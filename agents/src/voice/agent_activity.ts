@@ -409,13 +409,17 @@ export class AgentActivity implements RecognitionHooks {
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session
       const capabilities = this.llm.capabilities;
-      await this.realtimeSession!._updateSession(
-        !rtReused || capabilities.midSessionInstructionsUpdate
-          ? this.agent.instructions
-          : undefined,
-        !rtReused || capabilities.midSessionChatCtxUpdate ? this.agent.chatCtx : undefined,
-        !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
-      );
+      try {
+        await this.realtimeSession!._updateSession(
+          !rtReused || capabilities.midSessionInstructionsUpdate
+            ? this.agent.instructions
+            : undefined,
+          !rtReused || capabilities.midSessionChatCtxUpdate ? this.agent.chatCtx : undefined,
+          !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
+        );
+      } catch (error) {
+        this.logger.error(error, 'failed to update realtime session');
+      }
 
       if (!capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
         this.logger.error(
