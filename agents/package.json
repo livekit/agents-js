@@ -50,7 +50,7 @@
     "@bufbuild/protobuf": "^1.10.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@livekit/mutex": "^1.1.1",
-    "@livekit/protocol": "^1.45.1",
+    "@livekit/protocol": "^1.45.3",
     "@livekit/typed-emitter": "^3.0.0",
     "@livekit/throws-transformer": "0.0.0-20260320165515",
     "@opentelemetry/api": "^1.9.0",
