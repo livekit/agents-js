@@ -1,5 +1,22 @@
 # @livekit/agents
 
+## 1.2.5
+
+### Patch Changes
+
+- expose serviceTier in CompletionUsage from OpenAI Responses API - [#1205](https://github.com/livekit/agents-js/pull/1205) ([@piyush-gambhir](https://github.com/piyush-gambhir))
+
+- Fix extra_headers being sent in OpenAI request body instead of as HTTP headers in inference LLM - [#1216](https://github.com/livekit/agents-js/pull/1216) ([@smorimoto](https://github.com/smorimoto))
+
+- remove rt session say logic and add phonic logic for resetting ws conn - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(tts): unblock FallbackAdapter when primary provider fails silently - [#1218](https://github.com/livekit/agents-js/pull/1218) ([@mrniket](https://github.com/mrniket))
+
+- - Make reusable Realtime Session across Handoffs & Agent Tasks - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+  - Add say() capability to phonic realtime model
+
+- Reuse STT Pipeline Across Agent Handoff - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.2.4
 
 ### Patch Changes
