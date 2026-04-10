@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./src"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist",
+    "paths": {
+      "@livekit/agents": ["../../agents/src"],
+      "@livekit/agents-plugins-test": ["../../plugins/test/src"],
+      "@livekit/agents-plugin-*": ["../../plugins/*/src"]
+    }
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-mistral",
+    "entryPointStrategy": "resolve",
+    "entryPoints": ["src/index.ts"]
+  }
+}
