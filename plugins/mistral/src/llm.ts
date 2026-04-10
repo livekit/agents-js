@@ -144,31 +144,53 @@ export class LLMStream extends llm.LLMStream {
           }))
           : undefined;
 
-      const stream = await this.#client.chat.stream(
-        {
-          model: this.#opts.model,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          messages: messages as any,
-          tools,
-          temperature: this.#opts.temperature,
-          maxTokens: this.#opts.maxTokens,
-          // Only send tool-related params when tools are present
-          ...(tools && {
-            parallelToolCalls: this.#parallelToolCalls,
-            toolChoice: toMistralToolChoice(this.#toolChoice),
-          }),
-        },
-        {
-          fetchOptions: {
-            // Combine the caller's abort signal with a per-request timeout so the
-            // Mistral API call always respects connOptions.timeoutMs.
-            signal: AbortSignal.any([
-              this.abortController.signal,
-              AbortSignal.timeout(this.connOptions.timeoutMs),
-            ]),
-          },
-        },
+      // Apply connection timeout only to the initial chat.stream() call so long
+      // streaming responses are not prematurely aborted. Once the HTTP connection
+      // is established the timer is cleared; the user's abort signal continues
+      // to work throughout the stream iteration.
+      const connAbortController = new AbortController();
+      const connTimeoutId = setTimeout(
+        () =>
+          connAbortController.abort(
+            new DOMException(
+              `Mistral LLM: connection timed out after ${this.connOptions.timeoutMs}ms`,
+              'TimeoutError',
+            ),
+          ),
+        this.connOptions.timeoutMs,
       );
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let stream: any;
+      try {
+        stream = await this.#client.chat.stream(
+          {
+            model: this.#opts.model,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            messages: messages as any,
+            tools,
+            temperature: this.#opts.temperature,
+            maxTokens: this.#opts.maxTokens,
+            // Only send tool-related params when tools are present
+            ...(tools && {
+              parallelToolCalls: this.#parallelToolCalls,
+              toolChoice: toMistralToolChoice(this.#toolChoice),
+            }),
+          },
+          {
+            fetchOptions: {
+              signal: AbortSignal.any([
+                this.abortController.signal,
+                connAbortController.signal,
+              ]),
+            },
+          },
+        );
+      } finally {
+        // Connection established (or failed) — clear the connection timeout so
+        // the stream body can be read for as long as the model needs.
+        clearTimeout(connTimeoutId);
+      }
 
       // Track each in-progress tool call by its stream index.
       // With parallel tool calls, Mistral sends all tool call definitions in the first
