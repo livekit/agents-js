@@ -160,9 +160,12 @@ export class LLMStream extends llm.LLMStream {
         },
         {
           fetchOptions: {
-            signal: this.abortController.signal,
-            // @ts-ignore - Mistral SDK might not have 'timeout' in its TS definitions for fetchOptions, but passes it to fetch
-            timeout: Math.floor(this.connOptions.timeoutMs),
+            // Combine the caller's abort signal with a per-request timeout so the
+            // Mistral API call always respects connOptions.timeoutMs.
+            signal: AbortSignal.any([
+              this.abortController.signal,
+              AbortSignal.timeout(this.connOptions.timeoutMs),
+            ]),
           },
         },
       );
@@ -205,11 +208,10 @@ export class LLMStream extends llm.LLMStream {
           }
         }
 
-        // Flush all completed tool calls when the model finishes
-        if (
-          choice.finishReason &&
-          inProgressCalls.size > 0
-        ) {
+        // Flush all completed tool calls when the model finishes.
+        // Check any finishReason (not just 'tool_calls'/'stop') so accumulated
+        // calls are not silently lost on 'length' or 'error' terminations.
+        if (choice.finishReason && inProgressCalls.size > 0) {
           for (const call of inProgressCalls.values()) {
             this.queue.put({
               id: chunk.id,
@@ -254,10 +256,9 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
-      // Don't retry if the request was intentionally aborted
-      if (this.abortController.signal.aborted) {
-        throw error;
-      }
+      // An aborted signal means the stream was intentionally closed — do not
+      // wrap into APIConnectionError, which would trigger the retry loop.
+      if (this.abortController.signal.aborted) throw error;
 
       // Re-throw errors already in the framework's error hierarchy
       if (error instanceof APIStatusError || error instanceof APIConnectionError) {
@@ -324,7 +325,8 @@ function toMistralToolChoice(choice: llm.ToolChoice | undefined): 'auto' | 'none
  * 3. Tool response messages use the FunctionCall's name (always populated), not the
  *    FunctionCallOutput's name (defaults to '').
  */
-function buildMessages(chatCtx: llm.ChatContext, logger: any): object[] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildMessages(chatCtx: llm.ChatContext, logger?: { warn: (...args: any[]) => void }): object[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [];
 
@@ -347,7 +349,9 @@ function buildMessages(chatCtx: llm.ChatContext, logger: any): object[] {
       const text = item.content
         .filter((c): c is string => {
           if (typeof c !== 'string') {
-            logger.warn('Mistral plugin: non-string content found, vision content is not yet supported');
+            logger?.warn(
+              'Mistral plugin: non-string content (e.g. image) is not yet supported and will be dropped',
+            );
             return false;
           }
           return true;
