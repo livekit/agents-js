@@ -855,6 +855,7 @@ async function forwardAudio(
 
     reader?.releaseLock();
     audioOutput.flush();
+    resampler?.close();
   }
 }
 

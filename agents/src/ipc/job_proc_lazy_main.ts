@@ -126,6 +126,12 @@ const startJob = (
     }, 10000);
 
     try {
+      const closePromise = once(closeEvent, 'close').then((close) => {
+        logger.debug('shutting down');
+        shutdown = true;
+        safeSend({ case: 'exiting', value: { reason: close[1] } });
+      });
+
       // Run the job function within the AsyncLocalStorage context
       await runWithJobContextAsync(ctx, async () => {
         const { tracer, traceTypes } = await import('../telemetry/index.js');
@@ -138,15 +144,15 @@ const startJob = (
           },
           { name: 'job_entrypoint' },
         );
-      }).finally(() => {
-        clearTimeout(unconnectedTimeout);
-      });
-
-      await once(closeEvent, 'close').then((close) => {
-        logger.debug('shutting down');
-        shutdown = true;
-        safeSend({ case: 'exiting', value: { reason: close[1] } });
-      });
+      })
+        .then(async () => {
+          if (!shutdown) {
+            await closePromise;
+          }
+        })
+        .finally(async () => {
+          clearTimeout(unconnectedTimeout);
+        });
     } catch (error) {
       logger.error({ error }, 'error in entry function');
       shutdown = true;

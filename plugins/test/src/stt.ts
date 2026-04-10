@@ -130,6 +130,7 @@ const makeTestSpeech = (targetSampleRate: number, chunkDuration?: number): Audio
       output.push(...resampler.push(frame));
     }
     output.push(...resampler.flush());
+    resampler.close();
     frames = output;
   }
 

@@ -288,8 +288,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       /**
        * Thinking configuration for native audio models.
        * If not set, the model's default thinking behavior is used.
-       * Use `\{ thinkingBudget: 0 \}` to disable thinking.
-       * Use `\{ thinkingBudget: -1 \}` for automatic/dynamic thinking.
+       * Gemini 3.1 live models use `thinkingLevel`.
+       * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
     } = {},
@@ -547,6 +547,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(instructions: string): Promise<void> {
+    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+      this.#logger.warn(
+        'updateInstructions is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+      );
+      this.options.instructions = instructions;
+      return;
+    }
     if (this.options.instructions === undefined || this.options.instructions !== instructions) {
       this.options.instructions = instructions;
       this.markRestartNeeded();
@@ -554,6 +561,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
+    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+      this.#logger.warn(
+        'updateChatCtx is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+      );
+      this._chatCtx = chatCtx.copy();
+      return;
+    }
     const unlock = await this.sessionLock.lock();
     try {
       if (!this.activeSession) {
@@ -688,9 +702,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
     if (this.options.model === 'gemini-3.1-flash-live-preview') {
       this.#logger.warn(
-        'generateReply is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
+        'generateReply is not compatible with gemini-3.1-flash-live-preview. Use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.',
       );
-      throw new Error("generateReply is not compatible with 'gemini-3.1-flash-live-preview'");
+      throw new Error(
+        "generateReply is not compatible with 'gemini-3.1-flash-live-preview'; use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.",
+      );
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
@@ -798,6 +814,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.#closed = true;
 
     this.sessionShouldClose.set();
+    this.inputResampler?.close();
 
     await this.closeActiveSession();
 
@@ -1648,6 +1665,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.inputResampler) {
       if (frame.sampleRate !== this.inputResamplerInputRate) {
         // input audio changed to a different sample rate
+        this.inputResampler.close();
         this.inputResampler = undefined;
         this.inputResamplerInputRate = undefined;
       }

@@ -33,6 +33,7 @@ export default defineAgent({
       llm: new phonic.realtime.RealtimeModel({
         voice: 'sabrina',
         audioSpeed: 1.2,
+        minWordsToInterrupt: 3,
       }),
     });
 

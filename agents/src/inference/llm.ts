@@ -7,7 +7,12 @@ import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
-import { type AnyString, createAccessToken, getDefaultInferenceUrl } from './utils.js';
+import {
+  type AnyString,
+  buildMetadataHeaders,
+  createAccessToken,
+  getDefaultInferenceUrl,
+} from './utils.js';
 
 export type OpenAIModels =
   | 'openai/gpt-5.4'
@@ -58,6 +63,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   prediction?: ChatCompletionPredictionContentParam | null;
   presence_penalty?: number;
   prompt_cache_key?: string;
+  prompt_cache_retention?: 'in_memory' | '24h';
   reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
   safety_identifier?: string;
   seed?: number;
@@ -323,13 +329,14 @@ export class LLMStream extends llm.LLMStream {
         );
       }
 
+      const extraHeaders: Record<string, string> = {
+        ...buildMetadataHeaders(),
+        ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
+      };
       if (this.provider) {
-        const extraHeaders = requestOptions.extra_headers
-          ? (requestOptions.extra_headers as Record<string, string>)
-          : {};
         extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
-        requestOptions.extra_headers = extraHeaders;
       }
+      delete requestOptions.extra_headers;
 
       const stream = await this.client.chat.completions.create(
         {
@@ -341,6 +348,7 @@ export class LLMStream extends llm.LLMStream {
           ...requestOptions,
         },
         {
+          headers: extraHeaders,
           timeout: this.connOptions.timeoutMs,
           signal: this.abortController.signal,
         },

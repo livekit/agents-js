@@ -7,7 +7,7 @@ import { TransformStream } from 'stream/web';
 import { z } from 'zod';
 import { APIConnectionError, APIError, APIStatusError, isAPIError } from '../../_exceptions.js';
 import { log } from '../../log.js';
-import { createAccessToken } from '../utils.js';
+import { buildMetadataHeaders, createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -55,6 +55,7 @@ export async function predictHTTP(
     const response = await ofetch(url.toString(), {
       retry: 0,
       headers: {
+        ...buildMetadataHeaders(),
         'Content-Type': 'application/octet-stream',
         Authorization: `Bearer ${options.token}`,
       },

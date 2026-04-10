@@ -101,7 +101,7 @@ export class Queue<T> {
         await once(this.#events, 'put');
       }
       let item = this.items.shift();
-      if (!item) {
+      if (typeof item === 'undefined') {
         item = await _get();
       }
       return item;
@@ -723,6 +723,7 @@ export function resampleStream({
         for (const frame of resampler.flush()) {
           controller.enqueue(frame);
         }
+        resampler.close();
       }
     },
   });

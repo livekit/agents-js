@@ -44,6 +44,7 @@ export interface RealtimeModelOptions {
   audioSpeed?: number;
   phonicTools?: string[];
   boostedKeywords?: string[];
+  minWordsToInterrupt?: number;
   generateNoInputPokeText?: boolean;
   noInputPokeSec?: number;
   noInputPokeText?: string;
@@ -125,6 +126,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       boostedKeywords?: string[];
       /**
+       * Minimum number of user words required to interrupt the assistant
+       */
+      minWordsToInterrupt?: number;
+      /**
        * Auto-generate poke text when user is silent
        */
       generateNoInputPokeText?: boolean;
@@ -193,6 +198,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       audioSpeed: options.audioSpeed,
       phonicTools: options.phonicTools,
       boostedKeywords: options.boostedKeywords,
+      minWordsToInterrupt: options.minWordsToInterrupt,
       generateNoInputPokeText: options.generateNoInputPokeText,
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
@@ -530,6 +536,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.readyToStart.resolve();
     this.closeCurrentGeneration({ interrupted: false });
     this.rejectPendingGenerateReply();
+    this.inputResampler?.close();
     this.inputResampler = undefined;
     this.socket?.close();
     await this.connectTask;
@@ -584,6 +591,22 @@ export class RealtimeSession extends llm.RealtimeSession {
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
         toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
       }),
+      ...(this.options.additionalLanguages !== undefined && {
+        additional_languages: this.options.additionalLanguages,
+      }),
+      ...(this.options.multilingualMode !== undefined && {
+        multilingual_mode: this.options.multilingualMode,
+      }),
+      audio_speed: this.options.audioSpeed,
+      tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
+      boosted_keywords: this.options.boostedKeywords,
+      ...(this.options.minWordsToInterrupt !== undefined && {
+        min_words_to_interrupt: this.options.minWordsToInterrupt,
+      }),
+      generate_no_input_poke_text: this.options.generateNoInputPokeText,
+      no_input_poke_sec: this.options.noInputPokeSec,
+      no_input_poke_text: this.options.noInputPokeText,
+      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
