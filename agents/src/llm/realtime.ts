@@ -161,13 +161,6 @@ export abstract class RealtimeSession extends EventEmitter {
     return;
   }
 
-  say(
-    _text: string | ReadableStream<string>,
-    _options?: { allowInterruptions?: boolean },
-  ): Promise<GenerationCreatedEvent> {
-    throw new Error(`${this.constructor.name} does not implement say(). use a TTS model instead`);
-  }
-
   private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
     const reader = this.inputAudioStream.stream.getReader();
     while (true) {
