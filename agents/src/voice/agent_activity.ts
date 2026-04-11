@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
+import { context as otelContext, ROOT_CONTEXT, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
@@ -42,21 +43,21 @@ import type {
   VADMetrics,
 } from '../metrics/base.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
-import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
-import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
+import { type SpeechEvent, STT, type STTError } from '../stt/stt.js';
+import { recordRealtimeMetrics, tracer, traceTypes } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import { cancelAndWait, Future, isDevMode, isHosted, Task, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
-  StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
   functionCallStorage,
+  StopResponse,
   speechHandleStorage,
 } from './agent.js';
-import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -73,15 +74,15 @@ import {
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
-import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
+import type { _TTSGenerationData, ToolExecutionOutput, ToolOutput } from './generation.js';
 import {
   type _AudioOut,
   type _TextOut,
   performAudioForwarding,
   performLLMInference,
-  performTTSInference,
   performTextForwarding,
   performToolExecutions,
+  performTTSInference,
   removeInstructions,
   updateInstructions,
 } from './generation.js';
@@ -773,12 +774,7 @@ export class AgentActivity implements RecognitionHooks {
     this.audioStreamId = undefined;
   }
 
-  commitUserTurn(
-    options: {
-      audioDetached?: boolean;
-      throwIfNotReady?: boolean;
-    } = {},
-  ) {
+  commitUserTurn(options: { audioDetached?: boolean; throwIfNotReady?: boolean } = {}) {
     const { audioDetached = false, throwIfNotReady = true } = options;
     if (!this.audioRecognition) {
       if (throwIfNotReady) {
@@ -2206,6 +2202,20 @@ export class AgentActivity implements RecognitionHooks {
       );
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+
+      // Commit any completed FunctionCallOutputs to chatCtx. Without this,
+      // onToolExecutionStarted already added the FunctionCall but the matching
+      // FunctionCallOutput is only in speechHandle._itemAdded — leaving an
+      // orphaned FunctionCall that removeInvalidToolCalls() will strip later,
+      // erasing all evidence of the tool invocation from the LLM's context.
+      const completedOutputs = toolOutput.output
+        .map((o) => o.toolCallOutput)
+        .filter((o): o is FunctionCallOutput => o !== undefined);
+      if (completedOutputs.length > 0) {
+        this.agent._chatCtx.insert(completedOutputs);
+        this.agentSession._toolItemsAdded(completedOutputs);
+      }
+
       return;
     }
 
@@ -2235,10 +2245,8 @@ export class AgentActivity implements RecognitionHooks {
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        this.restoreInterruptionByAudioActivity();
       }
     }
 
@@ -2360,7 +2368,7 @@ export class AgentActivity implements RecognitionHooks {
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
-    addToChatCtx: boolean = true,
+    addToChatCtx = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
       async (span) =>
@@ -2911,11 +2919,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private scheduleSpeech(
-    speechHandle: SpeechHandle,
-    priority: number,
-    force: boolean = false,
-  ): void {
+  private scheduleSpeech(speechHandle: SpeechHandle, priority: number, force = false): void {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
     if (this.schedulingPaused && !force) {
@@ -2951,10 +2955,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async pause(
-    options: {
-      blockedTasks?: Task<any>[];
-      newActivity?: AgentActivity;
-    } = {},
+    options: { blockedTasks?: Task<any>[]; newActivity?: AgentActivity } = {},
   ): Promise<ReusableResources | undefined> {
     const { blockedTasks = [], newActivity } = options;
     const unlock = await this.lock.lock();

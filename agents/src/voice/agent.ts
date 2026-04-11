@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
+
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
+import type { AudioFrame } from '@livekit/rtc-node';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -23,7 +24,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
-import type { STT, SpeechEvent } from '../stt/index.js';
+import type { SpeechEvent, STT } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
@@ -600,8 +601,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       !oldActivity.llm.capabilities.manualFunctionCalls
     ) {
       this.#logger.error(
-        `Realtime model does not support resuming function calls from chat context, ` +
-          `using AgentTask inside a function tool may have unexpected behavior.`,
+        'Realtime model does not support resuming function calls from chat context, ' +
+          'using AgentTask inside a function tool may have unexpected behavior.',
       );
     }
 
@@ -619,9 +620,10 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       if (runState._watchedHandleCount() > 1) {
         runState._unwatchHandle(speechHandle);
       }
-      // it is OK to call _markDoneIfNeeded here, the above _updateActivity will call onEnter
-      // and newly added handles keep the run alive.
-      runState._markDoneIfNeeded();
+      // Do NOT call _markDoneIfNeeded() here. The AgentTask's activity may create new speech
+      // handles whose pipelines complete before this point, causing the RunState to resolve
+      // while the parent tool execution is still in progress. Handles will resolve the
+      // RunState naturally via their own done callbacks when they truly complete.
     }
 
     try {
@@ -633,7 +635,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       if (session.currentAgent !== this) {
         this.#logger.warn(
           `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
-            `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
+            'Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.',
         );
         await oldActivity.close();
       } else {
