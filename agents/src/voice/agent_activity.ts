@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
-import { context as otelContext, ROOT_CONTEXT, trace } from '@opentelemetry/api';
+import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
@@ -43,18 +42,18 @@ import type {
   VADMetrics,
 } from '../metrics/base.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
-import { type SpeechEvent, STT, type STTError } from '../stt/stt.js';
-import { recordRealtimeMetrics, tracer, traceTypes } from '../telemetry/index.js';
+import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
+import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { cancelAndWait, Future, isDevMode, isHosted, Task, waitFor } from '../utils.js';
+import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
+  StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
   functionCallStorage,
-  StopResponse,
   speechHandleStorage,
 } from './agent.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
@@ -74,15 +73,15 @@ import {
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
-import type { _TTSGenerationData, ToolExecutionOutput, ToolOutput } from './generation.js';
+import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
 import {
   type _AudioOut,
   type _TextOut,
   performAudioForwarding,
   performLLMInference,
+  performTTSInference,
   performTextForwarding,
   performToolExecutions,
-  performTTSInference,
   removeInstructions,
   updateInstructions,
 } from './generation.js';

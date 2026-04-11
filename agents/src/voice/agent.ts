@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
+import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
-import type { AudioFrame } from '@livekit/rtc-node';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -24,7 +23,7 @@ import {
   type ToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
-import type { SpeechEvent, STT } from '../stt/index.js';
+import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
