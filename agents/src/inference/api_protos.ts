@@ -140,7 +140,7 @@ export const sttSessionClosedEventSchema = z.object({
 export const sttErrorEventSchema = z.object({
   type: z.literal('error'),
   message: z.string().optional(),
-  code: z.string().optional(),
+  code: z.number().optional(),
 });
 
 // Discriminated union for all STT server events
