@@ -78,8 +78,7 @@ export class LLM extends llm.LLM {
     // Per-call overrides win over instance defaults
     const resolvedParallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    const resolvedToolChoice =
-      toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    const resolvedToolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
 
     return new LLMStream(this, {
       client: this.#client,
@@ -135,13 +134,13 @@ export class LLMStream extends llm.LLMStream {
       const tools: any[] | undefined =
         this.toolCtx && Object.keys(this.toolCtx).length > 0
           ? Object.entries(this.toolCtx).map(([name, func]) => ({
-            type: 'function' as const,
-            function: {
-              name,
-              description: func.description,
-              parameters: llm.toJsonSchema(func.parameters, true, false),
-            },
-          }))
+              type: 'function' as const,
+              function: {
+                name,
+                description: func.description,
+                parameters: llm.toJsonSchema(func.parameters, true, false),
+              },
+            }))
           : undefined;
 
       // Apply connection timeout only to the initial chat.stream() call so long
@@ -179,10 +178,7 @@ export class LLMStream extends llm.LLMStream {
           },
           {
             fetchOptions: {
-              signal: AbortSignal.any([
-                this.abortController.signal,
-                connAbortController.signal,
-              ]),
+              signal: AbortSignal.any([this.abortController.signal, connAbortController.signal]),
             },
           },
         );
@@ -251,7 +247,6 @@ export class LLMStream extends llm.LLMStream {
           }
           inProgressCalls.clear();
         }
-
 
         // Regular streamed text
         if (typeof delta.content === 'string' && delta.content) {
@@ -325,10 +320,12 @@ export class LLMStream extends llm.LLMStream {
  *
  * Mistral supports: 'auto' | 'none' | 'any'
  * LiveKit adds:     'required'  (force at least one call)  → maps to 'any'
- *                   { type: 'function', function: { name } } (named tool) → not supported, falls back to 'any'
+ *                   \{ type: 'function', function: \{ name \} \} (named tool) → not supported, falls back to 'any'
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toMistralToolChoice(choice: llm.ToolChoice | undefined): 'auto' | 'none' | 'any' | undefined {
+function toMistralToolChoice(
+  choice: llm.ToolChoice | undefined,
+): 'auto' | 'none' | 'any' | undefined {
   if (choice === undefined) return undefined;
   if (choice === 'auto') return 'auto';
   if (choice === 'none') return 'none';
@@ -348,7 +345,10 @@ function toMistralToolChoice(choice: llm.ToolChoice | undefined): 'auto' | 'none
  *    FunctionCallOutput's name (defaults to '').
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildMessages(chatCtx: llm.ChatContext, logger?: { warn: (...args: any[]) => void }): object[] {
+function buildMessages(
+  chatCtx: llm.ChatContext,
+  logger?: { warn: (msg: string) => void },
+): object[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [];
 

@@ -13,6 +13,6 @@ if (hasMistralApiKey) {
   });
 } else {
   describe('Mistral', () => {
-    it.skip('requires MISTRAL_API_KEY', () => { });
+    it.skip('requires MISTRAL_API_KEY', () => {});
   });
 }
