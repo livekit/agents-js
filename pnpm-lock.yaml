@@ -239,6 +239,9 @@ importers:
       '@livekit/agents-plugin-anam':
         specifier: workspace:*
         version: link:../plugins/anam
+      '@livekit/agents-plugin-assemblyai':
+        specifier: workspace:*
+        version: link:../plugins/assemblyai
       '@livekit/agents-plugin-baseten':
         specifier: workspace:*
         version: link:../plugins/baseten

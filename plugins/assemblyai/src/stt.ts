@@ -31,9 +31,17 @@ interface StreamEventMessage {
   transcript?: string;
   utterance?: string;
   end_of_turn?: boolean;
+  end_of_turn_confidence?: number;
   turn_is_formatted?: boolean;
   language_code?: string;
-  words?: Array<{ text?: string; start?: number; end?: number; confidence?: number }>;
+  speaker_label?: string;
+  words?: Array<{
+    text?: string;
+    start?: number;
+    end?: number;
+    confidence?: number;
+    speaker?: string;
+  }>;
   // Termination
   audio_duration_seconds?: number;
   session_duration_seconds?: number;
@@ -86,6 +94,7 @@ const defaultSTTOptions: STTOptions = {
 
 export class STT extends stt.STT {
   #opts: STTOptions;
+  #streams = new Set<WeakRef<SpeechStream>>();
   label = 'assemblyai.STT';
 
   get model(): string {
@@ -137,10 +146,20 @@ export class STT extends stt.STT {
 
   updateOptions(opts: Partial<STTOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions(opts);
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
-    return new SpeechStream(this, this.#opts, options?.connOptions);
+    const stream = new SpeechStream(this, this.#opts, options?.connOptions);
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 }
 
@@ -550,7 +569,6 @@ export class SpeechStream extends stt.SpeechStream {
       });
 
       this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
-
       if (this.#speechDurationInS > 0) {
         this.queue.put({
           type: stt.SpeechEventType.RECOGNITION_USAGE,

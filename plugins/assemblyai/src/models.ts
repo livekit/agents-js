@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Ref: python livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py - 48-54 lines
 export type STTModels =
   | 'universal-streaming-english'
   | 'universal-streaming-multilingual'
@@ -12,5 +11,4 @@ export type STTModels =
   // break if they already pass it.
   | 'u3-pro';
 
-// Ref: python livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py - 47 lines
 export type STTEncoding = 'pcm_s16le' | 'pcm_mulaw';
