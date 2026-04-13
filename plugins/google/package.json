@@ -43,7 +43,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@google/genai": "^1.44.0",
+    "@google/genai": "^1.49.0",
     "@livekit/mutex": "^1.1.1",
     "@types/json-schema": "^7.0.15",
     "json-schema": "^0.4.0"

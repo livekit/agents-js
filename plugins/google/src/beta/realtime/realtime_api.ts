@@ -140,6 +140,7 @@ interface ResponseGeneration {
  * Google Realtime Model for real-time voice conversations with Gemini models
  */
 export class RealtimeModel extends llm.RealtimeModel {
+  #logger = log();
   /** @internal */
   _options: RealtimeOptions;
 
@@ -329,6 +330,12 @@ export class RealtimeModel extends llm.RealtimeModel {
       midSessionToolsUpdate: false,
       perResponseToolChoice: false,
     });
+
+    if (!mutableSession) {
+      this.#logger.warn(
+        `'${model}' has limited mid-session update support. instructions, chat context, and tool updates will not be applied until the next session.`,
+      );
+    }
 
     this._options = {
       model,
