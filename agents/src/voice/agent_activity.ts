@@ -2184,6 +2184,9 @@ export class AgentActivity implements RecognitionHooks {
           interrupted: true,
           createdAt: replyStartedAt,
           metrics: assistantMetrics,
+          ...(Object.keys(llmGenData.generatedExtra).length > 0
+            ? { extra: llmGenData.generatedExtra }
+            : {}),
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
@@ -2218,6 +2221,9 @@ export class AgentActivity implements RecognitionHooks {
         createdAt: replyStartedAt,
         content: textOut.text,
         metrics: assistantMetrics,
+        ...(Object.keys(llmGenData.generatedExtra).length > 0
+          ? { extra: llmGenData.generatedExtra }
+          : {}),
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);

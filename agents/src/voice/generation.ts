@@ -60,6 +60,7 @@ const TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export class _LLMGenerationData {
   generatedText: string = '';
   generatedToolCalls: FunctionCall[];
+  generatedExtra: Record<string, unknown> = {};
   id: string;
   ttft?: number;
 
@@ -507,6 +508,10 @@ export function performLLMInference(
               data.generatedToolCalls.push(toolCall);
               await toolCallWriter.write(toolCall);
             }
+          }
+
+          if (chunk.delta.extra) {
+            Object.assign(data.generatedExtra, chunk.delta.extra);
           }
 
           if (chunk.delta.content) {

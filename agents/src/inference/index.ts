@@ -12,6 +12,7 @@ export {
   type GatewayOptions,
   type InferenceLLMOptions,
   type LLMModels,
+  type XAIModels,
 } from './llm.js';
 
 export {

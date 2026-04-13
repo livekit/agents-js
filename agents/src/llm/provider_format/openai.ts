@@ -5,6 +5,18 @@ import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { groupToolCalls } from './utils.js';
 
+const EXTRA_CONTENT_KEYS = ['google', 'livekit', 'xai'] as const;
+
+function filterExtra(extra: Record<string, unknown>): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of EXTRA_CONTENT_KEYS) {
+    if (extra[key]) {
+      filtered[key] = extra[key];
+    }
+  }
+  return filtered;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function toChatCtx(chatCtx: ChatContext, injectDummyUserMessage: boolean = true) {
   const itemGroups = groupToolCalls(chatCtx);
@@ -24,10 +36,12 @@ export async function toChatCtx(chatCtx: ChatContext, injectDummyUserMessage: bo
         function: { name: toolCall.name, arguments: toolCall.args },
       };
 
-      // Include provider-specific extra content (e.g., Google thought signatures)
-      const googleExtra = getGoogleExtra(toolCall);
-      if (googleExtra) {
-        tc.extra_content = { google: googleExtra };
+      const extraContent = toolCall.extra ? filterExtra(toolCall.extra) : {};
+      if (!extraContent.google && toolCall.thoughtSignature) {
+        extraContent.google = { thoughtSignature: toolCall.thoughtSignature };
+      }
+      if (Object.keys(extraContent).length > 0) {
+        tc.extra_content = extraContent;
       }
       return tc;
     });
@@ -72,6 +86,13 @@ async function toChatItem(item: ChatItem) {
       result.content = listContent;
     }
 
+    if (item.extra) {
+      const extraContent = filterExtra(item.extra);
+      if (Object.keys(extraContent).length > 0) {
+        result.extra_content = extraContent;
+      }
+    }
+
     return result;
   } else if (item.type === 'function_call') {
     const tc: Record<string, any> = {
@@ -80,10 +101,12 @@ async function toChatItem(item: ChatItem) {
       function: { name: item.name, arguments: item.args },
     };
 
-    // Include provider-specific extra content (e.g., Google thought signatures)
-    const googleExtra = getGoogleExtra(item);
-    if (googleExtra) {
-      tc.extra_content = { google: googleExtra };
+    const extraContent = item.extra ? filterExtra(item.extra) : {};
+    if (!extraContent.google && item.thoughtSignature) {
+      extraContent.google = { thoughtSignature: item.thoughtSignature };
+    }
+    if (Object.keys(extraContent).length > 0) {
+      tc.extra_content = extraContent;
     }
 
     return {
@@ -100,15 +123,6 @@ async function toChatItem(item: ChatItem) {
   // Skip other item types (e.g., agent_handoff)
   // These should be filtered by groupToolCalls, but this is a safety net
   throw new Error(`Unsupported item type: ${item['type']}`);
-}
-
-function getGoogleExtra(
-  item: Partial<{ extra?: Record<string, unknown>; thoughtSignature?: string }>,
-): Record<string, unknown> | undefined {
-  const googleExtra =
-    (item.extra?.google as Record<string, unknown> | undefined) ||
-    (item.thoughtSignature ? { thoughtSignature: item.thoughtSignature } : undefined);
-  return googleExtra;
 }
 
 async function toImageContent(content: ImageContent) {
