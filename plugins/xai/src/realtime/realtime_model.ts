@@ -8,7 +8,7 @@ type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeMod
 
 const XAI_BASE_URL = 'wss://api.x.ai/v1';
 const DEFAULT_MODEL = 'grok-4-1-fast-non-reasoning';
-const DEFAULT_VOICE = 'Ara';
+const DEFAULT_VOICE = 'eve';
 
 const XAI_DEFAULT_TURN_DETECTION = {
   type: 'server_vad' as const,
@@ -19,7 +19,7 @@ const XAI_DEFAULT_TURN_DETECTION = {
   interrupt_response: true,
 };
 
-export type GrokVoices = 'Ara' | 'Cora' | 'Sage';
+export type GrokVoices = 'eve' | 'ara' | 'rex' | 'sal' | 'leo';
 
 export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
   model?: string;
