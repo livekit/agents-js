@@ -239,9 +239,6 @@ importers:
       '@livekit/agents-plugin-anam':
         specifier: workspace:*
         version: link:../plugins/anam
-      '@livekit/agents-plugin-assemblyai':
-        specifier: workspace:*
-        version: link:../plugins/assemblyai
       '@livekit/agents-plugin-baseten':
         specifier: workspace:*
         version: link:../plugins/baseten
@@ -272,6 +269,9 @@ importers:
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
+      '@livekit/agents-plugin-mistral':
+        specifier: workspace:*
+        version: link:../plugins/mistral
       '@livekit/agents-plugin-neuphonic':
         specifier: workspace:*
         version: link:../plugins/neuphonic
@@ -745,6 +745,9 @@ importers:
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.25
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)

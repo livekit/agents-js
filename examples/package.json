@@ -41,6 +41,7 @@
     "@livekit/agents-plugin-resemble": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-trugen": "workspace:*",
+    "@livekit/agents-plugin-mistral": "workspace:*",
     "@livekit/agents-plugin-xai": "workspace:*",
     "@livekit/noise-cancellation-node": "^0.1.9",
     "@livekit/rtc-node": "catalog:",

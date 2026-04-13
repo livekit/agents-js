@@ -3,6 +3,7 @@ SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 
 SPDX-License-Identifier: Apache-2.0
 -->
+
 # Mistral AI plugin for LiveKit Agents
 
 The Agents Framework is designed for building realtime, programmable

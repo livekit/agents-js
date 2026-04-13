@@ -323,7 +323,8 @@ export class LLMStream extends llm.LLMStream {
  *                   \{ type: 'function', function: \{ name \} \} (named tool) → not supported, falls back to 'any'
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toMistralToolChoice(
+/** @internal */
+export function toMistralToolChoice(
   choice: llm.ToolChoice | undefined,
 ): 'auto' | 'none' | 'any' | undefined {
   if (choice === undefined) return undefined;
@@ -345,7 +346,8 @@ function toMistralToolChoice(
  *    FunctionCallOutput's name (defaults to '').
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildMessages(
+/** @internal */
+export function buildMessages(
   chatCtx: llm.ChatContext,
   logger?: { warn: (msg: string) => void },
 ): object[] {
