@@ -237,6 +237,7 @@ export class SpeechStream extends stt.SpeechStream {
       try {
         const ws = await this.#connectWS();
         await this.#runWS(ws);
+        retries = 0;
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
@@ -366,10 +367,9 @@ export class SpeechStream extends stt.SpeechStream {
           let frames: AudioFrame[];
           if (data === SpeechStream.FLUSH_SENTINEL) {
             frames = audioStream.flush();
-          } else if (data.sampleRate === this.#opts.sampleRate || data.channels === 1) {
-            // Matches the Deepgram plugin's permissive check — the base class
-            // resamples incoming frames, and the resampler output may not
-            // always be labeled with the target sample rate exactly.
+          } else if (data.sampleRate === this.#opts.sampleRate && data.channels === 1) {
+            // AssemblyAI expects mono PCM. The base SpeechStream only resamples
+            // sample rate, so reject any frame that is not already downmixed.
             frames = audioStream.write(data.data.buffer as ArrayBuffer);
           } else {
             throw new Error('sample rate or channel count of frame does not match');
