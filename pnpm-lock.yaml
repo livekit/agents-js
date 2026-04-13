@@ -269,6 +269,9 @@ importers:
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
+      '@livekit/agents-plugin-mistral':
+        specifier: workspace:*
+        version: link:../plugins/mistral
       '@livekit/agents-plugin-neuphonic':
         specifier: workspace:*
         version: link:../plugins/neuphonic
@@ -409,7 +412,7 @@ importers:
         version: 8.5.10
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -742,9 +745,12 @@ importers:
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.25
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -7380,13 +7386,13 @@ snapshots:
     optionalDependencies:
       vite: 7.3.2(@types/node@22.15.30)(tsx@4.21.0)
 
-  '@vitest/mocker@4.0.17(vite@7.3.1(@types/node@22.19.1)(tsx@4.21.0))':
+  '@vitest/mocker@4.0.17(vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0))':
     dependencies:
       '@vitest/spy': 4.0.17
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.1(@types/node@22.19.1)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
 
   '@vitest/pretty-format@3.2.2':
     dependencies:
@@ -10421,14 +10427,14 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.21.0
 
-  vite@7.3.1(@types/node@22.19.1)(tsx@4.21.0):
+  vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0):
     dependencies:
-      esbuild: 0.27.2
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
-      postcss: 8.5.6
-      rollup: 4.55.1
-      tinyglobby: 0.2.15
+      esbuild: 0.27.7
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
+      postcss: 8.5.9
+      rollup: 4.60.1
+      tinyglobby: 0.2.16
     optionalDependencies:
       '@types/node': 22.19.1
       fsevents: 2.3.3
@@ -10550,7 +10556,7 @@ snapshots:
   vitest@4.0.17(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(tsx@4.21.0):
     dependencies:
       '@vitest/expect': 4.0.17
-      '@vitest/mocker': 4.0.17(vite@7.3.1(@types/node@22.19.1)(tsx@4.21.0))
+      '@vitest/mocker': 4.0.17(vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0))
       '@vitest/pretty-format': 4.0.17
       '@vitest/runner': 4.0.17
       '@vitest/snapshot': 4.0.17
@@ -10567,7 +10573,7 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.15
       tinyrainbow: 3.0.3
-      vite: 7.3.1(@types/node@22.19.1)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
