@@ -333,6 +333,7 @@ export class SpeechStream extends stt.SpeechStream {
   // Ref: python livekit-plugins/livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py - 357-440 lines
   async #runWS(ws: WebSocket) {
     let closing = false;
+    const sessionController = new AbortController();
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
@@ -354,10 +355,11 @@ export class SpeechStream extends stt.SpeechStream {
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
 
       const abortPromise = waitForAbort(this.abortSignal);
+      const sessionAbort = waitForAbort(sessionController.signal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
 
           if (result === undefined) return; // aborted
           if (result.done) break;
@@ -441,6 +443,7 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.all([sendTask(), listenTask.result, wsMonitor.result]);
     } finally {
       closing = true;
+      sessionController.abort();
       listenTask.cancel();
       configTask.cancel();
       if (messageHandler) ws.off('message', messageHandler);
