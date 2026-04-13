@@ -39,13 +39,13 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@types/ws": "^8.5.10",
+    "@types/ws": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

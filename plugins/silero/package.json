@@ -37,14 +37,14 @@
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
+    "@types/ws": "catalog:",
     "onnxruntime-common": "1.21.0",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "onnxruntime-node": "1.21.0",
-    "ws": "^8.16.0"
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
