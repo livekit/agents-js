@@ -649,12 +649,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
         }
 
-        if (toolResults) {
-          this.sendClientEvent({
-            type: 'tool_response',
-            value: toolResults,
-          });
-        }
         if (this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
           this.sendClientEvent({
             type: 'content',
@@ -664,6 +658,13 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
           });
         }
+      }
+
+      if (toolResults) {
+        this.sendClientEvent({
+          type: 'tool_response',
+          value: toolResults,
+        });
       }
     }
 
