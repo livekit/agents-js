@@ -553,7 +553,7 @@ importers:
   plugins/google:
     dependencies:
       '@google/genai':
-        specifier: ^1.49.0
+        specifier: ^1.44.0
         version: 1.49.0
       '@livekit/mutex':
         specifier: ^1.1.1
