@@ -21,7 +21,6 @@ export type LiveAPIModels =
   // Gemini API models
   | 'gemini-3.1-flash-live-preview' // https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview
   | 'gemini-2.5-flash-native-audio-preview-12-2025' // https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash-live
-  | 'gemini-2.5-flash-native-audio-preview-09-2025' // https://ai.google.dev/gemini-api/docs/models#gemini-2.5-flash-live
   | 'gemini-2.0-flash-exp'; // still works in Gemini API but not VertexAI
 
 /**
