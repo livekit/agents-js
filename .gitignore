@@ -203,3 +203,4 @@ examples/src/test_*.ts
 # OpenTelemetry trace test output
 .traces/
 *.traces.json
+.worktrees/

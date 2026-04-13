@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import type { ParticipantKind } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
 import {
@@ -24,13 +25,13 @@ import {
 import type { LanguageCode } from '../language.js';
 import { type ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
-import { DeferredReadableStream, isStreamReaderReleaseError } from '../stream/deferred_stream.js';
+import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay, waitForAbort } from '../utils.js';
+import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
@@ -67,6 +68,49 @@ export interface RecognitionHooks {
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
   retrieveChatCtx: () => ChatContext;
+}
+
+export class STTPipeline {
+  static readonly PUMP_TASK_CANCEL_TIMEOUT = 5000;
+
+  private sttNode: STTNode;
+  private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
+  private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
+  private _pumpTask: Task<void>;
+
+  constructor(sttNode: STTNode) {
+    this.sttNode = sttNode;
+    this._pumpTask = Task.from(({ signal }) => this.sttPump(signal));
+    this._pumpTask.addDoneCallback(() => this._eventChannel.close());
+  }
+
+  get audioChannel() {
+    return this._audioChannel;
+  }
+
+  get eventChannel() {
+    return this._eventChannel;
+  }
+
+  private async sttPump(signal: AbortSignal): Promise<void> {
+    const node = await this.sttNode(this._audioChannel.stream(), {});
+    if (node === null) return;
+
+    try {
+      for await (const value of readStream(node, signal)) {
+        if (typeof value === 'string') {
+          throw new Error(`STT node must yield SpeechEvent, got: ${typeof value}`);
+        }
+        await this._eventChannel.write(value);
+      }
+    } finally {
+      await node.cancel().catch(() => {});
+    }
+  }
+
+  async close(): Promise<void> {
+    await cancelAndWait([this._pumpTask], STTPipeline.PUMP_TASK_CANCEL_TIMEOUT);
+  }
 }
 
 export interface _TurnDetector {
@@ -119,6 +163,7 @@ export interface ParticipantLike {
 export class AudioRecognition {
   private hooks: RecognitionHooks;
   private stt?: STTNode;
+  private sttPipeline?: STTPipeline;
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
@@ -149,12 +194,15 @@ export class AudioRecognition {
   private sttInputStream: ReadableStream<AudioFrame>;
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
+  private sttOwnershipTransferred = false;
+  private readonly sttLifecycleLock = new Mutex();
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
   private commitUserTurnTask?: Task<void>;
+  private sttForwardTask?: Task<void>;
   private vadTask?: Task<void>;
-  private sttTask?: Task<void>;
+  private sttConsumerTask?: Task<void>;
   private interruptionTask?: Task<void>;
 
   // interruption detection
@@ -228,15 +276,12 @@ export class AudioRecognition {
     this.turnDetectionMode = options.turnDetection;
   }
 
-  async start() {
+  async start(options?: { sttPipeline?: STTPipeline }) {
+    this.startSttTasks(options?.sttPipeline);
+
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
-    });
-
-    this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-    this.sttTask.result.catch((err) => {
-      this.logger.error(`Error running STT task: ${err}`);
     });
 
     this.interruptionTask = Task.from(({ signal }) =>
@@ -248,7 +293,8 @@ export class AudioRecognition {
   }
 
   async stop() {
-    await this.sttTask?.cancelAndWait();
+    await this.sttConsumerTask?.cancelAndWait();
+    await this.sttForwardTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
   }
@@ -887,56 +933,61 @@ export class AudioRecognition {
       });
   }
 
-  private async createSttTask(stt: STTNode | undefined, signal: AbortSignal) {
-    if (!stt) return;
+  private startSttTasks(reusePipeline?: STTPipeline) {
+    if (!this.stt) return;
 
-    this.logger.debug('createSttTask: create stt stream from stt node');
+    this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt);
 
-    const sttStream = await stt(this.sttInputStream, {});
+    this.transcriptBuffer = [];
+    this.ignoreUserTranscriptUntil = undefined;
+    this._inputStartedAt = undefined;
+    this.sttOwnershipTransferred = false;
 
-    if (signal.aborted || sttStream === null) return;
+    const pipeline = this.sttPipeline;
 
-    if (sttStream instanceof ReadableStream) {
-      const reader = sttStream.getReader();
+    this.sttForwardTask = Task.from(({ signal }) => this.forwardInputAudioToStt(pipeline, signal));
+    this.sttForwardTask.result.catch((err) => {
+      this.logger.error(`Error forwarding audio to STT pipeline: ${err}`);
+    });
 
-      signal.addEventListener('abort', async () => {
-        try {
-          reader.releaseLock();
-          await sttStream?.cancel();
-        } catch (e) {
-          this.logger.debug('createSttTask: error during abort handler:', e);
-        }
-      });
+    this.sttConsumerTask = Task.from(({ signal }) => this.consumeSttEvents(pipeline, signal));
+    this.sttConsumerTask.result.catch((err) => {
+      this.logger.error(`Error running STT task: ${err}`);
+    });
+  }
 
-      try {
-        while (true) {
-          if (signal.aborted) break;
+  private async stopSttTasks() {
+    await this.sttConsumerTask?.cancelAndWait();
+    this.sttConsumerTask = undefined;
+    await this.sttForwardTask?.cancelAndWait();
+    this.sttForwardTask = undefined;
+  }
 
-          const { done, value: ev } = await reader.read();
-          if (done) break;
+  async detachSttPipeline(): Promise<STTPipeline | undefined> {
+    const unlock = await this.sttLifecycleLock.lock();
+    try {
+      const pipeline = this.sttPipeline;
+      this.sttPipeline = undefined;
+      this.sttOwnershipTransferred = pipeline !== undefined;
 
-          if (typeof ev === 'string') {
-            throw new Error('STT node must yield SpeechEvent');
-          } else {
-            await this.onSTTEvent(ev);
-          }
-        }
-      } catch (e) {
-        if (isStreamReaderReleaseError(e)) {
-          return;
-        }
-        this.logger.error({ error: e }, 'createSttTask: error reading sttStream');
-      } finally {
-        reader.releaseLock();
-        try {
-          await sttStream.cancel();
-        } catch (e) {
-          this.logger.debug(
-            'createSttTask: error cancelling sttStream (may already be cancelled):',
-            e,
-          );
-        }
-      }
+      await this.sttConsumerTask?.cancelAndWait();
+      this.sttConsumerTask = undefined;
+
+      return pipeline;
+    } finally {
+      unlock();
+    }
+  }
+
+  private async forwardInputAudioToStt(pipeline: STTPipeline, signal: AbortSignal) {
+    for await (const frame of readStream(this.sttInputStream, signal)) {
+      await pipeline.audioChannel.write(frame);
+    }
+  }
+
+  private async consumeSttEvents(pipeline: STTPipeline, signal: AbortSignal) {
+    for await (const ev of readStream(pipeline.eventChannel.stream(), signal)) {
+      await this.onSTTEvent(ev);
     }
   }
 
@@ -1161,11 +1212,29 @@ export class AudioRecognition {
     this.finalTranscriptConfidence = [];
     this.userTurnCommitted = false;
 
-    this.sttTask?.cancelAndWait().finally(() => {
-      this.sttTask = Task.from(({ signal }) => this.createSttTask(this.stt, signal));
-      this.sttTask.result.catch((err) => {
-        this.logger.error(`Error running STT task: ${err}`);
-      });
+    const restartStt = async () => {
+      const unlock = await this.sttLifecycleLock.lock();
+      try {
+        if (!this.stt || this.sttOwnershipTransferred) {
+          return;
+        }
+
+        await this.stopSttTasks();
+        await this.sttPipeline?.close();
+        this.sttPipeline = undefined;
+
+        if (this.sttOwnershipTransferred) {
+          return;
+        }
+
+        this.startSttTasks();
+      } finally {
+        unlock();
+      }
+    };
+
+    void restartStt().catch((err) => {
+      this.logger.error(`Error resetting STT task: ${err}`);
     });
   }
 
@@ -1237,7 +1306,13 @@ export class AudioRecognition {
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
-    await this.sttTask?.cancelAndWait();
+    await this.stopSttTasks();
+
+    if (this.sttPipeline) {
+      await this.sttPipeline.close();
+      this.sttPipeline = undefined;
+    }
+
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();

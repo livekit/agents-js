@@ -1,5 +1,19 @@
 # @livekit/agents-plugin-rime
 
+## 1.2.6
+
+### Patch Changes
+
+- Updated dependencies [[`02e6d685149191a743abcdaf9a7514da5250c9ab`](https://github.com/livekit/agents-js/commit/02e6d685149191a743abcdaf9a7514da5250c9ab), [`dfe5f1b9761d863c729fe45764348cfcc31d8adb`](https://github.com/livekit/agents-js/commit/dfe5f1b9761d863c729fe45764348cfcc31d8adb), [`1070190afb5037ec7dd88a43d2f273e5dd94b63c`](https://github.com/livekit/agents-js/commit/1070190afb5037ec7dd88a43d2f273e5dd94b63c)]:
+  - @livekit/agents@1.2.6
+
+## 1.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`a4ed445ba9140bc1c091e7ecbd6ad394ba2d5e8d`](https://github.com/livekit/agents-js/commit/a4ed445ba9140bc1c091e7ecbd6ad394ba2d5e8d), [`8a06cacb6f183e44b333da95ee706370b99eb597`](https://github.com/livekit/agents-js/commit/8a06cacb6f183e44b333da95ee706370b99eb597), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e), [`f7d11deb098222c916ab03808e6c342b2c83dfc9`](https://github.com/livekit/agents-js/commit/f7d11deb098222c916ab03808e6c342b2c83dfc9), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e), [`a6f5c939e72aae8f8596636d0e425255499cc13e`](https://github.com/livekit/agents-js/commit/a6f5c939e72aae8f8596636d0e425255499cc13e)]:
+  - @livekit/agents@1.2.5
+
 ## 1.2.4
 
 ### Patch Changes

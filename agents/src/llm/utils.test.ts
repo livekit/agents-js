@@ -12,7 +12,12 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import { computeChatCtxDiff, formatChatHistory, serializeImage } from './utils.js';
+import {
+  computeChatCtxDiff,
+  formatChatHistory,
+  serializeImage,
+  validateChatContextStructure,
+} from './utils.js';
 
 function createChatMessage(
   id: string,
@@ -454,6 +459,87 @@ describe('formatChatHistory', () => {
         '  plain text error',
       ].join('\n'),
     );
+  });
+});
+
+describe('validateChatContextStructure', () => {
+  it('returns valid=true for well-formed chat context', () => {
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: 'msg_user',
+        role: 'user',
+        content: ['hello'],
+        createdAt: 1,
+      }),
+      FunctionCall.create({
+        id: 'fn_call',
+        callId: 'call_1',
+        name: 'lookup_order',
+        args: '{"orderId":"123"}',
+        createdAt: 2,
+      }),
+      FunctionCallOutput.create({
+        id: 'fn_output',
+        callId: 'call_1',
+        name: 'lookup_order',
+        output: '{"ok":true}',
+        isError: false,
+        createdAt: 3,
+      }),
+    ]);
+
+    const result = validateChatContextStructure(ctx);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toBe(0);
+    expect(result.warnings).toBe(0);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('detects duplicate ids and timestamp ordering issues', () => {
+    const m1 = ChatMessage.create({
+      id: 'dup_id',
+      role: 'user',
+      content: ['hello'],
+      createdAt: 10,
+    });
+    const m2 = ChatMessage.create({
+      id: 'dup_id',
+      role: 'assistant',
+      content: ['world'],
+      createdAt: 5,
+    });
+    const ctx = new ChatContext([m1, m2]);
+
+    const result = validateChatContextStructure(ctx);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toBeGreaterThanOrEqual(2);
+    expect(result.issues.some((i) => i.code === 'duplicate_id')).toBe(true);
+    expect(result.issues.some((i) => i.code === 'timestamp_order')).toBe(true);
+  });
+
+  it('detects malformed terms and orphan function outputs', () => {
+    const msg = ChatMessage.create({
+      id: 'msg_1',
+      role: 'user',
+      content: ['   '],
+      createdAt: 1,
+    });
+    const output = FunctionCallOutput.create({
+      id: 'fn_out_1',
+      callId: 'call_missing',
+      name: 'lookup_order',
+      output: 'ok',
+      isError: false,
+      createdAt: 2,
+    });
+    const ctx = new ChatContext([msg, output]);
+
+    const result = validateChatContextStructure(ctx);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toBe(0);
+    expect(result.warnings).toBeGreaterThanOrEqual(2);
+    expect(result.issues.some((i) => i.code === 'empty_text_term')).toBe(true);
+    expect(result.issues.some((i) => i.code === 'orphan_function_call_output')).toBe(true);
   });
 });
 

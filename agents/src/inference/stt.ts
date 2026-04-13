@@ -70,6 +70,8 @@ export interface DeepgramOptions {
   numerals?: boolean;
   /** Opt out of model improvement program. */
   mip_opt_out?: boolean;
+  /** Eager end-of-turn threshold (0.0–1.0). Enables preflight transcripts for preemptive generation. */
+  eager_eot_threshold?: number;
 }
 
 export interface AssemblyAIOptions {
@@ -519,10 +521,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 resourceCleanup();
                 break;
               case 'interim_transcript':
-                this.processTranscript(event, false);
+                this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
               case 'final_transcript':
-                this.processTranscript(event, true);
+                this.processTranscript(event, SpeechEventType.FINAL_TRANSCRIPT);
+                break;
+              case 'preflight_transcript':
+                this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
                 break;
               case 'error':
                 this.#logger.error({ error: event }, 'Received error from LiveKit STT');
@@ -588,7 +593,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
-  private processTranscript(data: SttTranscriptEvent, isFinal: boolean) {
+  private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
 
@@ -596,7 +601,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     const text = data.transcript;
     const language = normalizeLanguage(data.language || this.opts.language || 'en');
 
-    if (!text && !isFinal) return;
+    if (!text && eventType !== SpeechEventType.FINAL_TRANSCRIPT) return;
 
     try {
       // We'll have a more accurate way of detecting when speech started when we have VAD
@@ -623,7 +628,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         ),
       };
 
-      if (isFinal) {
+      if (eventType === SpeechEventType.FINAL_TRANSCRIPT) {
         if (this.speechDuration > 0) {
           this.queue.put({
             type: SpeechEventType.RECOGNITION_USAGE,
@@ -645,7 +650,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
       } else {
         this.queue.put({
-          type: SpeechEventType.INTERIM_TRANSCRIPT,
+          type: eventType,
           requestId,
           alternatives: [speechData],
         });

@@ -8,6 +8,7 @@ import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api'
 import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
+import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -61,6 +62,7 @@ import {
   type EndOfTurnInfo,
   type PreemptiveGenerationInfo,
   type RecognitionHooks,
+  type STTPipeline,
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
@@ -93,6 +95,50 @@ export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
 interface OnEnterData {
   session: AgentSession;
   agent: Agent;
+}
+
+export interface ReusableResources {
+  sttPipeline?: STTPipeline;
+  rtSession?: RealtimeSession;
+}
+
+export class SchedulingPausedError extends Error {
+  constructor() {
+    super('cannot schedule new speech, the speech scheduling is draining/pausing');
+    this.name = 'SchedulingPausedError';
+  }
+}
+
+export function isSchedulingPausedError(error: unknown): error is SchedulingPausedError {
+  return error instanceof SchedulingPausedError;
+}
+
+export async function cleanupReusableResources(
+  resources: ReusableResources,
+  logger: Logger,
+): Promise<void> {
+  const tasks: Promise<void>[] = [];
+  if (resources.sttPipeline) {
+    tasks.push(resources.sttPipeline.close());
+    resources.sttPipeline = undefined;
+  }
+  if (resources.rtSession) {
+    tasks.push(resources.rtSession.close());
+    resources.rtSession = undefined;
+  }
+
+  if (tasks.length > 0) {
+    const outputs = await Promise.allSettled(tasks);
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        if (logger) {
+          logger.error({ error: output.reason }, 'error cleaning up reusable resources');
+        } else {
+          console.error('error cleaning up reusable resources', output.reason);
+        }
+      }
+    }
+  }
 }
 
 interface PreemptiveGeneration {
@@ -293,19 +339,27 @@ export class AgentActivity implements RecognitionHooks {
     this.isDefaultInterruptionByAudioActivityEnabled = this.isInterruptionByAudioActivityEnabled;
   }
 
-  async start(): Promise<void> {
+  async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      await this._startSession({ spanName: 'start_agent_activity', runOnEnter: true });
+      await this._startSession({
+        spanName: 'start_agent_activity',
+        runOnEnter: true,
+        reuseResources: options?.reuseResources,
+      });
     } finally {
       unlock();
     }
   }
 
-  async resume(): Promise<void> {
+  async resume(options?: { reuseResources?: ReusableResources }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
-      await this._startSession({ spanName: 'resume_agent_activity', runOnEnter: false });
+      await this._startSession({
+        spanName: 'resume_agent_activity',
+        runOnEnter: false,
+        reuseResources: options?.reuseResources,
+      });
     } finally {
       unlock();
     }
@@ -314,8 +368,9 @@ export class AgentActivity implements RecognitionHooks {
   private async _startSession(options: {
     spanName: 'start_agent_activity' | 'resume_agent_activity';
     runOnEnter: boolean;
+    reuseResources?: ReusableResources;
   }): Promise<void> {
-    const { spanName, runOnEnter } = options;
+    const { spanName, runOnEnter, reuseResources } = options;
     const startSpan = tracer.startSpan({
       name: spanName,
       attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -325,38 +380,49 @@ export class AgentActivity implements RecognitionHooks {
     this.agent._agentActivity = this;
 
     if (this.llm instanceof RealtimeModel) {
-      this.realtimeSession = this.llm.session();
+      const rtReused = reuseResources?.rtSession !== undefined;
+
+      if (rtReused) {
+        this.logger.debug('reusing realtime session from previous activity');
+        this.realtimeSession = reuseResources!.rtSession;
+        reuseResources!.rtSession = undefined; // ownership transferred
+
+        // clear any stale audio/generation state
+        await this.realtimeSession!.interrupt();
+        await this.realtimeSession!.clearAudio();
+      } else {
+        this.realtimeSession = this.llm.session();
+      }
+
       this.realtimeSpans = new Map<string, Span>();
-      this.realtimeSession.on('generation_created', this.onRealtimeGenerationCreated);
-      this.realtimeSession.on('input_speech_started', this.onRealtimeInputSpeechStarted);
-      this.realtimeSession.on('input_speech_stopped', this.onRealtimeInputSpeechStopped);
-      this.realtimeSession.on(
+      this.realtimeSession!.on('generation_created', this.onRealtimeGenerationCreated);
+      this.realtimeSession!.on('input_speech_started', this.onRealtimeInputSpeechStarted);
+      this.realtimeSession!.on('input_speech_stopped', this.onRealtimeInputSpeechStopped);
+      this.realtimeSession!.on(
         'input_audio_transcription_completed',
         this.onRealtimeInputAudioTranscriptionCompleted,
       );
-      this.realtimeSession.on('metrics_collected', this.onMetricsCollected);
-      this.realtimeSession.on('error', this.onModelError);
+      this.realtimeSession!.on('metrics_collected', this.onMetricsCollected);
+      this.realtimeSession!.on('error', this.onModelError);
 
       removeInstructions(this.agent._chatCtx);
+
+      // skip the update if the session is reused and no mid-session update is supported
+      // this means the content is the same as the previous session
+      const capabilities = this.llm.capabilities;
       try {
-        await this.realtimeSession.updateInstructions(this.agent.instructions);
+        await this.realtimeSession!._updateSession(
+          !rtReused || capabilities.midSessionInstructionsUpdate
+            ? this.agent.instructions
+            : undefined,
+          !rtReused || capabilities.midSessionChatCtxUpdate ? this.agent.chatCtx : undefined,
+          !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
+        );
       } catch (error) {
-        this.logger.error(error, 'failed to update the instructions');
+        this.logger.error(error, 'failed to update realtime session');
       }
 
-      try {
-        await this.realtimeSession.updateChatCtx(this.agent.chatCtx);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the chat context');
-      }
-
-      try {
-        await this.realtimeSession.updateTools(this.tools);
-      } catch (error) {
-        this.logger.error(error, 'failed to update the tools');
-      }
-
-      if (!this.llm.capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
+      if (!capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
         this.logger.error(
           'audio output is enabled but RealtimeModel has no audio modality ' +
             'and no TTS is set. Either enable audio modality in the RealtimeModel ' +
@@ -416,9 +482,16 @@ export class AgentActivity implements RecognitionHooks {
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
     });
-    this.audioRecognition.start();
-    this.started = true;
 
+    if (reuseResources?.sttPipeline) {
+      this.logger.debug('reusing STT pipeline from previous activity');
+      await this.audioRecognition.start({ sttPipeline: reuseResources.sttPipeline });
+      reuseResources.sttPipeline = undefined; // ownership transferred
+    } else {
+      await this.audioRecognition.start();
+    }
+
+    this.started = true;
     this._resumeSchedulingTask();
 
     if (runOnEnter) {
@@ -437,6 +510,72 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     startSpan.end();
+  }
+
+  async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
+    const resources: ReusableResources = {};
+    try {
+      // stt pipeline
+      if (
+        this.audioRecognition &&
+        this.stt &&
+        newActivity.stt &&
+        this.stt === newActivity.stt &&
+        Object.getPrototypeOf(this.agent).sttNode ===
+          Object.getPrototypeOf(newActivity.agent).sttNode
+      ) {
+        resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
+      }
+
+      // rt session
+      if (
+        this.realtimeSession &&
+        this.llm instanceof RealtimeModel &&
+        this.llm === newActivity.llm
+      ) {
+        const capabilities = this.llm.capabilities;
+
+        // context update is supported or chat context is equivalent
+        let reusable =
+          capabilities.midSessionChatCtxUpdate ||
+          this.realtimeSession.chatCtx
+            .copy({ excludeInstructions: true, excludeHandoff: true })
+            .isEquivalent(
+              newActivity.agent.chatCtx.copy({ excludeInstructions: true, excludeHandoff: true }),
+            );
+
+        // instructions update is supported or instructions are the same
+        reusable =
+          reusable &&
+          (capabilities.midSessionInstructionsUpdate ||
+            this.agent.instructions === newActivity.agent.instructions);
+
+        // tools update is supported or tools are the same
+        reusable =
+          reusable &&
+          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+
+        if (reusable) {
+          // detach: remove event listeners but don't close the session
+          this.realtimeSession.off('generation_created', this.onRealtimeGenerationCreated);
+          this.realtimeSession.off('input_speech_started', this.onRealtimeInputSpeechStarted);
+          this.realtimeSession.off('input_speech_stopped', this.onRealtimeInputSpeechStopped);
+          this.realtimeSession.off(
+            'input_audio_transcription_completed',
+            this.onRealtimeInputAudioTranscriptionCompleted,
+          );
+          this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+          this.realtimeSession.off('error', this.onModelError);
+          resources.rtSession = this.realtimeSession;
+          this.realtimeSession = undefined; // prevent _closeSessionResources from closing it
+        }
+      }
+    } catch (error) {
+      await cleanupReusableResources(resources, this.logger);
+      throw error;
+    }
+
+    return resources;
   }
 
   get currentSpeech(): SpeechHandle | undefined {
@@ -684,7 +823,7 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: defaultAllowInterruptions,
       addToChatCtx = true,
     } = options ?? {};
-    let allowInterruptions = defaultAllowInterruptions;
+    const allowInterruptions = defaultAllowInterruptions;
 
     if (
       !audio &&
@@ -693,18 +832,6 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.output.audioEnabled
     ) {
       throw new Error('trying to generate speech from text without a TTS model');
-    }
-
-    if (
-      this.llm instanceof RealtimeModel &&
-      this.llm.capabilities.turnDetection &&
-      allowInterruptions === false
-    ) {
-      this.logger.warn(
-        'the RealtimeModel uses a server-side turn detection, allowInterruptions cannot be false when using VoiceAgent.say(), ' +
-          'disable turnDetection in the RealtimeModel and use VAD on the AgentTask/VoiceAgent instead',
-      );
-      allowInterruptions = true;
     }
 
     const handle = SpeechHandle.create({
@@ -719,11 +846,12 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle: handle,
       }),
     );
+
     const task = this.createSpeechTask({
       taskFn: (abortController: AbortController) =>
         this.ttsTask(handle, text, addToChatCtx, {}, abortController, audio),
       ownedSpeechHandle: handle,
-      name: 'AgentActivity.say_tts',
+      name: 'AgentActivity.tts_say',
     });
 
     task.result.finally(() => this.onPipelineReplyDone());
@@ -2251,6 +2379,7 @@ export class AgentActivity implements RecognitionHooks {
     ev: GenerationCreatedEvent,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
+    addToChatCtx: boolean = true,
   ): Promise<void> {
     return tracer.startActiveSpan(
       async (span) =>
@@ -2259,6 +2388,7 @@ export class AgentActivity implements RecognitionHooks {
           ev,
           modelSettings,
           replyAbortController,
+          addToChatCtx,
           span,
         }),
       {
@@ -2273,12 +2403,14 @@ export class AgentActivity implements RecognitionHooks {
     ev,
     modelSettings,
     replyAbortController,
+    addToChatCtx,
     span,
   }: {
     speechHandle: SpeechHandle;
     ev: GenerationCreatedEvent;
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
+    addToChatCtx: boolean;
     span: Span;
   }): Promise<void> {
     speechHandle._agentTurnContext = otelContext.active();
@@ -2550,7 +2682,7 @@ export class AgentActivity implements RecognitionHooks {
           });
         }
 
-        if (forwardedText) {
+        if (forwardedText && addToChatCtx) {
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
@@ -2575,7 +2707,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (messageOutputs.length > 0) {
+    if (messageOutputs.length > 0 && addToChatCtx) {
       // there should be only one message
       const [msgId, textOut, _, __] = messageOutputs[0]!;
       const message = ChatMessage.create({
@@ -2806,7 +2938,7 @@ export class AgentActivity implements RecognitionHooks {
     // when force=true, we allow tool responses to bypass scheduling pause
     // This allows for tool responses to be generated before the AgentActivity is finalized
     if (this.schedulingPaused && !force) {
-      throw new Error('cannot schedule new speech, the speech scheduling is draining/pausing');
+      throw new SchedulingPausedError();
     }
 
     // Monotonic time to avoid near 0 collisions
@@ -2837,8 +2969,13 @@ export class AgentActivity implements RecognitionHooks {
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
   }
 
-  async pause(options: { blockedTasks?: Task<any>[] } = {}): Promise<void> {
-    const { blockedTasks = [] } = options;
+  async pause(
+    options: {
+      blockedTasks?: Task<any>[];
+      newActivity?: AgentActivity;
+    } = {},
+  ): Promise<ReusableResources | undefined> {
+    const { blockedTasks = [], newActivity } = options;
     const unlock = await this.lock.lock();
 
     try {
@@ -2846,31 +2983,49 @@ export class AgentActivity implements RecognitionHooks {
         name: 'pause_agent_activity',
         attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
       });
+
+      let resources: ReusableResources | undefined;
       try {
         await this._pauseSchedulingTask(blockedTasks);
+
+        // detach after speech tasks are done but before _closeSessionResources
+        if (newActivity) {
+          resources = await this._detachReusableResources(newActivity);
+        }
+
         await this._closeSessionResources();
+      } catch (error) {
+        if (resources) {
+          await cleanupReusableResources(resources, this.logger);
+        }
+        throw error;
       } finally {
         span.end();
       }
+
+      return resources;
     } finally {
       unlock();
     }
   }
 
-  async drain(): Promise<void> {
+  async drain(options?: { newActivity?: AgentActivity }): Promise<ReusableResources | undefined> {
     // Create drain_agent_activity as a ROOT span (new trace) to match Python behavior
-    return tracer.startActiveSpan(async (span) => this._drainImpl(span), {
+    return tracer.startActiveSpan(async (span) => this._drainImpl(span, options?.newActivity), {
       name: 'drain_agent_activity',
       context: ROOT_CONTEXT,
     });
   }
 
-  private async _drainImpl(span: Span): Promise<void> {
+  private async _drainImpl(
+    span: Span,
+    newActivity?: AgentActivity,
+  ): Promise<ReusableResources | undefined> {
     span.setAttribute(traceTypes.ATTR_AGENT_LABEL, this.agent.id);
 
     const unlock = await this.lock.lock();
     try {
-      if (this._schedulingPaused) return;
+      if (this._schedulingPaused) return undefined;
 
       this._onExitTask = this.createSpeechTask({
         taskFn: () =>
@@ -2886,6 +3041,16 @@ export class AgentActivity implements RecognitionHooks {
 
       await this._onExitTask.result;
       await this._pauseSchedulingTask([]);
+
+      // detach after speech tasks are done but before _closeSessionResources
+      if (newActivity) {
+        try {
+          return await this._detachReusableResources(newActivity);
+        } catch (error) {
+          this.logger.error(error, 'failed to detach reusable resources');
+        }
+      }
+      return undefined;
     } finally {
       unlock();
     }

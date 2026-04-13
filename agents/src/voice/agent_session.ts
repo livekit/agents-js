@@ -39,7 +39,12 @@ import {
 import { Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
-import { AgentActivity } from './agent_activity.js';
+import {
+  AgentActivity,
+  type ReusableResources,
+  cleanupReusableResources,
+  isSchedulingPausedError,
+} from './agent_activity.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
@@ -223,6 +228,7 @@ export class AgentSession<
   private _input: AgentInput;
   private _output: AgentOutput;
 
+  private closing = false;
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
 
@@ -515,6 +521,7 @@ export class AgentSession<
       return;
     }
 
+    this.closing = false;
     this._usageCollector = new ModelUsageCollector();
 
     let ctx: JobContext | undefined = undefined;
@@ -694,7 +701,22 @@ export class AgentSession<
         }
         return nextActivity.generateReply({ userMessage, ...options });
       }
-      return activity.generateReply({ userMessage, ...options });
+
+      // Handoff can race with scheduling pause between the check above and generateReply().
+      // If that happens, retry on the next activity instead of surfacing an avoidable error.
+      try {
+        return activity.generateReply({ userMessage, ...options });
+      } catch (error) {
+        const canFallback = nextActivity !== undefined && isSchedulingPausedError(error);
+        if (!canFallback) {
+          throw error;
+        }
+        this.logger.debug(
+          { error },
+          'generateReply scheduling raced with handoff drain; retrying on next activity',
+        );
+        return nextActivity.generateReply({ userMessage, ...options });
+      }
     };
 
     // attach to the session span if called outside of the AgentSession
@@ -776,6 +798,7 @@ export class AgentSession<
     const runWithContext = async () => {
       const unlock = await this.activityLock.lock();
       let onEnterTask: Task<void> | undefined;
+      let reusableResources: ReusableResources | undefined;
 
       try {
         this.agent = agent;
@@ -800,11 +823,30 @@ export class AgentSession<
 
         if (prevActivityObj && prevActivityObj !== this.nextActivity) {
           if (previousActivity === 'pause') {
-            await prevActivityObj.pause({ blockedTasks });
+            reusableResources = await prevActivityObj.pause({
+              blockedTasks,
+              newActivity: this.nextActivity,
+            });
           } else {
-            await prevActivityObj.drain();
+            reusableResources = await prevActivityObj.drain({
+              newActivity: this.nextActivity,
+            });
             await prevActivityObj.close();
           }
+        }
+
+        if (this.closing && newActivity === 'start') {
+          this.logger.warn(
+            { agentId: this.nextActivity?.agent.id },
+            'Session is closing, skipping start of next activity',
+          );
+          if (reusableResources) {
+            await cleanupReusableResources(reusableResources, this.logger);
+            reusableResources = undefined;
+          }
+          this.nextActivity = undefined;
+          this.activity = undefined;
+          return;
         }
 
         this.activity = this.nextActivity;
@@ -831,16 +873,24 @@ export class AgentSession<
         );
 
         if (newActivity === 'start') {
-          await this.activity!.start();
+          await this.activity!.start({ reuseResources: reusableResources });
         } else {
-          await this.activity!.resume();
+          await this.activity!.resume({ reuseResources: reusableResources });
         }
+        reusableResources = undefined;
 
         onEnterTask = this.activity!._onEnterTask;
 
         if (this._input.audio) {
           this.activity!.attachAudioInput(this._input.audio.stream);
         }
+      } catch (error) {
+        // JS safeguard: session cleanup owns the detached resources until the next activity
+        // starts successfully, preventing leaks when handoff fails mid-transition.
+        if (reusableResources) {
+          await cleanupReusableResources(reusableResources, this.logger);
+        }
+        throw error;
       } finally {
         unlock();
       }
@@ -1146,6 +1196,7 @@ export class AgentSession<
       return;
     }
 
+    this.closing = true;
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);

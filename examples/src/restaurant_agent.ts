@@ -7,38 +7,20 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  inference,
   llm,
   voice,
 } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+// Ref: python examples/voice_agents/restaurant_agent.py - 29-34 lines
 const voices = {
-  greeter: {
-    id: '9BWtsMINqrJLrRacOk9x', // Aria - calm, professional female voice
-    name: 'Aria',
-    category: 'premade',
-  },
-  reservation: {
-    id: 'EXAVITQu4vr4xnSDxMaL', // Sarah - warm, reassuring professional tone
-    name: 'Sarah',
-    category: 'premade',
-  },
-  takeaway: {
-    id: 'CwhRBWXzGAHq8TQ4Fs17', // Roger - confident middle-aged male
-    name: 'Roger',
-    category: 'premade',
-  },
-  checkout: {
-    id: '5Q0t7uMcjvnagumLfvZi', // Paul - authoritative middle-aged male
-    name: 'Paul',
-    category: 'premade',
-  },
+  greeter: 'e07c00bc-4134-4eae-9ea4-1a55fb45746b',
+  reservation: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+  takeaway: '5ee9feff-1265-424a-9d7f-8e4d431a12c7',
+  checkout: 'a167e0f3-df7e-4d52-a9c3-f949145efdab',
 };
 
 type UserData = {
@@ -189,8 +171,8 @@ function createGreeterAgent(menu: string) {
   const greeter = new BaseAgent({
     name: 'greeter',
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
-    // TODO(brian): support parallel tool calls
-    tts: new elevenlabs.TTS({ voice: voices.greeter }),
+    llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.greeter }),
     tools: {
       toReservation: llm.tool({
         description: `Called when user wants to make or update a reservation.
@@ -225,7 +207,7 @@ function createReservationAgent() {
   const reservation = new BaseAgent({
     name: 'reservation',
     instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
-    tts: new elevenlabs.TTS({ voice: voices.reservation }),
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.reservation }),
     tools: {
       updateName,
       updatePhone,
@@ -267,7 +249,7 @@ function createTakeawayAgent(menu: string) {
   const takeaway = new BaseAgent({
     name: 'takeaway',
     instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
-    tts: new elevenlabs.TTS({ voice: voices.takeaway }),
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.takeaway }),
     tools: {
       toGreeter,
       updateOrder: llm.tool({
@@ -303,7 +285,7 @@ function createCheckoutAgent(menu: string) {
   const checkout = new BaseAgent({
     name: 'checkout',
     instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
-    tts: new elevenlabs.TTS({ voice: voices.checkout }),
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.checkout }),
     tools: {
       updateName,
       updatePhone,
@@ -383,12 +365,11 @@ export default defineAgent({
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      tts: new elevenlabs.TTS(),
-      llm: new openai.LLM(),
+      stt: new inference.STT({ model: 'deepgram/nova-3' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      tts: new inference.TTS({ model: 'cartesia/sonic-3' }),
       // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
-      turnDetection: new livekit.turnDetector.EnglishModel(),
+      // llm: new openai.realtime.RealtimeModel({ voice: 'alloy' }),
       userData,
       voiceOptions: {
         maxToolSteps: 5,

@@ -15,7 +15,19 @@ export interface BasetenLLMOptions {
   apiKey?: string;
   model: string;
   temperature?: number;
+  /** Nucleus sampling parameter. Forwarded to Baseten as `top_p`. */
+  topP?: number;
   maxTokens?: number;
+  /**
+   * Penalty for new tokens based on whether they appear in the text so far.
+   * Forwarded to Baseten as `presence_penalty`.
+   */
+  presencePenalty?: number;
+  /**
+   * Penalty for new tokens based on their frequency in the text so far.
+   * Forwarded to Baseten as `frequency_penalty`.
+   */
+  frequencyPenalty?: number;
   user?: string;
   toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } };
   parallelToolCalls?: boolean;

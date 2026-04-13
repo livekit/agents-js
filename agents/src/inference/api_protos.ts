@@ -120,6 +120,11 @@ export const sttFinalTranscriptEventSchema = z.object({
   extra: z.unknown().nullable().optional(),
 });
 
+// Preflight transcript event (Deepgram Flux turn-detection: EagerEndOfTurn, TurnResumed, StartOfTurn)
+export const sttPreflightTranscriptEventSchema = sttInterimTranscriptEventSchema.extend({
+  type: z.literal('preflight_transcript'),
+});
+
 // Session created event
 export const sttSessionCreatedEventSchema = z.object({
   type: z.literal('session.created'),
@@ -140,7 +145,7 @@ export const sttSessionClosedEventSchema = z.object({
 export const sttErrorEventSchema = z.object({
   type: z.literal('error'),
   message: z.string().optional(),
-  code: z.string().optional(),
+  code: z.number().optional(),
 });
 
 // Discriminated union for all STT server events
@@ -150,6 +155,7 @@ export const sttServerEventSchema = z.discriminatedUnion('type', [
   sttSessionClosedEventSchema,
   sttInterimTranscriptEventSchema,
   sttFinalTranscriptEventSchema,
+  sttPreflightTranscriptEventSchema,
   sttErrorEventSchema,
 ]);
 
@@ -157,7 +163,11 @@ export const sttServerEventSchema = z.discriminatedUnion('type', [
 export type SttWord = z.infer<typeof sttWordSchema>;
 export type SttInterimTranscriptEvent = z.infer<typeof sttInterimTranscriptEventSchema>;
 export type SttFinalTranscriptEvent = z.infer<typeof sttFinalTranscriptEventSchema>;
-export type SttTranscriptEvent = SttInterimTranscriptEvent | SttFinalTranscriptEvent;
+export type SttPreflightTranscriptEvent = z.infer<typeof sttPreflightTranscriptEventSchema>;
+export type SttTranscriptEvent =
+  | SttInterimTranscriptEvent
+  | SttFinalTranscriptEvent
+  | SttPreflightTranscriptEvent;
 export type SttSessionCreatedEvent = z.infer<typeof sttSessionCreatedEventSchema>;
 export type SttSessionFinalizedEvent = z.infer<typeof sttSessionFinalizedEventSchema>;
 export type SttSessionClosedEvent = z.infer<typeof sttSessionClosedEventSchema>;

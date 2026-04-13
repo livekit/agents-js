@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-hedra",
-  "version": "1.2.4",
+  "version": "1.2.6",
   "description": "Hedra avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22",
+    "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "pino": "^8.19.0",
     "tsup": "^8.3.5",
@@ -46,6 +46,6 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/rtc-node": "^0.13.22"
+    "@livekit/rtc-node": "catalog:"
   }
 }

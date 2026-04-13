@@ -4,7 +4,8 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import type { ReadableStream } from 'node:stream/web';
-import { DeferredReadableStream } from '../stream/deferred_stream.js';
+import { log } from '../log.js';
+import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { Task } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
 import type { ChatContext, FunctionCall } from './chat_context.js';
@@ -49,6 +50,10 @@ export interface RealtimeCapabilities {
   autoToolReplyGeneration: boolean;
   audioOutput: boolean;
   manualFunctionCalls: boolean;
+  midSessionChatCtxUpdate?: boolean;
+  midSessionInstructionsUpdate?: boolean;
+  midSessionToolsUpdate?: boolean;
+  perResponseToolChoice?: boolean;
 }
 
 export interface InputTranscriptionCompleted {
@@ -84,7 +89,9 @@ export abstract class RealtimeModel {
 
 export abstract class RealtimeSession extends EventEmitter {
   protected _realtimeModel: RealtimeModel;
-  private deferredInputStream = new DeferredReadableStream<AudioFrame>();
+  protected logger = log();
+  private inputAudioStream = new MultiInputStream<AudioFrame>();
+  private inputAudioStreamId?: string;
   private _mainTask: Task<void>;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -144,8 +151,37 @@ export abstract class RealtimeSession extends EventEmitter {
     audioTranscript?: string;
   }): Promise<void>;
 
+  async _updateSession(
+    instructions?: string,
+    chatCtx?: ChatContext,
+    tools?: ToolContext,
+  ): Promise<void> {
+    if (instructions !== undefined) {
+      try {
+        await this.updateInstructions(instructions);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the instructions');
+      }
+    }
+    if (chatCtx !== undefined) {
+      try {
+        await this.updateChatCtx(chatCtx);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the chat context');
+      }
+    }
+    if (tools !== undefined) {
+      try {
+        await this.updateTools(tools);
+      } catch (error) {
+        this.logger.error(error, 'failed to update the tools');
+      }
+    }
+  }
+
   async close(): Promise<void> {
     this._mainTask.cancel();
+    await this.inputAudioStream.close();
   }
 
   /**
@@ -156,7 +192,7 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   private async _mainTaskImpl(signal: AbortSignal): Promise<void> {
-    const reader = this.deferredInputStream.stream.getReader();
+    const reader = this.inputAudioStream.stream.getReader();
     while (true) {
       const { done, value } = await reader.read();
       if (done || signal.aborted) {
@@ -167,6 +203,9 @@ export abstract class RealtimeSession extends EventEmitter {
   }
 
   setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
-    this.deferredInputStream.setSource(audioStream);
+    if (this.inputAudioStreamId !== undefined) {
+      void this.inputAudioStream.removeInputStream(this.inputAudioStreamId);
+    }
+    this.inputAudioStreamId = this.inputAudioStream.addInputStream(audioStream);
   }
 }

@@ -25,6 +25,8 @@ export interface CompletionUsage {
   promptTokens: number;
   promptCachedTokens: number;
   totalTokens: number;
+  /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
+  serviceTier?: string;
 }
 
 export interface ChatChunk {

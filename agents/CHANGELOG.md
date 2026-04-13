@@ -1,5 +1,32 @@
 # @livekit/agents
 
+## 1.2.6
+
+### Patch Changes
+
+- Add get_framework_info request/response support - [#1223](https://github.com/livekit/agents-js/pull/1223) ([@toubatbrian](https://github.com/toubatbrian))
+
+- update readme with community link - [#1225](https://github.com/livekit/agents-js/pull/1225) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- refactor \_updateSession in phonic and base realtimesession class - [#1224](https://github.com/livekit/agents-js/pull/1224) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+## 1.2.5
+
+### Patch Changes
+
+- expose serviceTier in CompletionUsage from OpenAI Responses API - [#1205](https://github.com/livekit/agents-js/pull/1205) ([@piyush-gambhir](https://github.com/piyush-gambhir))
+
+- Fix extra_headers being sent in OpenAI request body instead of as HTTP headers in inference LLM - [#1216](https://github.com/livekit/agents-js/pull/1216) ([@smorimoto](https://github.com/smorimoto))
+
+- remove rt session say logic and add phonic logic for resetting ws conn - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(tts): unblock FallbackAdapter when primary provider fails silently - [#1218](https://github.com/livekit/agents-js/pull/1218) ([@mrniket](https://github.com/mrniket))
+
+- - Make reusable Realtime Session across Handoffs & Agent Tasks - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+  - Add say() capability to phonic realtime model
+
+- Reuse STT Pipeline Across Agent Handoff - [#1177](https://github.com/livekit/agents-js/pull/1177) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.2.4
 
 ### Patch Changes
