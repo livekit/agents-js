@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
@@ -199,6 +200,6 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     for (const stream of this.streams) {
       updatePromises.push(stream.updateOptions(options));
     }
-    await Promise.all(updatePromises);
+    await ThrowsPromise.all(updatePromises);
   }
 }

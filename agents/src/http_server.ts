@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import { log } from './log.js';
 
@@ -53,7 +54,7 @@ export class HTTPServer {
   }
 
   async run(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new ThrowsPromise<void, Error>((resolve, reject) => {
       this.app.listen(this.port, this.host, (err?: Error) => {
         if (err) reject(err);
         const address = this.app.address();
@@ -66,7 +67,7 @@ export class HTTPServer {
   }
 
   async close(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new ThrowsPromise<void, Error>((resolve, reject) => {
       this.app.close((err?: Error) => {
         if (err) reject(err);
         resolve();

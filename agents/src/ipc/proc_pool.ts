@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MultiMutex, Mutex } from '@livekit/mutex';
-import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -174,6 +174,6 @@ export class ProcPool {
       e.proc.close();
     });
     this.executors.forEach((e) => e.close());
-    await Promise.allSettled(this.tasks);
+    await ThrowsPromise.allSettled(this.tasks);
   }
 }

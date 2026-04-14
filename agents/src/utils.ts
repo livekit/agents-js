@@ -9,7 +9,7 @@ import type {
   TrackKind,
 } from '@livekit/rtc-node';
 import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
-import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
@@ -132,7 +132,7 @@ export class Future<T = void> {
   #error: Error | undefined = undefined;
 
   constructor() {
-    this.#await = new Promise<T>((resolve, reject) => {
+    this.#await = new ThrowsPromise<T, Error>((resolve, reject) => {
       this.#resolvePromise = resolve;
       this.#rejectPromise = reject;
     });
@@ -191,7 +191,7 @@ export class Event {
     if (this.#isSet) return true;
 
     let resolve: () => void = noop;
-    const waiter = new Promise<void>((r) => {
+    const waiter = new ThrowsPromise<void, never>((r) => {
       resolve = r;
       this.#waiters.push(resolve);
     });
@@ -240,12 +240,12 @@ export class CancellablePromise<T> {
   ) {
     let cancel: () => void;
 
-    this.#promise = new Promise<T>((resolve, reject) => {
+    this.#promise = new ThrowsPromise<T, Error>((resolve, reject) => {
       executor(
         resolve,
         (reason) => {
           this.#error = reason instanceof Error ? reason : new Error(String(reason));
-          reject(reason);
+          reject(this.#error);
         },
         (cancelFn) => {
           cancel = () => {
@@ -550,7 +550,7 @@ export class Task<T> {
       promises.push(delay(timeout).then(() => TaskResult.Timeout));
     }
 
-    const result = await Promise.race(promises);
+    const result = await ThrowsPromise.race(promises);
 
     // Check what happened
     if (result === TaskResult.Timeout) {
@@ -588,19 +588,19 @@ export class Task<T> {
 }
 
 export async function waitFor(tasks: Task<void>[]): Promise<void> {
-  await Promise.allSettled(tasks.map((task) => task.result));
+  await ThrowsPromise.allSettled(tasks.map((task) => task.result));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void> {
-  await Promise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
+  await ThrowsPromise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
 }
 
 export function withResolvers<T = unknown>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
+  let reject!: (reason: Error) => void;
 
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new ThrowsPromise<T, Error>((res, rej) => {
     resolve = res;
     reject = rej;
   });
@@ -806,8 +806,8 @@ export type DelayOptions = {
  */
 export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
   const { signal } = options;
-  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('delay aborted'));
-  return new Promise((resolve, reject) => {
+  if (signal?.aborted) return ThrowsPromise.reject(signal.reason ?? new Error('delay aborted'));
+  return new ThrowsPromise<void, Error>((resolve, reject) => {
     const abort = () => {
       clearTimeout(i);
       reject(signal?.reason ?? new Error('delay aborted'));
@@ -840,9 +840,9 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   throwError?: () => E,
 ): Promise<Throws<T, E | IdleTimeoutError>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
+  return ThrowsPromise.race([
     promise,
-    new Promise<never>((_, reject) => {
+    new ThrowsPromise<never, E | IdleTimeoutError>((_, reject) => {
       timer = setTimeout(() => reject(throwError?.() ?? new IdleTimeoutError()), timeoutMs);
     }),
   ]).finally(() => clearTimeout(timer)) as Promise<Throws<T, E>>;
@@ -977,7 +977,7 @@ export async function* readStream<T>(
     if (signal) {
       const abortPromise = waitForAbort(signal);
       while (true) {
-        const result = await Promise.race([reader.read(), abortPromise]);
+        const result = await ThrowsPromise.race([reader.read(), abortPromise]);
         if (!result) break;
         const { done, value } = result;
         if (done) break;
@@ -1066,3 +1066,10 @@ export const isDevMode = (): boolean => {
 export const isHosted = (): boolean => {
   return process.env.LIVEKIT_REMOTE_EOT_URL !== undefined;
 };
+
+export function unknownToError(maybeError: unknown): Error {
+  if (maybeError instanceof Error) {
+    return maybeError;
+  }
+  return new Error(String(maybeError));
+}

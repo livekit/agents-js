@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type {
   ReadableStream,
   ReadableStreamDefaultReader,
@@ -115,7 +116,7 @@ export class MultiInputStream<T> {
     this.inputs.clear();
 
     // Wait for every pump loop to finish before touching the writer.
-    await Promise.allSettled([...this.pumpPromises.values()]);
+    await ThrowsPromise.allSettled([...this.pumpPromises.values()]);
     this.pumpPromises.clear();
 
     // Close the output writer + writable side of the transform.

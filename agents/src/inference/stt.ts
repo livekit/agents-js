@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
@@ -403,7 +404,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
-        return new Promise<void>((resolve, reject) => {
+        return new ThrowsPromise<void, Error | APIStatusError>((resolve, reject) => {
           const onAbort = () => {
             resourceCleanup();
             reject(new Error('WebSocket connection aborted'));
@@ -446,7 +447,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         );
 
         // Create abort promise once to avoid memory leak
-        const abortPromise = new Promise<never>((_, reject) => {
+        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
           if (signal.aborted) {
             return reject(new Error('Send aborted'));
           }
@@ -458,7 +459,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const iterator = this.input[Symbol.asyncIterator]();
         try {
           while (true) {
-            const result = await Promise.race([iterator.next(), abortPromise]);
+            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
 
             if (result.done) break;
             const ev = result.value;
@@ -560,13 +561,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         );
         const recvTask = Task.from(({ signal }) => recv(signal), connController);
         const waitReconnectTask = Task.from(
-          ({ signal }) => Promise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
+          ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
           connController,
         );
 
         try {
-          await Promise.race([
-            Promise.all([sendTask.result, wsListenerTask.result, recvTask.result]),
+          await ThrowsPromise.race([
+            ThrowsPromise.all([sendTask.result, wsListenerTask.result, recvTask.result]),
             waitReconnectTask.result,
           ]);
 

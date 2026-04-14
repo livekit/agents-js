@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { ReadableStream } from 'node:stream/web';
-import { withResolvers } from '../utils.js';
+import { unknownToError, withResolvers } from '../utils.js';
 
 // Adapted from https://github.com/denoland/std/blob/main/streams/merge_readable_streams.ts
 // we manually adapted to make ReadableStream<T> typing compatible with our current node
@@ -12,7 +13,7 @@ export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): Readab
   return new ReadableStream<T>({
     start(controller) {
       let mustClose = false;
-      Promise.all(resolvePromises.map(({ promise }) => promise))
+      ThrowsPromise.all(resolvePromises.map(({ promise }) => promise))
         .then(() => {
           controller.close();
         })
@@ -31,7 +32,7 @@ export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): Readab
             }
             resolvePromises[index]!.resolve();
           } catch (error) {
-            resolvePromises[index]!.reject(error);
+            resolvePromises[index]!.reject(unknownToError(error));
           }
         })();
       }

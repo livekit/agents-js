@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Attributes } from '@opentelemetry/api';
 import type { LogRecord, LogRecordProcessor } from '@opentelemetry/sdk-logs';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 
 /**
  * Metadata log processor that injects metadata (room_id, job_id) into all log records.
@@ -24,11 +25,11 @@ export class MetadataLogProcessor implements LogRecordProcessor {
   }
 
   shutdown(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 
   forceFlush(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 }
 
@@ -46,10 +47,10 @@ export class ExtraDetailsProcessor implements LogRecordProcessor {
   }
 
   shutdown(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 
   forceFlush(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 }

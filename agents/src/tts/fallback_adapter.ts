@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { basic } from '../tokenize/index.js';
@@ -285,7 +285,7 @@ export class FallbackAdapter extends TTS {
     }
 
     // Close all TTS instances
-    await Promise.all(this.ttsInstances.map((tts) => tts.close()));
+    await ThrowsPromise.all(this.ttsInstances.map((tts) => tts.close()));
   }
 }
 
@@ -476,7 +476,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 stream.pushText(token);
               }
             }
-            await new Promise((resolve) => setTimeout(resolve, FORWARD_POLL_MS));
+            await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, FORWARD_POLL_MS));
             if (this.abortController.signal.aborted || streamOutputCompleted) {
               stream.endInput();
               return;
@@ -546,7 +546,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             streamOutputCompleted = true;
           }
         };
-        const [outputResult, forwardBufferResult] = await Promise.allSettled([
+        const [outputResult, forwardBufferResult] = await ThrowsPromise.allSettled([
           processOutput(),
           forwardBufferToTTS().catch((err) => {
             stream.close(); // Close stream so processOutput can exit

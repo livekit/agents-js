@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
@@ -40,9 +41,11 @@ type JobTask = {
 };
 
 class PendingInference {
-  promise = new Promise<{ requestId: string; data: unknown; error?: Error }>((resolve) => {
-    this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
-  });
+  promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
+    (resolve) => {
+      this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+    },
+  );
   resolve(arg: { requestId: string; data: unknown; error?: Error }) {
     arg; // useless call to counteract TypeScript E6133
   }
@@ -177,7 +180,7 @@ const startJob = (
     for (const callback of ctx.shutdownCallbacks) {
       shutdownTasks.push(callback());
     }
-    await Promise.all(shutdownTasks).catch((error) =>
+    await ThrowsPromise.all(shutdownTasks).catch((error) =>
       logger.error({ error }, 'error while shutting down the job'),
     );
 

@@ -4,6 +4,7 @@
 import { Mutex } from '@livekit/mutex';
 import type { ParticipantKind } from '@livekit/rtc-node';
 import { AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
   ROOT_CONTEXT,
@@ -1108,7 +1109,7 @@ export class AudioRecognition {
 
           try {
             while (!signal.aborted) {
-              const res = await Promise.race([inputReader.read(), abortPromise]);
+              const res = await ThrowsPromise.race([inputReader.read(), abortPromise]);
               if (!res) break;
 
               const { value, done } = res;
@@ -1131,7 +1132,7 @@ export class AudioRecognition {
         const abortPromise = waitForAbort(signal);
 
         while (!signal.aborted) {
-          const res = await Promise.race([eventReader.read(), abortPromise]);
+          const res = await ThrowsPromise.race([eventReader.read(), abortPromise]);
           if (!res) break;
           const { done, value: ev } = res;
           if (done) break;

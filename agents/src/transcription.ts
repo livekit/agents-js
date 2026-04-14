@@ -5,6 +5,7 @@ import { TranscriptionSegment } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { basic } from './tokenize/index.js';
 import type { SentenceStream, SentenceTokenizer } from './tokenize/tokenizer.js';
 import { AsyncIterableQueue, Future, shortuuid } from './utils.js';

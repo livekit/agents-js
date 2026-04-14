@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
@@ -78,7 +79,7 @@ export async function connectWs(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<WebSocket> {
-  return new Promise<WebSocket>((resolve, reject) => {
+  return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
     const timeout = setTimeout(() => {
