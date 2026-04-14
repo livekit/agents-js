@@ -222,4 +222,146 @@ describe('STT', () => {
       expect(ev.alternatives[0]!.text).toBe('X Y');
     });
   });
+
+  describe('frame accumulation', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function emptyFetchResponse() {
+      return { ok: true, json: async () => ({ transcription: '', confidence: 0.0 }) };
+    }
+
+    function textFetchResponse(text: string) {
+      return { ok: true, json: async () => ({ transcription: text, confidence: 0.95 }) };
+    }
+
+    it('empty STT response buffers PCM and returns SpeechData with empty text', async () => {
+      fetchMock.mockResolvedValue(emptyFetchResponse());
+
+      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize & {
+        _pendingPcm: Buffer;
+        _pendingEmptyCount: number;
+      };
+
+      const frame = makePcmFrame(160); // 160 samples = 320 bytes PCM
+      const event = await sttInstance._recognize([frame]) as {
+        type: number;
+        alternatives?: Array<{ text: string; confidence: number }>;
+      };
+
+      // Should return SpeechData with empty text (not undefined alternatives)
+      expect(event.type).toBe(2); // FINAL_TRANSCRIPT
+      expect(event.alternatives).toBeDefined();
+      expect(event.alternatives![0]!.text).toBe('');
+      expect(event.alternatives![0]!.confidence).toBe(0.0);
+    });
+
+    it('buffers PCM from empty result and prepends on next call', async () => {
+      // First call: empty result → buffer
+      fetchMock.mockResolvedValueOnce(emptyFetchResponse());
+      // Second call: capture body size
+      let capturedWavSize = 0;
+      fetchMock.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
+        const fd = init.body as FormData;
+        const blob = fd.get('audio_file') as Blob;
+        capturedWavSize = (await blob.arrayBuffer()).byteLength;
+        return textFetchResponse('xin chao');
+      });
+
+      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const frame = makePcmFrame(160, 16000, 1); // 320 bytes PCM each
+
+      await sttInstance._recognize([frame]); // first: empty → buffer
+      await sttInstance._recognize([frame]); // second: prepend + submit
+
+      // WAV = 44 header + (320 pending + 320 new) = 44 + 640
+      expect(capturedWavSize).toBe(44 + 640);
+    });
+
+    it('successful result clears pending buffer', async () => {
+      fetchMock.mockResolvedValueOnce(emptyFetchResponse());
+      fetchMock.mockResolvedValueOnce(textFetchResponse('xin chao'));
+
+      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const frame = makePcmFrame(160);
+
+      await sttInstance._recognize([frame]); // empty → buffer
+
+      // After success, third call should send only single frame (no pending)
+      let capturedWavSize = 0;
+      fetchMock.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
+        const fd = init.body as FormData;
+        const blob = fd.get('audio_file') as Blob;
+        capturedWavSize = (await blob.arrayBuffer()).byteLength;
+        return textFetchResponse('hello');
+      });
+
+      const result2 = await sttInstance._recognize([frame]); // success → clear pending
+      expect((result2 as { alternatives: Array<{ text: string }> }).alternatives[0]!.text).toBe('xin chao');
+
+      await sttInstance._recognize([frame]); // third: should be single frame only
+      expect(capturedWavSize).toBe(44 + 320); // no pending prepended
+    });
+
+    it('discards buffer after maxPendingSegments consecutive empties', async () => {
+      // 3 empties → buffered; 4th empty → discard
+      fetchMock.mockResolvedValue(emptyFetchResponse());
+
+      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+      const frame = makePcmFrame(160);
+
+      for (let i = 0; i < 3; i++) {
+        await sttInstance._recognize([frame]);
+      }
+      // After 3 calls: pendingPcm should be non-empty
+      // Send 4th empty: count exceeds maxPendingSegments (3)
+      await sttInstance._recognize([frame]);
+
+      // After discard: next call should send only single frame (320 bytes PCM)
+      let capturedWavSize = 0;
+      fetchMock.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
+        const fd = init.body as FormData;
+        const blob = fd.get('audio_file') as Blob;
+        capturedWavSize = (await blob.arrayBuffer()).byteLength;
+        return textFetchResponse('hello');
+      });
+
+      await sttInstance._recognize([frame]);
+      expect(capturedWavSize).toBe(44 + 320); // no pending after discard
+    });
+
+    it('discards buffer when duration exceeds maxPendingDuration', async () => {
+      fetchMock.mockResolvedValue(emptyFetchResponse());
+
+      const sttInstance = new STT({ authToken: 'tok', apiUrl: 'http://stt:8080' }) as STTWithRecognize;
+
+      // At 16kHz, 16-bit, mono: 5s = 5 * 16000 * 2 = 160000 bytes
+      // Use a large frame whose PCM > 160000 bytes
+      const largeSamples = 80500; // 161000 bytes > 160000
+      const largeFrame = makePcmFrame(largeSamples);
+
+      await sttInstance._recognize([largeFrame]);
+
+      // After discard: next call should send only single frame
+      let capturedWavSize = 0;
+      fetchMock.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
+        const fd = init.body as FormData;
+        const blob = fd.get('audio_file') as Blob;
+        capturedWavSize = (await blob.arrayBuffer()).byteLength;
+        return textFetchResponse('hello');
+      });
+
+      const smallFrame = makePcmFrame(160);
+      await sttInstance._recognize([smallFrame]);
+      expect(capturedWavSize).toBe(44 + 320); // only smallFrame, no pending
+    });
+  });
 });

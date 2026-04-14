@@ -88,6 +88,17 @@ export class STT extends stt.STT {
   label = 'blaze.STT';
   #opts: ResolvedSTTOptions;
 
+  // Frame accumulation: buffer PCM from empty STT segments so short
+  // leading fragments (hesitant speech) are prepended to the next segment.
+  #pendingPcm: Buffer = Buffer.alloc(0);
+  #pendingEmptyCount: number = 0;
+  #lastRecognizeTime: number = 0;
+
+  // Safety limits (mirrors Python defaults)
+  readonly #maxPendingDuration: number = 5.0;  // seconds of buffered audio
+  readonly #maxPendingSegments: number = 3;     // consecutive empty segments
+  readonly #pendingIdleTimeout: number = 10.0;  // auto-clear after idle gap (s)
+
   constructor(opts: STTOptions = {}) {
     super({ streaming: false, interimResults: false, alignedTranscript: false });
     this.#opts = resolveSTTOptions(opts);
@@ -108,31 +119,52 @@ export class STT extends stt.STT {
     // 1. Merge all audio frames into one
     const frame = mergeFrames(buffer);
 
-    // 2. Handle empty audio
-    if (frame.data.byteLength === 0) {
+    // 2. Extract raw PCM from the merged frame (new segment only)
+    const segmentPcm = Buffer.from(
+      frame.data.buffer,
+      frame.data.byteOffset,
+      frame.data.byteLength,
+    );
+
+    // 3. Auto-clear stale pending buffer if too much time has elapsed
+    const now = Date.now() / 1000; // seconds
+    if (this.#pendingPcm.length > 0 && this.#lastRecognizeTime > 0) {
+      const idleGap = now - this.#lastRecognizeTime;
+      if (idleGap > this.#pendingIdleTimeout) {
+        this.#pendingPcm = Buffer.alloc(0);
+        this.#pendingEmptyCount = 0;
+      }
+    }
+    this.#lastRecognizeTime = now;
+
+    // 4. Prepend buffered PCM from previous empty segments
+    const pcmData =
+      this.#pendingPcm.length > 0 ? Buffer.concat([this.#pendingPcm, segmentPcm]) : segmentPcm;
+
+    // 5. Handle fully empty audio (no sound at all)
+    if (pcmData.byteLength === 0) {
       return {
         type: stt.SpeechEventType.FINAL_TRANSCRIPT,
         alternatives: undefined,
       };
     }
 
-    // 3. Convert PCM frame to WAV format
-    const wavBuffer = this.#createWav(frame);
+    // 6. Convert PCM to WAV format
+    const wavBuffer = this.#createWavFromPcm(pcmData, frame.sampleRate, frame.channels);
 
-    // 4. Build FormData for multipart upload
+    // 7. Build FormData for multipart upload
     const formData = new FormData();
-    // Create a Uint8Array with a detached copy to satisfy BlobPart typing in strict TS.
     const wavBytes = Uint8Array.from(wavBuffer);
     const wavBlob = new Blob([wavBytes], { type: 'audio/wav' });
     formData.append('audio_file', wavBlob, 'audio.wav');
 
-    // 5. Build request URL with query params
+    // 8. Build request URL with query params
     const url = new URL(`${this.#opts.apiUrl}/v1/stt/transcribe`);
     url.searchParams.set('language', this.#opts.language);
     url.searchParams.set('enable_segments', 'false');
     url.searchParams.set('enable_refinement', 'false');
 
-    // 6. Make request with retry logic for transient failures
+    // 9. Make request with retry logic for transient failures
     let result: BlazeSTTResponse | undefined;
 
     for (let attempt = 0; attempt <= MAX_RETRY_COUNT; attempt++) {
@@ -161,7 +193,7 @@ export class STT extends stt.STT {
           throw new Error(`Blaze STT error ${response.status}: ${errorText}`);
         }
 
-        // 7. Parse response
+        // 10. Parse response
         result = (await response.json()) as BlazeSTTResponse;
         break; // Success
       } catch (err) {
@@ -182,6 +214,52 @@ export class STT extends stt.STT {
     const rawText = result.transcription ?? '';
     const text = this.#applyNormalizationRules(rawText);
     const confidence = result.confidence ?? 1.0;
+
+    // 11. Frame accumulation logic
+    if (!text.trim()) {
+      // Empty result — decide whether to buffer or discard
+      this.#pendingEmptyCount++;
+
+      const bytesPerSample = 2 * frame.channels; // 16-bit PCM
+      const segmentDuration =
+        frame.sampleRate && bytesPerSample
+          ? segmentPcm.byteLength / (frame.sampleRate * bytesPerSample)
+          : 0;
+      const pendingDuration =
+        this.#pendingPcm.length > 0 && frame.sampleRate && bytesPerSample
+          ? this.#pendingPcm.byteLength / (frame.sampleRate * bytesPerSample)
+          : 0;
+      const totalPendingDuration = pendingDuration + segmentDuration;
+
+      if (
+        this.#pendingEmptyCount <= this.#maxPendingSegments &&
+        totalPendingDuration <= this.#maxPendingDuration
+      ) {
+        // Buffer combined PCM for next call
+        this.#pendingPcm = pcmData;
+      } else {
+        // Safety limit reached — discard buffer
+        this.#pendingPcm = Buffer.alloc(0);
+        this.#pendingEmptyCount = 0;
+      }
+
+      return {
+        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        alternatives: [
+          {
+            text: '',
+            language: this.#opts.language as stt.SpeechData['language'],
+            startTime: 0,
+            endTime: 0,
+            confidence: 0.0,
+          },
+        ],
+      };
+    }
+
+    // Got real text — clear pending buffer
+    this.#pendingPcm = Buffer.alloc(0);
+    this.#pendingEmptyCount = 0;
 
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -209,29 +287,35 @@ export class STT extends stt.STT {
    * Follows the same 44-byte RIFF header pattern as the OpenAI STT plugin.
    */
   #createWav(frame: AudioFrame): Buffer {
+    const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+    return this.#createWavFromPcm(pcm, frame.sampleRate, frame.channels);
+  }
+
+  /**
+   * Create a WAV file buffer from raw PCM bytes + audio metadata.
+   * Used when pending PCM is prepended to the current segment.
+   */
+  #createWavFromPcm(pcm: Buffer, sampleRate: number, channels: number): Buffer {
     const bitsPerSample = 16;
-    const byteRate = (frame.sampleRate * frame.channels * bitsPerSample) / 8;
-    const blockAlign = (frame.channels * bitsPerSample) / 8;
+    const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+    const blockAlign = (channels * bitsPerSample) / 8;
 
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
-    header.writeUInt32LE(36 + frame.data.byteLength, 4);
+    header.writeUInt32LE(36 + pcm.byteLength, 4);
     header.write('WAVE', 8);
     header.write('fmt ', 12);
     header.writeUInt32LE(16, 16); // Subchunk1 size (PCM = 16)
     header.writeUInt16LE(1, 20); // Audio format (1 = PCM)
-    header.writeUInt16LE(frame.channels, 22);
-    header.writeUInt32LE(frame.sampleRate, 24);
+    header.writeUInt16LE(channels, 22);
+    header.writeUInt32LE(sampleRate, 24);
     header.writeUInt32LE(byteRate, 28);
     header.writeUInt16LE(blockAlign, 32);
     header.writeUInt16LE(bitsPerSample, 34);
     header.write('data', 36);
-    header.writeUInt32LE(frame.data.byteLength, 40);
+    header.writeUInt32LE(pcm.byteLength, 40);
 
-    return Buffer.concat([
-      header,
-      Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
-    ]);
+    return Buffer.concat([header, pcm]);
   }
 
   /**
