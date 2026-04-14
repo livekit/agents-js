@@ -280,7 +280,7 @@ export class CancellablePromise<T, E extends Error = Error> {
   catch<TResult = never>(
     onrejected?: ((reason: E) => TResult | Promise<TResult>) | null,
   ): Promise<Throws<T | TResult | undefined, E>> {
-    return this.#promise.catch((e) => onrejected?.(e));
+    return this.#promise.catch(onrejected);
   }
 
   finally(onfinally?: (() => void) | null): Promise<Throws<T, E>> {
@@ -291,6 +291,8 @@ export class CancellablePromise<T, E extends Error = Error> {
     this.#cancelFn();
   }
 
+  static from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>;
+  static from<T>(promise: Promise<T>): CancellablePromise<T>;
   static from<T>(promise: Promise<T>): CancellablePromise<T> {
     return new CancellablePromise<T>((resolve, reject) => {
       promise.then(resolve).catch(reject);
