@@ -19,7 +19,7 @@ import {
 } from '../inference/index.js';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { type JobContext, getJobContext } from '../job.js';
+import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
@@ -446,12 +446,7 @@ export class AgentSession<
       }
     }
 
-    let ctx: JobContext | undefined = undefined;
-    try {
-      ctx = getJobContext();
-    } catch {
-      // JobContext is not available in evals
-    }
+    const ctx = getJobContext(false);
 
     if (ctx) {
       if (room && ctx.room === room && !room.isConnected) {
@@ -524,10 +519,9 @@ export class AgentSession<
     this.closing = false;
     this._usageCollector = new ModelUsageCollector();
 
-    let ctx: JobContext | undefined = undefined;
-    try {
-      ctx = getJobContext();
+    const ctx = getJobContext(false);
 
+    if (ctx) {
       if (record === undefined) {
         record = ctx.job.enableRecording;
       }
@@ -537,9 +531,6 @@ export class AgentSession<
       if (this._enableRecording) {
         ctx.initRecording();
       }
-    } catch (error) {
-      // JobContext is not available in evals
-      this.logger.warn('JobContext is not available');
     }
 
     this.sessionSpan = tracer.startSpan({
