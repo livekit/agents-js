@@ -27,11 +27,14 @@ const jobContextStorage = new AsyncLocalStorage<JobContext>();
 /**
  * Returns the current job context.
  *
- * @throws {Error} if no job context is found
+ * @param required - If true (default), throws when no context is found. If false, returns undefined.
+ * @throws {Error} if no job context is found and required is true
  */
-export function getJobContext(): JobContext {
+export function getJobContext(required?: true): JobContext;
+export function getJobContext(required: false): JobContext | undefined;
+export function getJobContext(required = true): JobContext | undefined {
   const ctx = jobContextStorage.getStore();
-  if (!ctx) {
+  if (!ctx && required) {
     throw new Error('no job context found, are you running this code inside a job entrypoint?');
   }
   return ctx;
