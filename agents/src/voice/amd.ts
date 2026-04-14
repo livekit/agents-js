@@ -39,7 +39,6 @@ export interface AMDOptions {
   maxTranscriptTurns?: number;
 }
 
-// Ref: python classifier.py constants — thresholds for VAD-based heuristics and timeouts
 const HUMAN_SPEECH_THRESHOLD_MS = 2_500;
 const HUMAN_SILENCE_THRESHOLD_MS = 500;
 const MACHINE_SILENCE_THRESHOLD_MS = 1_500;
@@ -194,7 +193,6 @@ export class AMD {
   }
 
   private startTimers(): void {
-    // Ref: python classifier.py start() — two independent timers
     this.noSpeechTimer = setTimeout(() => this.settleNoSpeech(), this.noSpeechTimeoutMs);
     this.detectionTimer = setTimeout(() => this.settleDetectionTimeout(), this.detectionTimeoutMs);
   }
