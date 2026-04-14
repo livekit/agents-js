@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { asError } from 'agents/src/utils.js';
+import { asError } from '../../utils.js';
 import { z } from 'zod';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { LLM, ToolError, ToolFlag, tool } from '../../llm/index.js';
