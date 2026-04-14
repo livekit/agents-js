@@ -135,4 +135,17 @@ describe('AMD', () => {
     await expect(promise).rejects.toThrow('boom');
     expect(session.resumeReplyAuthorization).toHaveBeenCalled();
   });
+
+  it('should settle the execute promise when aclose is called', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'test' }));
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm });
+
+    const promise = amd.execute();
+    await amd.aclose();
+
+    await expect(promise).rejects.toThrow('AMD closed');
+    expect(session.resumeReplyAuthorization).toHaveBeenCalled();
+  });
 });

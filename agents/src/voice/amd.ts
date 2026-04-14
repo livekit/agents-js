@@ -168,9 +168,9 @@ export class AMD {
   }
 
   async aclose(): Promise<void> {
-    this.cleanup();
-    this.session.resumeReplyAuthorization();
-    this.active = false;
+    if (this.active && this.rejectRun) {
+      this.rejectRun(new Error('AMD closed'));
+    }
   }
 
   // ─── lifecycle ───────────────────────────────────────────────────────────────
