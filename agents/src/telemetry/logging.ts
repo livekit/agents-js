@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Attributes } from '@opentelemetry/api';
 import type { LogRecord, LogRecordProcessor } from '@opentelemetry/sdk-logs';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 
 /**
  * Metadata log processor that injects metadata (room_id, job_id) into all log records.
