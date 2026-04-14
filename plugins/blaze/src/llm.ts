@@ -50,6 +50,11 @@ export interface LLMOptions {
   deepSearch?: boolean;
   /** Enable agentic search mode. Default: false */
   agenticSearch?: boolean;
+  /**
+   * Enable tool/function calling (`use_tool_based` query param).
+   * When false the Blaze backend uses a simpler response path. Default: false
+   */
+  enableTools?: boolean;
   /** User demographics for personalization. */
   demographics?: BlazeDemographics;
   /** Request timeout in milliseconds. Default: 60000 */
@@ -64,6 +69,7 @@ interface ResolvedLLMOptions {
   authToken: string;
   deepSearch: boolean;
   agenticSearch: boolean;
+  enableTools: boolean;
   demographics?: BlazeDemographics;
   timeout: number;
 }
@@ -86,6 +92,7 @@ function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
     authToken: opts.authToken ?? cfg.authToken,
     deepSearch: opts.deepSearch ?? false,
     agenticSearch: opts.agenticSearch ?? false,
+    enableTools: opts.enableTools ?? false,
     demographics: opts.demographics,
     timeout: opts.timeout ?? cfg.llmTimeout,
   };
@@ -95,12 +102,13 @@ function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
  * Convert ChatContext items to Blaze API message format.
  * Only processes ChatMessage items (skips FunctionCall, FunctionCallOutput, etc.)
  *
- * System/developer messages are collected and merged into a single context
- * message prepended to the conversation, preserving their original order.
+ * System/developer messages are SKIPPED because the Blaze chatapp already
+ * loads the voicebot prompt from the database and applies voice/chat mode
+ * extraction. Sending them again would cause double-prompting (2x tokens)
+ * and format conflicts (chat-mode template leaking into voice responses).
  */
 function convertMessages(chatCtx: ChatContext): BlazeChatMessage[] {
   const messages: BlazeChatMessage[] = [];
-  const systemParts: string[] = [];
 
   for (const item of chatCtx.items) {
     // Only process ChatMessage items (type guard)
@@ -110,19 +118,18 @@ function convertMessages(chatCtx: ChatContext): BlazeChatMessage[] {
     if (!text) continue;
 
     const role = msg.role;
+    // Skip system/developer — chatapp loads prompt from DB
     if (role === 'system' || role === 'developer') {
-      systemParts.push(text);
+      continue;
     } else if (role === 'user') {
       messages.push({ role: 'user', content: text });
     } else if (role === 'assistant') {
-      messages.push({ role: 'assistant', content: text });
+      // Strip <img> tags — only meaningful for TTS/rendering, not for LLM context
+      const clean = text.replace(/<img>[^<]*<\/img>/gi, '').trim();
+      if (clean) {
+        messages.push({ role: 'assistant', content: clean });
+      }
     }
-  }
-
-  // Merge all system/developer messages and prepend as unified context
-  if (systemParts.length > 0) {
-    const systemText = systemParts.join('\n\n');
-    messages.unshift({ role: 'user', content: `[System Instructions]\n${systemText}` });
   }
 
   return messages;
@@ -168,7 +175,8 @@ export class BlazeLLMStream extends llm.LLMStream {
       `${this.#opts.apiUrl}/v1/voicebot-call/${this.#opts.botId}/chat-conversion-stream`,
     );
     url.searchParams.set('is_voice_call', 'true');
-    url.searchParams.set('use_tool_based', 'true');
+    url.searchParams.set('agent_stream', 'true');
+    url.searchParams.set('use_tool_based', this.#opts.enableTools ? 'true' : 'false');
     if (this.#opts.deepSearch) url.searchParams.set('deep_search', 'true');
     if (this.#opts.agenticSearch) url.searchParams.set('agentic_search', 'true');
     if (this.#opts.demographics?.gender)
@@ -339,6 +347,7 @@ export class BlazeLLM extends llm.LLM {
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
     if (opts.deepSearch !== undefined) this.#opts.deepSearch = opts.deepSearch;
     if (opts.agenticSearch !== undefined) this.#opts.agenticSearch = opts.agenticSearch;
+    if (opts.enableTools !== undefined) this.#opts.enableTools = opts.enableTools;
     if (opts.demographics !== undefined) this.#opts.demographics = opts.demographics;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
   }
