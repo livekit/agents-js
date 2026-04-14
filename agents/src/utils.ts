@@ -39,9 +39,12 @@ export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
 
-export const isPending = async (promise: Promise<unknown>): Promise<boolean> => {
+export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
-  const result = await Promise.race([promise, Promise.resolve(sentinel)]);
+  const result = await Promise.race([
+    ThrowsPromise.fromPromise<unknown, Error>(promise),
+    ThrowsPromise.resolve(sentinel),
+  ]);
   return result === sentinel;
 };
 
@@ -225,27 +228,27 @@ export class Event {
 }
 
 /** @internal */
-export class CancellablePromise<T> {
-  #promise: Promise<T>;
+export class CancellablePromise<T, E extends Error = Error> {
+  #promise: ThrowsPromise<T, E>;
   #cancelFn: () => void;
   #isCancelled: boolean = false;
-  #error: Error | null = null;
+  #error: E | null = null;
 
   constructor(
     executor: (
       resolve: (value: T | PromiseLike<T>) => void,
-      reject: (reason?: unknown) => void,
+      reject: (reason: E) => void,
       onCancel: (cancelFn: () => void) => void,
     ) => void,
   ) {
     let cancel: () => void;
 
-    this.#promise = new ThrowsPromise<T, Error>((resolve, reject) => {
+    this.#promise = new ThrowsPromise<T, E>((resolve, reject) => {
       executor(
         resolve,
         (reason) => {
-          this.#error = asError(reason);
-          reject(this.#error);
+          this.#error = reason;
+          reject(reason);
         },
         (cancelFn) => {
           cancel = () => {
@@ -269,18 +272,18 @@ export class CancellablePromise<T> {
 
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | Promise<TResult2>) | null,
+    onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
     return this.#promise.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: unknown) => TResult | Promise<TResult>) | null,
-  ): Promise<T | TResult> {
-    return this.#promise.catch(onrejected);
+    onrejected?: ((reason: E) => TResult | Promise<TResult>) | null,
+  ): Promise<Throws<T | TResult | undefined, E>> {
+    return this.#promise.catch((e) => onrejected?.(e));
   }
 
-  finally(onfinally?: (() => void) | null): Promise<T> {
+  finally(onfinally?: (() => void) | null): Promise<Throws<T, E>> {
     return this.#promise.finally(onfinally);
   }
 
