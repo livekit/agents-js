@@ -722,10 +722,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     return {
       type: 'session.update',
       session: {
-        type: 'realtime',
+        ...(!isLegacyAzure && { type: 'realtime' }),
         model: this.oaiRealtimeModel._options.model,
         tools: oaiTools,
       },
@@ -734,11 +736,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     const eventId = shortuuid('instructions_update_');
     this.sendEvent({
       type: 'session.update',
       session: {
-        type: 'realtime',
+        ...(!isLegacyAzure && { type: 'realtime' }),
         instructions: _instructions,
       },
       event_id: eventId,
@@ -754,8 +758,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     const options: api_proto.SessionUpdateEvent['session'] = {
-      type: 'realtime',
+      ...(!isLegacyAzure && { type: 'realtime' }),
     };
 
     this.oaiRealtimeModel._options.toolChoice = toolChoice;
@@ -1876,7 +1882,7 @@ function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
       // item.content can be a single object or an array; normalize to array
       const contents = Array.isArray(item.content) ? item.content : [item.content];
       for (const c of contents) {
-        if (c.type === 'text' || c.type === 'input_text') {
+        if (c.type === 'text' || c.type === 'input_text' || c.type === 'output_text') {
           content.push(c.text);
         } else if (c.type === 'input_image' && (c as api_proto.InputImageContent).image_url) {
           content.push(
