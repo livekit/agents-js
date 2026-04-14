@@ -22,8 +22,7 @@ import type { AgentSession } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const jobContextStorage = new AsyncLocalStorage<JobContext<any>>();
+const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
 
 /**
  * Returns the current job context.
@@ -45,7 +44,7 @@ export function getJobContext<
  * @internal
  */
 export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
-  return jobContextStorage.run(context, fn);
+  return jobContextStorage.run(context as JobContext<unknown>, fn);
 }
 
 /**
@@ -53,7 +52,7 @@ export function runWithJobContext<T>(context: JobContext, fn: () => T): T {
  * @internal
  */
 export function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T> {
-  return jobContextStorage.run(context, fn);
+  return jobContextStorage.run(context as JobContext<unknown>, fn);
 }
 
 /** Which tracks, if any, should the agent automatically subscribe to? */
