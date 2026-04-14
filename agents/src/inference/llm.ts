@@ -133,9 +133,7 @@ function dropUnsupportedParams(
 
   for (const [prefix, unsupported] of Object.entries(UNSUPPORTED_PARAMS)) {
     if (modelName.startsWith(prefix)) {
-      result = Object.fromEntries(
-        Object.entries(result).filter(([k]) => !unsupported.has(k)),
-      );
+      result = Object.fromEntries(Object.entries(result).filter(([k]) => !unsupported.has(k)));
       break;
     }
   }
