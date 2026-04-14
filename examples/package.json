@@ -39,6 +39,7 @@
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-phonic": "workspace:*",
     "@livekit/agents-plugin-resemble": "workspace:*",
+    "@livekit/agents-plugin-runway": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugin-trugen": "workspace:*",
     "@livekit/agents-plugin-mistral": "workspace:*",
