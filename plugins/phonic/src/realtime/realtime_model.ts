@@ -6,11 +6,11 @@ import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
+  asError,
   llm,
   log,
   shortuuid,
   stream,
-  unknownToError,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
@@ -274,7 +274,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
     this.connectTask = this.connect().catch((error: unknown) => {
-      const normalizedError = unknownToError(error);
+      const normalizedError = asError(error);
       this.emitError(normalizedError, false);
     });
   }

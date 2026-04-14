@@ -10,6 +10,7 @@ import {
   AudioByteStream,
   Future,
   type TimedString,
+  asError,
   createTimedString,
   getBaseLanguage,
   log,
@@ -18,7 +19,6 @@ import {
   stream,
   tokenize,
   tts,
-  unknownToError,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -592,7 +592,7 @@ class Connection {
     } catch (e) {
       this.#logger.warn({ error: e }, 'recv loop error');
       for (const ctx of this.#contextData.values()) {
-        ctx.waiter.reject(unknownToError(e));
+        ctx.waiter.reject(asError(e));
       }
       this.#contextData.clear();
     } finally {

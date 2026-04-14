@@ -5,12 +5,12 @@ import {
   type APIConnectOptions,
   AudioByteStream,
   type TimedString,
+  asError,
   createTimedString,
   log,
   shortuuid,
   tokenize,
   tts,
-  unknownToError,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
@@ -194,7 +194,7 @@ class WSConnectionPool {
       try {
         return await this.#attemptConnection();
       } catch (err) {
-        lastError = unknownToError(err);
+        lastError = asError(err);
         this.#connecting = undefined;
 
         if (attempt < MAX_RETRIES) {

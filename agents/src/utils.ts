@@ -244,7 +244,7 @@ export class CancellablePromise<T> {
       executor(
         resolve,
         (reason) => {
-          this.#error = unknownToError(reason);
+          this.#error = asError(reason);
           reject(this.#error);
         },
         (cancelFn) => {
@@ -1067,7 +1067,7 @@ export const isHosted = (): boolean => {
   return process.env.LIVEKIT_REMOTE_EOT_URL !== undefined;
 };
 
-export function unknownToError(maybeError: unknown): Error {
+export function asError(maybeError: unknown): Error {
   if (maybeError instanceof Error) {
     return maybeError;
   }

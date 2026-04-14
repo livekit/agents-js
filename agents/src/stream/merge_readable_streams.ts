@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { ReadableStream } from 'node:stream/web';
-import { unknownToError, withResolvers } from '../utils.js';
+import { asError, withResolvers } from '../utils.js';
 
 // Adapted from https://github.com/denoland/std/blob/main/streams/merge_readable_streams.ts
 // we manually adapted to make ReadableStream<T> typing compatible with our current node
@@ -32,7 +32,7 @@ export function mergeReadableStreams<T>(...streams: ReadableStream<T>[]): Readab
             }
             resolvePromises[index]!.resolve();
           } catch (error) {
-            resolvePromises[index]!.reject(unknownToError(error));
+            resolvePromises[index]!.reject(asError(error));
           }
         })();
       }

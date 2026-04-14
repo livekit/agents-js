@@ -8,6 +8,7 @@ import {
   AudioByteStream,
   Future,
   type TimedString,
+  asError,
   createTimedString,
   getBaseLanguage,
   log,
@@ -16,7 +17,6 @@ import {
   stream,
   tokenize,
   tts,
-  unknownToError,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
@@ -592,7 +592,7 @@ const hasAnyTransientCode = (e: unknown): boolean => {
 };
 
 const toRetryableConnectionError = (e: unknown): APIConnectionError => {
-  const err = unknownToError(e);
+  const err = asError(e);
   const isTimeout =
     hasErrorCode(e, 'ETIMEDOUT') ||
     (typeof err.message === 'string' && err.message.includes('ETIMEDOUT'));
@@ -627,7 +627,7 @@ const waitForWsOpen = async ({
   };
 
   const onOpen = () => fut.resolve();
-  const onError = (err: Error) => fut.reject(unknownToError(err));
+  const onError = (err: Error) => fut.reject(asError(err));
   const onClose = (code: number, reason: Buffer) =>
     fut.reject(
       new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),
