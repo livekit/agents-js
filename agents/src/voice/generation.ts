@@ -83,7 +83,7 @@ export interface _TTSGenerationData {
   /**
    * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
    */
-  timedTextsFut: Future<ReadableStream<TimedString> | null>;
+  timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
 }
@@ -566,7 +566,7 @@ export function performTTSInference(
   const outputWriter = audioStream.writable.getWriter();
   const audioOutputStream = audioStream.readable;
 
-  const timedTextsFut = new Future<ReadableStream<TimedString> | null>();
+  const timedTextsFut = new Future<ReadableStream<TimedString> | null, never>();
   const timedTextsStream = new IdentityTransform<TimedString>();
   const timedTextsWriter = timedTextsStream.writable.getWriter();
 

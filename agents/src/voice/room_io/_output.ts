@@ -15,7 +15,6 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,

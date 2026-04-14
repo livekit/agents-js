@@ -169,7 +169,7 @@ export class AgentActivity implements RecognitionHooks {
   private _drainBlockedTasks: Task<any>[] = [];
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
-  private q_updated: Future;
+  private q_updated: Future<void, never>;
   private speechTasks: Set<Task<void>> = new Set();
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
@@ -1316,7 +1316,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async mainTask(signal: AbortSignal): Promise<void> {
-    const abortFuture = new Future();
+    const abortFuture = new Future<void, never>();
     const abortHandler = () => {
       abortFuture.resolve();
       signal.removeEventListener('abort', abortHandler);

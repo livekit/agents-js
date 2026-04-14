@@ -122,17 +122,17 @@ export class Queue<T> {
 }
 
 /** @internal */
-export class Future<T = void> {
-  #await: Promise<T>;
+export class Future<T = void, E extends Error = Error> {
+  #await: ThrowsPromise<T, E>;
   #resolvePromise!: (value: T) => void;
-  #rejectPromise!: (error: Error) => void;
+  #rejectPromise!: (error: E) => void;
   #done: boolean = false;
   #rejected: boolean = false;
   #result: T | undefined = undefined;
   #error: Error | undefined = undefined;
 
   constructor() {
-    this.#await = new ThrowsPromise<T, Error>((resolve, reject) => {
+    this.#await = new ThrowsPromise<T, E>((resolve, reject) => {
       this.#resolvePromise = resolve;
       this.#rejectPromise = reject;
     });
@@ -169,7 +169,7 @@ export class Future<T = void> {
     this.#resolvePromise(value);
   }
 
-  reject(error: Error) {
+  reject(error: E) {
     this.#done = true;
     this.#rejected = true;
     this.#error = error;
