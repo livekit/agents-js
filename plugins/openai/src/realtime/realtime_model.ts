@@ -234,7 +234,7 @@ export class RealtimeModel extends llm.RealtimeModel {
    *
    * @param azureDeployment - The name of your Azure OpenAI deployment.
    * @param azureEndpoint - The endpoint URL for your Azure OpenAI resource. If undefined, will attempt to read from the environment variable AZURE_OPENAI_ENDPOINT.
-   * @param apiVersion - API version to use with Azure OpenAI Service. If undefined, will attempt to read from the environment variable OPENAI_API_VERSION.
+   * @param apiVersion - **Deprecated.** API version for legacy Azure OpenAI preview models. Will be removed on April 30, 2026. Omit for GA models.
    * @param apiKey - Azure OpenAI API key. If undefined, will attempt to read from the environment variable AZURE_OPENAI_API_KEY.
    * @param entraToken - Azure Entra authentication token. Required if not using API key authentication.
    * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
@@ -287,9 +287,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
 
     apiVersion = apiVersion || process.env.OPENAI_API_VERSION;
-    if (!apiVersion) {
-      throw new Error(
-        'Must provide either the `apiVersion` argument or the `OPENAI_API_VERSION` environment variable',
+    if (apiVersion) {
+      log().warn(
+        'The `apiVersion` parameter for Azure OpenAI Realtime is deprecated and will be removed on April 30, 2026. ' +
+          'Please use the newer Azure OpenAI Realtime API without specifying an API version.',
       );
     }
 
@@ -327,6 +328,24 @@ export class RealtimeModel extends llm.RealtimeModel {
   }
 }
 
+/**
+ * In-place normalization of client event dicts for legacy Azure compatibility.
+ *
+ * The legacy Azure Realtime API uses "text" for assistant content parts,
+ * while the newer OpenAI API uses "output_text".
+ */
+function normalizeAzureClientEvent(event: Record<string, unknown>): void {
+  const item = event['item'] as Record<string, unknown> | undefined;
+  if (!item) return;
+  const content = item['content'] as Record<string, unknown>[] | undefined;
+  if (!content) return;
+  for (const contentPart of content) {
+    if (contentPart['type'] === 'output_text') {
+      contentPart['type'] = 'text';
+    }
+  }
+}
+
 function processBaseURL({
   baseURL,
   model,
@@ -340,7 +359,9 @@ function processBaseURL({
   azureDeployment?: string;
   apiVersion?: string;
 }): string {
-  const url = new URL([baseURL, 'realtime'].join('/'));
+  // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime
+  const realtimePath = isAzure && !apiVersion ? 'v1/realtime' : 'realtime';
+  const url = new URL([baseURL, realtimePath].join('/'));
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
@@ -354,14 +375,19 @@ function processBaseURL({
   }
 
   const queryParams: Record<string, string> = {};
-  if (isAzure) {
-    if (apiVersion) {
-      queryParams['api-version'] = apiVersion;
-    }
+  if (isAzure && apiVersion) {
+    // Legacy Azure preview: /realtime?api-version=<v>&deployment=<d>
+    queryParams['api-version'] = apiVersion;
     if (azureDeployment) {
       queryParams['deployment'] = azureDeployment;
     }
+  } else if (isAzure) {
+    // GA Azure: /v1/realtime?model=<deployment>
+    if (azureDeployment) {
+      queryParams['model'] = azureDeployment;
+    }
   } else {
+    // Standard OpenAI: /realtime?model=<model>
     queryParams['model'] = model;
   }
 
@@ -434,37 +460,58 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
+    const opts = this.oaiRealtimeModel._options;
+    const maxOutputTokens =
+      opts.maxResponseOutputTokens === Infinity ? 'inf' : opts.maxResponseOutputTokens;
+
+    if (opts.isAzure && opts.apiVersion) {
+      // Legacy Azure preview API: flat format
+      const modalities: Modality[] = opts.modalities.includes('audio')
+        ? ['text', 'audio']
+        : ['text'];
+      return {
+        type: 'session.update',
+        session: {
+          model: opts.model,
+          voice: opts.voice,
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          modalities,
+          turn_detection: opts.turnDetection,
+          input_audio_transcription: opts.inputAudioTranscription,
+          tool_choice: toOaiToolChoice(opts.toolChoice),
+          max_response_output_tokens: maxOutputTokens,
+          speed: opts.speed,
+          instructions: this.instructions,
+        },
+      };
+    }
+
+    // GA format (OpenAI or Azure GA)
     const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
-
-    const modality: Modality = this.oaiRealtimeModel._options.modalities.includes('audio')
-      ? 'audio'
-      : 'text';
-
+    const modality: Modality = opts.modalities.includes('audio') ? 'audio' : 'text';
     return {
       type: 'session.update',
       session: {
         type: 'realtime',
-        model: this.oaiRealtimeModel._options.model,
+        model: opts.model,
         output_modalities: [modality],
         audio: {
           input: {
             format: audioFormat,
-            noise_reduction: this.oaiRealtimeModel._options.inputAudioNoiseReduction,
-            transcription: this.oaiRealtimeModel._options.inputAudioTranscription,
-            turn_detection: this.oaiRealtimeModel._options.turnDetection,
+            noise_reduction: opts.inputAudioNoiseReduction,
+            transcription: opts.inputAudioTranscription,
+            turn_detection: opts.turnDetection,
           },
           output: {
             format: audioFormat,
-            speed: this.oaiRealtimeModel._options.speed,
-            voice: this.oaiRealtimeModel._options.voice,
+            speed: opts.speed,
+            voice: opts.voice,
           },
         },
-        max_output_tokens:
-          this.oaiRealtimeModel._options.maxResponseOutputTokens === Infinity
-            ? 'inf'
-            : this.oaiRealtimeModel._options.maxResponseOutputTokens,
-        tool_choice: toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice),
-        tracing: this.oaiRealtimeModel._options.tracing,
+        max_output_tokens: maxOutputTokens,
+        tool_choice: toOaiToolChoice(opts.toolChoice),
+        tracing: opts.tracing,
         instructions: this.instructions,
       },
     };
@@ -675,10 +722,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     return {
       type: 'session.update',
       session: {
-        type: 'realtime',
+        ...(!isLegacyAzure && { type: 'realtime' }),
         model: this.oaiRealtimeModel._options.model,
         tools: oaiTools,
       },
@@ -687,11 +736,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     const eventId = shortuuid('instructions_update_');
     this.sendEvent({
       type: 'session.update',
       session: {
-        type: 'realtime',
+        ...(!isLegacyAzure && { type: 'realtime' }),
         instructions: _instructions,
       },
       event_id: eventId,
@@ -707,8 +758,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
+    const isLegacyAzure =
+      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
     const options: api_proto.SessionUpdateEvent['session'] = {
-      type: 'realtime',
+      ...(!isLegacyAzure && { type: 'realtime' }),
     };
 
     this.oaiRealtimeModel._options.toolChoice = toolChoice;
@@ -952,6 +1005,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       try {
         for (const ev of events) {
           this.emit('openai_client_event_queued', ev);
+          if (this.oaiRealtimeModel._options.isAzure && this.oaiRealtimeModel._options.apiVersion) {
+            normalizeAzureClientEvent(ev as unknown as Record<string, unknown>);
+          }
           wsConn!.send(JSON.stringify(ev));
         }
       } catch (error) {
@@ -1042,6 +1098,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
 
           this.emit('openai_client_event_queued', event);
+          if (this.oaiRealtimeModel._options.isAzure && this.oaiRealtimeModel._options.apiVersion) {
+            normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
+          }
           wsConn.send(JSON.stringify(event));
         } catch (error) {
           break;
@@ -1823,7 +1882,7 @@ function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
       // item.content can be a single object or an array; normalize to array
       const contents = Array.isArray(item.content) ? item.content : [item.content];
       for (const c of contents) {
-        if (c.type === 'text' || c.type === 'input_text') {
+        if (c.type === 'text' || c.type === 'input_text' || c.type === 'output_text') {
           content.push(c.text);
         } else if (c.type === 'input_image' && (c as api_proto.InputImageContent).image_url) {
           content.push(
