@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { initializeLogger } from '../../agents/src/log.js';
 import { LLM } from './llm.js';
+
+// LLMStream base class initializes a logger on construction.
+// Without this call all chat() calls throw "logger not initialized".
+beforeAll(() => {
+  initializeLogger({ pretty: false, level: 'silent' });
+});
 
 /** Create a minimal ChatContext mock for testing. */
 function makeChatCtx(messages: Array<{ role: string; text: string }>) {
@@ -88,7 +95,7 @@ describe('LLM', () => {
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toContain('/v1/voicebot-call/my-bot/chat-conversion-stream');
       expect(url).toContain('is_voice_call=true');
-      expect(url).toContain('use_tool_based=true');
+      expect(url).toContain('use_tool_based=false');
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({
         'Content-Type': 'application/json',
@@ -236,11 +243,10 @@ describe('LLM', () => {
         role: string;
         content: string;
       }>;
-      expect(body[0]).toEqual({
-        role: 'user',
-        content: '[System Instructions]\nYou are a helpful assistant.',
-      });
-      expect(body[1]).toEqual({ role: 'user', content: 'Hello' });
+      // System messages are SKIPPED — Blaze chatapp loads the prompt from DB.
+      // Only the user message should appear.
+      expect(body).toHaveLength(1);
+      expect(body[0]).toEqual({ role: 'user', content: 'Hello' });
     });
     it('merges system/developer messages into one', async () => {
       fetchMock.mockResolvedValue({
@@ -266,11 +272,9 @@ describe('LLM', () => {
         role: string;
         content: string;
       }>;
-      expect(body[0]).toEqual({
-        role: 'user',
-        content: '[System Instructions]\nYou are a helpful assistant.\n\nBe concise.',
-      });
-      expect(body[1]).toEqual({ role: 'user', content: 'Hello' });
+      // system & developer messages are both SKIPPED — only the user message is sent.
+      expect(body).toHaveLength(1);
+      expect(body[0]).toEqual({ role: 'user', content: 'Hello' });
     });
     it('handles raw JSON lines (non-SSE fallback format)', async () => {
       const encoder = new TextEncoder();
@@ -382,6 +386,43 @@ describe('LLM', () => {
       expect(url).toContain('age=30');
       expect(url).not.toContain('gender=male');
       expect(init.headers).toMatchObject({ Authorization: 'Bearer old-token' });
+    });
+
+    it('sends use_tool_based=true when enableTools is set', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        body: makeSseBody(['ok']),
+      });
+
+      const llmInstance = new LLM({
+        botId: 'bot',
+        authToken: 'tok',
+        apiUrl: 'http://llm:8080',
+        enableTools: true,
+      });
+      const ctx = makeChatCtx([{ role: 'user', text: 'test' }]);
+
+      const stream = llmInstance.chat({ chatCtx: ctx as never });
+      for await (const _ of stream) { /* consume */ }
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toContain('use_tool_based=true');
+    });
+
+    it('sends use_tool_based=false by default', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        body: makeSseBody(['ok']),
+      });
+
+      const llmInstance = new LLM({ botId: 'bot', authToken: 'tok', apiUrl: 'http://llm:8080' });
+      const ctx = makeChatCtx([{ role: 'user', text: 'test' }]);
+
+      const stream = llmInstance.chat({ chatCtx: ctx as never });
+      for await (const _ of stream) { /* consume */ }
+
+      const [url] = fetchMock.mock.calls[0] as [string];
+      expect(url).toContain('use_tool_based=false');
     });
   });
 });
