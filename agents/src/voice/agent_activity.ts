@@ -483,7 +483,7 @@ export class AgentActivity implements RecognitionHooks {
       maxEndpointingDelay:
         this.agent.turnHandling?.endpointing?.maxDelay ??
         this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
-      rootSpanContext: this.agentSession.rootSpanContext,
+      agentSession: this.agentSession,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
