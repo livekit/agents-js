@@ -68,7 +68,7 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -98,7 +98,7 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
