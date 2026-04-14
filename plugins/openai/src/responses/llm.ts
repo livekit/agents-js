@@ -28,6 +28,8 @@ export interface LLMOptions {
   strictToolSchema?: boolean;
   /** Specifies the processing tier (e.g. 'auto', 'default', 'priority', 'flex'). */
   serviceTier?: string;
+  /** Upper bound for the number of tokens that can be generated for a response. */
+  maxOutputTokens?: number;
 
   /**
    * Whether to use the WebSocket API.
@@ -118,6 +120,10 @@ class ResponsesHttpLLM extends llm.LLM {
 
     if (this.#opts.serviceTier) {
       modelOptions.service_tier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.maxOutputTokens !== undefined) {
+      modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
     }
 
     return new ResponsesHttpLLMStream(this, {

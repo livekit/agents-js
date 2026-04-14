@@ -57,8 +57,8 @@ export function buildMetadataHeaders(): Record<string, string> {
     'User-Agent': `livekit-agents-js/${version} (node ${process.version})`,
   };
 
-  try {
-    const ctx = getJobContext();
+  const ctx = getJobContext(false);
+  if (ctx) {
     const roomSid = ctx.job.room?.sid;
     if (roomSid) {
       headers['X-LiveKit-Room-Id'] = roomSid;
@@ -66,8 +66,6 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
-  } catch {
-    // No job context available — standalone inference usage
   }
 
   return headers;
