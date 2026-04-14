@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
-import { asError } from 'agents/src/utils.js';
+import { asError } from '../../utils.js';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
