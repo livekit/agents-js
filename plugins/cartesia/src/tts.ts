@@ -555,8 +555,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const asError = (e: unknown): Error => unknownToError(e);
-
 const transientNetworkCodes = new Set([
   'ETIMEDOUT',
   'ECONNRESET',
@@ -594,7 +592,7 @@ const hasAnyTransientCode = (e: unknown): boolean => {
 };
 
 const toRetryableConnectionError = (e: unknown): APIConnectionError => {
-  const err = asError(e);
+  const err = unknownToError(e);
   const isTimeout =
     hasErrorCode(e, 'ETIMEDOUT') ||
     (typeof err.message === 'string' && err.message.includes('ETIMEDOUT'));
@@ -629,7 +627,7 @@ const waitForWsOpen = async ({
   };
 
   const onOpen = () => fut.resolve();
-  const onError = (err: Error) => fut.reject(asError(err));
+  const onError = (err: Error) => fut.reject(unknownToError(err));
   const onClose = (code: number, reason: Buffer) =>
     fut.reject(
       new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),

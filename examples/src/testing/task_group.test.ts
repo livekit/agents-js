@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Future, beta, initializeLogger, llm, voice } from '@livekit/agents';
+import { Future, beta, initializeLogger, llm, unknownToError, voice } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -11,15 +11,11 @@ type TaskCompletedEvent = beta.TaskCompletedEvent;
 
 initializeLogger({ pretty: true, level: 'warn' });
 
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
 async function withFutureResolution<T>(done: Future<T>, fn: () => Promise<T>): Promise<void> {
   try {
     done.resolve(await fn());
   } catch (error) {
-    done.reject(asError(error));
+    done.reject(unknownToError(error));
   }
 }
 

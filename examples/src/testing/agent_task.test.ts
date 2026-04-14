@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Future, initializeLogger, llm, voice } from '@livekit/agents';
+import { Future, initializeLogger, llm, unknownToError, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -27,15 +27,11 @@ initializeLogger({ pretty: true, level: 'warn' });
  *    NOT COVERED in this suite due to known deadlock limitation.
  */
 
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
 async function withFutureResolution<T>(done: Future<T>, fn: () => Promise<T>): Promise<void> {
   try {
     done.resolve(await fn());
   } catch (error) {
-    done.reject(asError(error));
+    done.reject(unknownToError(error));
   }
 }
 
