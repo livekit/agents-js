@@ -39,13 +39,13 @@
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
-    "@types/ws": "^8.5.10",
+    "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "livekit-server-sdk": "^2.9.2",
-    "ws": "^8.16.0"
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

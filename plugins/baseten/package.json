@@ -52,14 +52,14 @@
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.18.11",
-    "@types/ws": "^8.5.8",
+    "@types/ws": "catalog:",
     "tsx": "^4.7.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
     "openai": "^6.8.1",
-    "ws": "^8.14.2"
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

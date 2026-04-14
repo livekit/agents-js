@@ -41,7 +41,7 @@
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
-    "@types/ws": "^8.5.10",
+    "@types/ws": "catalog:",
     "tsup": "^8.4.0",
     "typescript": "^5.0.0",
     "zod": "^3.25.76"
@@ -79,7 +79,7 @@
     "pino-pretty": "^11.0.0",
     "sharp": "0.34.5",
     "uuid": "^11.1.0",
-    "ws": "^8.18.0",
+    "ws": "catalog:",
     "zod-to-json-schema": "^3.24.6"
   },
   "peerDependencies": {
