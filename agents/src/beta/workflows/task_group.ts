@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { unknownToError } from 'agents/src/utils.js';
 import { z } from 'zod';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { LLM, ToolError, ToolFlag, tool } from '../../llm/index.js';
@@ -114,7 +115,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
           taskResults[taskId] = e;
           continue;
         } else {
-          this.complete(e instanceof Error ? e : new Error(String(e)));
+          this.complete(unknownToError(e));
           return;
         }
       }

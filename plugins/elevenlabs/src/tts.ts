@@ -18,6 +18,7 @@ import {
   stream,
   tokenize,
   tts,
+  unknownToError,
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -591,7 +592,7 @@ class Connection {
     } catch (e) {
       this.#logger.warn({ error: e }, 'recv loop error');
       for (const ctx of this.#contextData.values()) {
-        ctx.waiter.reject(e instanceof Error ? e : new Error(String(e)));
+        ctx.waiter.reject(unknownToError(e));
       }
       this.#contextData.clear();
     } finally {

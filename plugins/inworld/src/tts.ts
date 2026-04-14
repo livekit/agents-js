@@ -10,6 +10,7 @@ import {
   shortuuid,
   tokenize,
   tts,
+  unknownToError,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
@@ -193,7 +194,7 @@ class WSConnectionPool {
       try {
         return await this.#attemptConnection();
       } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
+        lastError = unknownToError(err);
         this.#connecting = undefined;
 
         if (attempt < MAX_RETRIES) {

@@ -16,6 +16,7 @@ import {
   stream,
   tokenize,
   tts,
+  unknownToError,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
@@ -554,7 +555,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
-const asError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));
+const asError = (e: unknown): Error => unknownToError(e);
 
 const transientNetworkCodes = new Set([
   'ETIMEDOUT',

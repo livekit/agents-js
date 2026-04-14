@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import { unknownToError } from 'agents/src/utils.js';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
@@ -166,7 +167,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       this.streams.add(streamBase);
       return streamBase;
     } catch (e) {
-      const cause = e instanceof Error ? e : new Error(String(e));
+      const cause = unknownToError(e);
       this.emitError(new InterruptionDetectionError(cause.message, Date.now(), this._label, false));
       throw e;
     }

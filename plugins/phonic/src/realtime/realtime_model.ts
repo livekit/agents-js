@@ -10,6 +10,7 @@ import {
   log,
   shortuuid,
   stream,
+  unknownToError,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
@@ -250,7 +251,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private configSent = false;
   private instructionsReady = new Future<void>();
   private toolsReady = new Future<void>();
-  private closedFuture = new Future<void>();
+  private closedFuture = new Future<void, never>();
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
   private pendingToolCallIds = new Set<string>();
@@ -273,7 +274,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
     this.connectTask = this.connect().catch((error: unknown) => {
-      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      const normalizedError = unknownToError(error);
       this.emitError(normalizedError, false);
     });
   }

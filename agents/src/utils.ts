@@ -244,7 +244,7 @@ export class CancellablePromise<T> {
       executor(
         resolve,
         (reason) => {
-          this.#error = reason instanceof Error ? reason : new Error(String(reason));
+          this.#error = unknownToError(reason);
           reject(this.#error);
         },
         (cancelFn) => {

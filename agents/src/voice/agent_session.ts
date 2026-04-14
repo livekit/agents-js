@@ -37,7 +37,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task } from '../utils.js';
+import { Task, unknownToError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -768,7 +768,7 @@ export class AgentSession<
         unlock();
         this.generateReply({ userInput });
       } catch (e) {
-        runState._reject(e instanceof Error ? e : new Error(String(e)));
+        runState._reject(unknownToError(e));
       }
     })();
 
