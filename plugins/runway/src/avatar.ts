@@ -190,7 +190,7 @@ export class AvatarSession {
         }
         return;
       } catch (e) {
-        if (e instanceof APIStatusError) throw e;
+        if (e instanceof APIStatusError && !e.retryable) throw e;
 
         if (e instanceof APIConnectionError) {
           this.#logger.warn({ error: String(e) }, 'failed to call Runway API');
