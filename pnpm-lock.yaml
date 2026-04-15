@@ -537,6 +537,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.25
@@ -549,6 +552,9 @@ importers:
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
 
   plugins/deepgram:
     dependencies:

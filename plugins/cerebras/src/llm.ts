@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { gzipSync } from 'node:zlib';
-import { llm } from '@livekit/agents';
+import type { llm } from '@livekit/agents';
 import { LLM as OpenAILLM } from '@livekit/agents-plugin-openai';
 import { encode } from '@msgpack/msgpack';
+import { gzipSync } from 'node:zlib';
 import OpenAI from 'openai';
 import type { CerebrasChatModels } from './models.js';
 
