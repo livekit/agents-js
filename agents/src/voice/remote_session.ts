@@ -4,6 +4,7 @@
 import { Timestamp } from '@bufbuild/protobuf';
 import { AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
@@ -198,7 +199,7 @@ export class RoomSessionTransport extends SessionTransport {
     return {
       next: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
         if (this.closed && this.pendingMessages.length === 0) {
-          return Promise.resolve({
+          return ThrowsPromise.resolve({
             value: undefined as unknown as pb.AgentSessionMessage,
             done: true,
           });
@@ -206,16 +207,16 @@ export class RoomSessionTransport extends SessionTransport {
 
         const pending = this.pendingMessages.shift();
         if (pending) {
-          return Promise.resolve({ value: pending, done: false });
+          return ThrowsPromise.resolve({ value: pending, done: false });
         }
 
-        return new Promise<IteratorResult<pb.AgentSessionMessage>>((resolve) => {
+        return new ThrowsPromise<IteratorResult<pb.AgentSessionMessage>, never>((resolve) => {
           this.waitingResolve = resolve;
         });
       },
       return: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
         this.close();
-        return Promise.resolve({
+        return ThrowsPromise.resolve({
           value: undefined as unknown as pb.AgentSessionMessage,
           done: true,
         });
@@ -519,7 +520,7 @@ export class SessionHost {
       this.recvTask.cancel();
     }
 
-    await Promise.allSettled([...this.tasks].map((task) => task.cancelAndWait()));
+    await ThrowsPromise.allSettled([...this.tasks].map((task) => task.cancelAndWait()));
     this.tasks.clear();
 
     await this.transport.close();

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { isStreamClosedError } from '../utils.js';
@@ -113,6 +114,6 @@ export class StreamAdapterWrapper extends SpeechStream {
       }
     };
 
-    await Promise.all([forwardInput(), recognize()]);
+    await ThrowsPromise.all([forwardInput(), recognize()]);
   }
 }

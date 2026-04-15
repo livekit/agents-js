@@ -72,6 +72,7 @@ function buildMainTaskRunner() {
     speechQueue,
     _currentSpeech: undefined as SpeechHandle | undefined,
     _schedulingPaused: false,
+    _authorizationPaused: false,
     getDrainPendingSpeechTasks: () => [],
     logger: {
       info: () => {},
@@ -183,6 +184,39 @@ describe('AgentActivity - mainTask', () => {
     const mainTaskPromise = mainTask(ac.signal);
 
     await new Promise((r) => setTimeout(r, 50));
+    fakeActivity._schedulingPaused = true;
+    fakeActivity.q_updated = new Future();
+    fakeActivity.q_updated.resolve();
+    ac.abort();
+
+    const result = await raceTimeout(mainTaskPromise, 2000);
+    expect(result).toBe('resolved');
+  });
+
+  it('should hold queued speech while reply authorization is paused', async () => {
+    const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
+
+    const handle = SpeechHandle.create({ allowInterruptions: true });
+    fakeActivity._authorizationPaused = true;
+
+    speechQueue.push([SpeechHandle.SPEECH_PRIORITY_NORMAL, 1, handle]);
+    handle._markScheduled();
+    q_updated.resolve();
+
+    const ac = new AbortController();
+    const mainTaskPromise = mainTask(ac.signal);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(() => handle._markGenerationDone()).toThrow(
+      'cannot use mark_generation_done: no active generation is running.',
+    );
+
+    fakeActivity._authorizationPaused = false;
+    fakeActivity.q_updated.resolve();
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(() => handle._markGenerationDone()).not.toThrow();
+
     fakeActivity._schedulingPaused = true;
     fakeActivity.q_updated = new Future();
     fakeActivity.q_updated.resolve();

@@ -26,7 +26,7 @@
  *   - onEnter() signals readiness instead of awaiting generateReply()
  *   - Tasks tested in isolation and as a group
  */
-import { Future, beta, initializeLogger, llm, voice } from '@livekit/agents';
+import { Future, asError, beta, initializeLogger, llm, voice } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -39,10 +39,6 @@ initializeLogger({ pretty: true, level: 'warn' });
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
 
 /** Run `fn` and forward its result or error to `done`. */
 async function withFutureResolution<T>(done: Future<T>, fn: () => Promise<T>): Promise<void> {

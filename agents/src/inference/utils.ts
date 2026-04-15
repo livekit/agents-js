@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
@@ -57,8 +58,8 @@ export function buildMetadataHeaders(): Record<string, string> {
     'User-Agent': `livekit-agents-js/${version} (node ${process.version})`,
   };
 
-  try {
-    const ctx = getJobContext();
+  const ctx = getJobContext(false);
+  if (ctx) {
     const roomSid = ctx.job.room?.sid;
     if (roomSid) {
       headers['X-LiveKit-Room-Id'] = roomSid;
@@ -66,8 +67,6 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
-  } catch {
-    // No job context available — standalone inference usage
   }
 
   return headers;
@@ -78,7 +77,7 @@ export async function connectWs(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<WebSocket> {
-  return new Promise<WebSocket>((resolve, reject) => {
+  return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
     const timeout = setTimeout(() => {

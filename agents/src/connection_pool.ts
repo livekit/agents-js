@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { waitForAbort } from './utils.js';
 
 /**
@@ -273,7 +274,7 @@ export class ConnectionPool<T> {
     try {
       const fnPromise = fn(conn);
       const result = signal
-        ? await Promise.race([
+        ? await ThrowsPromise.race([
             fnPromise.then((value) => ({ type: 'result' as const, value })),
             waitForAbort(signal).then(() => ({ type: 'abort' as const })),
           ]).then((r) => {

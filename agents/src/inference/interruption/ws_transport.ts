@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TransformStream } from 'stream/web';
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
-import TypedPromise from '../../typed_promise.js';
 import { buildMetadataHeaders, createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
@@ -83,7 +82,7 @@ async function connectWebSocket(
     headers: { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` },
   });
 
-  await new TypedPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
+  await new ThrowsPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
     (resolve, reject) => {
       const timeout = setTimeout(() => {
         ws.terminate();

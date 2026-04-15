@@ -5,7 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, Task, TaskResult, delay, isPending, resampleStream } from '../src/utils.js';
+import { Event, Task, TaskResult, dedent, delay, isPending, resampleStream } from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -625,6 +625,94 @@ describe('utils', () => {
 
       event.set();
       expect(await waiterAfterSet).toBe(true);
+    });
+  });
+
+  describe('dedent', () => {
+    it('should remove common leading indentation', () => {
+      const result = dedent`
+        hello
+        world
+      `;
+      expect(result).toBe('hello\nworld');
+    });
+
+    it('should preserve relative indentation', () => {
+      const result = dedent`
+        hello
+          world
+            nested
+      `;
+      expect(result).toBe('hello\n  world\n    nested');
+    });
+
+    it('should handle interpolations', () => {
+      const name = 'world';
+      const result = dedent`
+        hello ${name}
+        goodbye ${name}
+      `;
+      expect(result).toBe('hello world\ngoodbye world');
+    });
+
+    it('should handle empty lines in the middle', () => {
+      const result = dedent`
+        hello
+
+        world
+      `;
+      expect(result).toBe('hello\n\nworld');
+    });
+
+    it('should handle single line', () => {
+      const result = dedent`
+        hello
+      `;
+      expect(result).toBe('hello');
+    });
+
+    it('should handle no indentation', () => {
+      const result = dedent`
+hello
+world
+`;
+      expect(result).toBe('hello\nworld');
+    });
+
+    it('should handle tab indentation', () => {
+      const result = dedent`
+\t\thello
+\t\t\tworld
+\t\t`;
+      expect(result).toBe('hello\n\tworld');
+    });
+
+    it('should handle empty string', () => {
+      const result = dedent``;
+      expect(result).toBe('');
+    });
+
+    it('should handle string with only whitespace', () => {
+      const result = dedent`
+
+      `;
+      expect(result).toBe('');
+    });
+
+    it('should handle inline usage without leading newline', () => {
+      const result = dedent`hello
+        world`;
+      expect(result).toBe('hello\n        world');
+    });
+
+    it('should handle interpolations that span values', () => {
+      const a = 1;
+      const b = 2;
+      const result = dedent`
+        sum: ${a + b}
+        product: ${a * b}
+      `;
+      expect(result).toBe('sum: 3\nproduct: 2');
     });
   });
 

@@ -10,7 +10,7 @@ import {
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
-import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
@@ -225,7 +225,7 @@ export class ServerOptions {
 }
 
 class PendingAssignment {
-  promise = new Promise<JobAssignment>((resolve) => {
+  promise = new ThrowsPromise<JobAssignment, never>((resolve) => {
     this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
   });
   resolve(arg: JobAssignment) {
@@ -384,10 +384,10 @@ export class AgentServer {
         });
 
         try {
-          await new Promise((resolve, reject) => {
+          await new ThrowsPromise<unknown, Error>((resolve, reject) => {
             this.#session!.on('open', resolve);
             this.#session!.on('error', (error) => reject(error));
-            this.#session!.on('close', (code) => reject(`WebSocket returned ${code}`));
+            this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
           });
 
           retries = 0;
@@ -409,12 +409,12 @@ export class AgentServer {
             `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
           );
 
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+          await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, delay * 1000));
         }
       }
     };
 
-    await Promise.all([workerWS(), this.#httpServer.run()]);
+    await ThrowsPromise.all([workerWS(), this.#httpServer.run()]);
     this.#close.resolve();
   }
 
@@ -429,7 +429,7 @@ export class AgentServer {
   }
 
   /** @throws {@link WorkerError} if worker did not drain in time */
-  async drain(timeout?: number): Promise<Throws<void, WorkerError>> {
+  async drain(timeout?: number): Promise<Throws<void, WorkerError | Error>> {
     if (this.#draining) {
       return;
     }
@@ -449,8 +449,8 @@ export class AgentServer {
       }),
     );
 
-    const joinJobs = async () => {
-      return Promise.all(
+    const joinJobs = async (): Promise<Throws<void[], Error>> => {
+      return ThrowsPromise.all(
         this.#procPool.processes.map((proc): Promise<Throws<void, Error>> => {
           if (!proc.runningJob) {
             proc.close();
@@ -469,7 +469,7 @@ export class AgentServer {
         }),
       );
     }
-    await Promise.race(promises);
+    await ThrowsPromise.race(promises);
   }
 
   async simulateJob(roomName: string, participantIdentity?: string) {
@@ -518,7 +518,7 @@ export class AgentServer {
     };
     this.event.on('worker_msg', send);
 
-    const close = new Promise<void>((resolve) => {
+    const close = new ThrowsPromise<void, never>((resolve) => {
       ws.addEventListener('close', () => {
         closingWS = true;
         if (!this.#closed) {
@@ -818,7 +818,7 @@ export class AgentServer {
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();
     await this.#httpServer.close();
-    await Promise.allSettled(this.#tasks);
+    await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
     await this.#close.await;

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
@@ -128,7 +129,7 @@ export async function cleanupReusableResources(
   }
 
   if (tasks.length > 0) {
-    const outputs = await Promise.allSettled(tasks);
+    const outputs = await ThrowsPromise.allSettled(tasks);
     for (const output of outputs) {
       if (output.status === 'rejected') {
         if (logger) {
@@ -165,10 +166,11 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _schedulingPaused = true;
+  private _authorizationPaused = false;
   private _drainBlockedTasks: Task<any>[] = [];
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
-  private q_updated: Future;
+  private q_updated: Future<void, never>;
   private speechTasks: Set<Task<void>> = new Set();
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
@@ -614,6 +616,20 @@ export class AgentActivity implements RecognitionHooks {
 
   get schedulingPaused(): boolean {
     return this._schedulingPaused;
+  }
+
+  pauseReplyAuthorization(): void {
+    this._authorizationPaused = true;
+    this.wakeupMainTask();
+  }
+
+  resumeReplyAuthorization(): void {
+    if (!this._authorizationPaused) {
+      return;
+    }
+
+    this._authorizationPaused = false;
+    this.wakeupMainTask();
   }
 
   get realtimeLLMSession(): RealtimeSession | undefined {
@@ -1315,7 +1331,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async mainTask(signal: AbortSignal): Promise<void> {
-    const abortFuture = new Future();
+    const abortFuture = new Future<void, never>();
     const abortHandler = () => {
       abortFuture.resolve();
       signal.removeEventListener('abort', abortHandler);
@@ -1323,7 +1339,7 @@ export class AgentActivity implements RecognitionHooks {
     signal.addEventListener('abort', abortHandler);
 
     while (true) {
-      await Promise.race([this.q_updated.await, abortFuture.await]);
+      await ThrowsPromise.race([this.q_updated.await, abortFuture.await]);
       if (signal.aborted) break;
 
       while (this.speechQueue.size() > 0) {
@@ -1332,6 +1348,10 @@ export class AgentActivity implements RecognitionHooks {
         const heapItem = this.speechQueue.pop();
         if (!heapItem) {
           throw new Error('Speech queue is empty');
+        }
+        if (this._authorizationPaused) {
+          this.speechQueue.push(heapItem);
+          break;
         }
         const speechHandle = heapItem[2];
 
@@ -2010,11 +2030,11 @@ export class AgentActivity implements RecognitionHooks {
     // Check if we should use TTS aligned transcripts
     if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
       // Race timedTextsFut with ttsTask to avoid hanging if TTS fails before resolving the future
-      const timedTextsStream = await Promise.race([
+      const timedTextsStream = await ThrowsPromise.race([
         ttsGenData.timedTextsFut.await,
         ttsTask?.result.catch(() =>
           this.logger.warn('TTS task failed before resolving timedTextsFut'),
-        ) ?? Promise.resolve(),
+        ) ?? ThrowsPromise.resolve(),
       ]);
       if (timedTextsStream) {
         this.logger.debug('Using TTS aligned transcripts for transcription node input');
@@ -2184,6 +2204,9 @@ export class AgentActivity implements RecognitionHooks {
           interrupted: true,
           createdAt: replyStartedAt,
           metrics: assistantMetrics,
+          ...(Object.keys(llmGenData.generatedExtra).length > 0
+            ? { extra: llmGenData.generatedExtra }
+            : {}),
         });
         chatCtx.insert(message);
         this.agent._chatCtx.insert(message);
@@ -2218,6 +2241,9 @@ export class AgentActivity implements RecognitionHooks {
         createdAt: replyStartedAt,
         content: textOut.text,
         metrics: assistantMetrics,
+        ...(Object.keys(llmGenData.generatedExtra).length > 0
+          ? { extra: llmGenData.generatedExtra }
+          : {}),
       });
       chatCtx.insert(message);
       this.agent._chatCtx.insert(message);
@@ -2755,7 +2781,7 @@ export class AgentActivity implements RecognitionHooks {
           await this.currentSpeech.waitForPlayout();
         } else {
           // Don't block the event loop
-          await new Promise((resolve) => setImmediate(resolve));
+          await new ThrowsPromise<void, never>((resolve) => setImmediate(resolve));
         }
       }
       const chatCtx = this.realtimeSession.chatCtx.copy();

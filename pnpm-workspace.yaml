@@ -6,6 +6,10 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - '@livekit/*'
+  # Renovate security update: vite@7.3.2
+  - vite@7.3.2
 
 catalog:
   '@livekit/rtc-node': ^0.13.25
+  ws: ^8.18.0
+  '@types/ws': ^8.5.10
