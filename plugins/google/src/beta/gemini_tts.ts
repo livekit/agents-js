@@ -14,6 +14,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { GeminiTTSModels } from '../models.js';
+export type { GeminiTTSModels } from '../models.js';
 
 export type GeminiVoices =
   | 'Zephyr'
