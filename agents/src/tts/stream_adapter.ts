@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
@@ -87,7 +88,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
         tokenCompletionTasks.push(task);
       }
 
-      await Promise.all(tokenCompletionTasks.map((t) => t.result));
+      await ThrowsPromise.all(tokenCompletionTasks.map((t) => t.result));
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
@@ -127,6 +128,6 @@ export class StreamAdapterWrapper extends SynthesizeStream {
       }
     };
 
-    await Promise.all([forwardInput(), synthesizeSentenceStream()]);
+    await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);
   }
 }

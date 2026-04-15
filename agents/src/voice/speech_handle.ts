@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import type { Task } from '../utils.js';
@@ -164,9 +165,9 @@ export class SpeechHandle {
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
-    const allTasksPromise = Promise.all(aw);
+    const allTasksPromise = ThrowsPromise.all(aw);
     const fs: Promise<unknown>[] = [allTasksPromise, this.interruptFut.await];
-    await Promise.race(fs);
+    await ThrowsPromise.race(fs);
   }
 
   addDoneCallback(callback: (sh: SpeechHandle) => void) {

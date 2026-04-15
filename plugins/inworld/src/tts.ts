@@ -5,6 +5,7 @@ import {
   type APIConnectOptions,
   AudioByteStream,
   type TimedString,
+  asError,
   createTimedString,
   log,
   shortuuid,
@@ -193,7 +194,7 @@ class WSConnectionPool {
       try {
         return await this.#attemptConnection();
       } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
+        lastError = asError(err);
         this.#connecting = undefined;
 
         if (attempt < MAX_RETRIES) {

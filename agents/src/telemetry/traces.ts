@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MetricsRecordingHeader } from '@livekit/protocol';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Attributes,
   type Context,
@@ -164,11 +165,11 @@ class MetadataSpanProcessor implements SpanProcessor {
   onEnd(_span: ReadableSpan): void {}
 
   shutdown(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 
   forceFlush(): Promise<void> {
-    return Promise.resolve();
+    return ThrowsPromise.resolve();
   }
 }
 
@@ -624,7 +625,7 @@ export async function uploadSessionReport(options: {
 
   // Upload to LiveKit Cloud using form-data's submit method
   // This properly streams the multipart form with all headers including Content-Length
-  return new Promise<void>((resolve, reject) => {
+  return new ThrowsPromise<void, Error>((resolve, reject) => {
     formData.submit(
       {
         protocol: 'https:',

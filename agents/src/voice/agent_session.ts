@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
@@ -36,7 +37,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task } from '../utils.js';
+import { Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -479,7 +480,7 @@ export class AgentSession<
     // Initial start does not wait on onEnter
     tasks.push(this._updateActivity(this.agent, { waitOnEnter: false }));
 
-    await Promise.allSettled(tasks);
+    await ThrowsPromise.allSettled(tasks);
 
     if (this.sessionHost) {
       await this.sessionHost.start();
@@ -774,7 +775,7 @@ export class AgentSession<
         unlock();
         this.generateReply({ userInput });
       } catch (e) {
-        runState._reject(e instanceof Error ? e : new Error(String(e)));
+        runState._reject(asError(e));
       }
     })();
 

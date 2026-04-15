@@ -8,6 +8,7 @@ import {
   AudioByteStream,
   Future,
   type TimedString,
+  asError,
   createTimedString,
   getBaseLanguage,
   log,
@@ -553,8 +554,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     }
   }
 }
-
-const asError = (e: unknown): Error => (e instanceof Error ? e : new Error(String(e)));
 
 const transientNetworkCodes = new Set([
   'ETIMEDOUT',

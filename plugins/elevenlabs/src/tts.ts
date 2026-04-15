@@ -10,6 +10,7 @@ import {
   AudioByteStream,
   Future,
   type TimedString,
+  asError,
   createTimedString,
   getBaseLanguage,
   log,
@@ -591,7 +592,7 @@ class Connection {
     } catch (e) {
       this.#logger.warn({ error: e }, 'recv loop error');
       for (const ctx of this.#contextData.values()) {
-        ctx.waiter.reject(e instanceof Error ? e : new Error(String(e)));
+        ctx.waiter.reject(asError(e));
       }
       this.#contextData.clear();
     } finally {

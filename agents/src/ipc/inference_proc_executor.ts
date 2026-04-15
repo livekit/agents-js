@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
@@ -11,9 +12,11 @@ import type { IPCMessage } from './message.js';
 import { SupervisedProc } from './supervised_proc.js';
 
 class PendingInference {
-  promise = new Promise<{ requestId: string; data: unknown; error?: Error }>((resolve) => {
-    this.resolve = resolve;
-  });
+  promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
+    (resolve) => {
+      this.resolve = resolve;
+    },
+  );
   resolve(arg: { requestId: string; data: unknown; error?: Error }) {
     arg;
   }

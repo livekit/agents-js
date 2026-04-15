@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
@@ -524,7 +525,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    Promise.resolve().then(() => this.mainTask().finally(() => this.queue.close()));
+    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   private _mainTaskImpl = async (span: Span) => {

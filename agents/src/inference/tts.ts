@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { WebSocket } from 'ws';
 import { APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
@@ -710,7 +711,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
             ];
 
             try {
-              await Promise.all(tasks.map((t) => t.result));
+              await ThrowsPromise.all(tasks.map((t) => t.result));
             } finally {
               // Mirror python finally: unblock recv and cancel all tasks.
               inputSentEvent.set();

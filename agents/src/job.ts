@@ -10,6 +10,7 @@ import type {
   RtcConfiguration,
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -200,7 +201,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       }
     }
 
-    return new Promise((resolve, reject) => {
+    return new ThrowsPromise<RemoteParticipant, Error>((resolve, reject) => {
       const onParticipantConnected = (participant: RemoteParticipant) => {
         if (
           (!identity || participant.identity === identity) &&
