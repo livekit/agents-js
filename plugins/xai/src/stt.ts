@@ -463,5 +463,6 @@ function createWav(frame: AudioFrame): Buffer {
   header.writeUInt16LE(16, 34);
   header.write('data', 36);
   header.writeUInt32LE(frame.data.byteLength, 40);
-  return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
+  const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+  return Buffer.concat([header, pcm]);
 }
