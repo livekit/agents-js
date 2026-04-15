@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 1-525 lines
 import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
@@ -66,7 +65,6 @@ const defaultSTTOptions: Omit<STTOptions, 'apiKey'> = {
   language: 'en',
 };
 
-// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 62-112 lines
 export class STT extends stt.STT {
   #opts: STTOptions;
   #apiKey: string;
@@ -93,7 +91,6 @@ export class STT extends stt.STT {
     this.#opts = { ...merged, apiKey };
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 120-164 lines
   async _recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent> {
     const frame = mergeFrames(buffer);
     const wavBuffer = createWav(frame);
@@ -121,14 +118,12 @@ export class STT extends stt.STT {
     return prerecordedTranscriptionToSpeechEvent(data);
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 172-187 lines
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
     const stream = new SpeechStream(this, this.#opts, this.#apiKey, options?.connOptions);
     this.#streams.add(new WeakRef(stream));
     return stream;
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 189-215 lines
   updateOptions(opts: Partial<STTOptions>) {
     this.#opts = { ...this.#opts, ...opts };
 
@@ -147,7 +142,6 @@ export class STT extends stt.STT {
   }
 }
 
-// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 218-484 lines
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #apiKey: string;
@@ -177,7 +171,6 @@ export class SpeechStream extends stt.SpeechStream {
     this.#resetWS.resolve();
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 265-353 lines
   protected async run() {
     const maxRetry = 32;
     let retries = 0;
@@ -248,7 +241,6 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([closed, waitForAbort(controller.signal)]);
     });
 
-    // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 269-294 lines
     const sendTask = async () => {
       await this.#serverReady.await;
 
@@ -287,7 +279,6 @@ export class SpeechStream extends stt.SpeechStream {
       }
     };
 
-    // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 296-318 lines
     const listenTask = Task.from(async (controller) => {
       const listenMessage = new Promise<void>((resolve, reject) => {
         ws.on('message', (msg) => {
@@ -316,7 +307,6 @@ export class SpeechStream extends stt.SpeechStream {
     ws.close();
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 376-383 lines
   #onAudioDurationReport(duration: number) {
     const usageEvent: stt.SpeechEvent = {
       type: stt.SpeechEventType.RECOGNITION_USAGE,
@@ -340,7 +330,6 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 385-484 lines
   #processStreamEvent(data: Record<string, unknown>) {
     const msgType = (data['type'] as string) ?? '';
 
@@ -421,7 +410,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
-// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 487-508 lines
 function wordsToSpeechData(
   words: Record<string, unknown>[],
   text: string,
@@ -446,7 +434,6 @@ function wordsToSpeechData(
   };
 }
 
-// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 511-524 lines
 function prerecordedTranscriptionToSpeechEvent(data: Record<string, unknown>): stt.SpeechEvent {
   const text = (data['text'] as string) ?? '';
   const words = (data['words'] as Record<string, unknown>[]) ?? [];

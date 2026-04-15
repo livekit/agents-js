@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Ref: python livekit-plugins/livekit-plugins-cartesia/livekit/plugins/cartesia/models.py - 11 lines
 export type TTSModels =
   | 'sonic'
   | 'sonic-2'
