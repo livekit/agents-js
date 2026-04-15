@@ -16,7 +16,6 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-// Ref: python examples/voice_agents/restaurant_agent.py - 29-34 lines
 const voices = {
   greeter: 'e07c00bc-4134-4eae-9ea4-1a55fb45746b',
   reservation: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',

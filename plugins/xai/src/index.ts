@@ -4,6 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * as realtime from './realtime/index.js';
+export { STT, type STTOptions, type STTLanguages } from './stt.js';
 
 class XAIPlugin extends Plugin {
   constructor() {
