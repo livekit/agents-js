@@ -1,5 +1,5 @@
 ---
-"@livekit/agents-plugin-mistral": minor
+'@livekit/agents-plugin-mistral': patch
 ---
 
 Add Mistral AI plugin for LiveKit Node Agents.
