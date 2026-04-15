@@ -36,13 +36,17 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
+    "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "openai": "^6.8.1"
+    "openai": "^6.8.1",
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
