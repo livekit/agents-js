@@ -39,7 +39,10 @@ export default defineAgent({
 
     const avatarId = process.env.RUNWAY_AVATAR_ID || undefined;
     const presetId = process.env.RUNWAY_AVATAR_PRESET_ID || 'cat-character';
-    const avatar = new runway.AvatarSession({ avatarId, presetId: avatarId ? undefined : presetId });
+    const avatar = new runway.AvatarSession({
+      avatarId,
+      presetId: avatarId ? undefined : presetId,
+    });
     await avatar.start(session, ctx.room);
 
     session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
