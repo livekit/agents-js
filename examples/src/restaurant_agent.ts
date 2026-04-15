@@ -6,6 +6,7 @@ import {
   type JobProcess,
   ServerOptions,
   cli,
+  dedent,
   defineAgent,
   inference,
   llm,
@@ -175,10 +176,12 @@ function createGreeterAgent(menu: string) {
     tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.greeter }),
     tools: {
       toReservation: llm.tool({
-        description: `Called when user wants to make or update a reservation.
-        This function handles transitioning to the reservation agent
-        who will collect the necessary details like reservation time,
-        customer name and phone number.`,
+        description: dedent`
+          Called when user wants to make or update a reservation.
+          This function handles transitioning to the reservation agent
+          who will collect the necessary details like reservation time,
+          customer name and phone number.
+        `,
         execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'reservation',
@@ -187,9 +190,11 @@ function createGreeterAgent(menu: string) {
         },
       }),
       toTakeaway: llm.tool({
-        description: `Called when the user wants to place a takeaway order.
-        This includes handling orders for pickup, delivery, or when the user wants to
-        proceed to checkout with their existing order.`,
+        description: dedent`
+          Called when the user wants to place a takeaway order.
+          This includes handling orders for pickup, delivery, or when the user wants to
+          proceed to checkout with their existing order.
+        `,
         execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'takeaway',
@@ -213,8 +218,10 @@ function createReservationAgent() {
       updatePhone,
       toGreeter,
       updateReservationTime: llm.tool({
-        description: `Called when the user provides their reservation time.
-        Confirm the time with the user before calling the function.`,
+        description: dedent`
+          Called when the user provides their reservation time.
+          Confirm the time with the user before calling the function.
+        `,
         parameters: z.object({
           time: z.string().describe('The reservation time'),
         }),
@@ -301,8 +308,10 @@ function createCheckoutAgent(menu: string) {
         },
       }),
       updateCreditCard: llm.tool({
-        description: `Called when the user provides their credit card number, expiry date, and CVV.
-        Confirm the spelling with the user before calling the function.`,
+        description: dedent`
+          Called when the user provides their credit card number, expiry date, and CVV.
+          Confirm the spelling with the user before calling the function.
+        `,
         parameters: z.object({
           number: z.string().describe('The credit card number'),
           expiry: z.string().describe('The expiry date of the credit card'),

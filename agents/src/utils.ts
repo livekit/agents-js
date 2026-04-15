@@ -1078,3 +1078,62 @@ export function asError(maybeError: unknown): Error {
   }
   return new Error(String(maybeError));
 }
+
+/**
+ * Tagged template literal that strips common leading indentation from every line,
+ * trims the first empty line and any trailing whitespace.
+ *
+ * Useful for writing multi-line strings inside indented code without the indentation
+ * leaking into the runtime value.
+ *
+ * @example
+ * ```ts
+ * const msg = dedent`
+ *   Hello,
+ *     world!
+ * `;
+ * // "Hello,\n  world!"
+ * ```
+ */
+export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string {
+  // Build the raw string with interpolations
+  let result = '';
+  for (let i = 0; i < strings.length; i++) {
+    result += strings[i];
+    if (i < values.length) {
+      result += String(values[i]);
+    }
+  }
+
+  // Strip the leading newline (first line is usually empty after the backtick)
+  if (result.startsWith('\n')) {
+    result = result.slice(1);
+  }
+
+  const lines = result.split('\n');
+
+  // Find the minimum indentation across non-empty lines
+  let minIndent = Infinity;
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    let spaces = 0;
+    for (const ch of line) {
+      if (ch === ' ' || ch === '\t') {
+        spaces++;
+      } else {
+        break;
+      }
+    }
+    minIndent = Math.min(minIndent, spaces);
+  }
+
+  if (minIndent === Infinity) {
+    minIndent = 0;
+  }
+
+  // Remove common indentation and join
+  return lines
+    .map((line) => line.slice(minIndent))
+    .join('\n')
+    .trimEnd();
+}

@@ -6,6 +6,7 @@ import {
   type JobProcess,
   ServerOptions,
   cli,
+  dedent,
   defineAgent,
   llm,
   voice,
@@ -86,8 +87,10 @@ class StoryAgent extends voice.Agent<StoryData> {
 
   static create(name: string, location: string) {
     return new StoryAgent({
-      instructions: `You are a storyteller. Use the user's information in order to make the story personalized.
-          The user's name is ${name}, from ${location}`,
+      instructions: dedent`
+        You are a storyteller. Use the user's information in order to make the story personalized.
+        The user's name is ${name}, from ${location}
+      `,
     });
   }
 }
