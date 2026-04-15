@@ -6,6 +6,7 @@ import {
   type JobProcess,
   ServerOptions,
   cli,
+  dedent,
   defineAgent,
   llm,
   log,
@@ -147,11 +148,13 @@ class TestAgent extends voice.Agent<UserData> {
     const modelName = realtimeModel ? `${realtimeLlmChoice} realtime` : llmChoice;
 
     super({
-      instructions: `You are a test voice-based agent, you can hear the user's message and respond to it. User is testing your hearing & speaking abilities.
+      instructions: dedent`
+        You are a test voice-based agent, you can hear the user's message and respond to it. User is testing your hearing & speaking abilities.
         You are using ${sttChoice} STT, ${ttsChoice} TTS, ${eouChoice} EOU, ${modelName} LLM.
         You can use the following tools to test your abilities:
         - testTool: Testing agent's tool calling ability
-        - nextAgent: Called when user confirm current agent is working and want to proceed to next agent`,
+        - nextAgent: Called when user confirm current agent is working and want to proceed to next agent
+      `,
       stt: stt,
       tts: tts,
       llm: realtimeModel ?? model,
