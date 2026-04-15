@@ -423,6 +423,10 @@ export class LLMStream extends llm.LLMStream {
         },
       );
 
+      if (this.abortController.signal.aborted) {
+        return;
+      }
+
       for await (const chunk of stream) {
         if (this.abortController.signal.aborted) {
           break;
@@ -451,6 +455,10 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error) {
+      if (this.abortController.signal.aborted) {
+        return;
+      }
+
       if (error instanceof OpenAI.APIConnectionTimeoutError) {
         throw new APITimeoutError({ options: { retryable } });
       } else if (error instanceof OpenAI.APIError) {
