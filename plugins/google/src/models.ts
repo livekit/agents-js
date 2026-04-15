@@ -90,7 +90,16 @@ export type SpeechLanguages =
 
 export type Gender = 'male' | 'female' | 'neutral';
 
+export type GeminiTTSModels =
+  | 'gemini-3.1-flash-tts-preview'
+  | 'gemini-2.5-flash-tts'
+  | 'gemini-2.5-flash-lite-preview-tts'
+  | 'gemini-2.5-pro-tts';
+
 export type ChatModels =
+  | 'gemini-3-pro-preview'
+  | 'gemini-3-flash-preview'
+  | 'gemini-2.5-flash'
   | 'gemini-2.5-pro-preview-05-06'
   | 'gemini-2.5-flash-preview-04-17'
   | 'gemini-2.5-flash-preview-05-20'
