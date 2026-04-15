@@ -60,6 +60,12 @@ export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 
+// answering machine detection
+export const ATTR_AMD_CATEGORY = 'lk.amd.category';
+export const ATTR_AMD_REASON = 'lk.amd.reason';
+export const ATTR_AMD_IS_MACHINE = 'lk.amd.is_machine';
+export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
+
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
 export const ATTR_INTERRUPTION_PROBABILITY = 'lk.interruption.probability';

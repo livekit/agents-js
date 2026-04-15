@@ -165,6 +165,7 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _schedulingPaused = true;
+  private _authorizationPaused = false;
   private _drainBlockedTasks: Task<any>[] = [];
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
@@ -614,6 +615,20 @@ export class AgentActivity implements RecognitionHooks {
 
   get schedulingPaused(): boolean {
     return this._schedulingPaused;
+  }
+
+  pauseReplyAuthorization(): void {
+    this._authorizationPaused = true;
+    this.wakeupMainTask();
+  }
+
+  resumeReplyAuthorization(): void {
+    if (!this._authorizationPaused) {
+      return;
+    }
+
+    this._authorizationPaused = false;
+    this.wakeupMainTask();
   }
 
   get realtimeLLMSession(): RealtimeSession | undefined {
@@ -1332,6 +1347,10 @@ export class AgentActivity implements RecognitionHooks {
         const heapItem = this.speechQueue.pop();
         if (!heapItem) {
           throw new Error('Speech queue is empty');
+        }
+        if (this._authorizationPaused) {
+          this.speechQueue.push(heapItem);
+          break;
         }
         const speechHandle = heapItem[2];
 

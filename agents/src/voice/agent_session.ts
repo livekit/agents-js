@@ -648,6 +648,22 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
+  pauseReplyAuthorization(): void {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    this.activity.pauseReplyAuthorization();
+  }
+
+  resumeReplyAuthorization(): void {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    this.activity.resumeReplyAuthorization();
+  }
+
   generateReply(options?: {
     userInput?: string | ChatMessage;
     chatCtx?: ChatContext;
