@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ReadableStreamDefaultController } from 'node:stream/web';
+import type { ReadableStreamDefaultController } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';

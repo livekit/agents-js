@@ -13,7 +13,7 @@ import {
   trace,
 } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import { ReadableStream } from 'node:stream/web';
+import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
