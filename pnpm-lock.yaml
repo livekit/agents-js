@@ -263,9 +263,6 @@ importers:
       '@livekit/agents-plugin-google':
         specifier: workspace:*
         version: link:../plugins/google
-      '@livekit/agents-plugin-hedra':
-        specifier: workspace:*
-        version: link:../plugins/hedra
       '@livekit/agents-plugin-inworld':
         specifier: workspace:*
         version: link:../plugins/inworld
