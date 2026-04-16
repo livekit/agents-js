@@ -6,13 +6,25 @@
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
-    "import": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
-    "require": {
-      "types": "./dist/index.d.cts",
-      "default": "./dist/index.cjs"
+    "./functional": {
+      "import": {
+        "types": "./dist/functional/index.d.ts",
+        "default": "./dist/functional/index.js"
+      },
+      "require": {
+        "types": "./dist/functional/index.d.cts",
+        "default": "./dist/functional/index.cjs"
+      }
     }
   },
   "author": "LiveKit",
