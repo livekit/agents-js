@@ -167,7 +167,8 @@ export class AvatarSession {
       body.maxDuration = this.maxDuration;
     }
 
-    for (let i = 0; i < this.connOptions.maxRetry; i++) {
+    const maxAttempts = this.connOptions.maxRetry + 1;
+    for (let i = 0; i < maxAttempts; i++) {
       try {
         const response = await fetch(`${this.apiUrl}/v1/realtime_sessions`, {
           method: 'POST',
@@ -198,7 +199,7 @@ export class AvatarSession {
           this.#logger.error({ error: e }, 'failed to call Runway API');
         }
 
-        if (i < this.connOptions.maxRetry - 1) {
+        if (i < maxAttempts - 1) {
           await new Promise((resolve) =>
             setTimeout(resolve, intervalForRetry(this.connOptions, i)),
           );

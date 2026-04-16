@@ -28,7 +28,7 @@ export RUNWAYML_API_SECRET=<your-runway-api-secret>
 import { AvatarSession } from '@livekit/agents-plugin-runway';
 
 const avatarSession = new AvatarSession({
-  avatarId: 'your-avatar-preset-id',
+  presetId: 'your-avatar-preset-id',
   // apiKey defaults to RUNWAYML_API_SECRET env var
 });
 
