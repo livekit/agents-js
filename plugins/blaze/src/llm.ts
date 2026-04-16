@@ -15,6 +15,7 @@ import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   type BlazeConfig,
+  BlazeHttpError,
   MAX_RETRY_COUNT,
   RETRY_BASE_DELAY_MS,
   type ResolvedBlazeConfig,
@@ -155,6 +156,7 @@ function extractContent(data: Record<string, unknown>): string | null {
 export class BlazeLLMStream extends llm.LLMStream {
   label = 'blaze.LLMStream';
   readonly #opts: ResolvedLLMOptions;
+  readonly #llm: BlazeLLM;
 
   constructor(
     llmInstance: BlazeLLM,
@@ -164,6 +166,26 @@ export class BlazeLLMStream extends llm.LLMStream {
   ) {
     super(llmInstance, { chatCtx, connOptions });
     this.#opts = opts;
+    this.#llm = llmInstance;
+  }
+
+  /**
+   * Emit a non-recoverable error on the LLM instance.
+   *
+   * Errors from run() must be surfaced via the LLM's 'error' event rather
+   * than thrown, because the base class starts run() via a fire-and-forget
+   * setTimeout (startSoon). Throwing from run() would propagate as an
+   * unhandled promise rejection; emitting lets callers handle it through the
+   * standard EventEmitter 'error' channel that voice agents already listen on.
+   */
+  #emitHttpError(error: Error): void {
+    this.#llm.emit('error', {
+      type: 'llm_error',
+      timestamp: Date.now(),
+      label: this.#llm.label(),
+      error,
+      recoverable: false,
+    });
   }
 
   protected async run(): Promise<void> {
@@ -209,7 +231,8 @@ export class BlazeLLMStream extends llm.LLMStream {
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'unknown error');
-          throw new Error(`Blaze LLM error ${response.status}: ${errorText}`);
+          this.#emitHttpError(new BlazeHttpError(response.status, `Blaze LLM error ${response.status}: ${errorText}`));
+          return;
         }
 
         if (!response.body) {
@@ -297,7 +320,10 @@ export class BlazeLLMStream extends llm.LLMStream {
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
           continue;
         }
-        throw err;
+        // Emit error via the LLM instance instead of throwing to avoid
+        // unhandled promise rejection from the fire-and-forget startSoon task.
+        this.#emitHttpError(err instanceof Error ? err : new Error(String(err)));
+        return;
       } finally {
         clearTimeout(timeoutId);
       }
