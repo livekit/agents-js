@@ -231,6 +231,6 @@ export interface AgentBuilderContext {
 // AgentTemplate
 // ---------------------------------------------------------------------------
 
-export type AgentTemplate<Props = void> = (
+export type AgentTemplate<Props = void> = ((
   ...args: Props extends void ? [] : [props: Props]
-) => Agent & { [AGENT_TEMPLATE_ID]: number };
+) => Agent) & { [AGENT_TEMPLATE_ID]: number };

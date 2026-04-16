@@ -222,7 +222,7 @@ export function createAgentTemplate<Props = void>(
       },
 
       tool(name: string, toolInput: ToolInput) {
-        if (name in state.tools) {
+        if (Object.hasOwn(state.tools, name)) {
           throw new Error(
             `Tool '${name}' is already registered. Each tool must have a unique name.`,
           );
@@ -413,7 +413,8 @@ export function createAgentTemplate<Props = void>(
   }) as AgentTemplate<Props>;
 
   Object.defineProperty(factory, AGENT_TEMPLATE_ID, { value: templateId, writable: false });
-  templateRegistry.set(templateId, factory);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  templateRegistry.set(templateId, factory as AgentTemplate<any>);
 
   return factory;
 }
