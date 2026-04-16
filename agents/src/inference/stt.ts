@@ -92,6 +92,7 @@ export interface AssemblyAIOptions {
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
   keyterms_prompt?: string[];
+  // Ref: python livekit-agents/livekit/agents/inference/stt.py - AssemblyaiOptions speaker_labels
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
 }

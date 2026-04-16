@@ -62,6 +62,7 @@ export interface SpeechData {
   confidence: number;
   /** Word-level timing information. */
   words?: TimedString[];
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - SpeechData speaker_id
   /** Speaker identifier when the provider supports diarization. */
   speakerId?: string | null;
 }
@@ -99,6 +100,7 @@ export interface STTCapabilities {
    * - false: Provider does not support aligned transcripts
    */
   alignedTranscript?: 'word' | 'chunk' | false;
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - STTCapabilities diarization
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
 }
