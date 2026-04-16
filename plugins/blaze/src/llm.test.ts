@@ -332,8 +332,7 @@ describe('LLM', () => {
     });
 
     it('sends request even when server returns an error status', async () => {
-      // Note: Framework-level error propagation (events + unhandled rejections) is tested
-      // via integration tests. Here we verify the request is correctly formed.
+      // Verify the request is correctly formed; error should propagate via event.
       fetchMock.mockResolvedValue({
         ok: false,
         status: 429,
@@ -341,14 +340,19 @@ describe('LLM', () => {
       });
 
       const llmInstance = new LLM({ botId: 'bot', authToken: 'tok', apiUrl: 'http://llm:8080' });
-      llmInstance.on('error', () => {}); // suppress error event
       const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
+      const stream = llmInstance.chat({ chatCtx: ctx as never });
 
-      llmInstance.chat({ chatCtx: ctx as never });
+      // The base class emits errors on the LLM instance; the iterator ends normally.
+      let capturedError: Error | undefined;
+      llmInstance.on('error', ({ error }: { error: Error }) => {
+        capturedError = error;
+      });
 
-      // Give the async run() task a tick to start
-      await new Promise((r) => setTimeout(r, 10));
+      // Drain the stream — it ends normally even when the request fails.
+      for await (const _ of stream) { /* consume */ }
 
+      expect(capturedError?.message).toContain('429');
       expect(fetchMock).toHaveBeenCalledOnce();
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toContain('/v1/voicebot-call/bot/chat-conversion-stream');

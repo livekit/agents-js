@@ -79,8 +79,23 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Check if an error is retryable (not an intentional abort). */
+/**
+ * Error thrown for non-retryable HTTP errors (4xx client errors).
+ * `isRetryableError` returns false for this type, preventing pointless retries.
+ */
+export class BlazeHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'BlazeHttpError';
+    this.status = status;
+  }
+}
+
+/** Check if an error is retryable (not an intentional abort or client error). */
 export function isRetryableError(err: unknown): boolean {
   if (err instanceof DOMException && err.name === 'AbortError') return false;
+  // 4xx client errors are deterministic failures — retrying won't help
+  if (err instanceof BlazeHttpError && err.status < 500) return false;
   return true;
 }
