@@ -5,7 +5,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
 import type { Task } from '../utils.js';
-import { Event, Future, shortuuid } from '../utils.js';
+import { Event, Future, dedent, shortuuid } from '../utils.js';
 import { functionCallStorage } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
@@ -21,6 +21,38 @@ export function isSpeechHandle(value: unknown): value is SpeechHandle {
     SPEECH_HANDLE_SYMBOL in value &&
     (value as Record<symbol, boolean>)[SPEECH_HANDLE_SYMBOL] === true
   );
+}
+
+/**
+ * Type returned by `await` on a {@link SpeechHandle}.
+ *
+ * Structurally identical to SpeechHandle at runtime — this alias only exists
+ * to hide the `then` key from the static view. Without it, TypeScript's
+ * `Awaited<T>` unwrap recurses through `SpeechHandle`'s own `.then` callback
+ * parameter forever, emitting TS1062 ("Type is referenced directly or
+ * indirectly in the fulfillment callback of its own 'then' method").
+ * Omitting `then` terminates the unwrap because the pattern
+ * `object & { then(...) }` no longer matches. In practice, calling `.then`
+ * on an already-awaited handle has no meaningful use.
+ */
+export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
+
+/**
+ * Thrown by {@link SpeechHandle.waitForPlayout} when called from inside the
+ * function tool that owns this SpeechHandle. Awaiting the handle that owns the
+ * currently-running tool creates a real circular wait — the handle's playout
+ * cannot finish until the tool returns, but the tool is blocked waiting for
+ * the playout.
+ */
+export class SpeechHandleCircularWaitError extends Error {
+  constructor(functionCallName: string) {
+    super(dedent`
+      Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${functionCallName}' that owns this SpeechHandle.
+      This creates a circular wait: the speech handle is waiting for the function tool to complete, while the function tool is simultaneously waiting for the speech handle.
+      To wait for the assistant's spoken response prior to running this tool, use RunContext.waitForPlayout() instead.
+    `);
+    this.name = 'SpeechHandleCircularWaitError';
+  }
 }
 
 export class SpeechHandle {
@@ -150,18 +182,62 @@ export class SpeechHandle {
    * including any finalization steps beyond initial response generation.
    * This is appropriate to call when you want to ensure the speech output
    * has entirely played out, including any tool calls and response follow-ups.
+   *
+   * @throws {@link SpeechHandleCircularWaitError} if called on the SpeechHandle
+   * that owns the currently-running function tool — that would be a real
+   * circular wait (the tool is blocked waiting for this handle, and the handle
+   * cannot finish until the tool returns). Awaiting a *different* handle
+   * scheduled from inside a tool (e.g.
+   * `session.generateReply().waitForPlayout()`) is safe, because the main
+   * speech-queue loop frees the owning handle's generation slot via
+   * `_markGenerationDone()` before awaiting tool execution.
    */
   async waitForPlayout(): Promise<void> {
     const store = functionCallStorage.getStore();
-    if (store && store?.functionCall) {
-      throw new Error(
-        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
-          'This creates a circular wait: the speech handle is waiting for the function tool to complete, ' +
-          'while the function tool is simultaneously waiting for the speech handle.\n' +
-          "To wait for the assistant's spoken response prior to running this tool, use RunContext.wait_for_playout() instead.",
-      );
+    if (store?.functionCall && store.speechHandle === this) {
+      throw new SpeechHandleCircularWaitError(store.functionCall.name);
     }
     await this.doneFut.await;
+  }
+
+  /**
+   * Makes the SpeechHandle awaitable: `await handle` resolves to the handle
+   * itself once its playout has finished.
+   *
+   * Implementation note: naively returning `this` from `onFulfilled` would
+   * trigger infinite Promise assimilation recursion (the returned thenable
+   * gets unwrapped, calling `.then()` again, forever). We side-step this by
+   * shadowing `.then` with `undefined` on the instance for the duration of
+   * the synchronous `Resolve(this)` call. The spec-level IsCallable check
+   * reads `undefined`, fulfills the outer promise with `this` as a plain
+   * value, and we restore the prototype method immediately after.
+   */
+  then<R1 = ResolvedSpeechHandle, R2 = never>(
+    onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null,
+    onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+  ): Promise<R1 | R2> {
+    return this.waitForPlayout().then(() => {
+      // Create an OWN property `then = undefined` on the instance. Own
+      // properties shadow prototype properties during lookup, so for the
+      // duration of this block `Get(this, "then")` returns undefined even
+      // though the prototype's `then` method is untouched.
+      (this as unknown as { then?: unknown }).then = undefined;
+      try {
+        // `onFulfilled(this)` invokes the Promise machinery's internal
+        // Resolve synchronously. Resolve does Get(this, "then") here →
+        // undefined → IsCallable(undefined) is false → FulfillPromise with
+        // `this` as a plain value (spec: ECMA-262 PromiseResolveFunctions).
+        // No assimilation job is queued, so no recursion into this method.
+        return onFulfilled
+          ? onFulfilled(this as unknown as ResolvedSpeechHandle)
+          : (this as unknown as R1);
+      } finally {
+        // Remove the own property. Lookup now falls through to the
+        // prototype's `then` again, so direct `handle.then(cb)` calls and
+        // re-awaits keep working (the prototype method was never mutated).
+        delete (this as unknown as { then?: unknown }).then;
+      }
+    }, onRejected);
   }
 
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
