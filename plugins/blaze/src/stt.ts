@@ -16,6 +16,7 @@ import { mergeFrames, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import {
   type BlazeConfig,
+  BlazeHttpError,
   MAX_RETRY_COUNT,
   RETRY_BASE_DELAY_MS,
   type ResolvedBlazeConfig,
@@ -190,7 +191,7 @@ export class STT extends stt.STT {
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'unknown error');
-          throw new Error(`Blaze STT error ${response.status}: ${errorText}`);
+          throw new BlazeHttpError(response.status, `Blaze STT error ${response.status}: ${errorText}`);
         }
 
         // 10. Parse response
