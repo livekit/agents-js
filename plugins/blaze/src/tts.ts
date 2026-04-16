@@ -533,7 +533,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(opts.sampleRate, 1);
       let pendingFrame: AudioFrame | undefined;
       let hasPrevSegment = false;
-      let segmentAudioBuf = Buffer.alloc(0);
       let speechEnded = false;
 
       let audioReaderResolve!: () => void;
@@ -552,7 +551,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (isBinary) {
             // Binary audio data
             const buf = data as Buffer;
-            segmentAudioBuf = Buffer.concat([segmentAudioBuf, buf]);
             const chunk = new Uint8Array(buf).buffer;
             for (const frame of bstream.write(chunk)) {
               if (pendingFrame !== undefined) {
@@ -579,12 +577,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                   pendingFrame = frame;
                 }
               }
-              segmentAudioBuf = Buffer.alloc(0);
             } else if (status === 'finished-byte-stream') {
-              // Apply fade-out to segment boundary for smooth audio transition
-              if (segmentAudioBuf.length >= fadeSamples * 2) {
-                applyPcm16Fade(segmentAudioBuf, fadeSamples, !hasPrevSegment, true);
-              }
               hasPrevSegment = true;
             } else if (status === 'speech-end') {
               speechEnded = true;
