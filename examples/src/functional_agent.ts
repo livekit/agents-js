@@ -64,8 +64,9 @@ const MyAgent = createAgentTemplate<MyAgentProps>((ctx, _props) => {
   });
 
   ctx.onEnter(async () => {
-    const logger = log();
-    logger.info({ agentId: ctx.id }, 'Agent entered');
+    ctx.session.generateReply({
+      userInput: 'Greet the user',
+    });
   });
 
   ctx.onUserTurnCompleted(async (_chatCtx, newMessage) => {
@@ -111,8 +112,6 @@ export default defineAgent({
       agent,
       room: ctx.room,
     });
-
-    session.say('Hello, how can I help you today?');
   },
 });
 
