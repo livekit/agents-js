@@ -23,6 +23,20 @@ export function isSpeechHandle(value: unknown): value is SpeechHandle {
   );
 }
 
+/**
+ * Type returned by `await` on a {@link SpeechHandle}.
+ *
+ * Structurally identical to SpeechHandle at runtime — this alias only exists
+ * to hide the `then` key from the static view. Without it, TypeScript's
+ * `Awaited<T>` unwrap recurses through `SpeechHandle`'s own `.then` callback
+ * parameter forever, emitting TS1062 ("Type is referenced directly or
+ * indirectly in the fulfillment callback of its own 'then' method").
+ * Omitting `then` terminates the unwrap because the pattern
+ * `object & { then(...) }` no longer matches. In practice, calling `.then`
+ * on an already-awaited handle has no meaningful use.
+ */
+export type ResolvedSpeechHandle = Omit<SpeechHandle, 'then'>;
+
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
   static SPEECH_PRIORITY_LOW = 0;
@@ -184,8 +198,8 @@ export class SpeechHandle {
    * reads `undefined`, fulfills the outer promise with `this` as a plain
    * value, and we restore the prototype method immediately after.
    */
-  then<R1 = SpeechHandle, R2 = never>(
-    onFulfilled?: ((value: SpeechHandle) => R1 | PromiseLike<R1>) | null,
+  then<R1 = ResolvedSpeechHandle, R2 = never>(
+    onFulfilled?: ((value: ResolvedSpeechHandle) => R1 | PromiseLike<R1>) | null,
     onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
   ): Promise<R1 | R2> {
     return this.waitForPlayout().then(() => {
@@ -200,7 +214,9 @@ export class SpeechHandle {
         // undefined → IsCallable(undefined) is false → FulfillPromise with
         // `this` as a plain value (spec: ECMA-262 PromiseResolveFunctions).
         // No assimilation job is queued, so no recursion into this method.
-        return onFulfilled ? onFulfilled(this) : (this as unknown as R1);
+        return onFulfilled
+          ? onFulfilled(this as unknown as ResolvedSpeechHandle)
+          : (this as unknown as R1);
       } finally {
         // Remove the own property. Lookup now falls through to the
         // prototype's `then` again, so direct `handle.then(cb)` calls and
