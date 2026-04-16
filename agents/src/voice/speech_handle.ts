@@ -170,6 +170,46 @@ export class SpeechHandle {
     await this.doneFut.await;
   }
 
+  /**
+   * Makes the SpeechHandle awaitable: `await handle` resolves to the handle
+   * itself once its playout has finished.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/speech_handle.py - 184-189 lines
+   *
+   * Implementation note: naively returning `this` from `onFulfilled` would
+   * trigger infinite Promise assimilation recursion (the returned thenable
+   * gets unwrapped, calling `.then()` again, forever). We side-step this by
+   * shadowing `.then` with `undefined` on the instance for the duration of
+   * the synchronous `Resolve(this)` call. The spec-level IsCallable check
+   * reads `undefined`, fulfills the outer promise with `this` as a plain
+   * value, and we restore the prototype method immediately after.
+   */
+  then<R1 = SpeechHandle, R2 = never>(
+    onFulfilled?: ((value: SpeechHandle) => R1 | PromiseLike<R1>) | null,
+    onRejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+  ): Promise<R1 | R2> {
+    return this.waitForPlayout().then(() => {
+      // Create an OWN property `then = undefined` on the instance. Own
+      // properties shadow prototype properties during lookup, so for the
+      // duration of this block `Get(this, "then")` returns undefined even
+      // though the prototype's `then` method is untouched.
+      (this as unknown as { then?: unknown }).then = undefined;
+      try {
+        // `onFulfilled(this)` invokes the Promise machinery's internal
+        // Resolve synchronously. Resolve does Get(this, "then") here →
+        // undefined → IsCallable(undefined) is false → FulfillPromise with
+        // `this` as a plain value (spec: ECMA-262 PromiseResolveFunctions).
+        // No assimilation job is queued, so no recursion into this method.
+        return onFulfilled ? onFulfilled(this) : (this as unknown as R1);
+      } finally {
+        // Remove the own property. Lookup now falls through to the
+        // prototype's `then` again, so direct `handle.then(cb)` calls and
+        // re-awaits keep working (the prototype method was never mutated).
+        delete (this as unknown as { then?: unknown }).then;
+      }
+    }, onRejected);
+  }
+
   async waitIfNotInterrupted(aw: Promise<unknown>[]): Promise<void> {
     const allTasksPromise = ThrowsPromise.all(aw);
     const fs: Promise<unknown>[] = [allTasksPromise, this.interruptFut.await];
