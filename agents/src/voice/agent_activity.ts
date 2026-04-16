@@ -172,6 +172,11 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future<void, never>;
   private speechTasks: Set<Task<void>> = new Set();
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 210 lines
+  // Handles whose TTS playout has finished but whose tool execution is still running.
+  // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
+  // still own an in-flight tool call (which may have scheduled further speech handles).
+  private _backgroundSpeeches: Set<SpeechHandle> = new Set();
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -1231,6 +1236,17 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1199-1205 lines
+  private _interruptBackgroundSpeeches(force: boolean): SpeechHandle[] {
+    const interrupted: SpeechHandle[] = [];
+    for (const speech of this._backgroundSpeeches) {
+      if (force || speech.allowInterruptions) {
+        interrupted.push(speech.interrupt(force));
+      }
+    }
+    return interrupted;
+  }
+
   private createSpeechTask(options: {
     taskFn: (controller: AbortController) => Promise<void>;
     controller?: AbortController;
@@ -1550,7 +1566,8 @@ export class AgentActivity implements RecognitionHooks {
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
-    //TODO(AJS-273): add interrupt for background speeches
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1199-1218 lines
+    this._interruptBackgroundSpeeches(force);
 
     currentSpeech?.interrupt(force);
 
@@ -2268,9 +2285,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2619-2630 lines
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
-    await executeToolsTask.result;
+    this._backgroundSpeeches.add(speechHandle);
+    try {
+      await executeToolsTask.result;
+    } finally {
+      this._backgroundSpeeches.delete(speechHandle);
+    }
 
     if (toolOutput.output.length === 0) return;
 
@@ -2729,11 +2752,17 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(brian): add tracing span
     }
 
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3178-3189 lines
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
 
-    await executeToolsTask.result;
+    this._backgroundSpeeches.add(speechHandle);
+    try {
+      await executeToolsTask.result;
+    } finally {
+      this._backgroundSpeeches.delete(speechHandle);
+    }
 
     if (toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');

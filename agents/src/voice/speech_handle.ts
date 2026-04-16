@@ -152,13 +152,19 @@ export class SpeechHandle {
    * has entirely played out, including any tool calls and response follow-ups.
    */
   async waitForPlayout(): Promise<void> {
+    // Ref: python livekit-agents/livekit/agents/voice/speech_handle.py - 156-182 lines
+    // Only throw when the running function tool is owned by *this* SpeechHandle —
+    // that's the true circular wait. Waiting on a different handle scheduled from
+    // inside the tool (e.g. session.generateReply().waitForPlayout()) is safe,
+    // because the main speech-queue loop frees the owning handle's generation slot
+    // via _markGenerationDone() before awaiting tool execution.
     const store = functionCallStorage.getStore();
-    if (store && store?.functionCall) {
+    if (store?.functionCall && store.speechHandle === this) {
       throw new Error(
-        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}'. ` +
+        `Cannot call 'SpeechHandle.waitForPlayout()' from inside the function tool '${store.functionCall.name}' that owns this SpeechHandle. ` +
           'This creates a circular wait: the speech handle is waiting for the function tool to complete, ' +
           'while the function tool is simultaneously waiting for the speech handle.\n' +
-          "To wait for the assistant's spoken response prior to running this tool, use RunContext.wait_for_playout() instead.",
+          "To wait for the assistant's spoken response prior to running this tool, use RunContext.waitForPlayout() instead.",
       );
     }
     await this.doneFut.await;
