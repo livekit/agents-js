@@ -585,12 +585,11 @@ class SynthesizeStream extends tts.SynthesizeStream {
             }
 
             // Create TimedString objects for the framework pipeline
-            // Add trailing space to each word for proper transcript rendering
             for (let i = 0; i < words.length; i++) {
               if (words[i] !== undefined && starts[i] !== undefined && ends[i] !== undefined) {
                 pendingTimedTranscripts.push(
                   createTimedString({
-                    text: words[i] + ' ',
+                    text: words[i]!,
                     startTime: starts[i],
                     endTime: ends[i],
                   }),
