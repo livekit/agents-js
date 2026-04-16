@@ -441,7 +441,6 @@ function toolNames(toolCtx: ToolContext | undefined): string[] {
   return Object.keys(toolCtx);
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/remote_session.py - 328-335 lines
 function protoSerializeOptions(opts: {
   turnHandling?: {
     endpointing?: unknown;

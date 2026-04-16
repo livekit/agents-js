@@ -50,7 +50,6 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     );
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 205-244 lines
   const turnHandling: TurnHandlingOptions = {
     interruption: {
       discardAudioIfUninterruptible: voiceOptions?.discardAudioIfUninterruptible,
@@ -86,7 +85,6 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 240-244 lines
   // Migrate deprecated top-level preemptiveGeneration boolean into turn_handling
   const deprecatedPreemptiveGen =
     legacyOptions.preemptiveGeneration ?? voiceOptions?.preemptiveGeneration;
@@ -127,7 +125,6 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 171-179 lines
 export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
     turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
@@ -144,7 +141,6 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
  * Build a partial {@link TurnHandlingOptions} from deprecated Agent constructor fields.
  * Mirrors the Python Agent compatibility path, but keeps the JS API surface explicit.
  */
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 198-244 lines
 export function migrateTurnHandling(opts: {
   turnDetection?: TurnDetectionMode;
   allowInterruptions?: boolean;

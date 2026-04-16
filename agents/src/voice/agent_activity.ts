@@ -179,7 +179,6 @@ export class AgentActivity implements RecognitionHooks {
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 165 lines
   private _preemptiveGenerationCount = 0;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
@@ -1183,7 +1182,6 @@ export class AgentActivity implements RecognitionHooks {
     // TODO: resume false interruption - start interrupt paused speech task
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1798-1825 lines
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
     const preemptiveOpts = this.agentSession.sessionOptions.turnHandling.preemptiveGeneration;
     if (
@@ -1197,7 +1195,6 @@ export class AgentActivity implements RecognitionHooks {
 
     this.cancelPreemptiveGeneration();
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1810-1813 lines
     if (
       info.startedSpeakingAt !== undefined &&
       Date.now() - info.startedSpeakingAt > preemptiveOpts.maxSpeechDuration
@@ -1205,7 +1202,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1815-1816 lines
     if (this._preemptiveGenerationCount >= preemptiveOpts.maxRetries) {
       return;
     }
@@ -1623,7 +1619,6 @@ export class AgentActivity implements RecognitionHooks {
       await oldTask.result;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1902 lines
     this._preemptiveGenerationCount = 0;
 
     // When the audio recognition detects the end of a user turn:
@@ -2005,7 +2000,6 @@ export class AgentActivity implements RecognitionHooks {
     let ttsGenData: _TTSGenerationData | null = null;
     let llmOutput: ReadableStream<string>;
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2409-2467 lines
     // Helper to start TTS inference, used both for preemptive and deferred TTS start.
     // We always tee the LLM output stream upfront when audio is needed, so the ttsTextInput
     // is available regardless of when TTS actually starts.
@@ -2055,7 +2049,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2451-2453 lines
     // Start TTS inference if not already started and audio output is enabled
     if (audioOutput && ttsTask === null) {
       [ttsTask, ttsGenData] = startTtsInference();
@@ -2072,7 +2065,6 @@ export class AgentActivity implements RecognitionHooks {
     // Determine the transcription input source
     let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2455-2465 lines
     // Check if we should use TTS aligned transcripts
     if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
       // Race timedTextsFut with ttsTask to avoid hanging if TTS fails before resolving the future

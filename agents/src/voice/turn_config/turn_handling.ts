@@ -26,7 +26,6 @@ import {
  * });
  * ```
  */
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 144-175 lines
 export interface TurnHandlingOptions {
   /**
    * Strategy for deciding when the user has finished speaking.

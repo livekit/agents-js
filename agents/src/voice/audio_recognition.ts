@@ -619,7 +619,6 @@ export class AudioRecognition {
               { transcript: this.audioTranscript },
               'triggering preemptive generation (FINAL_TRANSCRIPT)',
             );
-            // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1808-1813 lines
             this.hooks.onPreemptiveGeneration({
               newTranscript: this.audioTranscript,
               transcriptConfidence:
@@ -687,7 +686,6 @@ export class AudioRecognition {
             },
             'triggering preemptive generation (PREFLIGHT_TRANSCRIPT)',
           );
-          // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1808-1813 lines
           this.hooks.onPreemptiveGeneration({
             newTranscript: this.audioPreflightTranscript,
             transcriptConfidence:

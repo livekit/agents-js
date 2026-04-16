@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 115-143 lines
 /**
  * Configuration for preemptive generation.
  */
@@ -35,7 +34,6 @@ export interface PreemptiveGenerationOptions {
   maxRetries: number;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 136-141 lines
 export const defaultPreemptiveGenerationOptions = {
   enabled: true,
   preemptiveTts: false,
