@@ -56,6 +56,8 @@ export interface EndOfTurnInfo {
 export interface PreemptiveGenerationInfo {
   newTranscript: string;
   transcriptConfidence: number;
+  /** Timestamp when user started speaking (milliseconds since epoch), if known. */
+  startedSpeakingAt: number | undefined;
 }
 
 export interface RecognitionHooks {
@@ -617,6 +619,7 @@ export class AudioRecognition {
               { transcript: this.audioTranscript },
               'triggering preemptive generation (FINAL_TRANSCRIPT)',
             );
+            // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1808-1813 lines
             this.hooks.onPreemptiveGeneration({
               newTranscript: this.audioTranscript,
               transcriptConfidence:
@@ -624,6 +627,7 @@ export class AudioRecognition {
                   ? this.finalTranscriptConfidence.reduce((a, b) => a + b, 0) /
                     this.finalTranscriptConfidence.length
                   : 0,
+              startedSpeakingAt: this.speechStartTime,
             });
           }
 
@@ -683,12 +687,14 @@ export class AudioRecognition {
             },
             'triggering preemptive generation (PREFLIGHT_TRANSCRIPT)',
           );
+          // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1808-1813 lines
           this.hooks.onPreemptiveGeneration({
             newTranscript: this.audioPreflightTranscript,
             transcriptConfidence:
               confidenceVals.length > 0
                 ? confidenceVals.reduce((a, b) => a + b, 0) / confidenceVals.length
                 : 0,
+            startedSpeakingAt: this.speechStartTime,
           });
         }
         break;

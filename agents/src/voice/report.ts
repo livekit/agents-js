@@ -131,6 +131,8 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       min_endpointing_delay: minEndpointingDelay,
       max_endpointing_delay: maxEndpointingDelay,
       max_tool_steps: options.maxToolSteps,
+      // Ref: python livekit-agents/livekit/agents/voice/report.py - 66 lines
+      preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
     },
     chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
     enable_user_data_training: report.enableRecording,

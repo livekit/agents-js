@@ -10,11 +10,11 @@ import {
 } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
+import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
 const defaultSessionOptions = {
   maxToolSteps: 3,
-  preemptiveGeneration: true,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
   turnHandling: {},
@@ -25,7 +25,6 @@ const defaultLegacyVoiceOptions: VoiceOptions = {
   minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,
   maxEndpointingDelay: defaultTurnHandlingOptions.endpointing.maxDelay,
   maxToolSteps: defaultSessionOptions.maxToolSteps,
-  preemptiveGeneration: defaultSessionOptions.preemptiveGeneration,
 };
 
 export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOptions<UserData>): {
@@ -51,6 +50,7 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     );
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 205-244 lines
   const turnHandling: TurnHandlingOptions = {
     interruption: {
       discardAudioIfUninterruptible: voiceOptions?.discardAudioIfUninterruptible,
@@ -62,6 +62,9 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
       minDelay: voiceOptions?.minEndpointingDelay,
       maxDelay: voiceOptions?.maxEndpointingDelay,
       ...sessionOptions.turnHandling?.endpointing,
+    },
+    preemptiveGeneration: {
+      ...sessionOptions.turnHandling?.preemptiveGeneration,
     },
 
     turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
@@ -79,11 +82,24 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
   if (voiceOptions?.maxToolSteps !== undefined) {
     migratedVoiceOptions.maxToolSteps = voiceOptions.maxToolSteps;
   }
-  if (voiceOptions?.preemptiveGeneration !== undefined) {
-    migratedVoiceOptions.preemptiveGeneration = voiceOptions.preemptiveGeneration;
-  }
   if (voiceOptions?.userAwayTimeout !== undefined) {
     migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 240-244 lines
+  // Migrate deprecated top-level preemptiveGeneration boolean into turn_handling
+  const deprecatedPreemptiveGen =
+    legacyOptions.preemptiveGeneration ?? voiceOptions?.preemptiveGeneration;
+  if (deprecatedPreemptiveGen !== undefined) {
+    logger.warn(
+      'preemptiveGeneration as a top-level option is deprecated, use turnHandling.preemptiveGeneration instead',
+    );
+    if (turnHandling.preemptiveGeneration.enabled === undefined) {
+      turnHandling.preemptiveGeneration = {
+        ...turnHandling.preemptiveGeneration,
+        enabled: deprecatedPreemptiveGen,
+      };
+    }
   }
 
   const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
@@ -111,11 +127,16 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
+// Ref: python livekit-agents/livekit/agents/voice/turn.py - 171-179 lines
 export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
     turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
+    preemptiveGeneration: {
+      ...defaultPreemptiveGenerationOptions,
+      ...stripUndefined(config.preemptiveGeneration ?? {}),
+    },
   } as const;
 }
 
@@ -123,9 +144,11 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
  * Build a partial {@link TurnHandlingOptions} from deprecated Agent constructor fields.
  * Mirrors the Python Agent compatibility path, but keeps the JS API surface explicit.
  */
+// Ref: python livekit-agents/livekit/agents/voice/turn.py - 198-244 lines
 export function migrateTurnHandling(opts: {
   turnDetection?: TurnDetectionMode;
   allowInterruptions?: boolean;
+  preemptiveGeneration?: boolean;
   minEndpointingDelay?: number;
   maxEndpointingDelay?: number;
   turnHandling?: TurnHandlingOptions;
@@ -159,9 +182,16 @@ export function migrateTurnHandling(opts: {
     migrated.turnDetection = opts.turnDetection;
   }
 
+  if (opts.preemptiveGeneration !== undefined) {
+    migrated.preemptiveGeneration = { enabled: opts.preemptiveGeneration };
+  }
+
   return {
     ...(migrated.endpointing ? { endpointing: migrated.endpointing } : {}),
     ...(migrated.interruption ? { interruption: migrated.interruption } : {}),
     ...(migrated.turnDetection !== undefined ? { turnDetection: migrated.turnDetection } : {}),
+    ...(migrated.preemptiveGeneration
+      ? { preemptiveGeneration: migrated.preemptiveGeneration }
+      : {}),
   };
 }

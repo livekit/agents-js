@@ -4,11 +4,29 @@
 import type { TurnDetectionMode } from '../agent_session.js';
 import { type EndpointingOptions, defaultEndpointingOptions } from './endpointing.js';
 import { type InterruptionOptions, defaultInterruptionOptions } from './interruption.js';
+import {
+  type PreemptiveGenerationOptions,
+  defaultPreemptiveGenerationOptions,
+} from './preemptive_generation.js';
 
 /**
  * Configuration for the turn handling system. Used to configure the turn taking behavior of the
  * session.
+ *
+ * @example
+ * ```ts
+ * session.start({
+ *   agent,
+ *   room,
+ *   turnHandling: {
+ *     endpointing: { minDelay: 300 },
+ *     interruption: { enabled: false },
+ *     preemptiveGeneration: { preemptiveTts: true },
+ *   },
+ * });
+ * ```
  */
+// Ref: python livekit-agents/livekit/agents/voice/turn.py - 144-175 lines
 export interface TurnHandlingOptions {
   /**
    * Strategy for deciding when the user has finished speaking.
@@ -31,15 +49,21 @@ export interface TurnHandlingOptions {
    * Configuration for interruption handling.
    */
   interruption: Partial<InterruptionOptions>;
+  /**
+   * Preemptive generation configuration. Use `{ enabled: false }` to disable.
+   */
+  preemptiveGeneration: Partial<PreemptiveGenerationOptions>;
 }
 
 export interface InternalTurnHandlingOptions extends TurnHandlingOptions {
   endpointing: EndpointingOptions;
   interruption: InterruptionOptions;
+  preemptiveGeneration: PreemptiveGenerationOptions;
 }
 
 export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
   turnDetection: undefined,
   interruption: defaultInterruptionOptions,
   endpointing: defaultEndpointingOptions,
+  preemptiveGeneration: defaultPreemptiveGenerationOptions,
 };
