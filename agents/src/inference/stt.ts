@@ -74,6 +74,9 @@ export interface DeepgramOptions {
   numerals?: boolean;
   /** Opt out of model improvement program. */
   mip_opt_out?: boolean;
+  // Ref: python livekit-agents/livekit/agents/inference/stt.py - DeepgramOptions diarize
+  /** Enable speaker diarization. Default: false. */
+  diarize?: boolean;
   /** Eager end-of-turn threshold (0.0–1.0). Enables preflight transcripts for preemptive generation. */
   eager_eot_threshold?: number;
 }
@@ -429,11 +432,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language'>>): void {
+  updateOptions(
+    opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
+  ): void {
+    const mergedModelOptions = opts.modelOptions
+      ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
+      : this.opts.modelOptions;
+
     this.opts = {
       ...this.opts,
       ...opts,
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+      modelOptions: mergedModelOptions,
     };
     this.reconnectEvent.set();
   }

@@ -311,4 +311,17 @@ describe('STT diarization capabilities', () => {
     expect(stt['opts'].modelOptions).toHaveProperty('endpointing', 500);
     expect(stt.capabilities.diarization).toBe(true);
   });
+
+  it('updateOptions merges modelOptions on associated streams', () => {
+    const stt = makeStt({ modelOptions: { diarize: true } });
+    const stream = stt.stream();
+
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+
+    // The stream's local modelOptions must be the merged object, not the partial.
+    expect(stream['opts'].modelOptions).toHaveProperty('diarize', true);
+    expect(stream['opts'].modelOptions).toHaveProperty('endpointing', 500);
+
+    stream.close();
+  });
 });
