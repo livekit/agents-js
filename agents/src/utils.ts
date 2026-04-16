@@ -12,10 +12,14 @@ import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  TransformStream,
+  type TransformStreamDefaultController,
+} from 'node:stream/web';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
+import { isStreamReaderReleaseError } from './stream/deferred_stream.js';
 
 /**
  * Recursively expands all nested properties of a type,
@@ -823,6 +827,92 @@ export function delay(ms: number, options: DelayOptions = {}): Promise<void> {
     };
     const i = setTimeout(done, ms);
     signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+/**
+ * Converts a ReadableStream into an AsyncGenerator. When the stream is cancelled,
+ * closed, or encounters an error, the generator terminates cleanly. Stream-reader
+ * release errors (from concurrent close / releaseLock) are swallowed so callers
+ * can simply `for await` without boilerplate try/catch around reader lifecycle.
+ *
+ * If an `AbortSignal` is provided, the generator races each read against the abort
+ * event — equivalent to the manual `Promise.race([reader.read(), abortPromise])`
+ * pattern that is otherwise repeated across STT/TTS plugins.
+ */
+export async function* readableStreamToAsyncIterable<T>(
+  stream: ReadableStream<T>,
+  signal?: AbortSignal,
+): AsyncGenerator<T, void, undefined> {
+  if (signal?.aborted) return;
+  const reader = stream.getReader();
+  let streamEnded = false;
+  try {
+    if (signal) {
+      const abortPromise = waitForAbort(signal);
+      while (true) {
+        const result = await ThrowsPromise.race([reader.read(), abortPromise]);
+        if (!result) break;
+        const { done, value } = result;
+        if (done) {
+          streamEnded = true;
+          break;
+        }
+        yield value;
+      }
+    } else {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          streamEnded = true;
+          break;
+        }
+        yield value;
+      }
+    }
+  } catch (e) {
+    if (isStreamReaderReleaseError(e)) return;
+    throw e;
+  } finally {
+    try {
+      if (!streamEnded) {
+        await reader.cancel();
+      }
+      reader.releaseLock();
+    } catch {
+      // stream cleanup errors are expected during concurrent teardown
+    }
+  }
+}
+
+/**
+ * Wraps an AsyncIterable in a ReadableStream.  When the ReadableStream is
+ * cancelled (e.g. by the framework tearing down the pipeline), the backing
+ * async iterator is properly returned so that `finally` blocks inside the
+ * generator execute.
+ */
+export function asyncIterableToReadableStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  let cancelled = false;
+
+  return new ReadableStream<T>({
+    async pull(controller) {
+      if (cancelled) return;
+      try {
+        const { done, value } = await iterator.next();
+        if (done || cancelled) {
+          if (!cancelled) controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel() {
+      cancelled = true;
+      await iterator.return?.(undefined);
+    },
   });
 }
 

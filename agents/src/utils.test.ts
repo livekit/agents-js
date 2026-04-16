@@ -5,7 +5,17 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, Task, TaskResult, dedent, delay, isPending, resampleStream } from '../src/utils.js';
+import {
+  Event,
+  Task,
+  TaskResult,
+  asyncIterableToReadableStream,
+  dedent,
+  delay,
+  isPending,
+  readableStreamToAsyncIterable,
+  resampleStream,
+} from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -821,6 +831,304 @@ world
       const outputFrames = await streamToArray(outputStream);
 
       expect(outputFrames).toEqual([]);
+    });
+  });
+
+  describe('readableStreamToAsyncIterable', () => {
+    it('should yield all values from a ReadableStream', async () => {
+      const stream = new ReadableStream<number>({
+        start(controller) {
+          controller.enqueue(1);
+          controller.enqueue(2);
+          controller.enqueue(3);
+          controller.close();
+        },
+      });
+
+      const result: number[] = [];
+      for await (const value of readableStreamToAsyncIterable(stream)) {
+        result.push(value);
+      }
+      expect(result).toEqual([1, 2, 3]);
+    });
+
+    it('should handle an empty stream', async () => {
+      const stream = new ReadableStream<number>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      const result: number[] = [];
+      for await (const value of readableStreamToAsyncIterable(stream)) {
+        result.push(value);
+      }
+      expect(result).toEqual([]);
+    });
+
+    it('should stop when the signal is already aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const stream = new ReadableStream<number>({
+        start(c) {
+          c.enqueue(1);
+          c.close();
+        },
+      });
+
+      const result: number[] = [];
+      for await (const value of readableStreamToAsyncIterable(stream, controller.signal)) {
+        result.push(value);
+      }
+      expect(result).toEqual([]);
+    });
+
+    it('should stop iteration when signal is aborted mid-stream', async () => {
+      const ac = new AbortController();
+      let enqueueNext: ((v: number) => void) | null = null;
+
+      const stream = new ReadableStream<number>({
+        start(controller) {
+          let n = 0;
+          enqueueNext = (v: number) => {
+            n++;
+            if (n > 10) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(v);
+          };
+        },
+      });
+
+      const result: number[] = [];
+      const iterPromise = (async () => {
+        for await (const value of readableStreamToAsyncIterable(stream, ac.signal)) {
+          result.push(value);
+        }
+      })();
+
+      enqueueNext!(1);
+      enqueueNext!(2);
+      await delay(10);
+      ac.abort();
+      await iterPromise;
+
+      expect(result).toEqual([1, 2]);
+    });
+
+    it('should handle stream errors by propagating them', async () => {
+      let pullCount = 0;
+      const stream = new ReadableStream<number>({
+        pull(controller) {
+          pullCount++;
+          if (pullCount === 1) {
+            controller.enqueue(1);
+          } else {
+            controller.error(new Error('stream broke'));
+          }
+        },
+      });
+
+      const result: number[] = [];
+      await expect(async () => {
+        for await (const value of readableStreamToAsyncIterable(stream)) {
+          result.push(value);
+        }
+      }).rejects.toThrow('stream broke');
+      expect(result).toEqual([1]);
+    });
+
+    it('should release the reader lock after iteration completes', async () => {
+      const stream = new ReadableStream<number>({
+        start(controller) {
+          controller.enqueue(42);
+          controller.close();
+        },
+      });
+
+      const result: number[] = [];
+      for await (const value of readableStreamToAsyncIterable(stream)) {
+        result.push(value);
+      }
+
+      const reader = stream.getReader();
+      const { done } = await reader.read();
+      expect(done).toBe(true);
+      reader.releaseLock();
+    });
+
+    it('should release the reader lock after abort', async () => {
+      const ac = new AbortController();
+      let enqueue: ((v: number) => void) | null = null;
+
+      const stream = new ReadableStream<number>({
+        start(controller) {
+          enqueue = (v) => controller.enqueue(v);
+        },
+      });
+
+      const iterPromise = (async () => {
+        for await (const _ of readableStreamToAsyncIterable(stream, ac.signal)) {
+          // consume
+        }
+      })();
+
+      enqueue!(1);
+      await delay(10);
+      ac.abort();
+      await iterPromise;
+
+      const reader = stream.getReader();
+      reader.releaseLock();
+    });
+  });
+
+  describe('asyncIterableToReadableStream', () => {
+    it('should produce all values from an async iterable', async () => {
+      async function* gen() {
+        yield 'a';
+        yield 'b';
+        yield 'c';
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const reader = stream.getReader();
+      const result: string[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      reader.releaseLock();
+      expect(result).toEqual(['a', 'b', 'c']);
+    });
+
+    it('should handle an empty async iterable', async () => {
+      async function* gen(): AsyncGenerator<number> {
+        // yields nothing
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const reader = stream.getReader();
+      const { done } = await reader.read();
+      expect(done).toBe(true);
+      reader.releaseLock();
+    });
+
+    it('should run generator finally block when stream is cancelled', async () => {
+      let finallyCalled = false;
+
+      async function* gen() {
+        try {
+          yield 1;
+          yield 2;
+          await delay(5000);
+          yield 3;
+        } finally {
+          finallyCalled = true;
+        }
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const reader = stream.getReader();
+
+      const { value: first } = await reader.read();
+      expect(first).toBe(1);
+
+      await reader.cancel();
+      expect(finallyCalled).toBe(true);
+    });
+
+    it('should stop yielding after stream cancel', async () => {
+      let yieldCount = 0;
+
+      async function* gen() {
+        while (true) {
+          yieldCount++;
+          yield yieldCount;
+          await delay(10);
+        }
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const reader = stream.getReader();
+
+      await reader.read();
+      await reader.read();
+      const countBeforeCancel = yieldCount;
+      await reader.cancel();
+
+      await delay(50);
+      expect(yieldCount).toBe(countBeforeCancel);
+    });
+
+    it('should propagate generator errors to the stream reader', async () => {
+      async function* gen() {
+        yield 1;
+        throw new Error('generator failed');
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const reader = stream.getReader();
+
+      const { value } = await reader.read();
+      expect(value).toBe(1);
+
+      await expect(reader.read()).rejects.toThrow('generator failed');
+    });
+
+    it('round-trip: stream → iterable → stream preserves values', async () => {
+      const original = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('x');
+          controller.enqueue('y');
+          controller.enqueue('z');
+          controller.close();
+        },
+      });
+
+      const iterable = readableStreamToAsyncIterable(original);
+      const rebuilt = asyncIterableToReadableStream(iterable);
+
+      const reader = rebuilt.getReader();
+      const result: string[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      reader.releaseLock();
+      expect(result).toEqual(['x', 'y', 'z']);
+    });
+
+    it('round-trip: cancel on rebuilt stream stops the original', async () => {
+      let finallyCalled = false;
+
+      async function* gen() {
+        try {
+          let i = 0;
+          while (true) {
+            yield i++;
+            await delay(10);
+          }
+        } finally {
+          finallyCalled = true;
+        }
+      }
+
+      const stream = asyncIterableToReadableStream(gen());
+      const iterable = readableStreamToAsyncIterable(stream);
+      const rebuilt = asyncIterableToReadableStream(iterable);
+
+      const reader = rebuilt.getReader();
+      await reader.read();
+      await reader.read();
+      await reader.cancel();
+
+      await delay(20);
+      expect(finallyCalled).toBe(true);
     });
   });
 });
