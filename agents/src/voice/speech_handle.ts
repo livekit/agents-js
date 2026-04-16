@@ -66,10 +66,7 @@ export class SpeechHandle {
   private interruptFut = new Future<void>();
   private authorizedEvent = new Event();
   private scheduledFut = new Future<void>();
-  // doneFut is never rejected — only _markDone() resolves it. Typing E as
-  // `never` lets waitForPlayout's ThrowsPromise narrow its rejection type to
-  // only SpeechHandleCircularWaitError.
-  private doneFut = new Future<void, never>();
+  private doneFut = new Future<void>();
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
 
@@ -195,16 +192,12 @@ export class SpeechHandle {
    * speech-queue loop frees the owning handle's generation slot via
    * `_markGenerationDone()` before awaiting tool execution.
    */
-  waitForPlayout(): ThrowsPromise<void, SpeechHandleCircularWaitError> {
+  async waitForPlayout(): Promise<void> {
     const store = functionCallStorage.getStore();
     if (store?.functionCall && store.speechHandle === this) {
-      return ThrowsPromise.reject(new SpeechHandleCircularWaitError(store.functionCall.name));
+      throw new SpeechHandleCircularWaitError(store.functionCall.name);
     }
-    // doneFut is Future<void, never>, so its awaitable is a ThrowsPromise that
-    // never rejects. Widening to ThrowsPromise<void, SpeechHandleCircularWaitError>
-    // is safe (adding a possible rejection type the promise won't actually use)
-    // but the type isn't assignable in either direction, so cast explicitly.
-    return this.doneFut.await as unknown as ThrowsPromise<void, SpeechHandleCircularWaitError>;
+    await this.doneFut.await;
   }
 
   /**
