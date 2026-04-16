@@ -5,7 +5,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { STT, type STTFallbackModel, normalizeSTTFallback, parseSTTModelString } from './stt.js';
+import {
+  STT,
+  type STTFallbackModel,
+  type XaiSTTModels,
+  normalizeSTTFallback,
+  parseSTTModelString,
+} from './stt.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -249,5 +255,60 @@ describe('STT constructor fallback and connOptions', () => {
     expect(stt['opts'].connOptions!.timeoutMs).toBe(60000);
     expect(stt['opts'].connOptions!.maxRetry).toBe(10);
     expect(stt['opts'].connOptions!.retryIntervalMs).toBe(2000);
+  });
+});
+
+// Ref: python tests/test_inference_stt_fallback.py - TestSTTDiarizationCapabilities
+describe('STT diarization capabilities', () => {
+  it('no diarization by default', () => {
+    const stt = makeStt();
+    expect(stt.capabilities.diarization).toBe(false);
+  });
+
+  it('diarization enabled with deepgram diarize option', () => {
+    const stt = makeStt({ modelOptions: { diarize: true } });
+    expect(stt.capabilities.diarization).toBe(true);
+  });
+
+  it('diarization disabled with diarize false', () => {
+    const stt = makeStt({ modelOptions: { diarize: false } });
+    expect(stt.capabilities.diarization).toBe(false);
+  });
+
+  it('diarization enabled with assemblyai speaker_labels', () => {
+    const stt = makeStt({
+      model: 'assemblyai/universal-streaming',
+      modelOptions: { speaker_labels: true },
+    });
+    expect(stt.capabilities.diarization).toBe(true);
+  });
+
+  it('updateOptions toggles diarization capability', () => {
+    const stt = makeStt();
+    expect(stt.capabilities.diarization).toBe(false);
+
+    stt.updateOptions({ modelOptions: { diarize: true } as Record<string, unknown> });
+    expect(stt.capabilities.diarization).toBe(true);
+
+    stt.updateOptions({ modelOptions: { diarize: false } as Record<string, unknown> });
+    expect(stt.capabilities.diarization).toBe(false);
+  });
+
+  it('diarization enabled with xai diarize option', () => {
+    const stt = makeStt({
+      model: 'xai/stt-1' satisfies XaiSTTModels,
+      modelOptions: { diarize: true },
+    });
+    expect(stt.capabilities.diarization).toBe(true);
+  });
+
+  it('updateOptions preserves unrelated flags when merging', () => {
+    const stt = makeStt({ modelOptions: { diarize: true } });
+    expect(stt.capabilities.diarization).toBe(true);
+
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+    expect(stt['opts'].modelOptions).toHaveProperty('diarize', true);
+    expect(stt['opts'].modelOptions).toHaveProperty('endpointing', 500);
+    expect(stt.capabilities.diarization).toBe(true);
   });
 });

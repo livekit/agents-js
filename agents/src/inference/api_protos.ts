@@ -85,15 +85,18 @@ export type TtsServerEvent = z.infer<typeof ttsServerEventSchema>;
 // STT Schemas
 // ============================================================================
 
+// Ref: python livekit-agents/livekit/agents/inference/stt.py - _build_speech_data word-level speaker_id
 // Word-level timing data
 export const sttWordSchema = z.object({
   word: z.string().optional().default(''),
   start: z.number().optional().default(0),
   end: z.number().optional().default(0),
   confidence: z.number().optional().default(0.0),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 
+// Ref: python livekit-agents/livekit/agents/inference/stt.py - _build_speech_data event-level speaker_id
 // Interim transcript event
 export const sttInterimTranscriptEventSchema = z.object({
   type: z.literal('interim_transcript'),
@@ -104,6 +107,7 @@ export const sttInterimTranscriptEventSchema = z.object({
   duration: z.number().optional().default(0),
   confidence: z.number().optional().default(1.0),
   words: z.array(sttWordSchema).optional().default([]),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 
@@ -117,6 +121,7 @@ export const sttFinalTranscriptEventSchema = z.object({
   duration: z.number().optional().default(0),
   confidence: z.number().optional().default(1.0),
   words: z.array(sttWordSchema).optional().default([]),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 

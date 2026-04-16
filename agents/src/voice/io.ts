@@ -44,6 +44,7 @@ export interface TimedString {
   endTime?: number; // seconds
   confidence?: number;
   startTimeOffset?: number;
+  speakerId?: string | null;
 }
 
 /**
@@ -55,6 +56,7 @@ export function createTimedString(opts: {
   endTime?: number;
   confidence?: number;
   startTimeOffset?: number;
+  speakerId?: string | null;
 }): TimedString {
   return {
     [TIMED_STRING_SYMBOL]: true,
@@ -63,6 +65,7 @@ export function createTimedString(opts: {
     endTime: opts.endTime,
     confidence: opts.confidence,
     startTimeOffset: opts.startTimeOffset,
+    speakerId: opts.speakerId ?? null,
   };
 }
 
