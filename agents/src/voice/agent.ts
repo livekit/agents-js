@@ -38,7 +38,6 @@ import type { SpeechHandle } from './speech_handle.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
 
-// Ref: python livekit-agents/livekit/agents/voice/agent.py - ActivityTaskInfo
 // speechHandle identifies which SpeechHandle owns the current tool call, enabling
 // SpeechHandle.waitForPlayout() to distinguish self-wait (deadlock) from waiting
 // on a different handle scheduled inside the tool.

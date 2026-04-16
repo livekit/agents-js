@@ -172,7 +172,6 @@ export class AgentActivity implements RecognitionHooks {
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private q_updated: Future<void, never>;
   private speechTasks: Set<Task<void>> = new Set();
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 210 lines
   // Handles whose TTS playout has finished but whose tool execution is still running.
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
@@ -1236,7 +1235,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1199-1205 lines
   private _interruptBackgroundSpeeches(force: boolean): SpeechHandle[] {
     const interrupted: SpeechHandle[] = [];
     for (const speech of this._backgroundSpeeches) {
@@ -1566,7 +1564,6 @@ export class AgentActivity implements RecognitionHooks {
     const future = new Future<void>();
     const currentSpeech = this._currentSpeech;
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1199-1218 lines
     this._interruptBackgroundSpeeches(force);
 
     currentSpeech?.interrupt(force);
@@ -2285,7 +2282,6 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2619-2630 lines
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     this._backgroundSpeeches.add(speechHandle);
@@ -2752,7 +2748,6 @@ export class AgentActivity implements RecognitionHooks {
       // TODO(brian): add tracing span
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3178-3189 lines
     // mark the playout done before waiting for the tool execution
     speechHandle._markGenerationDone();
     // TODO(brian): close tees
