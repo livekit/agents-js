@@ -272,6 +272,14 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       try {
         return await this.run();
       } catch (error) {
+        // If the stream was intentionally aborted (e.g. session shutdown), exit
+        // silently. Downstream listeners may already be detached by this point,
+        // and emitting an `error` event here would trigger ERR_UNHANDLED_ERROR
+        // in Node's EventEmitter.
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+
         if (error instanceof APIError) {
           const retryInterval = intervalForRetry(this._connOptions, i);
 
