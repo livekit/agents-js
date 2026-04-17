@@ -14,10 +14,11 @@ type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
 function baseOptions(): ReportOptions {
   return {
     maxToolSteps: 3,
-    preemptiveGeneration: false,
     userAwayTimeout: 15,
     useTtsAlignedTranscript: true,
-    turnHandling: {},
+    turnHandling: {
+      preemptiveGeneration: { enabled: false },
+    },
   };
 }
 

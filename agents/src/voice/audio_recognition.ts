@@ -56,6 +56,8 @@ export interface EndOfTurnInfo {
 export interface PreemptiveGenerationInfo {
   newTranscript: string;
   transcriptConfidence: number;
+  /** Timestamp when user started speaking (milliseconds since epoch), if known. */
+  startedSpeakingAt: number | undefined;
 }
 
 export interface RecognitionHooks {
@@ -624,6 +626,7 @@ export class AudioRecognition {
                   ? this.finalTranscriptConfidence.reduce((a, b) => a + b, 0) /
                     this.finalTranscriptConfidence.length
                   : 0,
+              startedSpeakingAt: this.speechStartTime,
             });
           }
 
@@ -689,6 +692,7 @@ export class AudioRecognition {
               confidenceVals.length > 0
                 ? confidenceVals.reduce((a, b) => a + b, 0) / confidenceVals.length
                 : 0,
+            startedSpeakingAt: this.speechStartTime,
           });
         }
         break;

@@ -67,13 +67,18 @@ export default defineAgent({
           'rime/arcana',
         ],
       }),
-      preemptiveGeneration: true,
       turnHandling: {
         turnDetection: new livekit.turnDetector.MultilingualModel(),
         interruption: {
           resumeFalseInterruption: true,
           falseInterruptionTimeout: 1,
           mode: 'adaptive',
+        },
+        // Preemptive generation speculatively starts LLM inference while the user is still
+        // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
+        // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
+        preemptiveGeneration: {
+          enabled: true,
         },
       },
       useTtsAlignedTranscript: true,

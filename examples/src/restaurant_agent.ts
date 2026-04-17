@@ -379,8 +379,14 @@ export default defineAgent({
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel({ voice: 'alloy' }),
       userData,
-      voiceOptions: {
-        maxToolSteps: 5,
+      maxToolSteps: 5,
+      turnHandling: {
+        // Preemptive generation speculatively starts LLM inference while the user is still
+        // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
+        // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
+        preemptiveGeneration: {
+          enabled: true,
+        },
       },
     });
 
