@@ -370,6 +370,7 @@ export class BlazeLLM extends llm.LLM {
    * Update LLM options at runtime.
    */
   updateOptions(opts: Partial<Omit<LLMOptions, 'botId' | 'config'>>): void {
+    if (opts.apiUrl !== undefined) this.#opts.apiUrl = opts.apiUrl;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
     if (opts.deepSearch !== undefined) this.#opts.deepSearch = opts.deepSearch;
     if (opts.agenticSearch !== undefined) this.#opts.agenticSearch = opts.agenticSearch;
