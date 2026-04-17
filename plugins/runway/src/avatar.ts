@@ -96,8 +96,7 @@ export class AvatarSession {
       );
     }
 
-    this.avatarParticipantIdentity =
-      options.avatarParticipantIdentity || AVATAR_AGENT_IDENTITY;
+    this.avatarParticipantIdentity = options.avatarParticipantIdentity || AVATAR_AGENT_IDENTITY;
     this.avatarParticipantName = options.avatarParticipantName || AVATAR_AGENT_NAME;
     this.connOptions = options.connOptions || DEFAULT_API_CONNECT_OPTIONS;
   }
