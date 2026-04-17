@@ -44,7 +44,6 @@ export interface TimedString {
   endTime?: number; // seconds
   confidence?: number;
   startTimeOffset?: number;
-  // Ref: python livekit-agents/livekit/agents/types.py - TimedString speaker_id
   speakerId?: string | null;
 }
 

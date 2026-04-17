@@ -43,7 +43,6 @@ export type AssemblyaiModels =
 
 export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
-// Ref: python livekit-agents/livekit/agents/inference/stt.py - XaiModels
 export type XaiSTTModels = 'xai/stt-1';
 
 export interface CartesiaOptions {
@@ -74,7 +73,6 @@ export interface DeepgramOptions {
   numerals?: boolean;
   /** Opt out of model improvement program. */
   mip_opt_out?: boolean;
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py - DeepgramOptions diarize
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
   /** Eager end-of-turn threshold (0.0–1.0). Enables preflight transcripts for preemptive generation. */
@@ -92,12 +90,10 @@ export interface AssemblyAIOptions {
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
   keyterms_prompt?: string[];
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py - AssemblyaiOptions speaker_labels
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
 }
 
-// Ref: python livekit-agents/livekit/agents/inference/stt.py - XaiOptions
 export interface XaiOptions {
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
@@ -121,7 +117,6 @@ export type STTLanguages =
   | 'hi'
   | AnyString;
 
-// Ref: python livekit-agents/livekit/agents/inference/stt.py - _DIARIZATION_EXTRA_KEYS
 const DIARIZATION_EXTRA_KEYS = ['diarize', 'speaker_labels'] as const;
 
 function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): boolean {
@@ -227,7 +222,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
   }) {
-    // Ref: python livekit-agents/livekit/agents/inference/stt.py - 377-387 lines
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     super({
       streaming: true,
@@ -314,7 +308,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     throw new Error('LiveKit STT does not support batch recognition, use stream() instead');
   }
 
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py - 505-510 lines
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
@@ -674,7 +667,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
       }
 
-      // Ref: python livekit-agents/livekit/agents/inference/stt.py - 746-760 lines
       const speechData: SpeechData = {
         language,
         startTime: this.startTimeOffset + data.start,

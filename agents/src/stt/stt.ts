@@ -62,7 +62,6 @@ export interface SpeechData {
   confidence: number;
   /** Word-level timing information. */
   words?: TimedString[];
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py - SpeechData speaker_id
   /** Speaker identifier when the provider supports diarization. */
   speakerId?: string | null;
 }
@@ -100,7 +99,6 @@ export interface STTCapabilities {
    * - false: Provider does not support aligned transcripts
    */
   alignedTranscript?: 'word' | 'chunk' | false;
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py - STTCapabilities diarization
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
 }
@@ -139,7 +137,6 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     return this.#capabilities;
   }
 
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py - STT._capabilities setter
   protected updateCapabilities(caps: Partial<STTCapabilities>): void {
     this.#capabilities = { ...this.#capabilities, ...caps };
   }

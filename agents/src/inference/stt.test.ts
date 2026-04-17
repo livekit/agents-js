@@ -258,7 +258,6 @@ describe('STT constructor fallback and connOptions', () => {
   });
 });
 
-// Ref: python tests/test_inference_stt_fallback.py - TestSTTDiarizationCapabilities
 describe('STT diarization capabilities', () => {
   it('no diarization by default', () => {
     const stt = makeStt();
