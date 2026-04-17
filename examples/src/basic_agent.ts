@@ -77,7 +77,9 @@ export default defineAgent({
         // Preemptive generation speculatively starts LLM inference while the user is still
         // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
         // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
-        preemptiveGeneration: {},
+        preemptiveGeneration: {
+          enabled: true,
+        },
       },
       useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
