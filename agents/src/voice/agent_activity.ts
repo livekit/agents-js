@@ -1146,7 +1146,7 @@ export class AgentActivity implements RecognitionHooks {
         transcript: ev.alternatives![0].text,
         isFinal: false,
         language: ev.alternatives![0].language,
-        // TODO(AJS-106): add multi participant support
+        speakerId: ev.alternatives![0].speakerId ?? null,
       }),
     );
 
@@ -1167,7 +1167,7 @@ export class AgentActivity implements RecognitionHooks {
         transcript: ev.alternatives![0].text,
         isFinal: true,
         language: ev.alternatives![0].language,
-        // TODO(AJS-106): add multi participant support
+        speakerId: ev.alternatives![0].speakerId ?? null,
       }),
     );
 

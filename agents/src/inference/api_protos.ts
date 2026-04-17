@@ -91,6 +91,7 @@ export const sttWordSchema = z.object({
   start: z.number().optional().default(0),
   end: z.number().optional().default(0),
   confidence: z.number().optional().default(0.0),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 
@@ -104,6 +105,7 @@ export const sttInterimTranscriptEventSchema = z.object({
   duration: z.number().optional().default(0),
   confidence: z.number().optional().default(1.0),
   words: z.array(sttWordSchema).optional().default([]),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 
@@ -117,6 +119,7 @@ export const sttFinalTranscriptEventSchema = z.object({
   duration: z.number().optional().default(0),
   confidence: z.number().optional().default(1.0),
   words: z.array(sttWordSchema).optional().default([]),
+  speaker_id: z.string().nullable().optional(),
   extra: z.unknown().nullable().optional(),
 });
 
