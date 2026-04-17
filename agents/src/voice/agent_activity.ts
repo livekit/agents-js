@@ -2203,6 +2203,8 @@ export class AgentActivity implements RecognitionHooks {
           );
           if (playbackEv.synchronizedTranscript) {
             forwardedText = playbackEv.synchronizedTranscript;
+          } else {
+            forwardedText = '';
           }
         } else {
           forwardedText = '';
@@ -2693,6 +2695,8 @@ export class AgentActivity implements RecognitionHooks {
             );
             if (playbackEv.synchronizedTranscript) {
               forwardedText = playbackEv.synchronizedTranscript;
+            } else {
+              forwardedText = '';
             }
           } else {
             forwardedText = '';
