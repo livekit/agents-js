@@ -33,6 +33,29 @@ describe('STT', () => {
     expect(() => sttInstance.updateOptions({ language: 'en' })).not.toThrow();
   });
 
+  it('updateOptions applies apiUrl to subsequent requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ transcription: 'hello', confidence: 0.9 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const sttInstance = new STT({
+      authToken: 'tok',
+      apiUrl: 'http://old-url:8080',
+    }) as STTWithRecognize;
+    sttInstance.updateOptions({ apiUrl: 'http://new-url:9090' });
+
+    const frame = makePcmFrame();
+    await sttInstance._recognize([frame]);
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain('http://new-url:9090');
+    expect(url).not.toContain('old-url');
+
+    vi.unstubAllGlobals();
+  });
+
   describe('_recognize with mocked fetch', () => {
     let fetchMock: ReturnType<typeof vi.fn>;
 
