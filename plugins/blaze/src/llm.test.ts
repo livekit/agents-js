@@ -60,6 +60,28 @@ describe('LLM', () => {
     ).not.toThrow();
   });
 
+  it('updateOptions applies apiUrl to subsequent requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: makeSseBody(['ok']),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const llmInstance = new LLM({ botId: 'bot', authToken: 'tok', apiUrl: 'http://old-url:8080' });
+    llmInstance.updateOptions({ apiUrl: 'http://new-url:9090' });
+
+    const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
+    const stream = llmInstance.chat({ chatCtx: ctx as never });
+    llmInstance.on('error', () => {});
+    for await (const _ of stream) { /* consume */ }
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain('http://new-url:9090');
+    expect(url).not.toContain('old-url');
+
+    vi.unstubAllGlobals();
+  });
+
   describe('chat() streaming', () => {
     let fetchMock: ReturnType<typeof vi.fn>;
 
