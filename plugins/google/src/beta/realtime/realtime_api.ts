@@ -140,6 +140,7 @@ interface ResponseGeneration {
  * Google Realtime Model for real-time voice conversations with Gemini models
  */
 export class RealtimeModel extends llm.RealtimeModel {
+  #logger = log();
   /** @internal */
   _options: RealtimeOptions;
 
@@ -303,20 +304,6 @@ export class RealtimeModel extends llm.RealtimeModel {
     if (options.realtimeInputConfig?.automaticActivityDetection?.disabled) {
       serverTurnDetection = false;
     }
-
-    super({
-      messageTruncation: false,
-      turnDetection: serverTurnDetection,
-      userTranscription: inputAudioTranscription !== null,
-      autoToolReplyGeneration: true,
-      audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
-      manualFunctionCalls: false,
-      midSessionChatCtxUpdate: false,
-      midSessionInstructionsUpdate: true,
-      midSessionToolsUpdate: false,
-      perResponseToolChoice: false,
-    });
-
     // Environment variable fallbacks
     const apiKey = options.apiKey || process.env.GOOGLE_API_KEY;
     const project = options.project || process.env.GOOGLE_CLOUD_PROJECT;
@@ -328,8 +315,30 @@ export class RealtimeModel extends llm.RealtimeModel {
       ? 'gemini-live-2.5-flash-native-audio'
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
+    const model = options.model || defaultModel;
+    const mutableSession = !model.includes('3.1');
+
+    super({
+      messageTruncation: false,
+      turnDetection: serverTurnDetection,
+      userTranscription: inputAudioTranscription !== null,
+      autoToolReplyGeneration: true,
+      audioOutput: options.modalities?.includes(Modality.AUDIO) ?? true,
+      manualFunctionCalls: false,
+      midSessionChatCtxUpdate: mutableSession,
+      midSessionInstructionsUpdate: mutableSession,
+      midSessionToolsUpdate: false,
+      perResponseToolChoice: false,
+    });
+
+    if (!mutableSession) {
+      this.#logger.warn(
+        `'${model}' has limited mid-session update support. instructions, chat context, and tool updates will not be applied until the next session.`,
+      );
+    }
+
     this._options = {
-      model: options.model || defaultModel,
+      model,
       apiKey,
       voice: options.voice || 'Puck',
       language: options.language ? normalizeLanguage(options.language) : undefined,
@@ -547,27 +556,44 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(instructions: string): Promise<void> {
-    if (this.options.model === 'gemini-3.1-flash-live-preview') {
-      this.#logger.warn(
-        'updateInstructions is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
-      );
-      this.options.instructions = instructions;
+    if (this.options.instructions !== undefined && this.options.instructions === instructions) {
       return;
     }
-    if (this.options.instructions === undefined || this.options.instructions !== instructions) {
-      this.options.instructions = instructions;
-      this.markRestartNeeded();
+
+    this.options.instructions = instructions;
+
+    const unlock = await this.sessionLock.lock();
+    try {
+      if (!this.activeSession) {
+        this.markRestartNeeded();
+        return;
+      }
+    } finally {
+      unlock();
     }
+
+    if (!this.realtimeModel.capabilities.midSessionInstructionsUpdate) {
+      return;
+    }
+
+    this.#logger.debug('Updating instructions mid-session');
+    this.sendClientEvent({
+      type: 'content',
+      value: {
+        turns: [
+          {
+            parts: [{ text: instructions }],
+            // Vertex AI ignores role=None or role="system" and only works with role="model".
+            // Gemini Live API (non-Vertex) errors on role="system"; role=None works as system role.
+            role: this.options.vertexai ? 'model' : undefined,
+          },
+        ],
+        turnComplete: false,
+      },
+    });
   }
 
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
-    if (this.options.model === 'gemini-3.1-flash-live-preview') {
-      this.#logger.warn(
-        'updateChatCtx is not compatible with gemini-3.1-flash-live-preview and will be ignored.',
-      );
-      this._chatCtx = chatCtx.copy();
-      return;
-    }
     const unlock = await this.sessionLock.lock();
     try {
       if (!this.activeSession) {
@@ -623,13 +649,15 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
         }
 
-        this.sendClientEvent({
-          type: 'content',
-          value: {
-            turns: turns as types.Content[],
-            turnComplete: false,
-          },
-        });
+        if (this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
+          this.sendClientEvent({
+            type: 'content',
+            value: {
+              turns: turns as types.Content[],
+              turnComplete: false,
+            },
+          });
+        }
       }
 
       if (toolResults) {
@@ -700,13 +728,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    if (this.options.model === 'gemini-3.1-flash-live-preview') {
+    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
       this.#logger.warn(
-        'generateReply is not compatible with gemini-3.1-flash-live-preview. Use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.',
+        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
       );
-      throw new Error(
-        "generateReply is not compatible with 'gemini-3.1-flash-live-preview'; use a Gemini 2.5 live model for voice-agent flows that require programmatic reply generation.",
-      );
+      throw new Error(`generateReply is not compatible with '${this.options.model}'`);
     }
 
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
