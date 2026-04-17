@@ -1,5 +1,31 @@
 # @livekit/agents
 
+## 1.2.7
+
+### Patch Changes
+
+- feat: add dedent tagged template literal helper - [#1259](https://github.com/livekit/agents-js/pull/1259) ([@u9g](https://github.com/u9g))
+
+- fix(inference): accept numeric STT error codes - [#1231](https://github.com/livekit/agents-js/pull/1231) ([@Maples7](https://github.com/Maples7))
+
+- feat: add UserData generic to JobProcess, JobContext, and defineAgent - [#1250](https://github.com/livekit/agents-js/pull/1250) ([@u9g](https://github.com/u9g))
+
+- Update all ws usage to use the same version - [#1239](https://github.com/livekit/agents-js/pull/1239) ([@lukasIO](https://github.com/lukasIO))
+
+- feat(inference): handle preflight_transcript events in inference STT plugin - [#1228](https://github.com/livekit/agents-js/pull/1228) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- fix: add `required` parameter to `getJobContext()`, matching Python SDK's `get_job_context(required=False)` pattern. Removes noisy warn-level log during evals/tests. - [#1253](https://github.com/livekit/agents-js/pull/1253) ([@u9g](https://github.com/u9g))
+
+- feat(voice): add answering machine detection - [#1215](https://github.com/livekit/agents-js/pull/1215) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- fix(voice): allow awaiting speech handles from inside function tools; make SpeechHandle awaitable - [#1266](https://github.com/livekit/agents-js/pull/1266) ([@u9g](https://github.com/u9g))
+
+- feat(inference): introduce XAIModels type and enhance LLMModels with reasoning support - [#1241](https://github.com/livekit/agents-js/pull/1241) ([@russellmartin-livekit](https://github.com/russellmartin-livekit))
+
+- Use ThrowsPromise helper across agent package - [#1249](https://github.com/livekit/agents-js/pull/1249) ([@lukasIO](https://github.com/lukasIO))
+
+- fix: avoid retrying aborted LLM requests during shutdown - [#1247](https://github.com/livekit/agents-js/pull/1247) ([@tobiplancraft](https://github.com/tobiplancraft))
+
 ## 1.2.6
 
 ### Patch Changes
