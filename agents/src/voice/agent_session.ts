@@ -103,7 +103,6 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
-  preemptiveGeneration: true,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
   turnHandling: {},
@@ -113,7 +112,8 @@ export const defaultAgentSessionOptions = {
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
 export type VoiceOptions = {
   maxToolSteps: number;
-  preemptiveGeneration: boolean;
+  /** @deprecated Use {@link AgentSessionOptions.turnHandling}.preemptiveGeneration instead. */
+  preemptiveGeneration?: boolean;
   userAwayTimeout?: number | null;
   /** @deprecated Use {@link AgentSessionOptions.turnHandling}.interruption.mode instead. */
   allowInterruptions?: boolean;
@@ -160,12 +160,8 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
 
   maxToolSteps?: number;
   /**
-   * Whether to speculatively begin LLM and TTS requests before an end-of-turn is detected.
-   * When `true`, the agent sends inference calls as soon as a user transcript is received rather
-   * than waiting for a definitive turn boundary. This can reduce response latency by overlapping
-   * model inference with user audio, but may incur extra compute if the user interrupts or
-   * revises mid-utterance.
-   * @defaultValue true
+   * @deprecated Use `turnHandling.preemptiveGeneration` instead.
+   * When set, migrated into `turnHandling.preemptiveGeneration.enabled`.
    */
   preemptiveGeneration?: boolean;
 

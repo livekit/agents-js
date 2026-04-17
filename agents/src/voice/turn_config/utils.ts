@@ -10,11 +10,11 @@ import {
 } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
+import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
 
 const defaultSessionOptions = {
   maxToolSteps: 3,
-  preemptiveGeneration: true,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
   turnHandling: {},
@@ -25,7 +25,6 @@ const defaultLegacyVoiceOptions: VoiceOptions = {
   minEndpointingDelay: defaultTurnHandlingOptions.endpointing.minDelay,
   maxEndpointingDelay: defaultTurnHandlingOptions.endpointing.maxDelay,
   maxToolSteps: defaultSessionOptions.maxToolSteps,
-  preemptiveGeneration: defaultSessionOptions.preemptiveGeneration,
 };
 
 export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOptions<UserData>): {
@@ -63,6 +62,9 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
       maxDelay: voiceOptions?.maxEndpointingDelay,
       ...sessionOptions.turnHandling?.endpointing,
     },
+    preemptiveGeneration: {
+      ...sessionOptions.turnHandling?.preemptiveGeneration,
+    },
 
     turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
   } as const;
@@ -79,11 +81,23 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
   if (voiceOptions?.maxToolSteps !== undefined) {
     migratedVoiceOptions.maxToolSteps = voiceOptions.maxToolSteps;
   }
-  if (voiceOptions?.preemptiveGeneration !== undefined) {
-    migratedVoiceOptions.preemptiveGeneration = voiceOptions.preemptiveGeneration;
-  }
   if (voiceOptions?.userAwayTimeout !== undefined) {
     migratedVoiceOptions.userAwayTimeout = voiceOptions.userAwayTimeout;
+  }
+
+  // Migrate deprecated top-level preemptiveGeneration boolean into turn_handling
+  const deprecatedPreemptiveGen =
+    legacyOptions.preemptiveGeneration ?? voiceOptions?.preemptiveGeneration;
+  if (deprecatedPreemptiveGen !== undefined) {
+    logger.warn(
+      'preemptiveGeneration as a top-level option is deprecated, use turnHandling.preemptiveGeneration instead',
+    );
+    if (turnHandling.preemptiveGeneration.enabled === undefined) {
+      turnHandling.preemptiveGeneration = {
+        ...turnHandling.preemptiveGeneration,
+        enabled: deprecatedPreemptiveGen,
+      };
+    }
   }
 
   const legacyVoiceOptions = { ...defaultLegacyVoiceOptions, ...voiceOptions };
@@ -116,6 +130,10 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
     turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
+    preemptiveGeneration: {
+      ...defaultPreemptiveGenerationOptions,
+      ...stripUndefined(config.preemptiveGeneration ?? {}),
+    },
   } as const;
 }
 
@@ -126,6 +144,7 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
 export function migrateTurnHandling(opts: {
   turnDetection?: TurnDetectionMode;
   allowInterruptions?: boolean;
+  preemptiveGeneration?: boolean;
   minEndpointingDelay?: number;
   maxEndpointingDelay?: number;
   turnHandling?: TurnHandlingOptions;
@@ -159,9 +178,16 @@ export function migrateTurnHandling(opts: {
     migrated.turnDetection = opts.turnDetection;
   }
 
+  if (opts.preemptiveGeneration !== undefined) {
+    migrated.preemptiveGeneration = { enabled: opts.preemptiveGeneration };
+  }
+
   return {
     ...(migrated.endpointing ? { endpointing: migrated.endpointing } : {}),
     ...(migrated.interruption ? { interruption: migrated.interruption } : {}),
     ...(migrated.turnDetection !== undefined ? { turnDetection: migrated.turnDetection } : {}),
+    ...(migrated.preemptiveGeneration
+      ? { preemptiveGeneration: migrated.preemptiveGeneration }
+      : {}),
   };
 }

@@ -263,9 +263,6 @@ importers:
       '@livekit/agents-plugin-google':
         specifier: workspace:*
         version: link:../plugins/google
-      '@livekit/agents-plugin-hedra':
-        specifier: workspace:*
-        version: link:../plugins/hedra
       '@livekit/agents-plugin-inworld':
         specifier: workspace:*
         version: link:../plugins/inworld
@@ -1079,6 +1076,9 @@ importers:
       openai:
         specifier: ^6.8.1
         version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+      ws:
+        specifier: 'catalog:'
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1086,12 +1086,21 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../openai
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../silero
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 0.13.25
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.5.10
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)

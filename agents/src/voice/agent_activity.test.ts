@@ -16,8 +16,11 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
+import type { ChatContext } from '../llm/chat_context.js';
+import { LLM, type LLMStream } from '../llm/llm.js';
 import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
+import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import { SpeechHandle } from './speech_handle.js';
 
 // Break circular dependency: agent_activity.ts → agent.js → beta/workflows/task_group.ts
@@ -224,5 +227,151 @@ describe('AgentActivity - mainTask', () => {
 
     const result = await raceTimeout(mainTaskPromise, 2000);
     expect(result).toBe('resolved');
+  });
+});
+
+/**
+ * Unit tests for the preemptive-generation guards in AgentActivity.
+ *
+ * These tests drive AgentActivity.onPreemptiveGeneration directly against a
+ * lightly-stubbed `this` context so we can exercise the `maxRetries` and
+ * `maxSpeechDuration` guards deterministically, without needing real STT
+ * preflight events or a live turn detector.
+ */
+class FakePreemptiveLLM extends LLM {
+  label(): string {
+    return 'fake.LLM';
+  }
+  chat(): LLMStream {
+    throw new Error('not used in these tests');
+  }
+}
+
+type PreemptiveOpts = {
+  enabled: boolean;
+  preemptiveTts: boolean;
+  maxSpeechDuration: number;
+  maxRetries: number;
+};
+
+function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
+  const preemptiveOpts: PreemptiveOpts = {
+    enabled: true,
+    preemptiveTts: false,
+    maxSpeechDuration: 10_000,
+    maxRetries: 3,
+    ...opts,
+  };
+
+  const generateReply = vi.fn(
+    () => ({ id: 'speech_fake', _cancel: () => {} }) as unknown as SpeechHandle,
+  );
+  const cancelPreemptiveGeneration = vi.fn();
+
+  const fakeChatCtx = { copy: () => fakeChatCtx } as unknown as ChatContext;
+
+  const fakeActivity = {
+    _preemptiveGenerationCount: 0,
+    _preemptiveGeneration: undefined,
+    _currentSpeech: undefined as SpeechHandle | undefined,
+    schedulingPaused: false,
+    llm: new FakePreemptiveLLM(),
+    tools: {},
+    toolChoice: null,
+    agent: { chatCtx: fakeChatCtx },
+    agentSession: {
+      sessionOptions: {
+        turnHandling: { preemptiveGeneration: preemptiveOpts },
+      },
+    },
+    logger: {
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
+    },
+    generateReply,
+    cancelPreemptiveGeneration,
+  };
+
+  const onPreemptiveGeneration = (AgentActivity.prototype as Record<string, unknown>)
+    .onPreemptiveGeneration as (this: unknown, info: PreemptiveGenerationInfo) => void;
+
+  return {
+    fakeActivity,
+    preemptiveOpts,
+    generateReply,
+    cancelPreemptiveGeneration,
+    call: (info: Partial<PreemptiveGenerationInfo> = {}) =>
+      onPreemptiveGeneration.call(fakeActivity, {
+        newTranscript: 'hello world',
+        transcriptConfidence: 0.95,
+        startedSpeakingAt: undefined,
+        ...info,
+      }),
+  };
+}
+
+describe('AgentActivity - onPreemptiveGeneration guards', () => {
+  it('increments counter up to maxRetries then skips further calls within the same turn', () => {
+    const { fakeActivity, generateReply, call } = buildPreemptiveRunner({ maxRetries: 2 });
+
+    call();
+    expect(fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(generateReply).toHaveBeenCalledTimes(1);
+
+    call();
+    expect(fakeActivity._preemptiveGenerationCount).toBe(2);
+    expect(generateReply).toHaveBeenCalledTimes(2);
+
+    call();
+    expect(fakeActivity._preemptiveGenerationCount).toBe(2);
+    expect(generateReply).toHaveBeenCalledTimes(2);
+
+    call();
+    expect(fakeActivity._preemptiveGenerationCount).toBe(2);
+    expect(generateReply).toHaveBeenCalledTimes(2);
+  });
+
+  it('resumes preemption after the counter is reset (simulates onEndOfTurn)', () => {
+    const { fakeActivity, generateReply, call } = buildPreemptiveRunner({ maxRetries: 2 });
+
+    call();
+    call();
+    call();
+    expect(generateReply).toHaveBeenCalledTimes(2);
+
+    fakeActivity._preemptiveGenerationCount = 0;
+
+    call();
+    expect(fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(generateReply).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips preemption when startedSpeakingAt exceeds maxSpeechDuration', () => {
+    const { fakeActivity, generateReply, call } = buildPreemptiveRunner({
+      maxSpeechDuration: 3000,
+    });
+
+    call({ startedSpeakingAt: Date.now() - 1000 });
+    expect(fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(generateReply).toHaveBeenCalledTimes(1);
+
+    call({ startedSpeakingAt: Date.now() - 5000 });
+    expect(fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(generateReply).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips preemption entirely when enabled is false', () => {
+    const { fakeActivity, generateReply, cancelPreemptiveGeneration, call } = buildPreemptiveRunner(
+      { enabled: false },
+    );
+
+    call();
+    call();
+
+    expect(fakeActivity._preemptiveGenerationCount).toBe(0);
+    expect(generateReply).not.toHaveBeenCalled();
+    expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
 });

@@ -13,8 +13,9 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import type { GeminiTTSModels } from '../models.js';
 
-export type GeminiTTSModels = 'gemini-2.5-flash-preview-tts' | 'gemini-2.5-pro-preview-tts';
+export type { GeminiTTSModels } from '../models.js';
 
 export type GeminiVoices =
   | 'Zephyr'
@@ -48,7 +49,7 @@ export type GeminiVoices =
   | 'Sadaltager'
   | 'Sulafat';
 
-const DEFAULT_MODEL: GeminiTTSModels = 'gemini-2.5-flash-preview-tts';
+const DEFAULT_MODEL: GeminiTTSModels = 'gemini-2.5-flash-lite-preview-tts';
 const DEFAULT_VOICE: GeminiVoices = 'Kore';
 const DEFAULT_SAMPLE_RATE = 24000; // not configurable
 const NUM_CHANNELS = 1;

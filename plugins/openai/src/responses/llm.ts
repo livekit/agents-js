@@ -400,7 +400,6 @@ export class LLM extends llm.LLM {
     this.#llm.prewarm();
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/responses/llm.py - 229-233 lines
   override async aclose(): Promise<void> {
     await this.#llm.aclose();
   }
