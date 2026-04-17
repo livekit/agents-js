@@ -6,6 +6,7 @@ import { initializeLogger } from '../../log.js';
 import { defaultAgentSessionOptions } from '../agent_session.js';
 import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
+import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { defaultTurnHandlingOptions } from './turn_handling.js';
 import { migrateLegacyOptions, migrateTurnHandling } from './utils.js';
 
@@ -21,9 +22,9 @@ describe('migrateLegacyOptions', () => {
       turnDetection: defaultTurnHandlingOptions.turnDetection,
       endpointing: defaultEndpointingOptions,
       interruption: defaultInterruptionOptions,
+      preemptiveGeneration: defaultPreemptiveGenerationOptions,
     });
     expect(result.maxToolSteps).toBe(defaultAgentSessionOptions.maxToolSteps);
-    expect(result.preemptiveGeneration).toBe(defaultAgentSessionOptions.preemptiveGeneration);
     expect(result.userAwayTimeout).toBe(defaultAgentSessionOptions.userAwayTimeout);
   });
 
@@ -128,6 +129,14 @@ describe('migrateTurnHandling', () => {
     expect(result.turnDetection).toBe('stt');
     expect(result.interruption).toEqual({ enabled: false });
     expect(result.endpointing).toEqual({ minDelay: 400, maxDelay: 3000 });
+  });
+
+  it('should map preemptiveGeneration boolean to preemptiveGeneration.enabled', () => {
+    const resultTrue = migrateTurnHandling({ preemptiveGeneration: true });
+    expect(resultTrue.preemptiveGeneration).toEqual({ enabled: true });
+
+    const resultFalse = migrateTurnHandling({ preemptiveGeneration: false });
+    expect(resultFalse.preemptiveGeneration).toEqual({ enabled: false });
   });
 
   it('should ignore deprecated Agent fields when explicit turnHandling is provided', () => {

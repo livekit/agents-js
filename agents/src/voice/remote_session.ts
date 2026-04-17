@@ -442,10 +442,13 @@ function toolNames(toolCtx: ToolContext | undefined): string[] {
 }
 
 function protoSerializeOptions(opts: {
-  turnHandling?: { endpointing?: unknown; interruption?: unknown };
+  turnHandling?: {
+    endpointing?: unknown;
+    interruption?: unknown;
+    preemptiveGeneration?: unknown;
+  };
   maxToolSteps?: number;
   userAwayTimeout?: number | null;
-  preemptiveGeneration?: boolean;
   useTtsAlignedTranscript?: boolean;
 }): Record<string, string> {
   return {
@@ -453,7 +456,7 @@ function protoSerializeOptions(opts: {
     interruption: JSON.stringify(opts.turnHandling?.interruption ?? {}),
     max_tool_steps: String(opts.maxToolSteps ?? 0),
     user_away_timeout: String(opts.userAwayTimeout ?? ''),
-    preemptive_generation: String(opts.preemptiveGeneration ?? false),
+    preemptive_generation: JSON.stringify(opts.turnHandling?.preemptiveGeneration ?? {}),
     use_tts_aligned_transcript: String(opts.useTtsAlignedTranscript ?? false),
   };
 }
@@ -812,7 +815,6 @@ export class SessionHost {
           turnHandling: this.session!.sessionOptions.turnHandling,
           maxToolSteps: this.session!.sessionOptions.maxToolSteps,
           userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
-          preemptiveGeneration: this.session!.sessionOptions.preemptiveGeneration,
           useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),

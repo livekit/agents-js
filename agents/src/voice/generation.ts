@@ -1080,13 +1080,16 @@ export function performToolExecutions({
             });
           }
 
-          const toolExecution = functionCallStorage.run({ functionCall: toolCall }, async () => {
-            return await tool.execute(parsedArgs, {
-              ctx: new RunContext(session, speechHandle, toolCall),
-              toolCallId: toolCall.callId,
-              abortSignal: signal,
-            });
-          });
+          const toolExecution = functionCallStorage.run(
+            { functionCall: toolCall, speechHandle },
+            async () => {
+              return await tool.execute(parsedArgs, {
+                ctx: new RunContext(session, speechHandle, toolCall),
+                toolCallId: toolCall.callId,
+                abortSignal: signal,
+              });
+            },
+          );
 
           await tracableToolExecution(toolExecution);
         },
