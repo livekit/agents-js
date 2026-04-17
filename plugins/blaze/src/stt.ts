@@ -109,6 +109,7 @@ export class STT extends stt.STT {
    * Update STT options at runtime.
    */
   updateOptions(opts: Partial<Omit<STTOptions, 'config'>>): void {
+    if (opts.apiUrl !== undefined) this.#opts.apiUrl = opts.apiUrl;
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
     if (opts.normalizationRules !== undefined)
