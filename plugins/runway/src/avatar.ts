@@ -17,7 +17,7 @@ import { log } from './log.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 
-const DEFAULT_API_URL = 'https://api.runwayml.com';
+const DEFAULT_API_URL = 'https://api.dev.runwayml.com';
 const API_VERSION = '2024-11-06';
 const SAMPLE_RATE = 16000;
 const AVATAR_AGENT_IDENTITY = 'runway-avatar-agent';
@@ -49,7 +49,7 @@ export interface AvatarSessionOptions {
    */
   apiKey?: string;
   /**
-   * Runway API URL. Defaults to https://api.runwayml.com or RUNWAYML_BASE_URL environment variable.
+   * Runway API URL. Defaults to https://api.dev.runwayml.com or RUNWAYML_BASE_URL environment variable.
    */
   apiUrl?: string;
   avatarParticipantIdentity?: string;
