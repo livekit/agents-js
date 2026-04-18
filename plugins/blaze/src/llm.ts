@@ -11,18 +11,20 @@
  * Input: JSON array of `{ role, content }` messages
  * Output: SSE stream: `data: {"content": "..."}` then `data: [DONE]`
  */
-import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { randomUUID } from 'node:crypto';
+import {
+  DEFAULT_API_CONNECT_OPTIONS,
+  llm,
+  APIError,
+  APIStatusError,
+  APIConnectionError,
+} from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   type BlazeConfig,
-  BlazeHttpError,
-  MAX_RETRY_COUNT,
-  RETRY_BASE_DELAY_MS,
   type ResolvedBlazeConfig,
   buildAuthHeaders,
-  isRetryableError,
   resolveConfig,
-  sleep,
 } from './config.js';
 import type { BlazeChatMessage, BlazeLLMData } from './models.js';
 
@@ -156,7 +158,6 @@ function extractContent(data: Record<string, unknown>): string | null {
 export class BlazeLLMStream extends llm.LLMStream {
   label = 'blaze.LLMStream';
   readonly #opts: ResolvedLLMOptions;
-  readonly #llm: BlazeLLM;
 
   constructor(
     llmInstance: BlazeLLM,
@@ -166,30 +167,10 @@ export class BlazeLLMStream extends llm.LLMStream {
   ) {
     super(llmInstance, { chatCtx, connOptions });
     this.#opts = opts;
-    this.#llm = llmInstance;
-  }
-
-  /**
-   * Emit a non-recoverable error on the LLM instance.
-   *
-   * Errors from run() must be surfaced via the LLM's 'error' event rather
-   * than thrown, because the base class starts run() via a fire-and-forget
-   * setTimeout (startSoon). Throwing from run() would propagate as an
-   * unhandled promise rejection; emitting lets callers handle it through the
-   * standard EventEmitter 'error' channel that voice agents already listen on.
-   */
-  #emitHttpError(error: Error): void {
-    this.#llm.emit('error', {
-      type: 'llm_error',
-      timestamp: Date.now(),
-      label: this.#llm.label(),
-      error,
-      recoverable: false,
-    });
   }
 
   protected async run(): Promise<void> {
-    const requestId = crypto.randomUUID();
+    const requestId = randomUUID();
     const messages = convertMessages(this.chatCtx);
 
     // Build URL with query params
@@ -207,126 +188,117 @@ export class BlazeLLMStream extends llm.LLMStream {
       url.searchParams.set('age', String(this.#opts.demographics.age));
     }
 
-    for (let attempt = 0; attempt <= MAX_RETRY_COUNT; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.#opts.timeout);
-      const signal = AbortSignal.any([this.abortController.signal, controller.signal]);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.#opts.timeout);
+    const signal = AbortSignal.any([this.abortController.signal, controller.signal]);
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...buildAuthHeaders(this.#opts.authToken),
+        },
+        body: JSON.stringify(messages),
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'unknown error');
+        throw new APIStatusError({
+          message: `Blaze LLM error ${response.status}: ${errorText}`,
+          options: { statusCode: response.status },
+        });
+      }
+
+      if (!response.body) {
+        throw new APIConnectionError({ message: 'Blaze LLM: response body is null' });
+      }
+
+      // Parse SSE stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = '';
+      let completionTokens = 0;
+      let streamDone = false;
 
       try {
-        const response = await fetch(url.toString(), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...buildAuthHeaders(this.#opts.authToken),
-          },
-          body: JSON.stringify(messages),
-          signal,
-        });
+        while (!streamDone) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (signal.aborted) break;
 
-        // Retry on 5xx server errors
-        if (response.status >= 500 && attempt < MAX_RETRY_COUNT) {
-          await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
-          continue;
-        }
+          lineBuffer += decoder.decode(value, { stream: true });
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'unknown error');
-          this.#emitHttpError(new BlazeHttpError(response.status, `Blaze LLM error ${response.status}: ${errorText}`));
-          return;
-        }
+          // Process all complete lines
+          const lines = lineBuffer.split('\n');
+          lineBuffer = lines.pop() ?? '';
 
-        if (!response.body) {
-          throw new Error('Blaze LLM: response body is null');
-        }
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
 
-        // Parse SSE stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let lineBuffer = '';
-        let completionTokens = 0;
-        let streamDone = false;
+            let rawData: string;
 
-        try {
-          while (!streamDone) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (signal.aborted) break;
+            if (trimmed.startsWith('data: ')) {
+              rawData = trimmed.slice(6);
+            } else {
+              // Raw JSON line (non-SSE format fallback)
+              rawData = trimmed;
+            }
 
-            lineBuffer += decoder.decode(value, { stream: true });
+            if (rawData === '[DONE]') {
+              streamDone = true;
+              break;
+            }
 
-            // Process all complete lines
-            const lines = lineBuffer.split('\n');
-            lineBuffer = lines.pop() ?? '';
+            let parsed: Record<string, unknown>;
+            try {
+              parsed = JSON.parse(rawData) as Record<string, unknown>;
+            } catch {
+              // Skip non-JSON lines (comments, keep-alives, etc.)
+              continue;
+            }
 
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-
-              let rawData: string;
-
-              if (trimmed.startsWith('data: ')) {
-                rawData = trimmed.slice(6);
-              } else {
-                // Raw JSON line (non-SSE format fallback)
-                rawData = trimmed;
-              }
-
-              if (rawData === '[DONE]') {
-                streamDone = true;
-                break;
-              }
-
-              let parsed: Record<string, unknown>;
-              try {
-                parsed = JSON.parse(rawData) as Record<string, unknown>;
-              } catch {
-                // Skip non-JSON lines (comments, keep-alives, etc.)
-                continue;
-              }
-
-              const content = extractContent(
-                parsed as BlazeLLMData as unknown as Record<string, unknown>,
-              );
-              if (content) {
-                completionTokens++;
-                this.queue.put({
-                  id: requestId,
-                  delta: {
-                    role: 'assistant',
-                    content,
-                  },
-                });
-              }
+            const content = extractContent(
+              parsed as BlazeLLMData as unknown as Record<string, unknown>,
+            );
+            if (content) {
+              completionTokens++;
+              this.queue.put({
+                id: requestId,
+                delta: {
+                  role: 'assistant',
+                  content,
+                },
+              });
             }
           }
-        } finally {
-          reader.releaseLock();
         }
-
-        // Emit final chunk with usage stats (approximate)
-        this.queue.put({
-          id: requestId,
-          usage: {
-            completionTokens,
-            promptTokens: 0,
-            promptCachedTokens: 0,
-            totalTokens: completionTokens,
-          },
-        });
-
-        return; // Success — exit method
-      } catch (err) {
-        if (attempt < MAX_RETRY_COUNT && isRetryableError(err)) {
-          await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
-          continue;
-        }
-        // Emit error via the LLM instance instead of throwing to avoid
-        // unhandled promise rejection from the fire-and-forget startSoon task.
-        this.#emitHttpError(err instanceof Error ? err : new Error(String(err)));
-        return;
       } finally {
-        clearTimeout(timeoutId);
+        reader.releaseLock();
       }
+
+      // Emit final chunk with usage stats (approximate)
+      this.queue.put({
+        id: requestId,
+        usage: {
+          completionTokens,
+          promptTokens: 0,
+          promptCachedTokens: 0,
+          totalTokens: completionTokens,
+        },
+      });
+    } catch (err) {
+      if (err instanceof APIError) throw err;
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new APIConnectionError({ message: `Blaze LLM request aborted: ${err.message}` });
+      }
+      throw new APIConnectionError({
+        message: `Blaze LLM connection error: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
