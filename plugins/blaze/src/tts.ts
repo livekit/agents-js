@@ -308,7 +308,11 @@ function openWebSocket(url: string): Promise<WebSocket> {
     };
     const onError = (err: Error) => {
       ws.off('open', onOpen);
-      reject(err);
+      reject(
+        new APIConnectionError({
+          message: `Blaze TTS failed to connect to WebSocket: ${err.message}`,
+        }),
+      );
     };
     ws.once('open', onOpen);
     ws.once('error', onError);
@@ -328,11 +332,15 @@ function waitForWsTextMessage(ws: WebSocket): Promise<string> {
     };
     const onError = (err: Error) => {
       cleanup();
-      reject(err);
+      reject(
+        new APIConnectionError({
+          message: `Blaze TTS WebSocket error: ${err.message}`,
+        }),
+      );
     };
     const onClose = () => {
       cleanup();
-      reject(new Error('WebSocket closed unexpectedly'));
+      reject(new APIConnectionError({ message: 'Blaze TTS WebSocket closed unexpectedly' }));
     };
     ws.on('message', onMessage);
     ws.on('error', onError);
@@ -550,6 +558,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         audioReaderResolve = resolve;
         audioReaderReject = reject;
       });
+      // Prevent transient unhandledRejection before we await audioReaderDone later.
+      audioReaderDone.catch(() => {});
 
       const emitFrame = (frame: AudioFrame, isFinal: boolean) => {
         this.queue.put({ requestId, segmentId, frame, final: isFinal });
@@ -617,7 +627,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       ws.on('error', (err: Error) => {
-        if (!speechEnded) audioReaderReject(err);
+        if (!speechEnded) {
+          audioReaderReject(
+            new APIConnectionError({
+              message: `Blaze TTS WebSocket error: ${err.message}`,
+            }),
+          );
+        }
       });
 
       ws.on('close', () => {
@@ -685,15 +701,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           pendingNext = inputIter.next();
         }
 
-        // Race between next token and batch timeout
-        const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) =>
-          setTimeout(() => resolve(TIMEOUT_SENTINEL), opts.batchMaxWaitMs),
-        );
+        // Race between next token and batch timeout. Always clear the timeout
+        // when the token path wins to avoid orphaned timers.
+        let batchTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+          batchTimeoutId = setTimeout(() => resolve(TIMEOUT_SENTINEL), opts.batchMaxWaitMs);
+        });
 
-        const result = await Promise.race([
-          pendingNext.then((r) => r as IteratorResult<string | typeof tts.SynthesizeStream.FLUSH_SENTINEL>),
-          timeoutPromise,
-        ]);
+        let result: IteratorResult<string | typeof tts.SynthesizeStream.FLUSH_SENTINEL> | typeof TIMEOUT_SENTINEL;
+        try {
+          result = await Promise.race([
+            pendingNext.then(
+              (r) => r as IteratorResult<string | typeof tts.SynthesizeStream.FLUSH_SENTINEL>,
+            ),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (batchTimeoutId !== undefined) {
+            clearTimeout(batchTimeoutId);
+          }
+        }
 
         if (result === TIMEOUT_SENTINEL) {
           // Timeout — flush accumulated text if we have enough for first batch
