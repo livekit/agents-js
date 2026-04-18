@@ -365,14 +365,23 @@ describe('LLM', () => {
       const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
       const stream = llmInstance.chat({ chatCtx: ctx as never });
 
-      // The base class emits errors on the LLM instance; the iterator ends normally.
+      // The base class _mainTaskImpl emits errors on the LLM instance, then
+      // rethrows.  The rethrow propagates as an unhandled rejection from the
+      // fire-and-forget startSoon task — suppress it for test isolation.
+      const suppress = () => {};
+      process.on('unhandledRejection', suppress);
+
       let capturedError: Error | undefined;
       llmInstance.on('error', ({ error }: { error: Error }) => {
         capturedError = error;
       });
 
-      // Drain the stream — it ends normally even when the request fails.
+      // Drain the stream — iterator ends normally; errors propagate via event.
       for await (const _ of stream) { /* consume */ }
+
+      // Flush pending microtasks so the rejection fires while our handler is active.
+      await new Promise((r) => setTimeout(r, 0));
+      process.off('unhandledRejection', suppress);
 
       expect(capturedError?.message).toContain('429');
       expect(fetchMock).toHaveBeenCalledOnce();
