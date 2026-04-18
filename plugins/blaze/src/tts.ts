@@ -702,9 +702,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         const item = result.value;
         if (item === tts.SynthesizeStream.FLUSH_SENTINEL) {
-          inputDone = true;
           drainBatches(true);
-          break;
+          continue;
         }
 
         textBuf += item;
