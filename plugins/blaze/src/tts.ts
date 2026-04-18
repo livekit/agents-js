@@ -22,7 +22,7 @@
  *   Input: FormData (query, language, audio_format, speaker_id, normalization, model)
  *   Output: Streaming raw PCM audio
  */
-import { AudioByteStream, tts } from '@livekit/agents';
+import { AudioByteStream, tts, APIStatusError, APIConnectionError } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import WebSocket from 'ws';
@@ -381,11 +381,14 @@ async function synthesizeAudio(
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'unknown error');
-      throw new Error(`Blaze TTS error ${response.status}: ${errorText}`);
+      throw new APIStatusError({
+        message: `Blaze TTS error ${response.status}: ${errorText}`,
+        options: { statusCode: response.status },
+      });
     }
 
     if (!response.body) {
-      throw new Error('Blaze TTS: response body is null');
+      throw new APIConnectionError({ message: 'Blaze TTS: response body is null' });
     }
 
     const bstream = new AudioByteStream(opts.sampleRate, 1);
@@ -496,7 +499,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     try {
       ws = await openWebSocket(opts.wsUrl);
     } catch (err) {
-      throw new Error(`Blaze TTS: failed to connect to ${opts.wsUrl}: ${err}`);
+      throw new APIConnectionError({
+        message: `Blaze TTS: failed to connect to ${opts.wsUrl}: ${err}`,
+      });
     }
 
     try {
@@ -504,7 +509,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const connMsg = await waitForWsTextMessage(ws);
       const connData = JSON.parse(connMsg) as Record<string, string>;
       if (connData.type !== 'successful-connection') {
-        throw new Error(`Blaze TTS: unexpected connection response: ${connMsg}`);
+        throw new APIConnectionError({
+          message: `Blaze TTS: unexpected connection response: ${connMsg}`,
+        });
       }
 
       // Authenticate
@@ -512,7 +519,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const authMsg = await waitForWsTextMessage(ws);
       const authData = JSON.parse(authMsg) as Record<string, string>;
       if (authData.type !== 'successful-authentication') {
-        throw new Error(`Blaze TTS: authentication failed: ${authMsg}`);
+        throw new APIConnectionError({
+          message: `Blaze TTS: authentication failed: ${authMsg}`,
+        });
       }
 
       // Send speech-start with TTS parameters
@@ -595,11 +604,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
               audioReaderResolve();
             } else if (status === 'failed-request' || status === 'error') {
-              audioReaderReject(new Error(`Blaze TTS error: ${msg.message ?? status}`));
+              audioReaderReject(new APIConnectionError({
+                message: `Blaze TTS error: ${msg.message ?? status}`,
+              }));
             }
           }
         } catch (err) {
-          audioReaderReject(err instanceof Error ? err : new Error(String(err)));
+          audioReaderReject(err instanceof APIConnectionError ? err : new APIConnectionError({
+            message: `Blaze TTS stream error: ${err instanceof Error ? err.message : String(err)}`,
+          }));
         }
       });
 
