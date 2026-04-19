@@ -1,6 +1,12 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
+  createTimedString,
   mergeFrames,
   normalizeLanguage,
   stt,
@@ -36,25 +42,45 @@ const defaultSTTOptions: STTOptions = {
 
 export class STT extends stt.STT {
   #opts: STTOptions;
-  #client: RealtimeTranscription;
   label = 'mistral.STT';
+  #client: Mistral;
 
   constructor(opts: Partial<STTOptions> = defaultSTTOptions) {
     super({ streaming: true, interimResults: true, alignedTranscript: 'word', diarization: false });
-
-    if (!opts.apiKey) {
-      throw new Error('Mistral API key is required');
-    }
 
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
     };
 
-    this.#client = new RealtimeTranscription({
-      apiKey: this.#opts.apiKey,
-      serverURL: this.#opts.baseURL,
-    });
+    if (this.#opts.apiKey === undefined) {
+      throw new Error('Mistral API key is required');
+    }
+
+    this.#client = new Mistral({ apiKey: this.#opts.apiKey, serverURL: this.#opts.baseURL });
+
+    // Patch the metrics emitter to correctly dynamically route live vs offline models for observability
+    const originalEmit = this.emit.bind(this);
+    this.emit = <E extends keyof stt.STTCallbacks>(
+      event: E,
+      ...args: Parameters<stt.STTCallbacks[E]>
+    ) => {
+      if (event === 'metrics_collected' && args[0]?.type === 'stt_metrics') {
+        const metric = args[0] as any;
+        metric.metadata.modelName = metric.streamed
+          ? this.#opts.liveModel
+          : this.#opts.offlineModel;
+      }
+      return originalEmit(event, ...args);
+    };
+  }
+
+  get model(): string {
+    return this.#opts.liveModel as string;
+  }
+
+  get provider(): string {
+    return 'api.mistral.ai';
   }
 
   get options(): Readonly<STTOptions> {
@@ -80,7 +106,10 @@ export class STT extends stt.STT {
     header.writeUInt16LE(16, 34);
     header.write('data', 36);
     header.writeUInt32LE(frame.data.byteLength, 40);
-    return Buffer.concat([header, Buffer.from(frame.data.buffer)]);
+    return Buffer.concat([
+      header,
+      Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
+    ]);
   }
 
   async _recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
@@ -88,21 +117,32 @@ export class STT extends stt.STT {
     let wavBuffer = this.#createWav(buffer);
     const audio_file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
 
-    // Use the standard Mistral client for offline transcripts
-    const offlineClient = new Mistral({ apiKey: this.#opts.apiKey, serverURL: this.#opts.baseURL });
-
-    const resp = await offlineClient.audio.transcriptions.complete(
+    const resp = await this.#client.audio.transcriptions.complete(
       {
         file: {
           content: audio_file,
           fileName: 'audio.wav',
         },
         model: this.#opts.offlineModel as string,
+        language: this.#opts.language,
+        timestampGranularities: ['word'],
       },
       {
         fetchOptions: { signal: abortSignal },
       },
     );
+
+    let parsedWords: any[] | undefined;
+    if ('words' in resp && Array.isArray(resp.words)) {
+      parsedWords = resp.words.map((w: any) =>
+        createTimedString({
+          text: w.word || w.text || '',
+          startTime: w.start || 0,
+          endTime: w.end || 0,
+          confidence: w.confidence ?? 1.0,
+        }),
+      );
+    }
 
     // Return the final result to LiveKit
     return {
@@ -111,9 +151,11 @@ export class STT extends stt.STT {
         {
           text: resp.text || '',
           language: normalizeLanguage(this.#opts.language),
-          startTime: 0,
-          endTime: 0,
+          startTime: parsedWords && parsedWords.length > 0 ? parsedWords[0].startTime : 0,
+          endTime:
+            parsedWords && parsedWords.length > 0 ? parsedWords[parsedWords.length - 1].endTime : 0,
           confidence: 1.0,
+          words: parsedWords,
         },
       ],
     };
@@ -121,60 +163,131 @@ export class STT extends stt.STT {
 
   stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
     // All this does is instantiate our async listener!
-    return new SpeechStream(this.#client, this, this.#opts.audioFormat, options?.connOptions);
+    return new SpeechStream(this, this.#opts.audioFormat, options?.connOptions);
   }
 }
 
 export class SpeechStream extends stt.SpeechStream {
   label = 'mistral.SpeechStream';
   #stt: STT;
-  #client: RealtimeTranscription;
   #audioFormat: audioFormat;
+  #connOptions?: APIConnectOptions;
 
-  constructor(
-    client: RealtimeTranscription,
-    sttInstance: STT,
-    audioFormat: audioFormat,
-    connOptions?: APIConnectOptions,
-  ) {
+  constructor(sttInstance: STT, audioFormat: audioFormat, connOptions?: APIConnectOptions) {
     super(sttInstance, audioFormat.sampleRate, connOptions);
     this.#stt = sttInstance;
-    this.#client = client;
     this.#audioFormat = audioFormat;
+    this.#connOptions = connOptions;
   }
 
   protected async run(): Promise<void> {
     let currentText = '';
-    const createAudioGenerator = async function* (that: SpeechStream) {
-      for await (const chunk of that.input) {
-        if (chunk === stt.SpeechStream.FLUSH_SENTINEL) {
-          continue;
-        }
+    let currentLanguage = this.#stt.options.language;
+    let speaking = false;
+    let stopRequested = false;
+    let resolveAbortTask: () => void = () => {};
+    const abortTaskPromise = new Promise<void>((resolve) => {
+      resolveAbortTask = resolve;
+    });
 
-        const pcmBuffer = Buffer.from(chunk.data.buffer);
-        yield new Uint8Array(pcmBuffer);
-      }
-    };
-
-    const audioStream = createAudioGenerator(this);
+    let connection: any;
+    let sendAudioTask: Promise<void> | undefined;
+    let sendError: unknown;
 
     try {
-      for await (const event of this.#client.transcribeStream(
-        audioStream,
-        this.#stt.options.liveModel,
-        { audioFormat: this.#audioFormat },
-      )) {
-        if (event.type === 'transcription.text.delta') {
+      const client = new RealtimeTranscription({
+        apiKey: this.#stt.options.apiKey,
+        serverURL: this.#stt.options.baseURL,
+      });
+
+      const timeoutMs = this.#connOptions?.timeoutMs ?? 15000;
+      let connTimeoutId: NodeJS.Timeout | undefined;
+      const connTimeoutPromise = new Promise<any>((_, reject) => {
+        connTimeoutId = setTimeout(
+          () =>
+            reject(
+              new APIConnectionError({
+                message: `Mistral STT: connection timed out after ${timeoutMs}ms`,
+                options: { retryable: true },
+              }),
+            ),
+          timeoutMs,
+        );
+      });
+
+      connection = await Promise.race([
+        client.connect(this.#stt.options.liveModel, {
+          audioFormat: this.#audioFormat,
+          // @ts-ignore Mistral STT stream API accepts 'language' despite SDK typings omitting it
+          language: this.#stt.options.language,
+        }),
+        connTimeoutPromise,
+      ]);
+      clearTimeout(connTimeoutId);
+
+      sendAudioTask = (async () => {
+        try {
+          const iterator = this.input[Symbol.asyncIterator]();
+          while (true) {
+            if (stopRequested || connection.isClosed) break;
+
+            const nextPromise = iterator.next();
+            const result = await Promise.race([
+              nextPromise,
+              abortTaskPromise.then(() => ({ abort: true }) as const),
+            ]);
+
+            if ('abort' in result) break;
+            if (result.done) break;
+
+            const chunk = result.value;
+            if (chunk === stt.SpeechStream.FLUSH_SENTINEL) {
+              await connection.flushAudio();
+              continue;
+            }
+
+            const pcmBuffer = Buffer.from(
+              chunk.data.buffer,
+              chunk.data.byteOffset,
+              chunk.data.byteLength,
+            );
+            await connection.sendAudio(new Uint8Array(pcmBuffer));
+          }
+        } catch (err: unknown) {
+          if (!stopRequested) {
+            sendError = err;
+            connection.close().catch(() => {});
+          }
+        } finally {
+          if (!connection.isClosed) {
+            await connection.flushAudio().catch(() => {});
+          }
+          await connection.endAudio().catch(() => {});
+        }
+      })();
+
+      let doneReceived = false;
+      for await (const event of connection) {
+        if (event.type === 'transcription.language') {
+          const typedEvent = event as any;
+          if (typedEvent.audio_language) {
+            currentLanguage = typedEvent.audio_language;
+          }
+        } else if (event.type === 'transcription.text.delta') {
+          if (!speaking) {
+            speaking = true;
+            this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+          }
           const typedEvent = event as any;
           currentText += typedEvent.text || '';
-          this.output.put({
+          this.queue.put({
             type: stt.SpeechEventType.INTERIM_TRANSCRIPT,
             alternatives: [
               {
                 text: currentText,
-                language: normalizeLanguage(this.#stt.options.language),
-                startTime: 0,
-                endTime: 0,
+                language: normalizeLanguage(currentLanguage),
+                startTime: this.startTimeOffset,
+                endTime: this.startTimeOffset,
                 confidence: 1.0,
               },
             ],
@@ -182,45 +295,140 @@ export class SpeechStream extends stt.SpeechStream {
         } else if (event.type === 'transcription.segment') {
           const typedEvent = event as any;
           currentText = typedEvent.text || currentText;
-          this.output.put({
+
+          let parsedWords: any[] | undefined;
+          if ('words' in typedEvent && Array.isArray(typedEvent.words)) {
+            parsedWords = typedEvent.words.map((w: any) =>
+              createTimedString({
+                text: w.word || w.text || '',
+                startTime: (w.start || 0) + this.startTimeOffset,
+                endTime: (w.end || 0) + this.startTimeOffset,
+                confidence: w.confidence ?? 1.0,
+              }),
+            );
+          }
+
+          this.queue.put({
             type: stt.SpeechEventType.FINAL_TRANSCRIPT,
             alternatives: [
               {
                 text: currentText,
-                language: normalizeLanguage(this.#stt.options.language),
-                startTime: typedEvent.start || 0,
-                endTime: typedEvent.end || 0,
+                language: normalizeLanguage(currentLanguage),
+                startTime:
+                  typedEvent.start !== undefined
+                    ? typedEvent.start + this.startTimeOffset
+                    : parsedWords && parsedWords.length > 0
+                      ? parsedWords[0].startTime
+                      : this.startTimeOffset,
+                endTime:
+                  typedEvent.end !== undefined
+                    ? typedEvent.end + this.startTimeOffset
+                    : parsedWords && parsedWords.length > 0
+                      ? parsedWords[parsedWords.length - 1].endTime
+                      : this.startTimeOffset,
                 confidence: 1.0,
+                words: parsedWords,
               },
             ],
           });
           currentText = ''; // reset for the next utterance
+
+          if (speaking) {
+            speaking = false;
+            this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          }
         } else if (event.type === 'transcription.done') {
           if (currentText.trim().length > 0) {
-            this.output.put({
+            this.queue.put({
               type: stt.SpeechEventType.FINAL_TRANSCRIPT,
               alternatives: [
                 {
                   text: currentText,
-                  language: normalizeLanguage(this.#stt.options.language),
-                  startTime: 0,
-                  endTime: 0,
+                  language: normalizeLanguage(currentLanguage),
+                  startTime: this.startTimeOffset,
+                  endTime: this.startTimeOffset,
                   confidence: 1.0,
                 },
               ],
             });
           }
+          if (speaking) {
+            speaking = false;
+            this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          }
+          doneReceived = true;
           break;
         } else if (event.type === 'error') {
           const errEvent = event as any;
           const errorMessage =
             typeof errEvent.error === 'string' ? errEvent.error : JSON.stringify(errEvent.error);
-          console.error(`\nTranscription error: ${errorMessage}`);
-          break;
+          throw new APIConnectionError({
+            message: `Mistral STT connection error: ${errorMessage}`,
+          });
         }
       }
+
+      if (sendError) {
+        throw sendError;
+      }
+
+      if (!stopRequested && !doneReceived) {
+        throw new APIConnectionError({
+          message: 'Mistral STT: WebSocket closed unexpectedly without transcription.done',
+          options: { retryable: true },
+        });
+      }
+    } catch (error: unknown) {
+      error = sendError ?? error;
+
+      // An aborted signal means the stream was intentionally closed — do not
+      // wrap into APIConnectionError, which would trigger the retry loop.
+      if (this.abortController.signal.aborted) throw error;
+
+      // Re-throw errors already in the framework's error hierarchy
+      if (error instanceof APIStatusError || error instanceof APIConnectionError) {
+        throw error;
+      }
+
+      // Inspect the Mistral SDK error for an HTTP status code
+      const err = error as { statusCode?: number; status?: number; message?: string };
+      const statusCode = err.statusCode ?? err.status;
+
+      if (statusCode !== undefined) {
+        if (statusCode === 429) {
+          throw new APIStatusError({
+            message: `Mistral STT: rate limit error - ${err.message ?? 'unknown error'}`,
+            options: { statusCode, retryable: true },
+          });
+        }
+        if (statusCode >= 400 && statusCode < 500) {
+          throw new APIStatusError({
+            message: `Mistral STT: client error (${statusCode}) - ${err.message ?? 'unknown error'}`,
+            options: { statusCode, retryable: false },
+          });
+        }
+        if (statusCode >= 500) {
+          throw new APIStatusError({
+            message: `Mistral STT: server error (${statusCode}) - ${err.message ?? 'unknown error'}`,
+            options: { statusCode, retryable: true },
+          });
+        }
+      }
+
+      // Network failure or unknown error — retryable by default
+      throw new APIConnectionError({
+        message: `Mistral STT: connection error - ${err.message ?? 'unknown error'}`,
+        options: { retryable: true },
+      });
     } finally {
-      await audioStream.return?.();
+      stopRequested = true;
+      resolveAbortTask();
+      if (connection) {
+        await connection.close().catch(() => {});
+      }
+      if (sendAudioTask) {
+        await sendAudioTask;
+      }
     }
   }
 }

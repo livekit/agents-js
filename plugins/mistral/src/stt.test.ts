@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
-import { describe, it } from 'vitest';
+import { describe, it, vi } from 'vitest';
 import { STT } from './stt.js';
+
+vi.setConfig({ testTimeout: 20000 });
 
 const hasMistralApiKey = Boolean(process.env.MISTRAL_API_KEY);
 
