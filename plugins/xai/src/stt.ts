@@ -56,13 +56,20 @@ export interface STTOptions {
   sampleRate: number;
   enableDiarization: boolean;
   language: STTLanguages | string;
+  /**
+   * Silence duration in milliseconds before an utterance-final event is fired.
+   * xAI's default is 10ms, but we default to 100ms for better compatibility with LK EOT models.
+   */
+  endpointing: number;
 }
 
+// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 57-79 lines
 const defaultSTTOptions: Omit<STTOptions, 'apiKey'> = {
   interimResults: true,
   sampleRate: SAMPLE_RATE,
   enableDiarization: false,
   language: 'en',
+  endpointing: 100,
 };
 
 export class STT extends stt.STT {
@@ -186,6 +193,8 @@ export class SpeechStream extends stt.SpeechStream {
       );
       streamURL.searchParams.set('diarize', String(this.#opts.enableDiarization).toLowerCase());
       streamURL.searchParams.set('language', this.#opts.language);
+      // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 372-375 lines
+      streamURL.searchParams.set('endpointing', String(this.#opts.endpointing));
 
       ws = new WebSocket(streamURL, {
         headers: { Authorization: `Bearer ${this.#apiKey}` },
