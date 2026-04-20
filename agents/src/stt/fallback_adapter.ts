@@ -205,6 +205,18 @@ export class FallbackAdapter extends STT {
     });
   }
 
+  // Skip the base class's `metrics_collected` emit: the active child's own
+  // `recognize()` already emits metrics, and those are forwarded onto the
+  // adapter by `setupEventForwarding`. Without this override, consumers see
+  // each RECOGNITION_USAGE event twice and `audioDurationMs` is double-counted.
+  // Mirrors the streaming path's `monitorMetrics` override.
+  override async recognize(
+    frame: Parameters<STT['recognize']>[0],
+    abortSignal?: AbortSignal,
+  ): Promise<SpeechEvent> {
+    return this._recognize(frame, abortSignal);
+  }
+
   protected async _recognize(
     frame: Parameters<STT['recognize']>[0],
     abortSignal?: AbortSignal,
@@ -375,6 +387,11 @@ class FallbackSpeechStream extends SpeechStream {
     // type to `never` based on its initial value. TS's control-flow analysis
     // for closures can't always see that outer code reassigns the var.
     const mainRef: { current: SpeechStream | null } = { current: null };
+    // Tracks whether the forwarder has finished draining `this.input`.
+    // Children elected after this point never receive input, so we must
+    // end their input immediately on election (mirrors Python's check for
+    // forward_input_task.done() before starting a new one).
+    let forwarderFinished = false;
     // Forwarder runs as a Task so we can cancel+await it on terminal failure.
     const forwarderTask = Task.from(async (controller) => {
       for await (const item of this.input) {
@@ -405,6 +422,7 @@ class FallbackSpeechStream extends SpeechStream {
           /* already ended */
         }
       }
+      forwarderFinished = true;
     });
 
     for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
@@ -434,6 +452,17 @@ class FallbackSpeechStream extends SpeechStream {
           },
         });
         mainRef.current = child;
+        // If the forwarder has already drained and exited (input EOF), it
+        // will never call endInput() on this child. End it here so the
+        // child's `for await (input)` loop can terminate cleanly instead
+        // of hanging forever.
+        if (forwarderFinished) {
+          try {
+            child.endInput();
+          } catch {
+            /* already ended */
+          }
+        }
 
         try {
           for await (const ev of child) {

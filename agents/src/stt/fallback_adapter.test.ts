@@ -24,11 +24,18 @@ class MockSpeechStream extends SpeechStream {
   label: string;
   private program: Step[];
   private parent: MockSTT;
-  constructor(parent: MockSTT, program: Step[], connOptions?: APIConnectOptions) {
+  private drainsInput: boolean;
+  constructor(
+    parent: MockSTT,
+    program: Step[],
+    connOptions?: APIConnectOptions,
+    drainsInput = false,
+  ) {
     super(parent, undefined, connOptions);
     this.label = `${parent.label}.stream`;
     this.program = program;
     this.parent = parent;
+    this.drainsInput = drainsInput;
   }
   protected async run(): Promise<void> {
     for (const step of this.program) {
@@ -44,7 +51,15 @@ class MockSpeechStream extends SpeechStream {
         });
         throw step.error;
       } else if (step.kind === 'end') {
-        return;
+        break;
+      }
+    }
+    // Optionally block on input like a real provider. run() only returns once
+    // endInput() is called on this child, so this is what exposes the
+    // "child elected after forwarder EOF never gets endInput()" hang.
+    if (this.drainsInput) {
+      for await (const _ of this.input) {
+        /* noop */
       }
     }
   }
@@ -54,6 +69,7 @@ interface MockSTTOptions {
   label: string;
   program: Step[];
   streamProgram?: Step[];
+  streamDrainsInput?: boolean;
   capabilities?: Partial<STTCapabilities>;
 }
 
@@ -61,6 +77,7 @@ class MockSTT extends STT {
   label: string;
   private recognizeProgram: Step[];
   private streamProgram: Step[];
+  private streamDrainsInput: boolean;
   constructor(opts: MockSTTOptions) {
     super({
       streaming: opts.capabilities?.streaming ?? true,
@@ -70,6 +87,7 @@ class MockSTT extends STT {
     this.label = opts.label;
     this.recognizeProgram = opts.program;
     this.streamProgram = opts.streamProgram ?? opts.program;
+    this.streamDrainsInput = opts.streamDrainsInput ?? false;
   }
   override async recognize(
     frame: Parameters<STT['recognize']>[0],
@@ -85,7 +103,12 @@ class MockSTT extends STT {
     return { type: SpeechEventType.FINAL_TRANSCRIPT };
   }
   override stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
-    return new MockSpeechStream(this, this.streamProgram, options?.connOptions);
+    return new MockSpeechStream(
+      this,
+      this.streamProgram,
+      options?.connOptions,
+      this.streamDrainsInput,
+    );
   }
 }
 
@@ -237,6 +260,27 @@ describe('FallbackAdapter', () => {
     // correctly stays marked unavailable since primary's program still errors).
     await new Promise((r) => setTimeout(r, 20));
     expect(adapter.status[0]?.available).toBe(false);
+  });
+
+  it('recognize emits exactly one metrics_collected event (no double-count)', async () => {
+    // Regression: base STT.recognize() emits its own metrics after _recognize()
+    // returns. _recognize() delegates to a child's public recognize(), which
+    // also emits metrics — and those child metrics are forwarded onto the
+    // adapter. Without a recognize() override, consumers see two stt_metrics
+    // events per call and RECOGNITION_USAGE is double-counted.
+    const primary = new MockSTT({
+      label: 'primary',
+      program: [{ kind: 'event', event: finalEvent }],
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary] });
+
+    const received: unknown[] = [];
+    adapter.on('metrics_collected', (m) => received.push(m));
+
+    const emptyFrame = {} as Parameters<typeof adapter.recognize>[0];
+    await adapter.recognize(emptyFrame);
+
+    expect(received).toHaveLength(1);
   });
 
   it('forwards metrics_collected events from every child instance', () => {
@@ -397,5 +441,46 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(events).toEqual([]);
     expect(adapter.status[0]?.available).toBe(false);
     expect(adapter.status[1]?.available).toBe(false);
+  });
+
+  it('ends the fallback child when input EOF arrives before failover', async () => {
+    // Regression: if endInput() is called on the adapter (input EOF) before
+    // the primary errors, the forwarder exits having only seen the primary.
+    // The fallback child elected afterwards never receives endInput(), so
+    // a provider whose run() drains input hangs forever. Guard: on election
+    // after the forwarder has finished, immediately end the child's input.
+    const primary = new MockSTT({
+      label: 'primary',
+      program: [],
+      streamProgram: [{ kind: 'error', error: new APIError('primary down') }],
+    });
+    const fallback = new MockSTT({
+      label: 'fallback',
+      program: [],
+      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
+      streamDrainsInput: true,
+    });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    const collect = (async () => {
+      for await (const ev of stream) events.push(ev);
+    })();
+
+    const timeout = new Promise<'timeout'>((resolve) =>
+      setTimeout(() => resolve('timeout'), 1_000),
+    );
+    const outcome = await Promise.race([collect.then(() => 'ok' as const), timeout]);
+
+    expect(outcome).toBe('ok');
+    expect(events).toEqual([finalEvent]);
+    expect(adapter.status[0]?.available).toBe(false);
+    expect(adapter.status[1]?.available).toBe(true);
   });
 });
