@@ -185,12 +185,17 @@ export class STTv2 extends stt.STT {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<STTv2Options>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language:
+        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
+    };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
     // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
     if (
-      opts.languageHint &&
-      opts.languageHint.length > 0 &&
+      this.#opts.languageHint &&
+      this.#opts.languageHint.length > 0 &&
       this.#opts.model !== 'flux-general-multi'
     ) {
       this.#logger.warn(
