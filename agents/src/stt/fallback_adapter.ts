@@ -4,7 +4,7 @@
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
-import type { APIConnectOptions } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
@@ -55,6 +55,12 @@ export interface AvailabilityChangedEvent {
   /** Whether the STT instance is now available. */
   available: boolean;
 }
+
+const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
+  maxRetry: 0,
+  timeoutMs: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
+  retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
+};
 
 /**
  * `FallbackAdapter` is an STT wrapper that provides automatic failover between
@@ -243,18 +249,9 @@ export class FallbackAdapter extends STT {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
-    // The base SpeechStream's mainTask honours its connOptions for its own
-    // retry loop, which we disable (maxRetry: 0) because failover is driven
-    // by this adapter. timeoutMs/retryIntervalMs here would only apply to
-    // that disabled loop — default them to the adapter's knobs anyway so
-    // callers that introspect the stream see consistent values.
     return new FallbackSpeechStream(
       this,
-      options?.connOptions ?? {
-        maxRetry: 0,
-        timeoutMs: this.attemptTimeoutMs,
-        retryIntervalMs: this.retryIntervalMs,
-      },
+      options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
     );
   }
 
