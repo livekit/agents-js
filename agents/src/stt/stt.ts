@@ -64,6 +64,18 @@ export interface SpeechData {
   words?: TimedString[];
   /** Speaker identifier when the provider supports diarization. */
   speakerId?: string | null;
+  /**
+   * The source languages spoken by the user.
+   *
+   * Populated by STT services that support translation, where `language` holds the
+   * target language and `sourceLanguages` holds the original spoken language(s),
+   * or by multi-language detection services where `language` holds the dominant
+   * language and `sourceLanguages` holds all detected languages sorted by prevalence.
+   *
+   * May contain multiple entries when a single utterance spans multiple source languages.
+   */
+  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 62-68 lines
+  sourceLanguages?: LanguageCode[];
 }
 
 export interface RecognitionUsage {

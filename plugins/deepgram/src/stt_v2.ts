@@ -36,6 +36,12 @@ export interface STTv2Options {
   eotTimeoutMs?: number;
   mipOptOut?: boolean;
   tags?: string[];
+  /**
+   * List of language hints to bias the model for improved accuracy.
+   * Only usable with `flux-general-multi`.
+   */
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 61 line
+  languageHint?: string[];
 }
 
 const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
@@ -104,6 +110,8 @@ export class STTv2 extends stt.STT {
    * @param opts.eotTimeoutMs - End-of-turn timeout in ms (default: 3000)
    * @param opts.keyterms - List of key terms to improve recognition
    * @param opts.tags - Tags for usage reporting (max 128 chars each)
+   * @param opts.languageHint - List of language hints to bias the model for improved accuracy.
+   *   Only usable with `flux-general-multi`.
    *
    * @throws Error if no API key is provided
    */
@@ -128,6 +136,18 @@ export class STTv2 extends stt.STT {
 
     if (this.#opts.tags) {
       this.#opts.tags = validateTags(this.#opts.tags);
+    }
+
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 134-138 lines
+    if (
+      this.#opts.languageHint &&
+      this.#opts.languageHint.length > 0 &&
+      this.#opts.model !== 'flux-general-multi'
+    ) {
+      this.#logger.warn(
+        { model: this.#opts.model },
+        '`languageHint` is only supported by `flux-general-multi` and will be ignored for this model',
+      );
     }
   }
 
@@ -165,8 +185,24 @@ export class STTv2 extends stt.STT {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<STTv2Options>) {
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language:
+        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
+    };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 244-249 lines
+    if (
+      this.#opts.languageHint &&
+      this.#opts.languageHint.length > 0 &&
+      this.#opts.model !== 'flux-general-multi'
+    ) {
+      this.#logger.warn(
+        { model: this.#opts.model },
+        '`languageHint` is only supported by `flux-general-multi` and will be ignored for this model',
+      );
+    }
     this.#logger.debug('Updated STTv2 options');
   }
 }
@@ -456,6 +492,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     if (this.#opts.keyterms.length > 0) params.keyterm = this.#opts.keyterms;
     if (this.#opts.tags && this.#opts.tags.length > 0) params.tag = this.#opts.tags;
 
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 480-481 lines
+    if (this.#opts.languageHint && this.#opts.languageHint.length > 0) {
+      params.language_hint = this.#opts.languageHint;
+    }
+
     const baseUrl = this.#opts.endpointUrl.replace(/^http/, 'ws');
     const qs = queryString.stringify(params);
     return `${baseUrl}?${qs}`;
@@ -487,12 +528,20 @@ function parseTranscription(
     confidence = sum / wordsData.length;
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 587-591 lines
+  const detectedLanguagesRaw = Array.isArray(data.languages) ? (data.languages as string[]) : [];
+  const detectedLanguages = detectedLanguagesRaw.map((lang) => normalizeLanguage(lang));
+  const primaryLanguage =
+    detectedLanguages.length > 0 ? detectedLanguages[0]! : normalizeLanguage(language);
+
   const sd: stt.SpeechData = {
-    language: normalizeLanguage(language),
+    language: primaryLanguage,
     startTime: ((data.audio_window_start as number) || 0) + startTimeOffset,
     endTime: ((data.audio_window_end as number) || 0) + startTimeOffset,
     confidence: confidence,
     text: transcript || '',
+    // Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py - 598 line
+    sourceLanguages: detectedLanguages.length > 0 ? detectedLanguages : undefined,
     // Note: Deepgram V2 (Flux) API does not provide word-level timing (start/end).
     // Words only contain 'word' and 'confidence' fields, so startTime/endTime will be 0.
     // See: https://developers.deepgram.com/docs/flux/nova-3-migration
