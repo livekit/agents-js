@@ -18,7 +18,8 @@ export type TTSModels =
 
 export type TTSEncoding = 'linear16' | 'mulaw' | 'alaw' | 'mp3' | 'opus' | 'flac' | 'aac';
 
-export type V2Models = 'flux-general-en';
+// Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/models.py - 38 line
+export type V2Models = 'flux-general-en' | 'flux-general-multi';
 
 export type STTModels =
   | 'nova-general'
