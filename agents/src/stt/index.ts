@@ -13,3 +13,4 @@ export {
   SpeechStream,
 } from './stt.js';
 export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
+export { FallbackAdapter, type AvailabilityChangedEvent } from './fallback_adapter.js';
