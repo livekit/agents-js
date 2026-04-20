@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.2.8
+
+### Patch Changes
+
+- Add Deepgram `flux-general-multi` STTv2 model support with multi-language detection. Introduces a new `languageHint` option for biasing the model toward specific languages (only used by `flux-general-multi`), and adds a new `sourceLanguages` field on `SpeechData` that carries all detected languages sorted by prevalence. For multi-language detection, the dominant language is set on `language` while `sourceLanguages` retains the full list. - [#1275](https://github.com/livekit/agents-js/pull/1275) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`ebb5d63a7fc05d5297c895ff99b7e76a81926321`](https://github.com/livekit/agents-js/commit/ebb5d63a7fc05d5297c895ff99b7e76a81926321), [`71bb39efa8aa0d82126e76db35c121235f040f2f`](https://github.com/livekit/agents-js/commit/71bb39efa8aa0d82126e76db35c121235f040f2f), [`3e67a904cf68275f26f9f30beb9c40d519e67b15`](https://github.com/livekit/agents-js/commit/3e67a904cf68275f26f9f30beb9c40d519e67b15), [`216f7630179d3d3bddb87ad71f1eb55dd20003ca`](https://github.com/livekit/agents-js/commit/216f7630179d3d3bddb87ad71f1eb55dd20003ca)]:
+  - @livekit/agents@1.2.8
+
 ## 1.2.7
 
 ### Patch Changes
