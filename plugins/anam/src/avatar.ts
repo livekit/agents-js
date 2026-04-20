@@ -37,7 +37,7 @@ export async function mintAvatarJoinToken({
 const AVATAR_IDENTITY = 'anam-avatar-agent';
 const _AVATAR_NAME = 'anam-avatar-agent';
 
-export class AvatarSession {
+export class AvatarSession extends voice.AvatarSession {
   private sessionId?: string;
 
   constructor(
@@ -49,7 +49,9 @@ export class AvatarSession {
       avatarParticipantName?: string;
       connOptions?: APIConnectOptions;
     },
-  ) {}
+  ) {
+    super();
+  }
 
   async start(
     agentSession: voice.AgentSession,
@@ -60,6 +62,9 @@ export class AvatarSession {
       livekitApiSecret?: string;
     },
   ) {
+    // Ref: python livekit-plugins/livekit-plugins-anam/livekit/plugins/anam/avatar.py - 76 lines
+    await super.start(agentSession, room);
+
     const logger = log().child({ module: 'AnamAvatar' });
     const apiKey = this.opts.apiKey ?? process.env.ANAM_API_KEY;
     if (!apiKey) throw new AnamException('ANAM_API_KEY is required');

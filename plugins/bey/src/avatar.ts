@@ -96,7 +96,7 @@ export interface StartOptions {
  * await avatar.start(agentSession, room);
  * ```
  */
-export class AvatarSession {
+export class AvatarSession extends voice.AvatarSession {
   private avatarId: string;
   private apiUrl: string;
   private apiKey: string;
@@ -113,6 +113,7 @@ export class AvatarSession {
    * @throws BeyException if BEY_API_KEY is not set
    */
   constructor(options: AvatarSessionOptions = {}) {
+    super();
     this.avatarId = options.avatarId || STOCK_AVATAR_ID;
     this.apiUrl = options.apiUrl || process.env.BEY_API_URL || DEFAULT_API_URL;
     this.apiKey = options.apiKey || process.env.BEY_API_KEY || '';
@@ -147,6 +148,9 @@ export class AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
+    // Ref: python livekit-plugins/livekit-plugins-bey/livekit/plugins/bey/avatar.py - 78 lines
+    await super.start(agentSession, room);
+
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
