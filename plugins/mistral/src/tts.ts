@@ -10,6 +10,7 @@ import {
   tts,
 } from '@livekit/agents';
 import { Mistral } from '@mistralai/mistralai';
+import * as crypto from 'node:crypto';
 import type { MistralTTSModels } from './models.js';
 
 // Confirmed from WAV header: Mistral TTS PCM output is 24000 Hz, mono, 16-bit signed
@@ -92,8 +93,12 @@ export class TTS extends tts.TTS {
     }));
   }
 
-  synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
-    return new ChunkedStream(this, text, this.#client, this.#opts, connOptions);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStream(this, text, this.#client, this.#opts, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -117,8 +122,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     client: Mistral,
     opts: TTSOptions,
     connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
   ) {
-    super(text, ttsInstance, connOptions);
+    super(text, ttsInstance, connOptions, abortSignal);
     this.#client = client;
     this.#opts = opts;
     this.#text = text;
@@ -127,15 +133,21 @@ export class ChunkedStream extends tts.ChunkedStream {
   protected async run(): Promise<void> {
     const logger = log();
     try {
-      const eventStream = await this.#client.audio.speech.complete({
-        input: this.#text,
-        model: this.#opts.model ?? 'voxtral-mini-tts-2603',
-        voiceId: this.#opts.voiceId,
-        responseFormat: 'pcm',
-        stream: true,
-      });
+      const eventStream = await this.#client.audio.speech.complete(
+        {
+          input: this.#text,
+          model: this.#opts.model ?? 'voxtral-mini-tts-2603',
+          voiceId: this.#opts.voiceId,
+          responseFormat: 'pcm',
+          stream: true,
+        },
+        {
+          fetchOptions: { signal: this.abortController?.signal },
+        },
+      );
 
-      const requestId = this.#text.slice(0, 8);
+      const requestId = crypto.randomUUID();
+      const segmentId = crypto.randomUUID();
       const audioByteStream = new AudioByteStream(MISTRAL_TTS_SAMPLE_RATE, MISTRAL_TTS_CHANNELS);
 
       let lastFrame: import('@livekit/rtc-node').AudioFrame | undefined;
@@ -152,7 +164,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           const pcmBytes = Buffer.from(event.data.audioData, 'base64');
           const frames = audioByteStream.write(pcmBytes);
           for (const frame of frames) {
-            sendLastFrame(requestId, false);
+            sendLastFrame(segmentId, false);
             lastFrame = frame;
           }
         } else if (event.data.type === 'speech.audio.done') {
@@ -163,11 +175,11 @@ export class ChunkedStream extends tts.ChunkedStream {
       // Flush any remaining buffered audio
       const flushFrames = audioByteStream.flush();
       for (const frame of flushFrames) {
-        sendLastFrame(requestId, false);
+        sendLastFrame(segmentId, false);
         lastFrame = frame;
       }
 
-      sendLastFrame(requestId, true);
+      sendLastFrame(segmentId, true);
       this.queue.close();
     } catch (error: unknown) {
       if (this.abortController?.signal.aborted) return;
@@ -204,8 +216,6 @@ export class ChunkedStream extends tts.ChunkedStream {
         message: `Mistral TTS: ${err.message ?? 'unknown error'}`,
         options: { retryable: true },
       });
-    } finally {
-      this.queue.close();
     }
   }
 }

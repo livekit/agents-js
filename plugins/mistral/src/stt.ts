@@ -199,6 +199,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     let connection: any;
     let sendAudioTask: Promise<void> | undefined;
+    let sendError: unknown;
 
     try {
       connection = await this.#client.connect(this.#stt.options.liveModel, {
@@ -233,8 +234,11 @@ export class SpeechStream extends stt.SpeechStream {
             );
             await connection.sendAudio(new Uint8Array(pcmBuffer));
           }
-        } catch (err) {
-          // Stream writing closed or errored
+        } catch (err: unknown) {
+          if (!stopRequested) {
+            sendError = err;
+            connection.close().catch(() => {});
+          }
         } finally {
           if (!connection.isClosed) {
             await connection.flushAudio().catch(() => {});
@@ -342,7 +346,13 @@ export class SpeechStream extends stt.SpeechStream {
           });
         }
       }
+
+      if (sendError) {
+        throw sendError;
+      }
     } catch (error: unknown) {
+      error = sendError ?? error;
+
       // An aborted signal means the stream was intentionally closed — do not
       // wrap into APIConnectionError, which would trigger the retry loop.
       if (this.abortController.signal.aborted) throw error;
@@ -386,7 +396,7 @@ export class SpeechStream extends stt.SpeechStream {
       stopRequested = true;
       resolveAbortTask();
       if (connection) {
-        await connection.close();
+        await connection.close().catch(() => {});
       }
       if (sendAudioTask) {
         await sendAudioTask;

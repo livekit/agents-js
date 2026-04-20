@@ -16,8 +16,7 @@ export type MistralChatModels =
 
 export type MistralSTTModels =
   | 'voxtral-mini-transcribe-realtime-2602' //realtime streaming
-  | 'voxtral-small-latest' //chat completions
-  | 'voxtral-mini-latest' //chat completions
-  | 'voxtral-mini-transcribe'; //chat completions
+  | 'voxtral-mini-2602' //batch transcription
+  | 'voxtral-mini-transcribe-2507'; //batch transcription (deprecated)
 
 export type MistralTTSModels = 'voxtral-mini-tts-2603';
