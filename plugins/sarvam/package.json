@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-sarvam",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "Sarvam AI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
