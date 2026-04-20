@@ -4,7 +4,7 @@
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import type { APIConnectOptions } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
@@ -56,12 +56,6 @@ export interface AvailabilityChangedEvent {
   available: boolean;
 }
 
-const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
-  maxRetry: 0,
-  timeoutMs: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
-  retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
-};
-
 /**
  * `FallbackAdapter` is an STT wrapper that provides automatic failover between
  * multiple STT providers.
@@ -97,7 +91,6 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
-  private _errorForwarders = new Map<STT, (e: STTError) => void>();
 
   label = 'stt.FallbackAdapter';
 
@@ -120,8 +113,8 @@ export class FallbackAdapter extends STT {
       s.capabilities.streaming ? s : new StreamAdapter(s, opts.vad!),
     );
 
-    // aligned_transcript: match Python — pick the primary's granularity only
-    // if every instance supports aligned transcripts.
+    // Pick the primary's granularity only if every instance supports aligned
+    // transcripts — otherwise consumers can't rely on a consistent format.
     let alignedTranscript: 'word' | 'chunk' | false = false;
     if (wrapped.every((s) => !!s.capabilities.alignedTranscript)) {
       alignedTranscript = wrapped[0]!.capabilities.alignedTranscript ?? false;
@@ -165,13 +158,17 @@ export class FallbackAdapter extends STT {
   }
 
   private setupEventForwarding(): void {
+    // We intentionally do NOT forward child 'error' events. The adapter's job
+    // is to mask transient child failures via fallback — surfacing them to
+    // consumers (e.g. AgentSession, which treats any unrecoverable stt_error
+    // as a reason to close the session) would defeat the point. Terminal
+    // errors still reach the session via the adapter's own run()/recognize()
+    // throwing APIConnectionError once every child has failed — the base
+    // SpeechStream.mainTask emits that on this STT instance naturally.
     for (const s of this.sttInstances) {
       const metricsForwarder = (metrics: STTMetrics) => this.emit('metrics_collected', metrics);
-      const errorForwarder = (error: STTError) => this.emit('error', error);
       this._metricsForwarders.set(s, metricsForwarder);
-      this._errorForwarders.set(s, errorForwarder);
       s.on('metrics_collected', metricsForwarder);
-      s.on('error', errorForwarder);
     }
   }
 
@@ -246,9 +243,18 @@ export class FallbackAdapter extends STT {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    // The base SpeechStream's mainTask honours its connOptions for its own
+    // retry loop, which we disable (maxRetry: 0) because failover is driven
+    // by this adapter. timeoutMs/retryIntervalMs here would only apply to
+    // that disabled loop — default them to the adapter's knobs anyway so
+    // callers that introspect the stream see consistent values.
     return new FallbackSpeechStream(
       this,
-      options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+      options?.connOptions ?? {
+        maxRetry: 0,
+        timeoutMs: this.attemptTimeoutMs,
+        retryIntervalMs: this.retryIntervalMs,
+      },
     );
   }
 
@@ -267,12 +273,9 @@ export class FallbackAdapter extends STT {
     }
     for (const s of this.sttInstances) {
       const m = this._metricsForwarders.get(s);
-      const e = this._errorForwarders.get(s);
       if (m) s.off('metrics_collected' as keyof STTCallbacks, m);
-      if (e) s.off('error' as keyof STTCallbacks, e);
     }
     this._metricsForwarders.clear();
-    this._errorForwarders.clear();
   }
 }
 
@@ -285,6 +288,22 @@ class FallbackSpeechStream extends SpeechStream {
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, undefined, connOptions);
     this.fallbackAdapter = adapter;
+  }
+
+  // Skip `metrics_collected` emission in the adapter stream — children's
+  // metrics are already forwarded to the adapter via `_metricsForwarders`.
+  // Without this override we double-count every RECOGNITION_USAGE event.
+  protected override async monitorMetrics(): Promise<void> {
+    for await (const event of this.queue) {
+      if (!this.output.closed) {
+        try {
+          this.output.put(event);
+        } catch {
+          /* queue closed during disconnect — expected */
+        }
+      }
+    }
+    if (!this.output.closed) this.output.close();
   }
 
   private tryRecoverStream(sttInstance: STT): void {
@@ -301,6 +320,12 @@ class FallbackSpeechStream extends SpeechStream {
       },
     });
     this.recoveringStreams.push(probe);
+
+    // Absorb child 'error' events while the probe is active. JS EventEmitter
+    // crashes if 'error' fires with no listener; the probe's iterator ends
+    // naturally on failure, so we don't need to do anything with the payload.
+    const errorSink: (e: STTError) => void = () => {};
+    sttInstance.on('error', errorSink);
 
     status.recoveringStreamTask = Task.from(async (controller) => {
       try {
@@ -331,6 +356,7 @@ class FallbackSpeechStream extends SpeechStream {
           );
         }
       } finally {
+        sttInstance.off('error', errorSink);
         probe.close();
         const i = this.recoveringStreams.indexOf(probe);
         if (i >= 0) this.recoveringStreams.splice(i, 1);
@@ -352,9 +378,10 @@ class FallbackSpeechStream extends SpeechStream {
     // type to `never` based on its initial value. TS's control-flow analysis
     // for closures can't always see that outer code reassigns the var.
     const mainRef: { current: SpeechStream | null } = { current: null };
-    const forwarderDone = (async () => {
+    // Forwarder runs as a Task so we can cancel+await it on terminal failure.
+    const forwarderTask = Task.from(async (controller) => {
       for await (const item of this.input) {
-        if (this.abortSignal.aborted) break;
+        if (controller.signal.aborted || this.abortSignal.aborted) break;
         for (const probe of [...this.recoveringStreams]) {
           try {
             if (typeof item === 'symbol') probe.flush();
@@ -381,7 +408,7 @@ class FallbackSpeechStream extends SpeechStream {
           /* already ended */
         }
       }
-    })();
+    });
 
     for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
       const sttInstance = this.fallbackAdapter.sttInstances[i]!;
@@ -455,7 +482,26 @@ class FallbackSpeechStream extends SpeechStream {
       this.tryRecoverStream(sttInstance);
     }
 
-    void forwarderDone;
+    // Terminal failure: drain + cancel the forwarder and every live probe
+    // task before throwing.
+    try {
+      this.input.close();
+    } catch {
+      /* already closed */
+    }
+    if (!forwarderTask.done) {
+      await cancelAndWait([forwarderTask], 1000);
+    }
+    const liveProbeTasks: Task<void>[] = [];
+    for (let i = 0; i < this.fallbackAdapter.sttInstances.length; i++) {
+      const s = this.fallbackAdapter.status[i];
+      if (s?.recoveringStreamTask && !s.recoveringStreamTask.done) {
+        liveProbeTasks.push(s.recoveringStreamTask);
+      }
+    }
+    if (liveProbeTasks.length > 0) {
+      await cancelAndWait(liveProbeTasks, 1000);
+    }
     for (const probe of [...this.recoveringStreams]) {
       try {
         probe.close();

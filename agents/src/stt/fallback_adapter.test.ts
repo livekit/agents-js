@@ -131,7 +131,7 @@ describe('FallbackAdapter', () => {
     );
   });
 
-  it('exposes provided instances and Python-aligned defaults', () => {
+  it('exposes provided instances and telephony-tuned defaults', () => {
     const a = new MockSTT({ label: 'a', program: [{ kind: 'end' }] });
     const b = new MockSTT({ label: 'b', program: [{ kind: 'end' }] });
     const adapter = new FallbackAdapter({ sttInstances: [a, b] });
@@ -289,5 +289,113 @@ describe('FallbackAdapter', () => {
     // should not satisfy the recovery condition.
     expect(emptyFinalEvent.alternatives?.[0]?.text).toBe('');
     expect(finalEvent.alternatives?.[0]?.text).toBe('hello world');
+  });
+});
+
+describe('FallbackSpeechStream (streaming path)', () => {
+  beforeAll(() => {
+    initializeLogger({ pretty: false });
+    process.on('unhandledRejection', () => {});
+  });
+
+  it('forwards events from the primary without triggering fallback when it succeeds', async () => {
+    const primary = new MockSTT({
+      label: 'primary',
+      program: [],
+      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
+    });
+    const fallback = new MockSTT({
+      label: 'fallback',
+      program: [],
+      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+
+    const availabilityChanges: Array<{ stt: STT; available: boolean }> = [];
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        availabilityChanges.push(ev);
+      },
+    );
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events).toEqual([finalEvent]);
+    expect(availabilityChanges).toEqual([]);
+    expect(adapter.status[0]?.available).toBe(true);
+    expect(adapter.status[1]?.available).toBe(true);
+  });
+
+  it('stream switches to the secondary provider when the primary errors', async () => {
+    const primary = new MockSTT({
+      label: 'primary',
+      program: [],
+      streamProgram: [{ kind: 'error', error: new APIError('primary down') }],
+    });
+    const fallback = new MockSTT({
+      label: 'fallback',
+      program: [],
+      streamProgram: [{ kind: 'event', event: finalEvent }, { kind: 'end' }],
+    });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0, // no retries — primary fails once, move on
+    });
+
+    const availabilityChanges: Array<{ stt: STT; available: boolean }> = [];
+    (adapter as unknown as EventEmitter).on(
+      'stt_availability_changed',
+      (ev: { stt: STT; available: boolean }) => {
+        availabilityChanges.push(ev);
+      },
+    );
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events).toEqual([finalEvent]);
+    expect(availabilityChanges).toContainEqual({ stt: primary, available: false });
+    expect(adapter.status[0]?.available).toBe(false);
+    expect(adapter.status[1]?.available).toBe(true);
+  });
+
+  it('stream marks every instance unavailable when all children fail', async () => {
+    const err = new APIError('down');
+    const a = new MockSTT({
+      label: 'a',
+      program: [],
+      streamProgram: [{ kind: 'error', error: err }],
+    });
+    const b = new MockSTT({
+      label: 'b',
+      program: [],
+      streamProgram: [{ kind: 'error', error: err }],
+    });
+    const adapter = new FallbackAdapter({
+      sttInstances: [a, b],
+      maxRetryPerSTT: 0,
+    });
+
+    // Adapter's base SpeechStream.mainTask re-throws after emitting 'error';
+    // swallow to keep the test harness quiet.
+    adapter.on('error', () => {});
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events).toEqual([]);
+    expect(adapter.status[0]?.available).toBe(false);
+    expect(adapter.status[1]?.available).toBe(false);
   });
 });
