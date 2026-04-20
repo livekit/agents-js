@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm as llmTest } from '@livekit/agents-plugins-test';
-import { describe, it } from 'vitest';
+import { describe, it, vi } from 'vitest';
 import { LLM } from './llm.js';
+
+vi.setConfig({ testTimeout: 30000 });
 
 const hasMistralApiKey = Boolean(process.env.MISTRAL_API_KEY);
 

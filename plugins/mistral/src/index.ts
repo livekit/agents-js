@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './llm.js';
 export * from './stt.js';
+export * from './tts.js';
 export * from './models.js';
 
 class MistralPlugin extends Plugin {

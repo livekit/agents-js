@@ -35,7 +35,7 @@ const defaultSTTOptions: STTOptions = {
   apiKey: process.env.MISTRAL_API_KEY,
   language: 'en',
   liveModel: 'voxtral-mini-transcribe-realtime-2602',
-  offlineModel: 'voxtral-small-latest',
+  offlineModel: 'voxtral-mini-2602',
   audioFormat: { encoding: AudioEncoding.PcmS16le, sampleRate: 16000 },
   baseURL: 'https://api.mistral.ai',
 };
@@ -244,9 +244,9 @@ export class SpeechStream extends stt.SpeechStream {
       })();
 
       for await (const event of connection) {
-        // [PR Reviewer]: Mistral's RealtimeConnectOptions does not formally accept an outbound 
-        // static language parameter for streaming API initialization (forcing backend auto-detection). 
-        // To prevent metadata drift, we intercept their dynamic inbound language detection payload 
+        // [PR Reviewer]: Mistral's RealtimeConnectOptions does not formally accept an outbound
+        // static language parameter for streaming API initialization (forcing backend auto-detection).
+        // To prevent metadata drift, we intercept their dynamic inbound language detection payload
         // down the socket and natively hydrate the SpeechEvent payload with the truthful dialect.
         if (event.type === 'transcription.language') {
           const typedEvent = event as any;

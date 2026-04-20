@@ -20,4 +20,4 @@ export type MistralSTTModels =
   | 'voxtral-mini-latest' //chat completions
   | 'voxtral-mini-transcribe'; //chat completions
 
-export type MistralTTSModels = 'mistral-tts-latest';
+export type MistralTTSModels = 'voxtral-mini-tts-2603';
