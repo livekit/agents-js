@@ -6,8 +6,8 @@
  */
 export interface EndpointingOptions {
   /**
-   * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adjusts delay based on
-   * end-of-utterance prediction.
+   * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adapts the delay within the
+   * configured range based on observed pause timing across the session.
    * @defaultValue "fixed"
    */
   mode: 'fixed' | 'dynamic';
