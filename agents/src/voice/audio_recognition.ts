@@ -169,7 +169,6 @@ export class AudioRecognition {
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 146-147 lines
   private endpointing: BaseEndpointing;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
@@ -273,7 +272,6 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 192-218 lines
   updateOptions(options: {
     turnDetection: TurnDetectionMode | undefined;
     endpointing?: BaseEndpointing;
@@ -317,14 +315,12 @@ export class AudioRecognition {
     this.interruptionStreamChannel = undefined;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 238-240 lines
   async onStartOfAgentSpeech(startedAt = Date.now()) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 245-270 lines
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
     if (this.isAgentSpeaking) {
       this.endpointing.onEndOfAgentSpeech(Date.now());
@@ -357,7 +353,6 @@ export class AudioRecognition {
     this.isAgentSpeaking = false;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 272-289 lines
   async onStartOfSpeech(startedAt: number, speechDuration = 0, userSpeakingSpan?: Span) {
     this.endpointing.onStartOfSpeech(startedAt, this.isAgentSpeaking);
 
@@ -370,7 +365,6 @@ export class AudioRecognition {
     );
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 291-329 lines
   async onEndOfSpeech(endedAt: number, userSpeakingSpan?: Span, interruption?: boolean) {
     if (this.speaking) {
       this.endpointing.onEndOfSpeech(
@@ -843,7 +837,6 @@ export class AudioRecognition {
         speechStartTime: number | undefined,
       ) =>
       async (controller: AbortController) => {
-        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 934-959 lines
         let endpointingDelay = this.endpointing.minDelay;
 
         const userTurnSpan = this.ensureUserTurnSpan();

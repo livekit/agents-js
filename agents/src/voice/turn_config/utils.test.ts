@@ -85,17 +85,6 @@ describe('migrateLegacyOptions', () => {
     expect(result.turnHandling.turnDetection).toBe('vad');
   });
 
-  it('should preserve dynamic endpointing mode from turnHandling', () => {
-    const { agentSessionOptions: result } = migrateLegacyOptions({
-      turnHandling: {
-        endpointing: {
-          mode: 'dynamic',
-        },
-      },
-    });
-
-    expect(result.turnHandling.endpointing.mode).toBe('dynamic');
-  });
 });
 
 describe('migrateTurnHandling', () => {

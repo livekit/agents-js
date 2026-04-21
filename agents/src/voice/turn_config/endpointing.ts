@@ -89,7 +89,6 @@ class ExpFilter {
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
-// Ref: python livekit-agents/livekit/agents/voice/turn.py - 47-69 lines
 export interface EndpointingOptions {
   /**
    * Endpointing mode. `"fixed"` uses the configured delays as-is, `"dynamic"` adapts the
@@ -117,7 +116,6 @@ export const defaultEndpointingOptions = {
   maxDelay: 3000,
 } as const satisfies EndpointingOptions;
 
-// Ref: python livekit-agents/livekit/agents/voice/endpointing.py - 10-47 lines
 export class BaseEndpointing {
   protected _minDelay: number;
   protected _maxDelay: number;
@@ -165,7 +163,6 @@ export class BaseEndpointing {
   onEndOfAgentSpeech(_endedAt: number): void {}
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/endpointing.py - 49-303 lines
 export class DynamicEndpointing extends BaseEndpointing {
   private _utterancePause: ExpFilter;
   private _turnPause: ExpFilter;
@@ -345,7 +342,6 @@ export class DynamicEndpointing extends BaseEndpointing {
   }
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/endpointing.py - 305-316 lines
 export function createEndpointing(options: EndpointingOptions): BaseEndpointing {
   if (options.mode === 'dynamic') {
     return new DynamicEndpointing({
