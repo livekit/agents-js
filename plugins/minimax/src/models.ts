@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 27-38 lines
 /** Supported MiniMax TTS models. */
 export type TTSModel =
   | 'speech-2.8-hd'
@@ -15,6 +16,7 @@ export type TTSModel =
   | 'speech-01-hd'
   | 'speech-01-turbo';
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 40-83 lines
 /**
  * A subset of commonly used MiniMax voice IDs. Any string is accepted by
  * {@link TTSOptions.voice} - these literals exist purely for IDE
@@ -61,6 +63,7 @@ export type TTSVoice =
   | 'moss_audio_84f32de9-2363-11f0-b7ab-d255fae1f27b'
   | 'moss_audio_82ebf67c-78c8-11f0-8e8e-36b92fbb4f95';
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 89-92 lines
 /**
  * MiniMax-supported emotions.
  *
@@ -76,6 +79,7 @@ export type TTSEmotion =
   | 'neutral'
   | 'fluent';
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 94-136 lines
 /** Language hint for multilingual performance. */
 export type TTSLanguageBoost =
   | 'auto'
@@ -120,11 +124,14 @@ export type TTSLanguageBoost =
   | 'Tamil'
   | 'Afrikaans';
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 139 line
 /**
  * Valid PCM sample rates accepted by the MiniMax API.
  */
 export type TTSSampleRate = 8000 | 16000 | 22050 | 24000 | 32000 | 44100;
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 85-86 lines
 export const DEFAULT_MODEL: TTSModel = 'speech-02-turbo';
 export const DEFAULT_VOICE_ID: TTSVoice = 'socialmedia_female_2_v1';
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 142-144 lines
 export const DEFAULT_BASE_URL = 'https://api-uw.minimax.io';

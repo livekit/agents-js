@@ -99,6 +99,36 @@ interface ResolvedTTSOptions {
   tokenizer: tokenize.SentenceTokenizer;
 }
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 239-252 lines
+const validateOptions = (opts: {
+  model?: TTSModel | string;
+  speed?: number;
+  intensity?: number;
+  timbre?: number;
+  emotion?: TTSEmotion;
+}): void => {
+  if (opts.speed !== undefined && (opts.speed < 0.5 || opts.speed > 2.0)) {
+    throw new Error(`speed must be between 0.5 and 2.0, but got ${opts.speed}`);
+  }
+  if (opts.intensity !== undefined && (opts.intensity < -100 || opts.intensity > 100)) {
+    throw new Error(`intensity must be between -100 and 100, but got ${opts.intensity}`);
+  }
+  if (opts.timbre !== undefined && (opts.timbre < -100 || opts.timbre > 100)) {
+    throw new Error(`timbre must be between -100 and 100, but got ${opts.timbre}`);
+  }
+  if (
+    opts.emotion === 'fluent' &&
+    opts.model !== undefined &&
+    !opts.model.startsWith('speech-2.6')
+  ) {
+    throw new Error(
+      `"fluent" emotion is only supported by speech-2.6-* models, but got model "${opts.model}". ` +
+        'Please use speech-2.6-hd or speech-2.6-turbo.',
+    );
+  }
+};
+
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 221-252 lines
 const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
   const apiKey = opts.apiKey ?? process.env.MINIMAX_API_KEY;
   if (!apiKey) {
@@ -107,30 +137,20 @@ const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
     );
   }
 
-  const speed = opts.speed ?? 1.0;
-  if (speed < 0.5 || speed > 2.0) {
-    throw new Error(`speed must be between 0.5 and 2.0, but got ${speed}`);
-  }
-  if (opts.intensity !== undefined && (opts.intensity < -100 || opts.intensity > 100)) {
-    throw new Error(`intensity must be between -100 and 100, but got ${opts.intensity}`);
-  }
-  if (opts.timbre !== undefined && (opts.timbre < -100 || opts.timbre > 100)) {
-    throw new Error(`timbre must be between -100 and 100, but got ${opts.timbre}`);
-  }
-
   const model = opts.model ?? DEFAULT_MODEL;
-  if (opts.emotion === 'fluent' && !model.startsWith('speech-2.6')) {
-    throw new Error(
-      `"fluent" emotion is only supported by speech-2.6-* models, but got model "${model}". ` +
-        'Please use speech-2.6-hd or speech-2.6-turbo.',
-    );
-  }
+  validateOptions({
+    model,
+    speed: opts.speed,
+    intensity: opts.intensity,
+    timbre: opts.timbre,
+    emotion: opts.emotion,
+  });
 
   return {
     model,
     voice: opts.voice ?? DEFAULT_VOICE_ID,
     emotion: opts.emotion,
-    speed,
+    speed: opts.speed ?? 1.0,
     vol: opts.vol ?? 1.0,
     pitch: opts.pitch ?? 0,
     textNormalization: opts.textNormalization ?? false,
@@ -146,6 +166,7 @@ const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
   };
 };
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 689-725 lines (_to_minimax_options)
 const toMiniMaxPayload = (opts: ResolvedTTSOptions): Record<string, unknown> => {
   const config: Record<string, unknown> = {
     model: opts.model,
@@ -186,6 +207,7 @@ const toMiniMaxPayload = (opts: ResolvedTTSOptions): Record<string, unknown> => 
   return config;
 };
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 168-388 lines
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   label = 'minimax.TTS';
@@ -207,6 +229,7 @@ export class TTS extends tts.TTS {
     this.#opts = resolved;
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 294-346 lines
   updateOptions(
     opts: Partial<
       Pick<
@@ -225,12 +248,21 @@ export class TTS extends tts.TTS {
       >
     >,
   ): void {
-    this.#opts = {
-      ...this.#opts,
-      ...opts,
-    };
+    const merged = { ...this.#opts, ...opts };
+    // Re-validate post-merge so updateOptions surfaces the same errors as the
+    // constructor. Python silently assigns invalid values; the JS port
+    // tightens this to produce a clear local error instead of a server-side one.
+    validateOptions({
+      model: merged.model,
+      speed: merged.speed,
+      intensity: merged.intensity,
+      timbre: merged.timbre,
+      emotion: merged.emotion,
+    });
+    this.#opts = merged;
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 371-374 lines
   synthesize(
     text: string,
     connOptions?: APIConnectOptions,
@@ -239,6 +271,7 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 376-381 lines
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     return new SynthesizeStream(this, this.#opts, options?.connOptions);
   }
@@ -246,6 +279,7 @@ export class TTS extends tts.TTS {
 
 const hexToBuffer = (hex: string): Buffer => Buffer.from(hex, 'hex');
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 575-687 lines
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'minimax.ChunkedStream';
   #logger = log();
@@ -264,6 +298,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     this.#opts = opts;
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 581-687 lines
   protected async run(): Promise<void> {
     if (!this.#text.trim()) {
       this.queue.close();
@@ -393,6 +428,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 }
 
+// Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 390-573 lines
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'minimax.SynthesizeStream';
   #logger = log();
@@ -405,6 +441,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#tokenStream = opts.tokenizer.stream();
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 396-569 lines
   protected async run(): Promise<void> {
     const requestId = shortuuid();
     let currentTraceId = requestId;
