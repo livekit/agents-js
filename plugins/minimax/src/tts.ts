@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
@@ -389,6 +389,11 @@ export class ChunkedStream extends tts.ChunkedStream {
                 statusCode,
                 requestId: data.trace_id ?? traceId,
                 body: data,
+                // MiniMax application-level codes (1xxx) are not HTTP status
+                // codes, so APIStatusError's default retryability heuristic
+                // (retryable = !(400 <= code < 500)) does not apply - most
+                // MiniMax errors (auth, invalid params) are permanent.
+                retryable: false,
               },
             });
           }
@@ -527,7 +532,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (statusCode !== 0) {
           throw new APIStatusError({
             message: `MiniMax error [${statusCode}]: ${baseResp.status_msg ?? 'Unknown error'} (trace_id: ${currentTraceId})`,
-            options: { statusCode, requestId: currentTraceId, body: data },
+            options: {
+              statusCode,
+              requestId: currentTraceId,
+              body: data,
+              // See ChunkedStream for rationale: MiniMax app-level codes are
+              // not HTTP codes, so we opt out of the default retry heuristic.
+              retryable: false,
+            },
           });
         }
 
