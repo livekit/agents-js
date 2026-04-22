@@ -36,7 +36,7 @@ import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.j
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
-import type { BaseEndpointing } from './turn_config/endpointing.js';
+import { type BaseEndpointing, createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface EndOfTurnInfo {
@@ -127,7 +127,7 @@ export interface _TurnDetector {
   predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
 }
 
-export interface AudioRecognitionOptions {
+type AudioRecognitionCommonOptions = {
   /** Hooks for recognition events. */
   recognitionHooks: RecognitionHooks;
   /** Speech-to-text node. */
@@ -139,8 +139,6 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
-  /** Endpointing strategy. */
-  endpointing: BaseEndpointing;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -149,7 +147,24 @@ export interface AudioRecognitionOptions {
   sttProvider?: string;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
-}
+};
+
+type AudioRecognitionEndpointingOptions =
+  | {
+      /** Endpointing strategy. */
+      endpointing: BaseEndpointing;
+      minEndpointingDelay?: never;
+      maxEndpointingDelay?: never;
+    }
+  | {
+      /** @deprecated Use `endpointing` instead. */
+      minEndpointingDelay: number;
+      /** @deprecated Use `endpointing` instead. */
+      maxEndpointingDelay: number;
+      endpointing?: never;
+    };
+
+export type AudioRecognitionOptions = AudioRecognitionCommonOptions & AudioRecognitionEndpointingOptions;
 
 /**
  * Minimal participant shape for span attribution.
@@ -223,7 +238,14 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
-    this.endpointing = opts.endpointing;
+    this.endpointing =
+      'endpointing' in opts && opts.endpointing !== undefined
+        ? opts.endpointing
+        : createEndpointing({
+            mode: 'fixed',
+            minDelay: opts.minEndpointingDelay,
+            maxDelay: opts.maxEndpointingDelay,
+          });
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
@@ -317,7 +339,9 @@ export class AudioRecognition {
   }
 
   // Ref: source livekit-agents/livekit/agents/voice/audio_recognition.py - 238-243
-  async onStartOfAgentSpeech(startedAt: number) {
+  async onStartOfAgentSpeech(): Promise<boolean>;
+  async onStartOfAgentSpeech(startedAt: number): Promise<boolean>;
+  async onStartOfAgentSpeech(startedAt = Date.now()) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
