@@ -745,6 +745,8 @@ export class AgentServer {
             url: asgn.url || this.#opts.wsURL,
             token: asgn.token,
             workerId: this.id,
+            apiKey: this.#opts.apiKey,
+            apiSecret: this.#opts.apiSecret,
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');

@@ -11,6 +11,7 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -84,6 +85,8 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  apiKey?: string;
+  apiSecret?: string;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -188,6 +191,28 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
   addShutdownCallback(callback: () => Promise<void>) {
     this.shutdownCallbacks.push(callback);
+  }
+
+  // Ref: python livekit-agents/livekit/agents/job.py - 534-558 lines
+  async deleteRoom(roomName?: string): Promise<void> {
+    const targetRoom = roomName ?? this.#room.name;
+    if (!targetRoom) {
+      return;
+    }
+
+    const host = new URL(this.#info.url);
+    host.protocol = host.protocol.replace('ws', 'http');
+
+    const client = new RoomServiceClient(host.toString(), this.#info.apiKey, this.#info.apiSecret);
+
+    try {
+      await client.deleteRoom(targetRoom);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not[ -]?found/i.test(message)) {
+        this.#logger.warn({ error, room: targetRoom }, 'error while deleting room');
+      }
+    }
   }
 
   async waitForParticipant(identity?: string): Promise<RemoteParticipant> {
