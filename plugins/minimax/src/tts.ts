@@ -593,7 +593,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       } catch {
         // ignore
       }
-      this.#tokenStream.close();
+      // Do NOT close #tokenStream here - the base class retries run() on
+      // retryable errors, and #tokenStream is created once in the constructor.
+      // Closing it here would make every retry push text into a closed stream,
+      // silently losing user input. It is closed in close() instead.
     }
   }
 
