@@ -302,7 +302,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       const body = await response.text().catch(() => '');
       throw new APIStatusError({
         message: `MiniMax HTTP error: ${response.status} ${response.statusText}: ${body}`,
-        options: { statusCode: response.status, requestId, body },
+        options: { statusCode: response.status, requestId, body: body ? { raw: body } : null },
       });
     }
 
@@ -353,7 +353,7 @@ export class ChunkedStream extends tts.ChunkedStream {
               options: {
                 statusCode,
                 requestId: data.trace_id ?? traceId,
-                body: JSON.stringify(data),
+                body: data,
               },
             });
           }
@@ -361,7 +361,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           const audioHex = data?.data?.audio as string | undefined;
           if (audioHex) {
             const audio = hexToBuffer(audioHex);
-            for (const frame of bstream.write(audio.buffer)) {
+            for (const frame of bstream.write(audio)) {
               sendLastFrame(traceId, false);
               lastFrame = frame;
             }
@@ -489,7 +489,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (statusCode !== 0) {
           throw new APIStatusError({
             message: `MiniMax error [${statusCode}]: ${baseResp.status_msg ?? 'Unknown error'} (trace_id: ${currentTraceId})`,
-            options: { statusCode, requestId: currentTraceId, body: JSON.stringify(data) },
+            options: { statusCode, requestId: currentTraceId, body: data },
           });
         }
 
@@ -506,7 +506,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           const audioHex = (data.data as { audio?: string } | undefined)?.audio;
           if (audioHex) {
             const audio = hexToBuffer(audioHex);
-            for (const frame of bstream.write(audio.buffer)) {
+            for (const frame of bstream.write(audio)) {
               sendLastFrame(false);
               lastFrame = frame;
             }
@@ -589,9 +589,7 @@ const waitForWebSocketOpen = async (
     };
     const onClose = (code: number, reason: Buffer) => {
       cleanup();
-      reject(
-        new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),
-      );
+      reject(new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`));
     };
     const onAbort = () => {
       cleanup();
