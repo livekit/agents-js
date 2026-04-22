@@ -196,12 +196,8 @@ describe('TTS FallbackAdapter', () => {
   });
 
   it('should not mark the primary unavailable when closed before any audio is received', async () => {
-    // A caller interruption within the window between text push and first
-    // audio frame (TTFA) must be treated as a clean abort, not a silent
-    // provider failure. Previously the `!sawRawAudio` guard raised
-    // APIConnectionError on abort, which the outer catch translated into
-    // markUnAvailable(primary) — forcing subsequent utterances onto the
-    // fallback for the recovery window.
+    // Regression: abort before first audio frame previously raised
+    // APIConnectionError, causing markUnAvailable on the primary.
     const primary = new MockTTS('primary');
     primary.emitAudio = false;
     const secondary = new MockTTS('secondary');
@@ -217,30 +213,20 @@ describe('TTS FallbackAdapter', () => {
       new ReadableStream<string>({
         start(controller) {
           controller.enqueue('hello world');
-          // Keep the input stream open so the adapter does not naturally
-          // flush; abort is the only path to completion.
         },
       }),
     );
 
-    // Drain the output in the background so the adapter's mainTask is not
-    // starved on output backpressure.
     const iterate = (async () => {
       for await (const event of stream) {
         if (event === SynthesizeStream.END_OF_STREAM) break;
       }
     })();
 
-    // Let forwardBufferToTTS push the token into the inner stream.
     await new Promise((r) => setTimeout(r, 50));
-
-    // Simulate a caller interruption before any audio has been produced.
     stream.close();
-
-    // Wait long enough for the adapter's mainTask to fully unwind both TTS
-    // instances — long enough to exercise the buggy markUnAvailable path
-    // that would otherwise mark the primary (and secondary) unavailable.
     await iterate;
+    // Allow mainTask to fully unwind both TTS instances.
     await new Promise((r) => setTimeout(r, 200));
 
     expect(adapter.status[0]!.available).toBe(true);
