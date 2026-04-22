@@ -351,44 +351,94 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 }
 
 /** @internal */
+// Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-64 lines
 export class ExpFilter {
   #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  #maxValue: number | undefined;
+  #minValue: number | undefined;
+  #filtered: number | undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
-  }
-
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  constructor(alpha: number, maxValue?: number, minValue?: number, initialValue?: number) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
     }
-    this.#filtered = undefined;
+
+    this.#alpha = alpha;
+    this.#maxValue = maxValue;
+    this.#minValue = minValue;
+    this.#filtered = initialValue;
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+  reset(
+    opts: {
+      alpha?: number;
+      initialValue?: number;
+      minValue?: number;
+      maxValue?: number;
+    } = {},
+  ): void {
+    if (opts.alpha !== undefined) {
+      if (!(opts.alpha > 0 && opts.alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this.#alpha = opts.alpha;
+    }
+    if (opts.initialValue !== undefined) {
+      this.#filtered = opts.initialValue;
+    }
+    if (opts.minValue !== undefined) {
+      this.#minValue = opts.minValue;
+    }
+    if (opts.maxValue !== undefined) {
+      this.#maxValue = opts.maxValue;
+    }
+  }
+
+  apply(exp: number, sample = this.#filtered): number {
+    if (sample !== undefined && this.#filtered === undefined) {
+      this.#filtered = sample;
+    } else if (sample !== undefined && this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this.#filtered === undefined) {
+      throw new Error('sample or initial value must be given.');
     }
 
+    if (this.#maxValue !== undefined && this.#filtered > this.#maxValue) {
+      this.#filtered = this.#maxValue;
+    }
+
+    if (this.#minValue !== undefined && this.#filtered < this.#minValue) {
+      this.#filtered = this.#minValue;
+    }
+
+    return this.#filtered;
+  }
+
+  get alpha(): number {
+    return this.#alpha;
+  }
+
+  set alpha(alpha: number) {
+    this.#alpha = alpha;
+  }
+
+  get maxValue(): number | undefined {
+    return this.#maxValue;
+  }
+
+  get minValue(): number | undefined {
+    return this.#minValue;
+  }
+
+  get value(): number | undefined {
     return this.#filtered;
   }
 
   get filtered(): number | undefined {
     return this.#filtered;
-  }
-
-  set alpha(alpha: number) {
-    this.#alpha = alpha;
   }
 }
 
