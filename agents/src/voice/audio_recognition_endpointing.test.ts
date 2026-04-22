@@ -80,6 +80,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
     const hooks = createHooks();
     const recognition = new AudioRecognition({
       recognitionHooks: hooks,
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing: new DynamicEndpointing(300, 1000, 0.5),
       turnDetectionMode: 'stt',
     });
@@ -173,6 +175,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
           rawAccumulatedSpeech: 0,
         },
       ]),
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing: new DynamicEndpointing(300, 1000, 0.5),
       turnDetectionMode: 'vad',
     });
@@ -200,6 +204,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
 
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing: new DynamicEndpointing(300, 1000, 0.5),
       turnDetectionMode: 'stt',
     });
@@ -241,6 +247,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
 
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing,
       turnDetectionMode: 'stt',
     });

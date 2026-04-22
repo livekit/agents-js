@@ -479,6 +479,12 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
+      minEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       endpointing: createEndpointing({
         mode:
           this.agent.turnHandling?.endpointing?.mode ??
@@ -708,6 +714,13 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  updateOptions({
+    toolChoice,
+    turnDetection,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode;
+  }): void;
   updateOptions({
     toolChoice,
     turnDetection,

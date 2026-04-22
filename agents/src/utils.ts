@@ -360,25 +360,25 @@ type ExpFilterConfig = {
 /** @internal */
 // Ref: source livekit-agents/livekit/agents/utils/exp_filter.py - 5-64
 export class ExpFilter {
-  private alphaValue: number;
-  private maxValue?: number;
-  private minValue?: number;
-  private filteredValue?: number;
+  #alphaValue: number;
+  #maxValue?: number;
+  #minValue?: number;
+  #filteredValue?: number;
 
   constructor(alpha: number, max?: number);
   constructor(alpha: number, config?: ExpFilterConfig);
   constructor(alpha: number, maxOrConfig?: number | ExpFilterConfig) {
     this.assertAlpha(alpha);
-    this.alphaValue = alpha;
+    this.#alphaValue = alpha;
 
     if (typeof maxOrConfig === 'number') {
-      this.maxValue = maxOrConfig;
+      this.#maxValue = maxOrConfig;
       return;
     }
 
-    this.maxValue = maxOrConfig?.max;
-    this.minValue = maxOrConfig?.min;
-    this.filteredValue = maxOrConfig?.initial;
+    this.#maxValue = maxOrConfig?.max;
+    this.#minValue = maxOrConfig?.min;
+    this.#filteredValue = maxOrConfig?.initial;
   }
 
   reset(alpha?: number): void;
@@ -386,76 +386,77 @@ export class ExpFilter {
   reset(alphaOrConfig?: number | ExpFilterConfig): void {
     if (typeof alphaOrConfig === 'number') {
       this.assertAlpha(alphaOrConfig);
-      this.alphaValue = alphaOrConfig;
+      this.#alphaValue = alphaOrConfig;
       return;
     }
 
     if (alphaOrConfig?.alpha !== undefined) {
       this.assertAlpha(alphaOrConfig.alpha);
-      this.alphaValue = alphaOrConfig.alpha;
+      this.#alphaValue = alphaOrConfig.alpha;
     }
     if (alphaOrConfig?.initial !== undefined) {
-      this.filteredValue = alphaOrConfig.initial;
+      this.#filteredValue = alphaOrConfig.initial;
     }
     if (alphaOrConfig?.min !== undefined) {
-      this.minValue = alphaOrConfig.min;
+      this.#minValue = alphaOrConfig.min;
     }
     if (alphaOrConfig?.max !== undefined) {
-      this.maxValue = alphaOrConfig.max;
+      this.#maxValue = alphaOrConfig.max;
     }
   }
 
+  apply(exp: number, sample: number): number;
   apply(exp: number, sample?: number): number {
-    const nextSample = sample ?? this.filteredValue;
+    const nextSample = sample ?? this.#filteredValue;
     if (nextSample === undefined) {
       throw new Error('sample or initial value must be given.');
     }
 
-    if (this.filteredValue === undefined) {
-      this.filteredValue = nextSample;
+    if (this.#filteredValue === undefined) {
+      this.#filteredValue = nextSample;
     } else {
-      const alpha = this.alphaValue ** exp;
-      this.filteredValue = alpha * this.filteredValue + (1 - alpha) * nextSample;
+      const alpha = this.#alphaValue ** exp;
+      this.#filteredValue = alpha * this.#filteredValue + (1 - alpha) * nextSample;
     }
 
-    if (this.maxValue !== undefined && this.filteredValue > this.maxValue) {
-      this.filteredValue = this.maxValue;
+    if (this.#maxValue !== undefined && this.#filteredValue > this.#maxValue) {
+      this.#filteredValue = this.#maxValue;
     }
-    if (this.minValue !== undefined && this.filteredValue < this.minValue) {
-      this.filteredValue = this.minValue;
+    if (this.#minValue !== undefined && this.#filteredValue < this.#minValue) {
+      this.#filteredValue = this.#minValue;
     }
 
-    return this.filteredValue;
+    return this.#filteredValue;
   }
 
   updateBase(alpha: number): void {
     this.assertAlpha(alpha);
-    this.alphaValue = alpha;
+    this.#alphaValue = alpha;
   }
 
   get filtered(): number | undefined {
-    return this.filteredValue;
+    return this.#filteredValue;
   }
 
   get value(): number | undefined {
-    return this.filteredValue;
+    return this.#filteredValue;
   }
 
   get alpha(): number {
-    return this.alphaValue;
+    return this.#alphaValue;
   }
 
   set alpha(alpha: number) {
     this.assertAlpha(alpha);
-    this.alphaValue = alpha;
+    this.#alphaValue = alpha;
   }
 
   get min(): number | undefined {
-    return this.minValue;
+    return this.#minValue;
   }
 
   get max(): number | undefined {
-    return this.maxValue;
+    return this.#maxValue;
   }
 
   private assertAlpha(alpha: number): void {

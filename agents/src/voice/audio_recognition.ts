@@ -127,7 +127,7 @@ export interface _TurnDetector {
   predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
 }
 
-type AudioRecognitionCommonOptions = {
+export interface AudioRecognitionOptions {
   /** Hooks for recognition events. */
   recognitionHooks: RecognitionHooks;
   /** Speech-to-text node. */
@@ -139,6 +139,14 @@ type AudioRecognitionCommonOptions = {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
+  /** Minimum endpointing delay in milliseconds. */
+  /** @deprecated Use `endpointing` instead. */
+  minEndpointingDelay: number;
+  /** Maximum endpointing delay in milliseconds. */
+  /** @deprecated Use `endpointing` instead. */
+  maxEndpointingDelay: number;
+  /** Endpointing strategy. */
+  endpointing?: BaseEndpointing;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -147,25 +155,7 @@ type AudioRecognitionCommonOptions = {
   sttProvider?: string;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
-};
-
-type AudioRecognitionEndpointingOptions =
-  | {
-      /** Endpointing strategy. */
-      endpointing: BaseEndpointing;
-      minEndpointingDelay?: never;
-      maxEndpointingDelay?: never;
-    }
-  | {
-      /** @deprecated Use `endpointing` instead. */
-      minEndpointingDelay: number;
-      /** @deprecated Use `endpointing` instead. */
-      maxEndpointingDelay: number;
-      endpointing?: never;
-    };
-
-export type AudioRecognitionOptions = AudioRecognitionCommonOptions &
-  AudioRecognitionEndpointingOptions;
+}
 
 /**
  * Minimal participant shape for span attribution.
@@ -185,6 +175,8 @@ export class AudioRecognition {
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
+  private minEndpointingDelay: number;
+  private maxEndpointingDelay: number;
   private endpointing: BaseEndpointing;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
@@ -239,6 +231,8 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
+    this.minEndpointingDelay = opts.minEndpointingDelay;
+    this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.endpointing =
       'endpointing' in opts && opts.endpointing !== undefined
         ? opts.endpointing
@@ -302,6 +296,8 @@ export class AudioRecognition {
     turnDetection: TurnDetectionMode | undefined;
   }): void {
     if (options.endpointing !== undefined) {
+      this.minEndpointingDelay = options.endpointing.minDelay;
+      this.maxEndpointingDelay = options.endpointing.maxDelay;
       this.endpointing = options.endpointing;
     }
     this.turnDetectionMode = options.turnDetection;
