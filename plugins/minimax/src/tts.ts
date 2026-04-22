@@ -473,18 +473,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       startMsg.event = 'task_start';
       ws.send(JSON.stringify(startMsg));
 
+      let taskStartTimeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           taskStarted.await,
-          new Promise<never>((_, reject) =>
-            setTimeout(
+          new Promise<never>((_, reject) => {
+            taskStartTimeout = setTimeout(
               () => reject(new APITimeoutError({ message: 'task_start timed out' })),
               this.connOptions.timeoutMs,
-            ),
-          ),
+            );
+          }),
         ]);
-      } catch (e) {
-        throw e;
+      } finally {
+        if (taskStartTimeout) clearTimeout(taskStartTimeout);
       }
 
       for await (const sentence of this.#tokenStream) {
