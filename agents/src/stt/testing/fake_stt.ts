@@ -23,11 +23,14 @@ import {
 
 /**
  * Describes a scheduled speech turn. `startTime`/`endTime`/`sttDelay` are in
- * seconds and keyed to the moment the first audio frame is pushed into the
- * stream — not wall-clock. `sttDelay` is the provider's transcription lag;
- * the stream emits an interim result halfway through and a final result at
- * `endTime + sttDelay`.
+ * milliseconds and keyed to the moment the first audio frame is pushed into
+ * the stream — not wall-clock. `sttDelay` is the provider's transcription
+ * lag; the stream emits an interim result halfway through and a final result
+ * at `endTime + sttDelay`.
+ *
+ * Python uses seconds here — multiply Python fixtures by 1000 when porting.
  */
+// Ref: python tests/fake_stt.py - 29-34 lines
 export interface FakeUserSpeech {
   startTime: number;
   endTime: number;
@@ -36,6 +39,7 @@ export interface FakeUserSpeech {
 }
 
 /** Scale every timing field by `factor` — useful for speeding up tests. */
+// Ref: python tests/fake_stt.py - 36-41 lines
 export function speedUpFakeUserSpeech(speech: FakeUserSpeech, factor: number): FakeUserSpeech {
   return {
     ...speech,
@@ -46,6 +50,7 @@ export function speedUpFakeUserSpeech(speech: FakeUserSpeech, factor: number): F
 }
 
 /** Marker posted to {@link FakeSTT.recognizeCh} each time `recognize()` runs. */
+// Ref: python tests/fake_stt.py - 25-26 lines
 export class RecognizeSentinel {}
 
 export interface FakeSTTOptions {
@@ -81,6 +86,7 @@ type UpdateOptions = Partial<
  * assert((await primary.recognizeCh.next()).value instanceof RecognizeSentinel);
  * ```
  */
+// Ref: python tests/fake_stt.py - 44-147 lines
 export class FakeSTT extends STT {
   label: string;
 
@@ -125,6 +131,7 @@ export class FakeSTT extends STT {
   }
 
   /** Replace one or more fake knobs mid-test (e.g. flip from error to success). */
+  // Ref: python tests/fake_stt.py - 74-88 lines
   updateOptions(opts: UpdateOptions): void {
     if ('fakeException' in opts) this._fakeException = opts.fakeException ?? null;
     if ('fakeTranscript' in opts) this._fakeTranscript = opts.fakeTranscript ?? null;
@@ -132,20 +139,24 @@ export class FakeSTT extends STT {
   }
 
   /** Channel: one sentinel per `recognize()` invocation. */
+  // Ref: python tests/fake_stt.py - 90-92 lines
   get recognizeCh(): AsyncIterableQueue<RecognizeSentinel> {
     return this._recognizeCh;
   }
 
   /** Channel: one stream instance per `stream()` invocation. */
+  // Ref: python tests/fake_stt.py - 94-96 lines
   get streamCh(): AsyncIterableQueue<FakeRecognizeStream> {
     return this._streamCh;
   }
 
+  // Ref: python tests/fake_stt.py - 98-100 lines
   get fakeUserSpeeches(): FakeUserSpeech[] | null {
     return this._fakeUserSpeeches;
   }
 
   /** Resolves once the scheduled `fake_user_speeches` have all been emitted. */
+  // Ref: python tests/fake_stt.py - 102-104 lines
   get fakeUserSpeechesDone(): Promise<void> {
     return this._fakeUserSpeechesDone;
   }
@@ -172,6 +183,7 @@ export class FakeSTT extends STT {
     this._resolveFakeUserSpeechesDone();
   }
 
+  // Ref: python tests/fake_stt.py - 106-124 lines
   protected async _recognize(_frame: AudioBuffer): Promise<SpeechEvent> {
     if (this._fakeTimeoutMs !== null) {
       await delay(this._fakeTimeoutMs);
@@ -193,11 +205,13 @@ export class FakeSTT extends STT {
     };
   }
 
+  // Ref: python tests/fake_stt.py - 126-134 lines
   override async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     this._recognizeCh.put(new RecognizeSentinel());
     return super.recognize(frame, abortSignal);
   }
 
+  // Ref: python tests/fake_stt.py - 136-147 lines
   override stream(options?: { connOptions?: APIConnectOptions }): FakeRecognizeStream {
     const stream = new FakeRecognizeStream(this, options?.connOptions);
     this._streamCh.put(stream);
@@ -209,23 +223,27 @@ export class FakeSTT extends STT {
  * Stream returned by {@link FakeSTT.stream}. Exposes an `attempt` counter and
  * `sendFakeTranscript()` so tests can inject interim/final events at will.
  */
+// Ref: python tests/fake_stt.py - 150-227 lines
 export class FakeRecognizeStream extends SpeechStream {
   label: string;
 
   private _attempt = 0;
   private _fakeStt: FakeSTT;
 
+  // Ref: python tests/fake_stt.py - 151-160 lines
   constructor(stt: FakeSTT, connOptions?: APIConnectOptions) {
     super(stt, undefined, connOptions);
     this._fakeStt = stt;
     this.label = `${stt.label}.stream`;
   }
 
+  // Ref: python tests/fake_stt.py - 162-164 lines
   get attempt(): number {
     return this._attempt;
   }
 
   /** Push a synthetic INTERIM or FINAL event onto the output queue. */
+  // Ref: python tests/fake_stt.py - 166-174 lines
   sendFakeTranscript(transcript: string, isFinal = true): void {
     this.queue.put({
       type: isFinal ? SpeechEventType.FINAL_TRANSCRIPT : SpeechEventType.INTERIM_TRANSCRIPT,
@@ -241,6 +259,7 @@ export class FakeRecognizeStream extends SpeechStream {
     });
   }
 
+  // Ref: python tests/fake_stt.py - 176-202 lines
   protected async run(): Promise<void> {
     this._attempt += 1;
     const state = this._fakeStt._state;
@@ -280,6 +299,7 @@ export class FakeRecognizeStream extends SpeechStream {
     }
   }
 
+  // Ref: python tests/fake_stt.py - 204-227 lines
   private async fakeUserSpeechTask(): Promise<void> {
     const speeches = this._fakeStt._state.fakeUserSpeeches;
     if (!speeches || speeches.length === 0) return;
@@ -288,17 +308,18 @@ export class FakeRecognizeStream extends SpeechStream {
     const first = await this.input.next();
     if (first.done) return;
 
+    // Elapsed time in milliseconds since the first pushed frame.
     const startHrt = process.hrtime.bigint();
-    const elapsed = (): number => Number(process.hrtime.bigint() - startHrt) / 1e9;
+    const elapsed = (): number => Number(process.hrtime.bigint() - startHrt) / 1e6;
 
     for (const speech of speeches) {
       const interimAt = speech.endTime + speech.sttDelay * 0.5;
-      if (elapsed() < interimAt) await delay((interimAt - elapsed()) * 1000);
+      if (elapsed() < interimAt) await delay(interimAt - elapsed());
       const interim = speech.transcript.split(/\s+/).slice(0, 2).join(' ');
       this.sendFakeTranscript(interim, false);
 
       const finalAt = speech.endTime + speech.sttDelay;
-      if (elapsed() < finalAt) await delay((finalAt - elapsed()) * 1000);
+      if (elapsed() < finalAt) await delay(finalAt - elapsed());
       this.sendFakeTranscript(speech.transcript, true);
     }
 
