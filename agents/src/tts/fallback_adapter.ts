@@ -565,6 +565,12 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // Silent failures must trigger fallback. See `sawRawAudio` above for
         // why we don't check `audioPushed` here.
         if (!sawRawAudio) {
+          // An abort before the first audio frame is a clean interruption,
+          // not a provider failure — do not mark the TTS unavailable.
+          if (this.abortController.signal.aborted) {
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            return;
+          }
           throw new APIConnectionError({
             message: 'TTS stream completed but no audio was received',
           });

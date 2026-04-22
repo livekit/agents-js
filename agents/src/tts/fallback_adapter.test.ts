@@ -18,6 +18,7 @@ class MockSynthesizeStream extends SynthesizeStream {
   constructor(
     private mockTts: MockTTS,
     private shouldFail: boolean,
+    private emitAudio: boolean,
     connOptions?: APIConnectOptions,
   ) {
     super(mockTts, connOptions);
@@ -37,6 +38,7 @@ class MockSynthesizeStream extends SynthesizeStream {
     for await (const data of this.input) {
       if (this.abortController.signal.aborted) break;
       if (data === SynthesizeStream.FLUSH_SENTINEL) continue;
+      if (!this.emitAudio) continue;
       this.queue.put({
         requestId: 'mock-req',
         segmentId: 'mock-seg',
@@ -53,6 +55,7 @@ class MockChunkedStream extends ChunkedStream {
     private mockTts: MockTTS,
     text: string,
     private shouldFail: boolean,
+    private emitAudio: boolean,
     connOptions?: APIConnectOptions,
   ) {
     super(text, mockTts, connOptions);
@@ -61,6 +64,7 @@ class MockChunkedStream extends ChunkedStream {
     if (this.shouldFail) {
       throw new APIError('mock TTS failed immediately');
     }
+    if (!this.emitAudio) return;
     this.queue.put({
       requestId: 'mock-req',
       segmentId: 'mock-seg',
@@ -73,6 +77,7 @@ class MockChunkedStream extends ChunkedStream {
 class MockTTS extends TTS {
   label: string;
   shouldFail = false;
+  emitAudio = true;
 
   constructor(label: string, sampleRate: number = SAMPLE_RATE) {
     super(sampleRate, 1, { streaming: true });
@@ -80,11 +85,11 @@ class MockTTS extends TTS {
   }
 
   synthesize(text: string, connOptions?: APIConnectOptions): ChunkedStream {
-    return new MockChunkedStream(this, text, this.shouldFail, connOptions);
+    return new MockChunkedStream(this, text, this.shouldFail, this.emitAudio, connOptions);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new MockSynthesizeStream(this, this.shouldFail, options?.connOptions);
+    return new MockSynthesizeStream(this, this.shouldFail, this.emitAudio, options?.connOptions);
   }
 }
 
@@ -187,6 +192,60 @@ describe('TTS FallbackAdapter', () => {
     expect(adapter.status[1]!.available).toBe(true);
 
     stream.close();
+    await adapter.close();
+  });
+
+  it('should not mark the primary unavailable when closed before any audio is received', async () => {
+    // A caller interruption within the window between text push and first
+    // audio frame (TTFA) must be treated as a clean abort, not a silent
+    // provider failure. Previously the `!sawRawAudio` guard raised
+    // APIConnectionError on abort, which the outer catch translated into
+    // markUnAvailable(primary) — forcing subsequent utterances onto the
+    // fallback for the recovery window.
+    const primary = new MockTTS('primary');
+    primary.emitAudio = false;
+    const secondary = new MockTTS('secondary');
+    secondary.emitAudio = false;
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello world');
+          // Keep the input stream open so the adapter does not naturally
+          // flush; abort is the only path to completion.
+        },
+      }),
+    );
+
+    // Drain the output in the background so the adapter's mainTask is not
+    // starved on output backpressure.
+    const iterate = (async () => {
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+      }
+    })();
+
+    // Let forwardBufferToTTS push the token into the inner stream.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Simulate a caller interruption before any audio has been produced.
+    stream.close();
+
+    // Wait long enough for the adapter's mainTask to fully unwind both TTS
+    // instances — long enough to exercise the buggy markUnAvailable path
+    // that would otherwise mark the primary (and secondary) unavailable.
+    await iterate;
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(adapter.status[0]!.available).toBe(true);
+    expect(adapter.status[1]!.available).toBe(true);
+
     await adapter.close();
   });
 
