@@ -929,8 +929,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
 function chatItemToText(item: llm.ChatItem): string | undefined {
   if (item.type === 'message') {
-    if (item.textContent === undefined) return undefined;
-    return `<${item.role}>${item.textContent}</${item.role}>`;
+    const text = item.textContent?.trim();
+    if (!text) return undefined;
+    return `<${item.role}>${text}</${item.role}>`;
   }
   if (item.type === 'function_call') {
     return `<tool_call name="${item.name}">${item.args}</tool_call>`;
