@@ -6,7 +6,7 @@ import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
-import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
+import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
@@ -532,10 +532,9 @@ export class AgentSession<
 
     this.sessionSpan = tracer.startSpan({
       name: 'agent_session',
-      context: ROOT_CONTEXT,
     });
 
-    this.rootSpanContext = trace.setSpan(ROOT_CONTEXT, this.sessionSpan);
+    this.rootSpanContext = trace.setSpan(otelContext.active(), this.sessionSpan);
 
     await this._startImpl({
       agent,

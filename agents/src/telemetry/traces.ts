@@ -259,8 +259,10 @@ export async function setupCloudTracer(options: {
       resource,
       spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
     });
+    // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
+    // and sets the global tracer provider. Both use set-once semantics in the OTel API,
+    // so if the user already called NodeSDK.start(), these are safe no-ops.
     tracerProvider.register();
-
     setTracerProvider(tracerProvider);
 
     // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
