@@ -477,6 +477,10 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 326-328 lines
+      endpointingMode:
+        this.agent.turnHandling?.endpointing?.mode ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.mode,
       minEndpointingDelay:
         this.agent.turnHandling?.endpointing?.minDelay ??
         this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
@@ -1838,7 +1842,8 @@ export class AgentActivity implements RecognitionHooks {
         otelContext: speechHandle._agentTurnContext,
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2195-2195 lines
+        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
         this.isInterruptionByAudioActivityEnabled = false;
       }
     };

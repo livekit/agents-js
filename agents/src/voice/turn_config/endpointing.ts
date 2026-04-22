@@ -5,9 +5,10 @@
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
 export interface EndpointingOptions {
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 47-69 lines
   /**
-   * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adjusts delay based on
-   * end-of-utterance prediction.
+   * Endpointing mode. `"fixed"` uses the configured delays, `"dynamic"` adapts the delays
+   * based on pauses between utterances and interruptions.
    * @defaultValue "fixed"
    */
   mode: 'fixed' | 'dynamic';

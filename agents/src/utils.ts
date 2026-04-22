@@ -350,36 +350,72 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   }
 }
 
+export interface ExpFilterOptions {
+  initial?: number;
+  minValue?: number;
+  maxValue?: number;
+}
+
 /** @internal */
+// Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-64 lines
 export class ExpFilter {
   #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  #filtered?: number;
+  #maxValue?: number;
+  #minValue?: number;
 
-  constructor(alpha: number, max?: number) {
+  constructor(alpha: number, { initial, minValue, maxValue }: ExpFilterOptions = {}) {
+    this.#assertAlpha(alpha);
     this.#alpha = alpha;
-    this.#max = max;
+    this.#filtered = initial;
+    this.#minValue = minValue;
+    this.#maxValue = maxValue;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
+  reset({ alpha, initial, minValue, maxValue }: ExpFilterOptions & { alpha?: number } = {}): void {
+    if (alpha !== undefined) {
+      this.#assertAlpha(alpha);
       this.#alpha = alpha;
     }
-    this.#filtered = undefined;
+    if (initial !== undefined) {
+      this.#filtered = initial;
+    }
+    if (minValue !== undefined) {
+      this.#minValue = minValue;
+    }
+    if (maxValue !== undefined) {
+      this.#maxValue = maxValue;
+    }
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+  apply(exp: number, sample = this.#filtered): number {
+    if (sample !== undefined && this.#filtered === undefined) {
+      this.#filtered = sample;
+    } else if (sample !== undefined && this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this.#filtered === undefined) {
+      throw new Error('sample or initial value must be given.');
     }
 
+    if (this.#maxValue !== undefined && this.#filtered > this.#maxValue) {
+      this.#filtered = this.#maxValue;
+    }
+    if (this.#minValue !== undefined && this.#filtered < this.#minValue) {
+      this.#filtered = this.#minValue;
+    }
+
+    return this.#filtered;
+  }
+
+  updateBase(alpha: number): void {
+    this.#assertAlpha(alpha);
+    this.#alpha = alpha;
+  }
+
+  get value(): number | undefined {
     return this.#filtered;
   }
 
@@ -387,8 +423,27 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get alpha(): number {
+    return this.#alpha;
+  }
+
+  get minValue(): number | undefined {
+    return this.#minValue;
+  }
+
+  get maxValue(): number | undefined {
+    return this.#maxValue;
+  }
+
   set alpha(alpha: number) {
+    this.#assertAlpha(alpha);
     this.#alpha = alpha;
+  }
+
+  #assertAlpha(alpha: number): void {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 

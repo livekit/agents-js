@@ -22,6 +22,8 @@ export {
   RoomSessionTransport,
 } from './remote_session.js';
 export * from './events.js';
+// Ref: python livekit-agents/livekit/agents/voice/endpointing.py - 10-316 lines
+export * from './endpointing.js';
 export { type TimedString } from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';
