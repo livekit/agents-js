@@ -7,6 +7,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { AudioRecognition, type RecognitionHooks, STTPipeline } from './audio_recognition.js';
+import { DynamicEndpointing, createEndpointing } from './endpointing.js';
 import type { STTNode } from './io.js';
 
 function createHooks() {
@@ -45,8 +46,7 @@ function createRecognition(sttNode: STTNode, hooks = createHooks()) {
     recognition: new AudioRecognition({
       recognitionHooks: hooks,
       stt: sttNode,
-      minEndpointingDelay: 0,
-      maxEndpointingDelay: 0,
+      endpointing: createEndpointing({ mode: 'fixed', minDelay: 0, maxDelay: 0 }),
     }),
   };
 }
@@ -223,6 +223,37 @@ describe('AudioRecognition STT pipeline handoff', () => {
 
       expect(sttNodeCalls).toBe(1);
       expect((recognition as any).sttPipeline).toBeUndefined();
+    } finally {
+      await recognition.close();
+    }
+  });
+
+  it('preserves learned dynamic endpointing state across clearUserTurn', async () => {
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start() {},
+      });
+
+    const endpointing = new DynamicEndpointing(300, 1000, 0.5);
+    endpointing.onEndOfSpeech(100000);
+    endpointing.onStartOfSpeech(100400);
+    endpointing.onEndOfSpeech(100600);
+
+    const recognition = new AudioRecognition({
+      recognitionHooks: createHooks(),
+      stt: sttNode,
+      endpointing,
+    });
+
+    const learnedMinDelay = endpointing.minDelay;
+
+    try {
+      await recognition.start();
+      recognition.clearUserTurn();
+      await flushTasks();
+
+      expect((recognition as any).endpointing).toBe(endpointing);
+      expect(endpointing.minDelay).toBe(learnedMinDelay);
     } finally {
       await recognition.close();
     }

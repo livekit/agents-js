@@ -421,5 +421,93 @@ describe('Agent', () => {
         }
       }
     });
+
+    it('should drive audio recognition from realtime speech events without VAD', () => {
+      const audioRecognition = {
+        onStartOfSpeech: vi.fn(),
+        onEndOfSpeech: vi.fn(),
+      };
+      const activity = Object.create(AgentActivity.prototype) as any;
+      activity.audioRecognition = audioRecognition;
+      activity.isInterruptionDetectionEnabled = false;
+      activity.interruptionDetected = false;
+      activity.agent = {
+        vad: undefined,
+      };
+      activity.agentSession = {
+        vad: undefined,
+        _updateUserState: vi.fn(),
+        _userSpeakingSpan: { spanId: 'user-speaking' },
+        emit: vi.fn(),
+      };
+      activity.logger = { info: vi.fn(), error: vi.fn() };
+      activity.interrupt = vi.fn();
+
+      AgentActivity.prototype.onInputSpeechStarted.call(activity, {} as any);
+      expect(audioRecognition.onStartOfSpeech).toHaveBeenCalledWith(
+        expect.any(Number),
+        0,
+        activity.agentSession._userSpeakingSpan,
+      );
+      expect(activity.agentSession._updateUserState).toHaveBeenCalledWith('speaking');
+      expect(activity.interrupt).toHaveBeenCalledTimes(1);
+
+      AgentActivity.prototype.onInputSpeechStopped.call(activity, {
+        userTranscriptionEnabled: false,
+      } as any);
+      expect(audioRecognition.onEndOfSpeech).toHaveBeenCalledWith(
+        expect.any(Number),
+        activity.agentSession._userSpeakingSpan,
+        undefined,
+      );
+      expect(activity.agentSession._updateUserState).toHaveBeenCalledWith('listening');
+    });
+
+    it('should synthesize overlap speech before interrupting audio activity', () => {
+      const audioRecognition = {
+        onStartOfSpeech: vi.fn(),
+        currentTranscript: '',
+      };
+      const realtimeSession = {
+        startUserActivity: vi.fn(),
+        interrupt: vi.fn(),
+      };
+      const currentSpeech = {
+        interrupted: false,
+        allowInterruptions: true,
+        interrupt: vi.fn(),
+        id: 'speech-1',
+      };
+      const activity = Object.create(AgentActivity.prototype) as any;
+      activity.audioRecognition = audioRecognition;
+      activity.agent = {
+        llm: undefined,
+        stt: undefined,
+      };
+      activity.agentSession = {
+        _aecWarmupRemaining: 0,
+        agentState: 'speaking',
+        llm: undefined,
+        stt: undefined,
+        sessionOptions: {
+          turnHandling: {
+            interruption: {
+              minWords: 0,
+            },
+          },
+        },
+      };
+      activity.isInterruptionByAudioActivityEnabled = true;
+      activity._currentSpeech = currentSpeech;
+      activity.realtimeSession = realtimeSession;
+      activity.logger = { info: vi.fn() };
+
+      (activity as any).interruptByAudioActivity();
+
+      expect(audioRecognition.onStartOfSpeech).toHaveBeenCalledWith(expect.any(Number));
+      expect(realtimeSession.startUserActivity).toHaveBeenCalledTimes(1);
+      expect(realtimeSession.interrupt).toHaveBeenCalledTimes(1);
+      expect(currentSpeech.interrupt).toHaveBeenCalledTimes(1);
+    });
   });
 });

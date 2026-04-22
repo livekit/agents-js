@@ -354,30 +354,66 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 export class ExpFilter {
   #alpha: number;
   #max?: number;
+  #min?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
-  }
-
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  // Ref: source livekit-agents/livekit/agents/utils/exp_filter.py - 5-64
+  constructor(
+    alpha: number,
+    options?: {
+      max?: number;
+      min?: number;
+      initial?: number;
+    },
+  ) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
     }
-    this.#filtered = undefined;
+
+    this.#alpha = alpha;
+    this.#max = options?.max;
+    this.#min = options?.min;
+    this.#filtered = options?.initial;
   }
 
+  // Ref: source livekit-agents/livekit/agents/utils/exp_filter.py - 21-37
+  reset(options?: { alpha?: number; initial?: number; min?: number; max?: number }) {
+    if (options?.alpha !== undefined) {
+      if (options.alpha <= 0 || options.alpha > 1) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+
+      this.#alpha = options.alpha;
+    }
+
+    if (options?.initial !== undefined) {
+      this.#filtered = options.initial;
+    }
+
+    if (options?.min !== undefined) {
+      this.#min = options.min;
+    }
+
+    if (options?.max !== undefined) {
+      this.#max = options.max;
+    }
+  }
+
+  // Ref: source livekit-agents/livekit/agents/utils/exp_filter.py - 38-57
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+    if (this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
     } else {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -387,7 +423,27 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
+  get alpha(): number {
+    return this.#alpha;
+  }
+
+  get min(): number | undefined {
+    return this.#min;
+  }
+
+  get max(): number | undefined {
+    return this.#max;
+  }
+
   set alpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+
     this.#alpha = alpha;
   }
 }
