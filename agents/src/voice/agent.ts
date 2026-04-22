@@ -648,7 +648,6 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         }
 
         const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
-          // excludeFunctionCall: true,
           excludeInstructions: true,
         });
         oldAgent._chatCtx.items = mergedChatCtx.items;
