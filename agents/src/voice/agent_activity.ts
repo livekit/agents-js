@@ -88,6 +88,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -469,6 +470,7 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.on('metrics_collected', this.onMetricsCollected);
     }
 
+    // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 768-784
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
@@ -477,12 +479,17 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.minDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.maxDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      endpointing: createEndpointing({
+        mode:
+          this.agent.turnHandling?.endpointing?.mode ??
+          this.agentSession.sessionOptions.turnHandling.endpointing.mode,
+        minDelay:
+          this.agent.turnHandling?.endpointing?.minDelay ??
+          this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+        maxDelay:
+          this.agent.turnHandling?.endpointing?.maxDelay ??
+          this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      }),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -661,20 +668,6 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
-  // get minEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.minDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
-  //   );
-  // }
-
-  // get maxEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.maxDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-  //   );
-  // }
-
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
   }
@@ -718,9 +711,11 @@ export class AgentActivity implements RecognitionHooks {
   updateOptions({
     toolChoice,
     turnDetection,
+    endpointing,
   }: {
     toolChoice?: ToolChoice | null;
     turnDetection?: TurnDetectionMode;
+    endpointing?: EndpointingOptions;
   }): void {
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
@@ -742,8 +737,12 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 477-482
     if (this.audioRecognition) {
-      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+      this.audioRecognition.updateOptions({
+        endpointing: endpointing ? createEndpointing(endpointing) : undefined,
+        turnDetection: this.turnDetectionMode,
+      });
     }
   }
 
@@ -921,13 +920,10 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info('onInputSpeechStarted');
 
     if (!this.vad) {
+      // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 1490-1498
       this.agentSession._updateUserState('speaking');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfOverlapSpeech(
-          0,
-          Date.now(),
-          this.agentSession._userSpeakingSpan,
-        );
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfSpeech(Date.now(), 0, this.agentSession._userSpeakingSpan);
       }
     }
 
@@ -947,8 +943,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(ev, 'onInputSpeechStopped');
 
     if (!this.vad) {
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
+      // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 1508-1516
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
       this.agentSession._updateUserState('listening');
     }
@@ -1832,13 +1829,17 @@ export class AgentActivity implements RecognitionHooks {
     let replyTtsGenData: _TTSGenerationData | null = null;
 
     const onFirstFrame = (startedSpeakingAt?: number) => {
-      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 2183-2197
+      const agentSpeechStartedAt = startedSpeakingAt ?? Date.now();
+      replyStartedSpeakingAt = agentSpeechStartedAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(agentSpeechStartedAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.isInterruptionByAudioActivityEnabled = false;
       }
     };
@@ -1924,10 +1925,12 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
-      this.restoreInterruptionByAudioActivity();
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     }
   }
 
@@ -2108,13 +2111,17 @@ export class AgentActivity implements RecognitionHooks {
 
     let agentStartedSpeakingAt: number | undefined;
     const onFirstFrame = (startedSpeakingAt?: number) => {
-      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      // Ref: source livekit-agents/livekit/agents/voice/agent_activity.py - 2183-2197
+      const agentSpeechStartedAt = startedSpeakingAt ?? Date.now();
+      agentStartedSpeakingAt = agentSpeechStartedAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(agentSpeechStartedAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.isInterruptionByAudioActivityEnabled = false;
       }
     };
@@ -2271,8 +2278,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2314,11 +2323,11 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
 

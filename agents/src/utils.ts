@@ -350,45 +350,118 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   }
 }
 
+type ExpFilterConfig = {
+  alpha?: number;
+  initial?: number;
+  min?: number;
+  max?: number;
+};
+
 /** @internal */
+// Ref: source livekit-agents/livekit/agents/utils/exp_filter.py - 5-64
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private alphaValue: number;
+  private maxValue?: number;
+  private minValue?: number;
+  private filteredValue?: number;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
-  }
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, config?: ExpFilterConfig);
+  constructor(alpha: number, maxOrConfig?: number | ExpFilterConfig) {
+    this.assertAlpha(alpha);
+    this.alphaValue = alpha;
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+    if (typeof maxOrConfig === 'number') {
+      this.maxValue = maxOrConfig;
+      return;
     }
-    this.#filtered = undefined;
+
+    this.maxValue = maxOrConfig?.max;
+    this.minValue = maxOrConfig?.min;
+    this.filteredValue = maxOrConfig?.initial;
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
+  reset(alpha?: number): void;
+  reset(config?: ExpFilterConfig): void;
+  reset(alphaOrConfig?: number | ExpFilterConfig): void {
+    if (typeof alphaOrConfig === 'number') {
+      this.assertAlpha(alphaOrConfig);
+      this.alphaValue = alphaOrConfig;
+      return;
+    }
+
+    if (alphaOrConfig?.alpha !== undefined) {
+      this.assertAlpha(alphaOrConfig.alpha);
+      this.alphaValue = alphaOrConfig.alpha;
+    }
+    if (alphaOrConfig?.initial !== undefined) {
+      this.filteredValue = alphaOrConfig.initial;
+    }
+    if (alphaOrConfig?.min !== undefined) {
+      this.minValue = alphaOrConfig.min;
+    }
+    if (alphaOrConfig?.max !== undefined) {
+      this.maxValue = alphaOrConfig.max;
+    }
+  }
+
+  apply(exp: number, sample?: number): number {
+    const nextSample = sample ?? this.filteredValue;
+    if (nextSample === undefined) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (this.filteredValue === undefined) {
+      this.filteredValue = nextSample;
     } else {
-      this.#filtered = sample;
+      const alpha = this.alphaValue ** exp;
+      this.filteredValue = alpha * this.filteredValue + (1 - alpha) * nextSample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this.maxValue !== undefined && this.filteredValue > this.maxValue) {
+      this.filteredValue = this.maxValue;
+    }
+    if (this.minValue !== undefined && this.filteredValue < this.minValue) {
+      this.filteredValue = this.minValue;
     }
 
-    return this.#filtered;
+    return this.filteredValue;
+  }
+
+  updateBase(alpha: number): void {
+    this.assertAlpha(alpha);
+    this.alphaValue = alpha;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this.filteredValue;
+  }
+
+  get value(): number | undefined {
+    return this.filteredValue;
+  }
+
+  get alpha(): number {
+    return this.alphaValue;
   }
 
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    this.assertAlpha(alpha);
+    this.alphaValue = alpha;
+  }
+
+  get min(): number | undefined {
+    return this.minValue;
+  }
+
+  get max(): number | undefined {
+    return this.maxValue;
+  }
+
+  private assertAlpha(alpha: number): void {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
