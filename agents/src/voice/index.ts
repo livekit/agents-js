@@ -11,6 +11,7 @@ export {
 } from './agent_session.js';
 export * from './avatar/index.js';
 export * from './background_audio.js';
+export * from './endpointing.js';
 export {
   type TextInputCallback,
   type TextInputEvent,

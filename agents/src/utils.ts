@@ -351,44 +351,124 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 }
 
 /** @internal */
+export interface ExpFilterOptions {
+  max?: number;
+  min?: number;
+  initial?: number;
+}
+
+/** @internal */
+// Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-64 lines
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private alphaValue: number;
+  private maxValue?: number;
+  private minValue?: number;
+  private filteredValue?: number;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, options?: ExpFilterOptions);
+  constructor(alpha: number, maxOrOptions?: number | ExpFilterOptions) {
+    this.assertAlpha(alpha);
+    this.alphaValue = alpha;
+
+    if (typeof maxOrOptions === 'number') {
+      this.maxValue = maxOrOptions;
+      return;
+    }
+
+    this.maxValue = maxOrOptions?.max;
+    this.minValue = maxOrOptions?.min;
+    this.filteredValue = maxOrOptions?.initial;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(alpha?: number): void;
+  reset(options?: ExpFilterOptions & { alpha?: number }): void;
+  reset(alphaOrOptions?: number | (ExpFilterOptions & { alpha?: number })): void {
+    if (typeof alphaOrOptions === 'number') {
+      this.assertAlpha(alphaOrOptions);
+      this.alphaValue = alphaOrOptions;
+      return;
     }
-    this.#filtered = undefined;
+
+    if (!alphaOrOptions) {
+      return;
+    }
+
+    if (alphaOrOptions.alpha !== undefined) {
+      this.assertAlpha(alphaOrOptions.alpha);
+      this.alphaValue = alphaOrOptions.alpha;
+    }
+    if ('initial' in alphaOrOptions) {
+      this.filteredValue = alphaOrOptions.initial;
+    }
+    if ('min' in alphaOrOptions) {
+      this.minValue = alphaOrOptions.min;
+    }
+    if ('max' in alphaOrOptions) {
+      this.maxValue = alphaOrOptions.max;
+    }
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
+  apply(exp: number, sample: number | undefined = this.filteredValue): number {
+    if (sample === undefined && this.filteredValue === undefined) {
+      throw new Error('sample or initial value must be given.');
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (sample !== undefined && this.filteredValue === undefined) {
+      this.filteredValue = sample;
+    } else if (sample !== undefined && this.filteredValue !== undefined) {
+      const a = this.alphaValue ** exp;
+      this.filteredValue = a * this.filteredValue + (1 - a) * sample;
     }
 
-    return this.#filtered;
+    if (this.filteredValue === undefined) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (this.maxValue !== undefined && this.filteredValue > this.maxValue) {
+      this.filteredValue = this.maxValue;
+    }
+
+    if (this.minValue !== undefined && this.filteredValue < this.minValue) {
+      this.filteredValue = this.minValue;
+    }
+
+    return this.filteredValue;
+  }
+
+  get value(): number | undefined {
+    return this.filteredValue;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this.filteredValue;
+  }
+
+  get alpha(): number {
+    return this.alphaValue;
   }
 
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    this.assertAlpha(alpha);
+    this.alphaValue = alpha;
+  }
+
+  get max(): number | undefined {
+    return this.maxValue;
+  }
+
+  get min(): number | undefined {
+    return this.minValue;
+  }
+
+  updateBase(alpha: number): void {
+    this.alpha = alpha;
+  }
+
+  private assertAlpha(alpha: number): void {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
