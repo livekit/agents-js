@@ -440,7 +440,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (this.socket) {
       this.#logger.info('Sending mid-session reset to Phonic');
-      this.#logger.debug({ systemPrompt }, 'Phonic reset system prompt');
       this.socket.sendReset({
         type: 'reset',
         config: this.buildConfigOptions({ systemPrompt, toolsPayload }),
