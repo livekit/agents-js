@@ -164,7 +164,8 @@ type AudioRecognitionEndpointingOptions =
       endpointing?: never;
     };
 
-export type AudioRecognitionOptions = AudioRecognitionCommonOptions & AudioRecognitionEndpointingOptions;
+export type AudioRecognitionOptions = AudioRecognitionCommonOptions &
+  AudioRecognitionEndpointingOptions;
 
 /**
  * Minimal participant shape for span attribution.
