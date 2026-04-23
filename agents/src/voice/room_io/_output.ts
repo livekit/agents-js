@@ -154,14 +154,18 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
-    const textStr = isTimedString(text) ? text.text : text;
-    this.latestText = textStr;
-
-    // Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 450-462 lines
+    // Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 447-464 lines
     // When json_format is enabled, serialize each chunk as a protobuf-compatible JSON dict.
     // The Python implementation uses `agent_pb.TimedString` + `MessageToDict(preserving_proto_field_name=True)`.
     // We emit the same snake_case shape directly (no protobuf runtime dependency on the JS side).
-    const payload = this.jsonFormat ? this.encodeJsonChunk(text) : textStr;
+    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
+    // same newline-delimited JSON format as the interim chunks.
+    const payload = this.jsonFormat
+      ? this.encodeJsonChunk(text)
+      : isTimedString(text)
+        ? text.text
+        : text;
+    this.latestText = payload;
 
     await this.handleCaptureText(payload);
   }

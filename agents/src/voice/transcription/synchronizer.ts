@@ -407,7 +407,15 @@ class SegmentSynchronizerImpl {
 
       if (textCursor < sentence.length) {
         const remaining = sentence.slice(textCursor);
-        this.outputStreamWriter.write(remaining);
+        // Keep the trailing fragment (whitespace/punctuation after the last word) shaped like
+        // the word emissions above so downstream consumers (e.g. jsonFormat) see a uniform
+        // stream of TimedString chunks.
+        this.outputStreamWriter.write(
+          createTimedString({
+            text: remaining,
+            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          }),
+        );
       }
     }
   }
