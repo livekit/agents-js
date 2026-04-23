@@ -493,6 +493,12 @@ export class AgentActivity implements RecognitionHooks {
           this.agent.turnHandling?.endpointing?.maxDelay ??
           this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       }),
+      minEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.minDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
+      maxEndpointingDelay:
+        this.agent.turnHandling?.endpointing?.maxDelay ??
+        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -726,9 +732,25 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 431-482 lines
+  updateOptions({
+    toolChoice,
+    turnDetection,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode | undefined;
+  }): void;
+  updateOptions({
+    toolChoice,
+    turnDetection,
+    endpointing,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode | undefined;
+    endpointing?: EndpointingOptions;
+  }): void;
   updateOptions(options: {
     toolChoice?: ToolChoice | null;
-    turnDetection?: TurnDetectionMode;
+    turnDetection?: TurnDetectionMode | undefined;
     endpointing?: EndpointingOptions;
   }): void {
     const { toolChoice, turnDetection, endpointing } = options;

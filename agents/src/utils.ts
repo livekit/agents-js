@@ -352,29 +352,33 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
 /** @internal */
 export class ExpFilter {
-  private _alpha: number;
-  private _maxVal: number | undefined;
-  private _minVal: number | undefined;
-  private _filtered: number | undefined;
+  #alpha: number;
+  #maxVal: number | undefined;
+  #minVal: number | undefined;
+  #filtered: number | undefined;
 
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, opts?: { max?: number; min?: number; initial?: number });
   constructor(alpha: number, opts?: number | { max?: number; min?: number; initial?: number }) {
     if (!(alpha > 0 && alpha <= 1)) {
       throw new Error('alpha must be in (0, 1].');
     }
 
-    this._alpha = alpha;
-    this._maxVal = typeof opts === 'number' ? opts : opts?.max;
-    this._minVal = typeof opts === 'number' ? undefined : opts?.min;
-    this._filtered = typeof opts === 'number' ? undefined : opts?.initial;
+    this.#alpha = alpha;
+    this.#maxVal = typeof opts === 'number' ? opts : opts?.max;
+    this.#minVal = typeof opts === 'number' ? undefined : opts?.min;
+    this.#filtered = typeof opts === 'number' ? undefined : opts?.initial;
   }
 
+  reset(alpha?: number): void;
+  reset(opts?: { alpha?: number; initial?: number; min?: number; max?: number }): void;
   reset(opts?: number | { alpha?: number; initial?: number; min?: number; max?: number }) {
     if (typeof opts === 'number') {
       if (!(opts > 0 && opts <= 1)) {
         throw new Error('alpha must be in (0, 1].');
       }
-      this._alpha = opts;
-      this._filtered = undefined;
+      this.#alpha = opts;
+      this.#filtered = undefined;
       return;
     }
 
@@ -382,56 +386,70 @@ export class ExpFilter {
       if (!(opts.alpha > 0 && opts.alpha <= 1)) {
         throw new Error('alpha must be in (0, 1].');
       }
-      this._alpha = opts.alpha;
+      this.#alpha = opts.alpha;
     }
     if (opts && Object.hasOwn(opts, 'initial')) {
-      this._filtered = opts.initial;
+      this.#filtered = opts.initial;
     }
     if (opts && Object.hasOwn(opts, 'min')) {
-      this._minVal = opts.min;
+      this.#minVal = opts.min;
     }
     if (opts && Object.hasOwn(opts, 'max')) {
-      this._maxVal = opts.max;
+      this.#maxVal = opts.max;
     }
   }
 
+  apply(exp: number, sample: number): number;
+  apply(exp: number, sample?: number): number;
   apply(exp: number, sample?: number): number {
-    const resolvedSample = sample ?? this._filtered;
+    const resolvedSample = sample ?? this.#filtered;
 
     if (resolvedSample === undefined) {
       throw new Error('sample or initial value must be given.');
     }
 
-    if (this._filtered === undefined) {
-      this._filtered = resolvedSample;
+    if (this.#filtered === undefined) {
+      this.#filtered = resolvedSample;
     } else {
-      const a = this._alpha ** exp;
-      this._filtered = a * this._filtered + (1 - a) * resolvedSample;
+      const a = this.#alpha ** exp;
+      this.#filtered = a * this.#filtered + (1 - a) * resolvedSample;
     }
 
-    if (this._maxVal !== undefined && this._filtered > this._maxVal) {
-      this._filtered = this._maxVal;
+    if (this.#maxVal !== undefined && this.#filtered > this.#maxVal) {
+      this.#filtered = this.#maxVal;
     }
-    if (this._minVal !== undefined && this._filtered < this._minVal) {
-      this._filtered = this._minVal;
+    if (this.#minVal !== undefined && this.#filtered < this.#minVal) {
+      this.#filtered = this.#minVal;
     }
 
-    return this._filtered;
+    return this.#filtered;
   }
 
   get filtered(): number | undefined {
-    return this._filtered;
+    return this.#filtered;
   }
 
   get value(): number | undefined {
-    return this._filtered;
+    return this.#filtered;
+  }
+
+  get _alpha(): number {
+    return this.#alpha;
+  }
+
+  get _maxVal(): number | undefined {
+    return this.#maxVal;
+  }
+
+  get _minVal(): number | undefined {
+    return this.#minVal;
   }
 
   set alpha(alpha: number) {
     if (!(alpha > 0 && alpha <= 1)) {
       throw new Error('alpha must be in (0, 1].');
     }
-    this._alpha = alpha;
+    this.#alpha = alpha;
   }
 }
 

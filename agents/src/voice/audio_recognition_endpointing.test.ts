@@ -37,6 +37,8 @@ describe('AudioRecognition dynamic endpointing', () => {
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
       endpointing: new DynamicEndpointing(300, 1000, 0.5),
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
     });
 
     state(recognition).speaking = true;
@@ -55,6 +57,8 @@ describe('AudioRecognition dynamic endpointing', () => {
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
       endpointing: new DynamicEndpointing(300, 1000, 0.5),
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
     });
 
     state(recognition).speaking = true;
@@ -82,6 +86,8 @@ describe('AudioRecognition dynamic endpointing', () => {
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
       endpointing: original,
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
     });
 
     recognition.updateOptions({ endpointing: replacement });

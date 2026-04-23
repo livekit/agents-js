@@ -142,10 +142,10 @@ export interface AudioRecognitionOptions {
   /** Endpointing strategy. */
   endpointing?: BaseEndpointing;
   interruptionDetection?: AdaptiveInterruptionDetector;
-  /** @deprecated Prefer `endpointing`. Minimum endpointing delay in milliseconds. */
-  minEndpointingDelay?: number;
-  /** @deprecated Prefer `endpointing`. Maximum endpointing delay in milliseconds. */
-  maxEndpointingDelay?: number;
+  /** Minimum endpointing delay in milliseconds. */
+  minEndpointingDelay: number;
+  /** Maximum endpointing delay in milliseconds. */
+  maxEndpointingDelay: number;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -175,6 +175,8 @@ export class AudioRecognition {
   private _endpointing: BaseEndpointing;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
+  private minEndpointingDelay: number;
+  private maxEndpointingDelay: number;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
@@ -225,12 +227,14 @@ export class AudioRecognition {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.vad = opts.vad;
+    this.minEndpointingDelay = opts.minEndpointingDelay;
+    this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this._endpointing =
       opts.endpointing ??
       createEndpointing({
         mode: defaultEndpointingOptions.mode,
-        minDelay: opts.minEndpointingDelay ?? defaultEndpointingOptions.minDelay,
-        maxDelay: opts.maxEndpointingDelay ?? defaultEndpointingOptions.maxDelay,
+        minDelay: this.minEndpointingDelay ?? defaultEndpointingOptions.minDelay,
+        maxDelay: this.maxEndpointingDelay ?? defaultEndpointingOptions.maxDelay,
       });
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
@@ -295,6 +299,8 @@ export class AudioRecognition {
   }): void {
     if (Object.hasOwn(options, 'endpointing') && options.endpointing !== undefined) {
       this._endpointing = options.endpointing;
+      this.minEndpointingDelay = options.endpointing.minDelay;
+      this.maxEndpointingDelay = options.endpointing.maxDelay;
     }
 
     if (Object.hasOwn(options, 'turnDetection')) {
@@ -417,7 +423,7 @@ export class AudioRecognition {
   /** Start interruption inference when agent is speaking and overlap speech starts. */
   async onStartOfOverlapSpeech(speechDuration: number, startedAt: number, userSpeakingSpan?: Span) {
     if (this.isAgentSpeaking) {
-      return this.trySendInterruptionSentinel(
+      await this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(
           speechDuration,
           startedAt,
@@ -427,6 +433,7 @@ export class AudioRecognition {
     }
   }
 
+  /** End interruption inference when overlap speech ends. */
   // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 307-329 lines
   async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span) {
     if (!this.isInterruptionEnabled) {
