@@ -22,6 +22,7 @@ import {
   type RecognitionHooks,
   type _TurnDetector,
 } from './audio_recognition.js';
+import { createEndpointing } from './endpointing.js';
 import type { STTNode } from './io.js';
 
 function setupInMemoryTracing() {
@@ -141,12 +142,11 @@ describe('AudioRecognition user_turn span parity', () => {
 
     const ar = new AudioRecognition({
       recognitionHooks: hooks,
+      endpointing: createEndpointing({ mode: 'fixed', minDelay: 0, maxDelay: 0 }),
       stt: sttNode,
       vad: undefined,
       turnDetector: alwaysTrueTurnDetector,
       turnDetectionMode: 'stt',
-      minEndpointingDelay: 0,
-      maxEndpointingDelay: 0,
       sttModel: 'deepgram-nova2',
       sttProvider: 'deepgram',
       getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: ParticipantKind.AGENT }),
@@ -250,12 +250,11 @@ describe('AudioRecognition user_turn span parity', () => {
 
     const ar = new AudioRecognition({
       recognitionHooks: hooks,
+      endpointing: createEndpointing({ mode: 'fixed', minDelay: 0, maxDelay: 0 }),
       stt: sttNode,
       vad: new FakeVAD(vadEvents),
       turnDetector: alwaysTrueTurnDetector,
       turnDetectionMode: 'vad',
-      minEndpointingDelay: 0,
-      maxEndpointingDelay: 0,
       sttModel: 'stt-model',
       sttProvider: 'stt-provider',
       getLinkedParticipant: () => ({ sid: 'p2', identity: 'alice', kind: ParticipantKind.AGENT }),

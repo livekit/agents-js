@@ -350,45 +350,123 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
   }
 }
 
+type ExpFilterOptions = {
+  max?: number;
+  min?: number;
+  initial?: number;
+};
+
+type ExpFilterResetOptions = ExpFilterOptions & {
+  alpha?: number;
+};
+
 /** @internal */
+// Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-64 lines
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private alphaValue: number;
+  private maxValue?: number;
+  private minValue?: number;
+  private filteredValue?: number;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, options?: ExpFilterOptions);
+  constructor(alpha: number, maxOrOptions?: number | ExpFilterOptions) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+
+    this.alphaValue = alpha;
+    this.filteredValue = undefined;
+
+    if (typeof maxOrOptions === 'number') {
+      this.maxValue = maxOrOptions;
+      return;
+    }
+
+    this.maxValue = maxOrOptions?.max;
+    this.minValue = maxOrOptions?.min;
+    this.filteredValue = maxOrOptions?.initial;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 21-37 lines
+  reset(alpha?: number): void;
+  reset(options?: ExpFilterResetOptions): void;
+  reset(alphaOrOptions?: number | ExpFilterResetOptions): void {
+    if (typeof alphaOrOptions === 'number') {
+      if (!(alphaOrOptions > 0 && alphaOrOptions <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+
+      this.alphaValue = alphaOrOptions;
+      return;
     }
-    this.#filtered = undefined;
+
+    if (alphaOrOptions?.alpha !== undefined) {
+      if (!(alphaOrOptions.alpha > 0 && alphaOrOptions.alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+
+      this.alphaValue = alphaOrOptions.alpha;
+    }
+
+    if (alphaOrOptions?.initial !== undefined) {
+      this.filteredValue = alphaOrOptions.initial;
+    }
+
+    if (alphaOrOptions?.min !== undefined) {
+      this.minValue = alphaOrOptions.min;
+    }
+
+    if (alphaOrOptions?.max !== undefined) {
+      this.maxValue = alphaOrOptions.max;
+    }
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 38-57 lines
+  apply(exp: number, sample?: number): number {
+    const nextSample = sample ?? this.filteredValue;
+
+    if (nextSample !== undefined && this.filteredValue === undefined) {
+      this.filteredValue = nextSample;
+    } else if (nextSample !== undefined && this.filteredValue !== undefined) {
+      const a = this.alphaValue ** exp;
+      this.filteredValue = a * this.filteredValue + (1 - a) * nextSample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this.filteredValue === undefined) {
+      throw new Error('sample or initial value must be given.');
     }
 
-    return this.#filtered;
+    if (this.maxValue !== undefined && this.filteredValue > this.maxValue) {
+      this.filteredValue = this.maxValue;
+    }
+
+    if (this.minValue !== undefined && this.filteredValue < this.minValue) {
+      this.filteredValue = this.minValue;
+    }
+
+    return this.filteredValue;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this.filteredValue;
+  }
+
+  get value(): number | undefined {
+    return this.filteredValue;
   }
 
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+
+    this.alphaValue = alpha;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 63-64 lines
+  updateBase(alpha: number): void {
+    this.alpha = alpha;
   }
 }
 

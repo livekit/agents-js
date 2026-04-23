@@ -35,6 +35,7 @@ import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
+import { type BaseEndpointing } from './endpointing.js';
 import type { STTNode } from './io.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
@@ -129,6 +130,8 @@ export interface _TurnDetector {
 export interface AudioRecognitionOptions {
   /** Hooks for recognition events. */
   recognitionHooks: RecognitionHooks;
+  /** Endpointing behavior. */
+  endpointing: BaseEndpointing;
   /** Speech-to-text node. */
   stt?: STTNode;
   /** Voice activity detection. */
@@ -138,10 +141,6 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
-  /** Minimum endpointing delay in milliseconds. */
-  minEndpointingDelay: number;
-  /** Maximum endpointing delay in milliseconds. */
-  maxEndpointingDelay: number;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -165,13 +164,12 @@ export interface ParticipantLike {
 // TODO add ability to update stt/vad/interruption-detection
 export class AudioRecognition {
   private hooks: RecognitionHooks;
+  private endpointing: BaseEndpointing;
   private stt?: STTNode;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
-  private minEndpointingDelay: number;
-  private maxEndpointingDelay: number;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
@@ -220,12 +218,11 @@ export class AudioRecognition {
 
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
+    this.endpointing = opts.endpointing;
     this.stt = opts.stt;
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
-    this.minEndpointingDelay = opts.minEndpointingDelay;
-    this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
@@ -275,8 +272,37 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  updateOptions(options: { turnDetection: TurnDetectionMode | undefined }): void {
-    this.turnDetectionMode = options.turnDetection;
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 192-219 lines
+  updateOptions(options: {
+    endpointing?: BaseEndpointing;
+    turnDetection?: TurnDetectionMode;
+    minEndpointingDelay?: number;
+    maxEndpointingDelay?: number;
+  }): void {
+    const { endpointing, turnDetection, minEndpointingDelay, maxEndpointingDelay } = options;
+
+    void minEndpointingDelay;
+    void maxEndpointingDelay;
+
+    if (Object.hasOwn(options, 'endpointing') && endpointing !== undefined) {
+      this.endpointing = endpointing;
+    }
+
+    if (Object.hasOwn(options, 'turnDetection')) {
+      this.turnDetector = typeof turnDetection === 'string' ? undefined : turnDetection;
+
+      const mode = typeof turnDetection === 'string' ? turnDetection : undefined;
+      if (this.turnDetectionMode !== mode) {
+        const previousMode = this.turnDetectionMode;
+        this.turnDetectionMode = mode;
+
+        if (this.turnDetectionMode === 'manual' || previousMode === 'manual') {
+          this.bounceEOUTask?.cancel();
+          this.bounceEOUTask = undefined;
+          this.userTurnCommitted = false;
+        }
+      }
+    }
   }
 
   async start(options?: { sttPipeline?: STTPipeline }) {
@@ -311,12 +337,19 @@ export class AudioRecognition {
     this.interruptionStreamChannel = undefined;
   }
 
-  async onStartOfAgentSpeech() {
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 238-243 lines
+  async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
+    this.endpointing.onStartOfAgentSpeech(startedAt);
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 245-270 lines
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+    if (this.isAgentSpeaking) {
+      this.endpointing.onEndOfAgentSpeech(Date.now());
+    }
+
     if (!this.isInterruptionEnabled) {
       this.isAgentSpeaking = false;
       return;
@@ -342,6 +375,31 @@ export class AudioRecognition {
       await this.flushHeldTranscripts();
     }
     this.isAgentSpeaking = false;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 272-289 lines
+  onStartOfSpeech(startedAt: number, speechDuration = 0, userSpeakingSpan?: Span): void {
+    this.endpointing.onStartOfSpeech(startedAt, this.isAgentSpeaking);
+
+    if (!this.isInterruptionEnabled || !this.isAgentSpeaking) {
+      return;
+    }
+
+    void this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.overlapSpeechStarted(speechDuration, startedAt, userSpeakingSpan),
+    );
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 291-305 lines
+  onEndOfSpeech(endedAt: number, userSpeakingSpan?: Span, interruption?: boolean): void {
+    if (this.speaking) {
+      this.endpointing.onEndOfSpeech(
+        endedAt,
+        interruption !== undefined && !interruption && this.isAgentSpeaking,
+      );
+    }
+
+    void this.onEndOfOverlapSpeech(endedAt, userSpeakingSpan);
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
@@ -704,13 +762,14 @@ export class AudioRecognition {
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
         {
+          const startedAt = Date.now();
           const span = this.ensureUserTurnSpan(Date.now());
           const ctx = this.userTurnContext(span);
           otelContext.with(ctx, () => {
             this.hooks.onStartOfSpeech({
               type: VADEventType.START_OF_SPEECH,
               samplesIndex: 0,
-              timestamp: Date.now(),
+              timestamp: startedAt,
               speechDuration: 0,
               silenceDuration: 0,
               frames: [],
@@ -721,9 +780,14 @@ export class AudioRecognition {
               rawAccumulatedSpeech: 0,
             });
           });
+
+          if (this.speechStartTime === undefined) {
+            this.speechStartTime = startedAt;
+          }
+
+          this.lastSpeakingTime = startedAt;
         }
         this.speaking = true;
-        this.lastSpeakingTime = Date.now();
 
         this.bounceEOUTask?.cancel();
         break;
@@ -805,7 +869,7 @@ export class AudioRecognition {
         speechStartTime: number | undefined,
       ) =>
       async (controller: AbortController) => {
-        let endpointingDelay = this.minEndpointingDelay;
+        let endpointingDelay = this.endpointing.minDelay;
 
         const userTurnSpan = this.ensureUserTurnSpan();
         const userTurnCtx = this.userTurnContext(userTurnSpan);
@@ -831,7 +895,7 @@ export class AudioRecognition {
                   );
 
                   if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
-                    endpointingDelay = this.maxEndpointingDelay;
+                    endpointingDelay = this.endpointing.maxDelay;
                   }
                 } catch (error) {
                   this.logger.error(error, 'Error predicting end of turn');
