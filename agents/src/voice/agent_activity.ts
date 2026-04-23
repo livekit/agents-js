@@ -208,6 +208,7 @@ export class AgentActivity implements RecognitionHooks {
   private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
     this.onError(ev);
 
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1484-1488 lines
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
     this.interruptionDetected = ev.isInterruption;
     this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
