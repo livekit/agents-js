@@ -732,8 +732,8 @@ export class AgentActivity implements RecognitionHooks {
     minEndpointingDelay?: number;
     maxEndpointingDelay?: number;
   }): void {
-    let { toolChoice, endpointingOpts, turnDetection, minEndpointingDelay, maxEndpointingDelay } =
-      options;
+    const { toolChoice, turnDetection, minEndpointingDelay, maxEndpointingDelay } = options;
+    let endpointingOpts = options.endpointingOpts;
 
     if (minEndpointingDelay !== undefined || maxEndpointingDelay !== undefined) {
       this.logger.warn(
