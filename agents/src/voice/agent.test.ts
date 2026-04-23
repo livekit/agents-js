@@ -8,6 +8,7 @@ import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
+import { DynamicEndpointing } from './endpointing.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
@@ -312,6 +313,37 @@ describe('Agent', () => {
       expect(activity.turnDetection).toBe('manual');
       expect(activity.turnHandling.endpointing?.minDelay).toBe(111);
       expect(activity.turnHandling.endpointing?.maxDelay).toBe(222);
+    });
+
+    it('should forward endpointing replacements into AudioRecognition.updateOptions', () => {
+      const agent = new Agent({ instructions: 'test' });
+      const session = {
+        sessionOptions: {
+          turnHandling: {
+            endpointing: defaultEndpointingOptions,
+            interruption: defaultInterruptionOptions,
+          },
+        },
+        turnDetection: 'vad',
+        useTtsAlignedTranscript: true,
+      } as any;
+
+      const activity = new AgentActivity(agent as any, session);
+      const updateOptions = vi.fn();
+      (activity as any).audioRecognition = { updateOptions };
+
+      activity.updateOptions({
+        endpointing: { mode: 'dynamic', minDelay: 123, maxDelay: 456 },
+      });
+
+      expect(updateOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          turnDetection: (activity as any).turnDetectionMode,
+          endpointing: expect.any(DynamicEndpointing),
+        }),
+      );
+      expect(updateOptions.mock.calls[0]?.[0].endpointing.minDelay).toBe(123);
+      expect(updateOptions.mock.calls[0]?.[0].endpointing.maxDelay).toBe(456);
     });
 
     it('should disable adaptive interruption detection in default mode when prerequisites are missing', () => {

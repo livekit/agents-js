@@ -65,6 +65,7 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
+import { createEndpointing } from './endpointing.js';
 import {
   AgentSessionEventTypes,
   createErrorEvent,
@@ -88,6 +89,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -477,12 +479,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.minDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.maxDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 768-775 lines
+      endpointing: createEndpointing(this.endpointingOptions),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -661,19 +659,12 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
-  // get minEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.minDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
-  //   );
-  // }
-
-  // get maxEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.maxDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-  //   );
-  // }
+  private get endpointingOptions(): EndpointingOptions {
+    return {
+      ...this.agentSession.sessionOptions.turnHandling.endpointing,
+      ...this.agent.turnHandling?.endpointing,
+    };
+  }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -718,9 +709,11 @@ export class AgentActivity implements RecognitionHooks {
   updateOptions({
     toolChoice,
     turnDetection,
+    endpointing,
   }: {
     toolChoice?: ToolChoice | null;
     turnDetection?: TurnDetectionMode;
+    endpointing?: EndpointingOptions;
   }): void {
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
@@ -743,7 +736,11 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.audioRecognition) {
-      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+      this.audioRecognition.updateOptions({
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 476-482 lines
+        turnDetection: this.turnDetectionMode,
+        endpointing: endpointing ? createEndpointing(endpointing) : undefined,
+      });
     }
   }
 
