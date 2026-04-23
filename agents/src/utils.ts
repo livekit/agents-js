@@ -352,43 +352,86 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
 /** @internal */
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private _alpha: number;
+  private _maxVal: number | undefined;
+  private _minVal: number | undefined;
+  private _filtered: number | undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
-  }
-
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  constructor(alpha: number, opts?: number | { max?: number; min?: number; initial?: number }) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
     }
-    this.#filtered = undefined;
+
+    this._alpha = alpha;
+    this._maxVal = typeof opts === 'number' ? opts : opts?.max;
+    this._minVal = typeof opts === 'number' ? undefined : opts?.min;
+    this._filtered = typeof opts === 'number' ? undefined : opts?.initial;
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
+  reset(opts?: number | { alpha?: number; initial?: number; min?: number; max?: number }) {
+    if (typeof opts === 'number') {
+      if (!(opts > 0 && opts <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this._alpha = opts;
+      this._filtered = undefined;
+      return;
+    }
+
+    if (opts?.alpha !== undefined) {
+      if (!(opts.alpha > 0 && opts.alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this._alpha = opts.alpha;
+    }
+    if (opts && Object.hasOwn(opts, 'initial')) {
+      this._filtered = opts.initial;
+    }
+    if (opts && Object.hasOwn(opts, 'min')) {
+      this._minVal = opts.min;
+    }
+    if (opts && Object.hasOwn(opts, 'max')) {
+      this._maxVal = opts.max;
+    }
+  }
+
+  apply(exp: number, sample?: number): number {
+    const resolvedSample = sample ?? this._filtered;
+
+    if (resolvedSample === undefined) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (this._filtered === undefined) {
+      this._filtered = resolvedSample;
     } else {
-      this.#filtered = sample;
+      const a = this._alpha ** exp;
+      this._filtered = a * this._filtered + (1 - a) * resolvedSample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this._maxVal !== undefined && this._filtered > this._maxVal) {
+      this._filtered = this._maxVal;
+    }
+    if (this._minVal !== undefined && this._filtered < this._minVal) {
+      this._filtered = this._minVal;
     }
 
-    return this.#filtered;
+    return this._filtered;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this._filtered;
+  }
+
+  get value(): number | undefined {
+    return this._filtered;
   }
 
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+    this._alpha = alpha;
   }
 }
 
