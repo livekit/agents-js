@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
-  cli,
+  createAgentServer,
+  createSnapshotable,
   defineAgent,
   llm,
   voice,
@@ -17,6 +17,7 @@ import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
+import superjson from 'superjson';
 import { z } from 'zod';
 import {
   type AvailableSlot,
@@ -27,24 +28,41 @@ import {
   getUniqueHash,
 } from './calendar_api.js';
 
-export interface Userdata {
+type FrontDeskProps = {
   cal: Calendar;
-}
+  timezone: string;
+};
 
-export class FrontDeskAgent extends voice.Agent {
-  private tz: string;
-  private _slotsMap: Map<string, AvailableSlot> = new Map();
+// Props carry a live calendar connection, so only the serializable parts
+// are persisted. On restore we rebuild the calendar from env.
+const frontDeskPropsSnapshotable = createSnapshotable<FrontDeskProps>({
+  snapshot: async ({ timezone }) => superjson.stringify({ timezone }),
+  restore: async (snapshot) => {
+    const { timezone } = superjson.parse<{ timezone: string }>(snapshot);
+    const cal = await loadCalendar(timezone);
+    return { cal, timezone };
+  },
+});
 
-  constructor(options: { timezone: string }) {
-    const today = new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      timeZone: options.timezone,
-    });
+// superjson handles Date (and Map) round-trips for us.
+const slotsSnapshotable = createSnapshotable<Map<string, AvailableSlot>>({
+  snapshot: async (slots) => superjson.stringify(slots),
+  restore: async (s) => superjson.parse<Map<string, AvailableSlot>>(s),
+});
 
-    const instructions =
+const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
+  const { cal, timezone } = props;
+
+  const today = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: timezone,
+  });
+
+  ctx.configure({
+    instructions:
       `You are Front-Desk, a helpful and efficient voice assistant. ` +
       `Today is ${today}. Your main goal is to schedule an appointment for the user. ` +
       `This is a voice conversation — speak naturally, clearly, and concisely. ` +
@@ -55,201 +73,201 @@ export class FrontDeskAgent extends voice.Agent {
       `Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one. ` +
       `Offer a few options at a time, pause for a response, then guide the user to confirm. ` +
       `If the time is no longer available, let them know gently and offer the next options. ` +
-      `Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.`;
+      `Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.`,
+  });
 
-    super({
-      instructions,
-      tools: {
-        scheduleAppointment: llm.tool({
-          description: 'Schedule an appointment at the given slot.',
-          parameters: z.object({
-            slotId: z
-              .string()
-              .describe(
-                'The identifier for the selected time slot (as shown in the list of available slots).',
-              ),
-          }),
-          execute: async ({ slotId }, { ctx }: llm.ToolOptions<Userdata>) => {
-            const slot = this._slotsMap.get(slotId);
-            if (!slot) {
-              throw new llm.ToolError(`error: slot ${slotId} was not found`);
-            }
+  const slots = ctx.signal<Map<string, AvailableSlot>>(() => new Map(), slotsSnapshotable);
 
-            // Note: The Python version uses beta.workflows.GetEmailTask which is not available in TypeScript yet
-            // For now, we'll use a placeholder email
-            const placeholderEmail = 'user@example.com';
+  ctx.tool('scheduleAppointment', {
+    description: 'Schedule an appointment at the given slot.',
+    parameters: z.object({
+      slotId: z
+        .string()
+        .describe(
+          'The identifier for the selected time slot (as shown in the list of available slots).',
+        ),
+    }),
+    execute: async ({ slotId }) => {
+      const slot = slots.value.get(slotId);
+      if (!slot) {
+        throw new llm.ToolError(`error: slot ${slotId} was not found`);
+      }
 
-            console.warn(
-              'Note: Email collection workflow not implemented in TypeScript version yet. Using placeholder email.',
-            );
+      // Placeholder: the Python version uses beta.workflows.GetEmailTask to
+      // collect the user's email. Once AgentTask lands in JS, replace with:
+      //   const email = await GetEmailTask({ chatCtx: ctx.chatCtx });
+      const placeholderEmail = 'user@example.com';
 
-            try {
-              await ctx.userData.cal.scheduleAppointment({
-                startTime: slot.startTime,
-                attendeeEmail: placeholderEmail,
-              });
-            } catch (error) {
-              if (error instanceof SlotUnavailableError) {
-                throw new llm.ToolError("This slot isn't available anymore");
-              }
-              throw error;
-            }
+      try {
+        await ctx.step(
+          () =>
+            cal.scheduleAppointment({
+              startTime: slot.startTime,
+              attendeeEmail: placeholderEmail,
+            }),
+          'scheduleAppointment',
+        );
+      } catch (error) {
+        if (error instanceof SlotUnavailableError) {
+          throw new llm.ToolError("This slot isn't available anymore");
+        }
+        throw error;
+      }
 
-            const local = new Date(slot.startTime.toLocaleString('en-US', { timeZone: this.tz }));
-            const formatted = local.toLocaleDateString('en-US', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              timeZoneName: 'short',
-              timeZone: this.tz,
-            });
+      const local = new Date(slot.startTime.toLocaleString('en-US', { timeZone: timezone }));
+      const formatted = local.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short',
+        timeZone: timezone,
+      });
 
-            return `The appointment was successfully scheduled for ${formatted}.`;
-          },
-        }),
-        listAvailableSlots: llm.tool({
-          description: `Return a plain-text list of available slots, one per line.
+      return `The appointment was successfully scheduled for ${formatted}.`;
+    },
+  });
+
+  ctx.tool('listAvailableSlots', {
+    description: `Return a plain-text list of available slots, one per line.
 
 <slot_id> - <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
 
 You must infer the appropriate range implicitly from the conversational context and must not prompt the user to pick a value explicitly.`,
-          parameters: z.object({
-            range: z
-              .enum(['+2week', '+1month', '+3month', 'default'])
-              .describe('Determines how far ahead to search for free time slots.'),
-          }),
-          execute: async ({ range }, { ctx }: llm.ToolOptions<Userdata>) => {
-            const now = new Date();
-            const lines: string[] = [];
+    parameters: z.object({
+      range: z
+        .enum(['+2week', '+1month', '+3month', 'default'])
+        .describe('Determines how far ahead to search for free time slots.'),
+    }),
+    execute: async ({ range }) => {
+      const now = new Date();
 
-            let rangeDays: number;
-            if (range === '+2week' || range === 'default') {
-              rangeDays = 14;
-            } else if (range === '+1month') {
-              rangeDays = 30;
-            } else if (range === '+3month') {
-              rangeDays = 90;
-            } else {
-              rangeDays = 14;
-            }
+      let rangeDays: number;
+      if (range === '+2week' || range === 'default') {
+        rangeDays = 14;
+      } else if (range === '+1month') {
+        rangeDays = 30;
+      } else if (range === '+3month') {
+        rangeDays = 90;
+      } else {
+        rangeDays = 14;
+      }
 
-            const endTime = new Date(now.getTime() + rangeDays * 24 * 60 * 60 * 1000);
+      const endTime = new Date(now.getTime() + rangeDays * 24 * 60 * 60 * 1000);
 
-            const slots = await ctx.userData.cal.listAvailableSlots({
-              startTime: now,
-              endTime: endTime,
-            });
+      const available = await ctx.step(
+        () => cal.listAvailableSlots({ startTime: now, endTime }),
+        'listAvailableSlots',
+      );
 
-            for (const slot of slots) {
-              const local = new Date(slot.startTime.toLocaleString('en-US', { timeZone: this.tz }));
-              const delta = local.getTime() - now.getTime();
-              const days = Math.floor(delta / (24 * 60 * 60 * 1000));
-              const seconds = Math.floor((delta % (24 * 60 * 60 * 1000)) / 1000);
+      const lines: string[] = [];
+      const next = new Map(slots.value);
 
-              let rel: string;
-              if (local.toDateString() === now.toDateString()) {
-                if (seconds < 3600) {
-                  rel = 'in less than an hour';
-                } else {
-                  rel = 'later today';
-                }
-              } else if (
-                local.toDateString() ===
-                new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString()
-              ) {
-                rel = 'tomorrow';
-              } else if (days < 7) {
-                rel = `in ${days} days`;
-              } else if (days < 14) {
-                rel = 'in 1 week';
-              } else {
-                rel = `in ${Math.floor(days / 7)} weeks`;
-              }
+      for (const slot of available) {
+        const local = new Date(slot.startTime.toLocaleString('en-US', { timeZone: timezone }));
+        const delta = local.getTime() - now.getTime();
+        const days = Math.floor(delta / (24 * 60 * 60 * 1000));
+        const seconds = Math.floor((delta % (24 * 60 * 60 * 1000)) / 1000);
 
-              const uniqueHash = getUniqueHash(slot);
-              const formatted = local.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZoneName: 'short',
-                timeZone: this.tz,
-              });
+        let rel: string;
+        if (local.toDateString() === now.toDateString()) {
+          if (seconds < 3600) {
+            rel = 'in less than an hour';
+          } else {
+            rel = 'later today';
+          }
+        } else if (
+          local.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString()
+        ) {
+          rel = 'tomorrow';
+        } else if (days < 7) {
+          rel = `in ${days} days`;
+        } else if (days < 14) {
+          rel = 'in 1 week';
+        } else {
+          rel = `in ${Math.floor(days / 7)} weeks`;
+        }
 
-              lines.push(`${uniqueHash} - ${formatted} (${rel})`);
-              this._slotsMap.set(uniqueHash, slot);
-            }
+        const uniqueHash = getUniqueHash(slot);
+        const formatted = local.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short',
+          timeZone: timezone,
+        });
 
-            return lines.join('\n') || 'No slots available at the moment.';
-          },
-        }),
-      },
-    });
+        lines.push(`${uniqueHash} - ${formatted} (${rel})`);
+        next.set(uniqueHash, slot);
+      }
 
-    this.tz = options.timezone;
-  }
+      slots.value = next;
+      return lines.join('\n') || 'No slots available at the moment.';
+    },
+  });
+
+  ctx.onEnter(async () => {
+    await ctx.generateReply({ userInput: 'Greet to the user' });
+  });
+}, frontDeskPropsSnapshotable);
+
+async function loadCalendar(timezone: string): Promise<Calendar> {
+  const calApiKey = process.env.CAL_API_KEY;
+  const cal = calApiKey
+    ? new CalComCalendar({ apiKey: calApiKey, timezone })
+    : new FakeCalendar({ timezone });
+  await cal.initialize();
+  return cal;
 }
 
-export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
-  entry: async (ctx: JobContext) => {
-    const timezone = 'UTC';
+const app = createAgentServer();
 
-    let cal: Calendar;
-    const calApiKey = process.env.CAL_API_KEY;
+app.prewarm(async (proc: JobProcess) => {
+  proc.userData.vad = await silero.VAD.load();
+});
 
-    if (calApiKey) {
-      console.log('CAL_API_KEY detected, using cal.com calendar');
-      cal = new CalComCalendar({ apiKey: calApiKey, timezone });
-    } else {
-      console.warn(
-        'CAL_API_KEY is not set. Falling back to FakeCalendar; set CAL_API_KEY to enable Cal.com integration.',
-      );
-      cal = new FakeCalendar({ timezone });
-    }
+app.rtc(async (ctx: JobContext) => {
+  const timezone = 'UTC';
 
-    await cal.initialize();
+  if (!process.env.CAL_API_KEY) {
+    console.warn(
+      'CAL_API_KEY is not set. Falling back to FakeCalendar; set CAL_API_KEY to enable Cal.com integration.',
+    );
+  }
 
-    const userdata: Userdata = { cal };
+  const cal = await loadCalendar(timezone);
 
-    const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      stt: new deepgram.STT(),
-      llm: new openai.LLM({
-        model: 'gpt-4.1',
-      }),
-      tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
-      userData: userdata,
-      voiceOptions: {
-        maxToolSteps: 1,
-      },
-    });
+  const session = new voice.AgentSession({
+    vad: ctx.proc.userData.vad! as silero.VAD,
+    stt: new deepgram.STT(),
+    llm: new openai.LLM({
+      model: 'gpt-4.1',
+    }),
+    tts: new elevenlabs.TTS(),
+    turnDetection: new livekit.turnDetector.MultilingualModel(),
+    voiceOptions: {
+      maxToolSteps: 1,
+    },
+  });
 
-    await session.start({
-      agent: new FrontDeskAgent({ timezone }),
-      room: ctx.room,
-      inputOptions: {
-        noiseCancellation: BackgroundVoiceCancellation(),
-      },
-    });
-
-    session.generateReply({
-      userInput: 'Greet to the user',
-    });
-  },
+  await session.start({
+    agent: FrontDeskAgent({ cal, timezone }),
+    room: ctx.room,
+    inputOptions: {
+      noiseCancellation: BackgroundVoiceCancellation(),
+    },
+  });
 });
 
 // Only run CLI when executed directly, not when imported for testing
 // eslint-disable-next-line turbo/no-undeclared-env-vars
 if (process.env.VITEST === undefined) {
-  // eslint-disable-next-line turbo/no-undeclared-env-vars
-  cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+  app.run({ path: fileURLToPath(import.meta.url) });
 }
+
+export default app;
