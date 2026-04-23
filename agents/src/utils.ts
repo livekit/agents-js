@@ -351,35 +351,92 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 }
 
 /** @internal */
+export interface ExpFilterOptions {
+  alpha?: number;
+  max?: number;
+  min?: number;
+  initial?: number;
+}
+
+/** @internal */
 export class ExpFilter {
   #alpha: number;
   #max?: number;
+  #min?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
-  }
-
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, options?: ExpFilterOptions);
+  constructor(alpha: number, maxOrOptions?: number | ExpFilterOptions) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
     }
-    this.#filtered = undefined;
+
+    const options: ExpFilterOptions =
+      typeof maxOrOptions === 'number' ? { max: maxOrOptions } : maxOrOptions ?? {};
+
+    this.#alpha = alpha;
+    this.#max = options.max;
+    this.#min = options.min;
+    this.#filtered = options.initial;
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+  reset(): void;
+  reset(alpha?: number): void;
+  reset(options?: ExpFilterOptions): void;
+  reset(alphaOrOptions?: number | ExpFilterOptions) {
+    if (typeof alphaOrOptions === 'number') {
+      if (!(alphaOrOptions > 0 && alphaOrOptions <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this.#alpha = alphaOrOptions;
+      return;
+    }
+
+    if (alphaOrOptions?.alpha !== undefined) {
+      if (!(alphaOrOptions.alpha > 0 && alphaOrOptions.alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this.#alpha = alphaOrOptions.alpha;
+    }
+
+    if (alphaOrOptions?.initial !== undefined) {
+      this.#filtered = alphaOrOptions.initial;
+    }
+
+    if (alphaOrOptions?.min !== undefined) {
+      this.#min = alphaOrOptions.min;
+    }
+
+    if (alphaOrOptions?.max !== undefined) {
+      this.#max = alphaOrOptions.max;
+    }
+  }
+
+  apply(exp: number, sample?: number): number {
+    if (sample !== undefined && this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
+    } else if (sample !== undefined) {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#filtered === undefined) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
     }
 
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
+    }
+
+    return this.#filtered;
+  }
+
+  get value(): number | undefined {
     return this.#filtered;
   }
 
@@ -387,7 +444,22 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get alpha(): number {
+    return this.#alpha;
+  }
+
+  get min(): number | undefined {
+    return this.#min;
+  }
+
+  get max(): number | undefined {
+    return this.#max;
+  }
+
   set alpha(alpha: number) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
     this.#alpha = alpha;
   }
 }
