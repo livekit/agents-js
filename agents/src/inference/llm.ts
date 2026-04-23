@@ -9,6 +9,8 @@ import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
 import {
   type AnyString,
+  HEADER_INFERENCE_PRIORITY,
+  HEADER_INFERENCE_PROVIDER,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
@@ -98,6 +100,9 @@ export type LLMModels =
   | XAIModels
   | AnyString;
 
+// Ref: python livekit-agents/livekit/agents/inference/llm.py - 140 lines
+export type InferenceClass = 'priority' | 'standard';
+
 const REASONING_UNSUPPORTED_PARAMS = new Set([
   'temperature',
   'top_p',
@@ -156,6 +161,8 @@ export interface InferenceLLMOptions {
   baseURL: string;
   apiKey: string;
   apiSecret: string;
+  // Ref: python livekit-agents/livekit/agents/inference/llm.py - 183 lines
+  inferenceClass?: InferenceClass;
   modelOptions: ChatCompletionOptions;
   strictToolSchema?: boolean;
 }
@@ -178,6 +185,8 @@ export class LLM extends llm.LLM {
     baseURL?: string;
     apiKey?: string;
     apiSecret?: string;
+    // Ref: python livekit-agents/livekit/agents/inference/llm.py - 196 lines
+    inferenceClass?: InferenceClass;
     modelOptions?: InferenceLLMOptions['modelOptions'];
     strictToolSchema?: boolean;
   }) {
@@ -189,6 +198,7 @@ export class LLM extends llm.LLM {
       baseURL,
       apiKey,
       apiSecret,
+      inferenceClass,
       modelOptions,
       strictToolSchema = false,
     } = opts;
@@ -211,6 +221,8 @@ export class LLM extends llm.LLM {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
+      // Ref: python livekit-agents/livekit/agents/inference/llm.py - 229 lines
+      inferenceClass,
       modelOptions: modelOptions || {},
       strictToolSchema,
     };
@@ -244,6 +256,7 @@ export class LLM extends llm.LLM {
     parallelToolCalls,
     toolChoice,
     // TODO(AJS-270): Add response_format parameter support
+    inferenceClass,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
@@ -252,6 +265,8 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     // TODO(AJS-270): Add responseFormat parameter
+    // Ref: python livekit-agents/livekit/agents/inference/llm.py - 272 lines
+    inferenceClass?: InferenceClass;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
     let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
@@ -278,9 +293,14 @@ export class LLM extends llm.LLM {
 
     modelOptions = { ...modelOptions, ...this.opts.modelOptions };
 
+    // Ref: python livekit-agents/livekit/agents/inference/llm.py - 306-308 lines
+    const effectiveInferenceClass =
+      inferenceClass !== undefined ? inferenceClass : this.opts.inferenceClass;
+
     return new LLMStream(this, {
       model: this.opts.model,
       provider: this.opts.provider,
+      inferenceClass: effectiveInferenceClass,
       client: this.client,
       chatCtx,
       toolCtx,
@@ -298,6 +318,8 @@ export class LLM extends llm.LLM {
 export class LLMStream extends llm.LLMStream {
   private model: LLMModels;
   private provider?: string;
+  // Ref: python livekit-agents/livekit/agents/inference/llm.py - 344 lines
+  private inferenceClass?: InferenceClass;
   private providerFmt: llm.ProviderFormat;
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
@@ -315,6 +337,7 @@ export class LLMStream extends llm.LLMStream {
     {
       model,
       provider,
+      inferenceClass,
       client,
       chatCtx,
       toolCtx,
@@ -326,6 +349,8 @@ export class LLMStream extends llm.LLMStream {
     }: {
       model: LLMModels;
       provider?: string;
+      // Ref: python livekit-agents/livekit/agents/inference/llm.py - 332 lines
+      inferenceClass?: InferenceClass;
       client: OpenAI;
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
@@ -340,6 +365,7 @@ export class LLMStream extends llm.LLMStream {
     this.client = client;
     this.gatewayOptions = gatewayOptions;
     this.provider = provider;
+    this.inferenceClass = inferenceClass;
     this.providerFmt = providerFmt || 'openai';
     this.modelOptions = modelOptions;
     this.model = model;
@@ -403,7 +429,12 @@ export class LLMStream extends llm.LLMStream {
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       if (this.provider) {
-        extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
+        // Ref: python livekit-agents/livekit/agents/inference/llm.py - 386 lines
+        extraHeaders[HEADER_INFERENCE_PROVIDER] = this.provider;
+      }
+      // Ref: python livekit-agents/livekit/agents/inference/llm.py - 387-388 lines
+      if (this.inferenceClass) {
+        extraHeaders[HEADER_INFERENCE_PRIORITY] = this.inferenceClass;
       }
       delete requestOptions.extra_headers;
 

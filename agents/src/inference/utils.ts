@@ -16,6 +16,10 @@ export const DEFAULT_INFERENCE_URL = 'https://agent-gateway.livekit.cloud/v1';
 /** Staging inference URL */
 export const STAGING_INFERENCE_URL = 'https://agent-gateway.staging.livekit.cloud/v1';
 
+// Ref: python livekit-agents/livekit/agents/inference/_utils.py - 17-18 lines
+export const HEADER_INFERENCE_PROVIDER = 'X-LiveKit-Inference-Provider';
+export const HEADER_INFERENCE_PRIORITY = 'X-LiveKit-Inference-Priority';
+
 /**
  * Get the default inference URL based on the environment.
  *
