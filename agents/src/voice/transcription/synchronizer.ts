@@ -416,6 +416,11 @@ class SegmentSynchronizerImpl {
       return;
     }
     this.closedFuture.resolve();
+    // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 394-396 lines
+    if (this.startWallTime === undefined) {
+      // avoid error in mainTask if playback completed before any audio frame arrived
+      this.startWallTime = Date.now();
+    }
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
     this.textData.sentenceStream.close();
     await this.captureTask;
