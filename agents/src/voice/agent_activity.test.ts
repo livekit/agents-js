@@ -375,3 +375,75 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
 });
+
+describe('AgentActivity endpointing integration', () => {
+  it('forwards no-VAD realtime input speech hooks into AudioRecognition', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123_456);
+    const audioRecognition = {
+      onStartOfSpeech: vi.fn(),
+      onStartOfOverlapSpeech: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onEndOfOverlapSpeech: vi.fn(),
+    };
+    const updateUserState = vi.fn();
+    const fakeActivity = {
+      logger: { info: vi.fn(), error: vi.fn() },
+      vad: undefined,
+      isInterruptionDetectionEnabled: true,
+      audioRecognition,
+      agentSession: {
+        _updateUserState: updateUserState,
+        _userSpeakingSpan: { id: 'span' },
+      },
+      interrupt: vi.fn(),
+    };
+
+    try {
+      AgentActivity.prototype.onInputSpeechStarted.call(fakeActivity as any, {} as any);
+      AgentActivity.prototype.onInputSpeechStopped.call(
+        fakeActivity as any,
+        { userTranscriptionEnabled: false } as any,
+      );
+
+      expect(updateUserState).toHaveBeenNthCalledWith(1, 'speaking');
+      expect(audioRecognition.onStartOfSpeech).toHaveBeenCalledWith(123_456);
+      expect(audioRecognition.onStartOfOverlapSpeech).toHaveBeenCalledWith(
+        0,
+        123_456,
+        fakeActivity.agentSession._userSpeakingSpan,
+      );
+
+      expect(audioRecognition.onEndOfSpeech).toHaveBeenCalledWith(123_456);
+      expect(audioRecognition.onEndOfOverlapSpeech).toHaveBeenCalledWith(
+        123_456,
+        fakeActivity.agentSession._userSpeakingSpan,
+      );
+      expect(updateUserState).toHaveBeenNthCalledWith(2, 'listening');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('creates a replacement endpointing instance when updateOptions receives endpointing config', () => {
+    const audioRecognition = { updateOptions: vi.fn() };
+    const fakeActivity = {
+      toolChoice: null,
+      realtimeSession: undefined,
+      turnDetectionMode: 'vad',
+      isDefaultInterruptionByAudioActivityEnabled: true,
+      isInterruptionByAudioActivityEnabled: true,
+      agentSession: { agentState: 'listening' },
+      audioRecognition,
+    };
+
+    AgentActivity.prototype.updateOptions.call(fakeActivity as any, {
+      endpointing: { mode: 'dynamic', minDelay: 111, maxDelay: 222 },
+    });
+
+    const [{ endpointing, turnDetection }] = audioRecognition.updateOptions.mock.calls[0];
+    expect(turnDetection).toBe('vad');
+    expect(endpointing?.constructor.name).toBe('DynamicEndpointing');
+    expect(endpointing?.minDelay).toBe(111);
+    expect(endpointing?.maxDelay).toBe(222);
+  });
+});
