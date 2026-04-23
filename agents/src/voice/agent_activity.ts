@@ -479,6 +479,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
+      minEndpointingDelay: this.endpointingOptions.minDelay,
+      maxEndpointingDelay: this.endpointingOptions.maxDelay,
       // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 768-775 lines
       endpointing: createEndpointing(this.endpointingOptions),
       rootSpanContext: this.agentSession.rootSpanContext,
@@ -706,6 +708,22 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  updateOptions({
+    toolChoice,
+    turnDetection,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode;
+  }): void;
+  updateOptions({
+    toolChoice,
+    turnDetection,
+    endpointing,
+  }: {
+    toolChoice?: ToolChoice | null;
+    turnDetection?: TurnDetectionMode;
+    endpointing?: EndpointingOptions;
+  }): void;
   updateOptions({
     toolChoice,
     turnDetection,

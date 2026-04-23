@@ -393,6 +393,8 @@ export class ExpFilter {
     }
   }
 
+  apply(exp: number, sample: number): number;
+  apply(exp: number): number;
   apply(exp: number, sample?: number): number {
     const resolvedSample = sample ?? this.#filtered;
 

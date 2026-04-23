@@ -120,6 +120,8 @@ describe('AudioRecognition endpointing integration', () => {
       recognitionHooks: createHooks(),
       stt: sttNode,
       turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
       endpointing,
     });
 
@@ -179,6 +181,8 @@ describe('AudioRecognition endpointing integration', () => {
       recognitionHooks: createHooks(),
       vad: new FakeVAD(vadEvents),
       turnDetectionMode: 'vad',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
       endpointing,
     });
 
@@ -204,6 +208,8 @@ describe('AudioRecognition endpointing integration', () => {
     const replacement = new DynamicEndpointing(0.3, 1.0, 0.5);
     const recognition = new AudioRecognition({
       recognitionHooks: createHooks(),
+      minEndpointingDelay: learned.minDelay,
+      maxEndpointingDelay: learned.maxDelay,
       endpointing: learned,
     });
 

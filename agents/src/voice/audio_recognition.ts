@@ -35,7 +35,7 @@ import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
-import type { BaseEndpointing } from './endpointing.js';
+import { BaseEndpointing } from './endpointing.js';
 import type { STTNode } from './io.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
@@ -139,8 +139,12 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
+  /** Minimum endpointing delay in milliseconds. */
+  minEndpointingDelay: number;
+  /** Maximum endpointing delay in milliseconds. */
+  maxEndpointingDelay: number;
   /** Endpointing strategy. */
-  endpointing: BaseEndpointing;
+  endpointing?: BaseEndpointing;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -169,6 +173,8 @@ export class AudioRecognition {
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
+  private minEndpointingDelay: number;
+  private maxEndpointingDelay: number;
   private endpointing: BaseEndpointing;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
@@ -223,7 +229,10 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
-    this.endpointing = opts.endpointing;
+    this.minEndpointingDelay = opts.minEndpointingDelay;
+    this.maxEndpointingDelay = opts.maxEndpointingDelay;
+    this.endpointing =
+      opts.endpointing ?? new BaseEndpointing(this.minEndpointingDelay, this.maxEndpointingDelay);
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
@@ -280,6 +289,8 @@ export class AudioRecognition {
     this.turnDetectionMode = options.turnDetection;
     if (options.endpointing !== undefined) {
       this.endpointing = options.endpointing;
+      this.minEndpointingDelay = options.endpointing.minDelay;
+      this.maxEndpointingDelay = options.endpointing.maxDelay;
     }
   }
 

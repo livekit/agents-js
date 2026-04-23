@@ -46,6 +46,8 @@ function createRecognition(sttNode: STTNode, hooks = createHooks()) {
     recognition: new AudioRecognition({
       recognitionHooks: hooks,
       stt: sttNode,
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
       endpointing: createEndpointing({ mode: 'fixed', minDelay: 0, maxDelay: 0 }),
     }),
   };
