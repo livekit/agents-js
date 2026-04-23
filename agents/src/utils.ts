@@ -351,44 +351,75 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 }
 
 /** @internal */
+// Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-64 lines
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private _alpha: number;
+  private _max?: number;
+  private _min?: number;
+  private _filtered?: number;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(alpha: number, max?: number, min?: number, initial?: number) {
+    if (!(alpha > 0 && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+    this._alpha = alpha;
+    this._max = max;
+    this._min = min;
+    this._filtered = initial;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(opts?: { alpha?: number; initial?: number; min?: number; max?: number }): void {
+    if (opts?.alpha !== undefined) {
+      if (!(opts.alpha > 0 && opts.alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this._alpha = opts.alpha;
     }
-    this.#filtered = undefined;
+    if (opts?.initial !== undefined) {
+      this._filtered = opts.initial;
+    }
+    if (opts?.min !== undefined) {
+      this._min = opts.min;
+    }
+    if (opts?.max !== undefined) {
+      this._max = opts.max;
+    }
   }
 
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
+    if (this._filtered !== undefined) {
+      const a = this._alpha ** exp;
+      this._filtered = a * this._filtered + (1 - a) * sample;
     } else {
-      this.#filtered = sample;
+      this._filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this._max !== undefined && this._filtered > this._max) {
+      this._filtered = this._max;
+    }
+    if (this._min !== undefined && this._filtered < this._min) {
+      this._filtered = this._min;
     }
 
-    return this.#filtered;
+    return this._filtered;
   }
 
+  /** Current filtered value, or `undefined` if `apply` has never been called and no `initial` was provided. */
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this._filtered;
+  }
+
+  /** Alias for `filtered` — mirrors the Python `ExpFilter.value` property. */
+  get value(): number | undefined {
+    return this._filtered;
+  }
+
+  get alpha(): number {
+    return this._alpha;
   }
 
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    this._alpha = alpha;
   }
 }
 

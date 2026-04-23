@@ -5,7 +5,16 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, Task, TaskResult, dedent, delay, isPending, resampleStream } from '../src/utils.js';
+import {
+  Event,
+  ExpFilter,
+  Task,
+  TaskResult,
+  dedent,
+  delay,
+  isPending,
+  resampleStream,
+} from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
@@ -821,6 +830,64 @@ world
       const outputFrames = await streamToArray(outputStream);
 
       expect(outputFrames).toEqual([]);
+    });
+  });
+
+  // Ref: python tests/test_endpointing.py - 7-61 lines
+  describe('ExpFilter', () => {
+    // Ref: python tests/test_endpointing.py - 10-19 lines
+    it('test_initialization_with_valid_alpha', () => {
+      let ema = new ExpFilter(0.5);
+      expect(ema.filtered).toBeUndefined();
+
+      ema = new ExpFilter(0.5, undefined, undefined, 10.0);
+      expect(ema.filtered).toBe(10.0);
+
+      ema = new ExpFilter(1.0);
+      expect(ema.filtered).toBeUndefined();
+    });
+
+    // Ref: python tests/test_endpointing.py - 21-30 lines
+    it('test_initialization_with_invalid_alpha', () => {
+      expect(() => new ExpFilter(0.0)).toThrow(/alpha must be in/);
+      expect(() => new ExpFilter(-0.5)).toThrow(/alpha must be in/);
+      expect(() => new ExpFilter(1.5)).toThrow(/alpha must be in/);
+    });
+
+    // Ref: python tests/test_endpointing.py - 32-37 lines
+    it('test_update_with_no_initial_value', () => {
+      const ema = new ExpFilter(0.5);
+      const result = ema.apply(1.0, 10.0);
+      expect(result).toBe(10.0);
+      expect(ema.filtered).toBe(10.0);
+    });
+
+    // Ref: python tests/test_endpointing.py - 39-44 lines
+    it('test_update_with_initial_value', () => {
+      const ema = new ExpFilter(0.5, undefined, undefined, 10.0);
+      const result = ema.apply(1.0, 20.0); // 0.5 * 20 + 0.5 * 10 = 15
+      expect(result).toBe(15.0);
+      expect(ema.filtered).toBe(15.0);
+    });
+
+    // Ref: python tests/test_endpointing.py - 46-51 lines
+    it('test_update_multiple_times', () => {
+      const ema = new ExpFilter(0.5, undefined, undefined, 10.0);
+      ema.apply(1.0, 20.0); // 15.0
+      ema.apply(1.0, 20.0); // 0.5 * 20 + 0.5 * 15 = 17.5
+      expect(ema.filtered).toBe(17.5);
+    });
+
+    // Ref: python tests/test_endpointing.py - 53-61 lines
+    it('test_reset', () => {
+      let ema = new ExpFilter(0.5, undefined, undefined, 10.0);
+      expect(ema.filtered).toBe(10.0);
+      ema.reset();
+      expect(ema.filtered).toBe(10.0);
+
+      ema = new ExpFilter(0.5, undefined, undefined, 10.0);
+      ema.reset({ initial: 5.0 });
+      expect(ema.filtered).toBe(5.0);
     });
   });
 });
