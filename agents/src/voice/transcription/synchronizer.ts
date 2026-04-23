@@ -13,6 +13,7 @@ import {
   type PlaybackFinishedEvent,
   TextOutput,
   type TimedString,
+  createTimedString,
   isTimedString,
 } from '../io.js';
 
@@ -143,8 +144,11 @@ class SegmentSynchronizerImpl {
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
-  private outputStream: IdentityTransform<string>;
-  private outputStreamWriter: WritableStreamDefaultWriter<string>;
+  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 151 lines
+  // Emit TimedString objects so downstream outputs (e.g. RoomIO's json_format) can
+  // attach `end_time` reflecting synchronized playback timing.
+  private outputStream: IdentityTransform<string | TimedString>;
+  private outputStreamWriter: WritableStreamDefaultWriter<string | TimedString>;
   private captureTask: Promise<void>;
   private startWallTime?: number;
 
@@ -200,7 +204,7 @@ class SegmentSynchronizerImpl {
     return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
-  get readable(): ReadableStream<string> {
+  get readable(): ReadableStream<string | TimedString> {
     return this.outputStream.readable;
   }
 
@@ -342,7 +346,14 @@ class SegmentSynchronizerImpl {
         }
 
         if (this.playbackCompleted) {
-          this.outputStreamWriter.write(sentence.slice(textCursor, endPos));
+          // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 331-333 lines
+          const playedWord = sentence.slice(textCursor, endPos);
+          this.outputStreamWriter.write(
+            createTimedString({
+              text: playedWord,
+              endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+            }),
+          );
           textCursor = endPos;
           continue;
         }
@@ -379,7 +390,13 @@ class SegmentSynchronizerImpl {
 
         await this.sleepIfNotClosed(delayTime / 2);
         const forwardedWord = sentence.slice(textCursor, endPos);
-        this.outputStreamWriter.write(forwardedWord);
+        // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 363-368 lines
+        this.outputStreamWriter.write(
+          createTimedString({
+            text: forwardedWord,
+            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          }),
+        );
 
         await this.sleepIfNotClosed(delayTime / 2);
 

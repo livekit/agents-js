@@ -125,9 +125,67 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
+// Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 363-383 lines
+export interface ParticipantTranscriptionOutputOptions {
+  /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
+   *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
+   *  `start_time_offset` when the captured value is a TimedString. Each object is
+   *  suffixed with a newline so subscribers can parse the stream line-by-line. */
+  jsonFormat?: boolean;
+}
+
 export class ParticipantTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private writer: TextStreamWriter | null = null;
   private flushTask: Task<void> | null = null;
+  private jsonFormat: boolean;
+
+  constructor(
+    room: Room,
+    isDeltaStream: boolean,
+    participant: Participant | string | null,
+    options: ParticipantTranscriptionOutputOptions = {},
+  ) {
+    super(room, isDeltaStream, participant);
+    this.jsonFormat = options.jsonFormat ?? false;
+  }
+
+  override async captureText(text: string | TimedString) {
+    if (!this.participantIdentity) {
+      return;
+    }
+
+    const textStr = isTimedString(text) ? text.text : text;
+    this.latestText = textStr;
+
+    // Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 450-462 lines
+    // When json_format is enabled, serialize each chunk as a protobuf-compatible JSON dict.
+    // The Python implementation uses `agent_pb.TimedString` + `MessageToDict(preserving_proto_field_name=True)`.
+    // We emit the same snake_case shape directly (no protobuf runtime dependency on the JS side).
+    const payload = this.jsonFormat ? this.encodeJsonChunk(text) : textStr;
+
+    await this.handleCaptureText(payload);
+  }
+
+  private encodeJsonChunk(text: string | TimedString): string {
+    const obj: Record<string, unknown> = {
+      text: isTimedString(text) ? text.text : String(text),
+    };
+    if (isTimedString(text)) {
+      if (text.startTime !== undefined) {
+        obj.start_time = text.startTime;
+      }
+      if (text.endTime !== undefined) {
+        obj.end_time = text.endTime;
+      }
+      if (text.confidence !== undefined) {
+        obj.confidence = text.confidence;
+      }
+      if (text.startTimeOffset !== undefined) {
+        obj.start_time_offset = text.startTimeOffset;
+      }
+    }
+    return JSON.stringify(obj) + '\n';
+  }
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (this.flushTask && !this.flushTask.done) {

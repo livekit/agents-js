@@ -101,6 +101,13 @@ export interface RoomOutputOptions {
     Defaults to the AudioSource internal default (1000ms).
   */
   queueSizeMs?: number;
+  // Ref: python livekit-agents/livekit/agents/voice/room_io/types.py - 102-103 lines
+  /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
+    datastream topic, including `start_time`/`end_time` timestamps if the chunk is a
+    TimedString. Each JSON object is suffixed with a newline so clients can parse the
+    stream line-by-line.
+  */
+  jsonFormat: boolean;
 }
 
 const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
@@ -120,6 +127,7 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   audioEnabled: true,
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+  jsonFormat: false,
 };
 
 export class RoomIO {
@@ -339,7 +347,10 @@ export class RoomIO {
         options.isDeltaStream,
         options.participant,
       ),
-      new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant),
+      // Ref: python livekit-agents/livekit/agents/voice/room_io/room_io.py - 159 lines
+      new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
+        jsonFormat: this.outputOptions.jsonFormat,
+      }),
     ]);
   }
 
