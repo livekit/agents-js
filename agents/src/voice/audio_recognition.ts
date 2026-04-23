@@ -35,7 +35,7 @@ import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
-import type { BaseEndpointing } from './endpointing.js';
+import { BaseEndpointing, type BaseEndpointing as BaseEndpointingType } from './endpointing.js';
 import type { STTNode } from './io.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
@@ -139,8 +139,12 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   /** Endpointing strategy. */
-  endpointing: BaseEndpointing;
+  endpointing?: BaseEndpointingType;
   interruptionDetection?: AdaptiveInterruptionDetector;
+  /** Minimum endpointing delay in milliseconds. */
+  minEndpointingDelay: number;
+  /** Maximum endpointing delay in milliseconds. */
+  maxEndpointingDelay: number;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -169,7 +173,9 @@ export class AudioRecognition {
   private vad?: VAD;
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
-  private endpointing: BaseEndpointing;
+  private endpointing: BaseEndpointingType;
+  private minEndpointingDelay: number;
+  private maxEndpointingDelay: number;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
@@ -222,7 +228,10 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
-    this.endpointing = opts.endpointing;
+    this.minEndpointingDelay = opts.minEndpointingDelay;
+    this.maxEndpointingDelay = opts.maxEndpointingDelay;
+    this.endpointing =
+      opts.endpointing ?? new BaseEndpointing(opts.minEndpointingDelay, opts.maxEndpointingDelay);
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
@@ -279,7 +288,7 @@ export class AudioRecognition {
   // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 192-218 lines
   /** @internal */
   updateOptions(options: {
-    endpointing?: BaseEndpointing;
+    endpointing?: BaseEndpointingType;
     turnDetection: TurnDetectionMode | undefined;
   }): void {
     if (options.endpointing !== undefined) {
@@ -322,7 +331,9 @@ export class AudioRecognition {
   }
 
   // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 238-243 lines
-  async onStartOfAgentSpeech(startedAt: number) {
+  async onStartOfAgentSpeech(): Promise<boolean>;
+  async onStartOfAgentSpeech(startedAt: number): Promise<boolean>;
+  async onStartOfAgentSpeech(startedAt = Date.now()) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());

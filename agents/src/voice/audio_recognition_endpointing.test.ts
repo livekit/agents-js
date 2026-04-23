@@ -65,6 +65,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
 
     const recognition = new AudioRecognition({
       recognitionHooks: hooks,
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing,
     });
 
@@ -102,6 +104,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
 
     const recognition = new AudioRecognition({
       recognitionHooks: hooks,
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing,
       turnDetector,
       turnDetectionMode: turnDetector,
@@ -132,6 +136,8 @@ describe('AudioRecognition dynamic endpointing integration', () => {
 
     const recognition = new AudioRecognition({
       recognitionHooks: hooks,
+      minEndpointingDelay: 300,
+      maxEndpointingDelay: 1000,
       endpointing: learnedEndpointing,
     });
 
