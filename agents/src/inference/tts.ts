@@ -381,6 +381,12 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
         ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as TTSOptions<TModel>)
         : this.opts.modelOptions;
 
+    const sessionAffectingChange =
+      opts.model !== undefined ||
+      opts.voice !== undefined ||
+      opts.language !== undefined ||
+      opts.modelOptions !== undefined;
+
     this.opts = {
       ...this.opts,
       ...opts,
@@ -393,6 +399,16 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       this.opts.model,
       this.opts.modelOptions as Record<string, unknown>,
     );
+
+    // The inference gateway only consumes `model` / `voice` / `language` /
+    // `extra` (modelOptions) when the WebSocket is first opened via
+    // `session.create`. Pooled sockets keep the old session settings and, for
+    // example, would keep reporting `alignedTranscript=true` while the server
+    // never emits `output_timestamps`. Invalidate so the next `stream()` opens
+    // a fresh connection with the up-to-date payload.
+    if (sessionAffectingChange) {
+      this.pool.invalidate();
+    }
 
     for (const stream of this.streams) {
       stream.updateOptions(this.opts);

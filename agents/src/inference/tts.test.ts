@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -446,5 +446,26 @@ describe('TTS alignedTranscript capability', () => {
 
     tts.updateOptions({ model: 'elevenlabs/eleven_flash_v2' });
     expect(tts.capabilities.alignedTranscript).toBe(true);
+  });
+
+  it('invalidates the connection pool when session-affecting options change', () => {
+    const tts = makeTts({ model: 'cartesia/sonic' });
+    const invalidateSpy = vi.spyOn(tts.pool, 'invalidate');
+
+    tts.updateOptions({ modelOptions: { add_timestamps: true } });
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+    tts.updateOptions({ model: 'elevenlabs/eleven_flash_v2' });
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+
+    tts.updateOptions({ voice: 'narrator' });
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+
+    tts.updateOptions({ language: 'en' });
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
+
+    // Empty update should not churn the pool.
+    tts.updateOptions({});
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
   });
 });
