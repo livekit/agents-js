@@ -5,7 +5,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { TTS, type TTSFallbackModel, normalizeTTSFallback, parseTTSModelString } from './tts.js';
+import {
+  TTS,
+  type TTSFallbackModel,
+  hasAlignedTranscript,
+  normalizeTTSFallback,
+  parseTTSModelString,
+} from './tts.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -350,5 +356,95 @@ describe('TTS provider modelOptions parity', () => {
     });
 
     expect(tts['opts'].modelOptions).toEqual(modelOptions);
+  });
+});
+
+describe('hasAlignedTranscript', () => {
+  it('returns false for unknown provider', () => {
+    expect(hasAlignedTranscript('rime/mistv2', { add_timestamps: true })).toBe(false);
+    expect(hasAlignedTranscript('deepgram/aura-2', { sync_alignment: true })).toBe(false);
+  });
+
+  it('returns false for an empty options payload', () => {
+    expect(hasAlignedTranscript('cartesia/sonic', {})).toBe(false);
+    expect(hasAlignedTranscript('elevenlabs/eleven_flash_v2', undefined)).toBe(false);
+    expect(hasAlignedTranscript(undefined, { add_timestamps: true })).toBe(false);
+  });
+
+  it('detects Cartesia add_timestamps opt-in', () => {
+    expect(hasAlignedTranscript('cartesia/sonic', { add_timestamps: true })).toBe(true);
+    expect(hasAlignedTranscript('cartesia/sonic-3', { add_timestamps: false })).toBe(false);
+  });
+
+  it('detects ElevenLabs sync_alignment opt-in', () => {
+    expect(hasAlignedTranscript('elevenlabs/eleven_flash_v2', { sync_alignment: true })).toBe(true);
+    expect(
+      hasAlignedTranscript('elevenlabs/eleven_multilingual_v2', { sync_alignment: false }),
+    ).toBe(false);
+  });
+
+  it('detects Inworld WORD/CHARACTER timestamp types', () => {
+    expect(hasAlignedTranscript('inworld/inworld-tts-1', { timestamp_type: 'WORD' })).toBe(true);
+    expect(hasAlignedTranscript('inworld/inworld-tts-1', { timestamp_type: 'CHARACTER' })).toBe(
+      true,
+    );
+    expect(
+      hasAlignedTranscript('inworld/inworld-tts-1', {
+        timestamp_type: 'TIMESTAMP_TYPE_UNSPECIFIED',
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('TTS alignedTranscript capability', () => {
+  it('defaults to alignedTranscript=false when no opt-in is provided', () => {
+    const tts = makeTts();
+    expect(tts.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('reports alignedTranscript=true when Cartesia add_timestamps is set', () => {
+    const tts = makeTts({
+      model: 'cartesia/sonic',
+      modelOptions: { add_timestamps: true },
+    });
+    expect(tts.capabilities.alignedTranscript).toBe(true);
+  });
+
+  it('reports alignedTranscript=true when ElevenLabs sync_alignment is set', () => {
+    const tts = makeTts({
+      model: 'elevenlabs/eleven_flash_v2',
+      modelOptions: { sync_alignment: true },
+    });
+    expect(tts.capabilities.alignedTranscript).toBe(true);
+  });
+
+  it('reports alignedTranscript=true when Inworld timestamp_type is WORD', () => {
+    const tts = makeTts({
+      model: 'inworld/inworld-tts-1',
+      modelOptions: { timestamp_type: 'WORD' },
+    });
+    expect(tts.capabilities.alignedTranscript).toBe(true);
+  });
+
+  it('recomputes alignedTranscript when updateOptions changes modelOptions', () => {
+    const tts = makeTts({ model: 'cartesia/sonic' });
+    expect(tts.capabilities.alignedTranscript).toBe(false);
+
+    tts.updateOptions({ modelOptions: { add_timestamps: true } });
+    expect(tts.capabilities.alignedTranscript).toBe(true);
+
+    tts.updateOptions({ modelOptions: { add_timestamps: false } });
+    expect(tts.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('recomputes alignedTranscript when updateOptions changes the model', () => {
+    const tts = makeTts({
+      model: 'cartesia/sonic',
+      modelOptions: { sync_alignment: true },
+    });
+    expect(tts.capabilities.alignedTranscript).toBe(false);
+
+    tts.updateOptions({ model: 'elevenlabs/eleven_flash_v2' });
+    expect(tts.capabilities.alignedTranscript).toBe(true);
   });
 });

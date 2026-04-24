@@ -23,6 +23,7 @@ import {
   shortuuid,
   waitUntilTimeout,
 } from '../utils.js';
+import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
@@ -157,6 +158,34 @@ export function parseTTSModelString(model: string): [string, string | undefined]
   return [model, undefined];
 }
 
+/**
+ * Whether the given Inference TTS provider+options combination emits aligned
+ * (word- or character-level) timestamps alongside the synthesized audio.
+ *
+ * Mirrors the Python implementation: support is opt-in through the provider's
+ * `extra_kwargs` / `modelOptions` payload — the gateway only emits
+ * `output_timestamps` events when the provider-specific flag is set.
+ */
+// Ref: python livekit-agents/livekit/agents/inference/tts.py - 100-108 lines
+export function hasAlignedTranscript(
+  model: string | undefined,
+  modelOptions: Record<string, unknown> | undefined,
+): boolean {
+  if (!model) return false;
+  const provider = model.split('/')[0];
+  const opts = modelOptions ?? {};
+  if (provider === 'cartesia') {
+    return Boolean(opts.add_timestamps);
+  }
+  if (provider === 'elevenlabs') {
+    return Boolean(opts.sync_alignment);
+  }
+  if (provider === 'inworld') {
+    return opts.timestamp_type === 'WORD' || opts.timestamp_type === 'CHARACTER';
+  }
+  return false;
+}
+
 /** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
 export interface TTSFallbackModel {
   /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/arcana"). */
@@ -218,6 +247,8 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
   pool: ConnectionPool<WebSocket>;
 
   #logger = log();
+  // Ref: python livekit-agents/livekit/agents/inference/tts.py - 354-362 lines
+  #alignedTranscript: boolean;
 
   constructor(opts: {
     model: TModel;
@@ -234,7 +265,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
-    super(sampleRate, 1, { streaming: true });
+    const initialAligned = hasAlignedTranscript(
+      opts?.model,
+      opts?.modelOptions as Record<string, unknown> | undefined,
+    );
+    super(sampleRate, 1, { streaming: true, alignedTranscript: initialAligned });
 
     const {
       model,
@@ -296,6 +331,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
+    this.#alignedTranscript = hasAlignedTranscript(
+      nextModel,
+      modelOptions as Record<string, unknown>,
+    );
+
     // Initialize connection pool
     this.pool = new ConnectionPool<WebSocket>({
       connectCb: (timeout) => this.connectWs(timeout),
@@ -318,17 +358,42 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'livekit';
   }
 
+  // Ref: python livekit-agents/livekit/agents/inference/tts.py - 540-543 lines
+  // The Python class mutates `self._capabilities.aligned_transcript` when options
+  // change; the JS base holds `#capabilities` as a hard-private field, so we
+  // shadow the getter here and expose the up-to-date alignment flag.
+  override get capabilities() {
+    return { streaming: true, alignedTranscript: this.#alignedTranscript };
+  }
+
   static fromModelString(modelString: string): TTS<AnyString> {
     const [model, voice] = parseTTSModelString(modelString);
     return new TTS({ model, voice: voice || undefined });
   }
 
-  updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
+  updateOptions(
+    opts: Partial<
+      Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language' | 'modelOptions'>
+    >,
+  ) {
+    const mergedModelOptions =
+      opts.modelOptions !== undefined
+        ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as TTSOptions<TModel>)
+        : this.opts.modelOptions;
+
     this.opts = {
       ...this.opts,
       ...opts,
+      modelOptions: mergedModelOptions,
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
     };
+
+    // Ref: python livekit-agents/livekit/agents/inference/tts.py - 540-542 lines
+    this.#alignedTranscript = hasAlignedTranscript(
+      this.opts.model,
+      this.opts.modelOptions as Record<string, unknown>,
+    );
+
     for (const stream of this.streams) {
       stream.updateOptions(this.opts);
     }
@@ -422,10 +487,20 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     return 'inference.SynthesizeStream';
   }
 
-  updateOptions(opts: Partial<Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language'>>) {
+  updateOptions(
+    opts: Partial<
+      Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language' | 'modelOptions'>
+    >,
+  ) {
+    const mergedModelOptions =
+      opts.modelOptions !== undefined
+        ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as TTSOptions<TModel>)
+        : this.opts.modelOptions;
+
     this.opts = {
       ...this.opts,
       ...opts,
+      modelOptions: mergedModelOptions,
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
     };
   }
@@ -433,6 +508,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
+    // Ref: python livekit-agents/livekit/agents/inference/tts.py - 651-670 lines
+    // Timestamps are delivered in their own WS message; buffer them and attach
+    // to the next audio frame that we forward to the output emitter. This
+    // mirrors the semantics of `output_emitter.push_timed_transcript` on the
+    // Python side.
+    let pendingTimedTranscripts: TimedString[] = [];
 
     const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
@@ -464,8 +545,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
-        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        this.queue.put({
+          requestId,
+          segmentId,
+          frame: lastFrame,
+          final,
+          timedTranscripts:
+            pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+        });
         lastFrame = undefined;
+        pendingTimedTranscripts = [];
       }
     };
 
@@ -616,6 +705,30 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               for (const frame of bstream.write(base64Data.buffer)) {
                 sendLastFrame(currentSessionId!, false);
                 lastFrame = frame;
+              }
+              break;
+            // Ref: python livekit-agents/livekit/agents/inference/tts.py - 651-670 lines
+            case 'output_timestamps':
+              if (serverEvent.words && serverEvent.words.length > 0) {
+                for (const w of serverEvent.words) {
+                  pendingTimedTranscripts.push(
+                    createTimedString({
+                      text: w.word,
+                      startTime: w.start,
+                      endTime: w.end,
+                    }),
+                  );
+                }
+              } else if (serverEvent.chars && serverEvent.chars.length > 0) {
+                for (const c of serverEvent.chars) {
+                  pendingTimedTranscripts.push(
+                    createTimedString({
+                      text: c.char,
+                      startTime: c.start,
+                      endTime: c.end,
+                    }),
+                  );
+                }
               }
               break;
             case 'done':
