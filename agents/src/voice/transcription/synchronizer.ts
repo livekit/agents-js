@@ -434,7 +434,7 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   speed: 1,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
-  wordTokenizer: new basic.WordTokenizer(),
+  wordTokenizer: new basic.WordTokenizer(false),
 };
 
 export class TranscriptionSynchronizer {
