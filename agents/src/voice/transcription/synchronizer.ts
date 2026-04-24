@@ -357,7 +357,9 @@ class SegmentSynchronizerImpl {
         continue;
       }
 
-      const wordHyphens = this.options.hyphenateWord(word).length;
+      const cleanWords = this.options.splitWords(word);
+      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
+      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
       const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
 
       let dHyphens = 0;
@@ -377,7 +379,7 @@ class SegmentSynchronizerImpl {
         }
       } else {
         // Fall back to estimated hyphens-per-second calculation
-        const targetHyphens = elapsedSeconds * this.options.speed;
+        const targetHyphens = elapsedSeconds * this.speed;
         dHyphens = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
       }
 
