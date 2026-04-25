@@ -375,3 +375,107 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
 });
+
+type AgentActivityEndpointingMethods = {
+  onInputSpeechStarted: (this: unknown, ev: unknown) => void;
+  onInputSpeechStopped: (this: unknown, ev: unknown) => void;
+  onStartOfSpeech: (this: unknown, ev: unknown) => void;
+  onEndOfSpeech: (this: unknown, ev: unknown) => void;
+  onPipelineReplyDone: (this: unknown) => void;
+};
+
+const agentActivityEndpointingMethods =
+  AgentActivity.prototype as unknown as AgentActivityEndpointingMethods;
+
+describe('AgentActivity - endpointing integration', () => {
+  it('feeds realtime no-VAD speech starts and stops into AudioRecognition endpointing', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const userSpeakingSpan = {};
+    const audioRecognition = {
+      onStartOfSpeech: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+    };
+    const fakeActivity = {
+      vad: undefined,
+      agentSession: {
+        _updateUserState: vi.fn(),
+        _userSpeakingSpan: userSpeakingSpan,
+        emit: vi.fn(),
+      },
+      audioRecognition,
+      interruptionDetected: false,
+      isInterruptionDetectionEnabled: true,
+      interrupt: vi.fn(),
+      logger: { info: vi.fn(), error: vi.fn() },
+    };
+
+    try {
+      agentActivityEndpointingMethods.onInputSpeechStarted.call(fakeActivity, {});
+      expect(audioRecognition.onStartOfSpeech).toHaveBeenCalledWith(10_000, 0, userSpeakingSpan);
+
+      agentActivityEndpointingMethods.onInputSpeechStopped.call(fakeActivity, {
+        userTranscriptionEnabled: false,
+      });
+      expect(audioRecognition.onEndOfSpeech).toHaveBeenCalledWith(10_000, userSpeakingSpan, false);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('passes adaptive interruption results through VAD speech end handling', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const userSpeakingSpan = {};
+    const audioRecognition = {
+      onStartOfSpeech: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+    };
+    const fakeActivity = {
+      agentSession: {
+        _updateUserState: vi.fn(),
+        _userSpeakingSpan: userSpeakingSpan,
+      },
+      audioRecognition,
+      interruptionDetected: false,
+      isInterruptionDetectionEnabled: true,
+    };
+    const vadEvent = {
+      speechDuration: 100,
+      inferenceDuration: 25,
+      silenceDuration: 50,
+    };
+
+    try {
+      agentActivityEndpointingMethods.onStartOfSpeech.call(fakeActivity, vadEvent);
+      expect(audioRecognition.onStartOfSpeech).toHaveBeenCalledWith(9_875, 100, userSpeakingSpan);
+      expect(fakeActivity.interruptionDetected).toBe(false);
+
+      fakeActivity.interruptionDetected = true;
+      agentActivityEndpointingMethods.onEndOfSpeech.call(fakeActivity, vadEvent);
+      expect(audioRecognition.onEndOfSpeech).toHaveBeenCalledWith(9_925, userSpeakingSpan, true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('notifies endpointing when pipeline speech drains to listening', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(12_345);
+    const audioRecognition = { onEndOfAgentSpeech: vi.fn() };
+    const fakeActivity = {
+      speechQueue: { peek: vi.fn(() => undefined) },
+      _currentSpeech: undefined,
+      agentSession: { _updateAgentState: vi.fn() },
+      audioRecognition,
+      isInterruptionDetectionEnabled: true,
+      restoreInterruptionByAudioActivity: vi.fn(),
+    };
+
+    try {
+      agentActivityEndpointingMethods.onPipelineReplyDone.call(fakeActivity);
+      expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
+      expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledWith(12_345);
+      expect(fakeActivity.restoreInterruptionByAudioActivity).toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
