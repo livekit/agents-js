@@ -10,7 +10,8 @@ import { ExpFilter } from '../../utils.js';
 export interface EndpointingOptions {
   /**
    * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adjusts delay based on
-   * pauses between user and agent speech.
+   * end-of-utterance prediction.
+   * Dynamic mode also adapts delay bounds from pauses between user and agent speech.
    * @defaultValue "fixed"
    */
   mode: 'fixed' | 'dynamic';
