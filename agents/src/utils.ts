@@ -370,6 +370,8 @@ export class ExpFilter {
   #maxVal?: number;
   #minVal?: number;
 
+  constructor(alpha: number, max?: number);
+  constructor(alpha: number, options?: ExpFilterOptions);
   constructor(alpha: number, maxOrOptions?: number | ExpFilterOptions) {
     if (!(alpha > 0 && alpha <= 1)) {
       throw new RangeError('alpha must be in (0, 1].');
@@ -387,6 +389,8 @@ export class ExpFilter {
   }
 
   // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 21-36 lines
+  reset(alpha?: number): void;
+  reset(options?: ExpFilterResetOptions): void;
   reset(options: number | ExpFilterResetOptions = {}): void {
     const resetOptions = typeof options === 'number' ? { alpha: options } : options;
 
@@ -408,6 +412,8 @@ export class ExpFilter {
   }
 
   // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 38-57 lines
+  apply(exp: number, sample: number): number;
+  apply(exp: number, sample?: number): number;
   apply(exp: number, sample?: number): number {
     const nextSample = sample ?? this.#filtered;
 
