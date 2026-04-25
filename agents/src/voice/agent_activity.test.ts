@@ -375,3 +375,37 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
 });
+
+describe('AgentActivity - endpointing wiring', () => {
+  it('forwards realtime speech boundaries into AudioRecognition when VAD is unavailable', () => {
+    const onStartOfSpeech = vi.fn();
+    const onEndOfSpeech = vi.fn();
+    const updateUserState = vi.fn();
+
+    const activity = Object.create(AgentActivity.prototype) as any;
+    activity.agent = { vad: undefined };
+    activity.audioRecognition = { onStartOfSpeech, onEndOfSpeech };
+    activity.agentSession = {
+      vad: undefined,
+      _userSpeakingSpan: undefined,
+      _updateUserState: updateUserState,
+    };
+    activity.isInterruptionDetectionEnabled = true;
+    activity.interruptionDetected = false;
+    activity.interrupt = vi.fn();
+    activity.logger = { info: vi.fn(), error: vi.fn() };
+
+    AgentActivity.prototype.onInputSpeechStarted.call(activity, {} as any);
+    expect(onStartOfSpeech).toHaveBeenCalledTimes(1);
+    expect(typeof onStartOfSpeech.mock.calls[0]?.[0]).toBe('number');
+    expect(onStartOfSpeech.mock.calls[0]?.[1]).toBe(0);
+
+    AgentActivity.prototype.onInputSpeechStopped.call(activity, {
+      userTranscriptionEnabled: false,
+    } as any);
+    expect(onEndOfSpeech).toHaveBeenCalledTimes(1);
+    expect(typeof onEndOfSpeech.mock.calls[0]?.[0]).toBe('number');
+    expect(onEndOfSpeech.mock.calls[0]?.[2]).toBe(false);
+    expect(updateUserState).toHaveBeenCalledTimes(2);
+  });
+});
