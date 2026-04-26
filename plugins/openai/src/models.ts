@@ -100,21 +100,13 @@ export type PerplexityChatModels =
   | 'llama-3.1-70b-instruct';
 
 export type GroqChatModels =
-  | 'llama-3.1-405b-reasoning'
   | 'llama-3.1-8b-instant'
   | 'llama-3.3-70b-versatile'
-  | 'llama3-groq-70b-8192-tool-use-preview'
-  | 'llama3-groq-8b-8192-tool-use-preview'
-  | 'llama-guard-3-8b'
-  | 'llama3-70b-8192'
-  | 'llama3-8b-8192'
-  | 'mixtral-8x7b-32768'
-  | 'gemma-7b-it'
-  | 'gemma2-9b-it';
+  | 'openai/gpt-oss-120b'
+  | 'openai/gpt-oss-20b';
 
 export type GroqAudioModels =
   | 'whisper-large-v3'
-  | 'distil-whisper-large-v3-en'
   | 'whisper-large-v3-turbo';
 
 export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
