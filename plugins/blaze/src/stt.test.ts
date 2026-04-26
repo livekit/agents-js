@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APIStatusError } from '@livekit/agents';
+import { MAX_RETRY_COUNT } from './config.js';
 import { STT } from './stt.js';
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -148,7 +150,7 @@ describe('STT', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('throws on HTTP error response', async () => {
+    it('throws APIStatusError without retrying 4xx HTTP responses', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
         status: 400,
@@ -161,7 +163,50 @@ describe('STT', () => {
       }) as STTWithRecognize;
       const frame = makePcmFrame();
 
-      await expect(sttInstance._recognize([frame])).rejects.toThrow('Blaze STT error 400');
+      const error = await sttInstance._recognize([frame]).catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({
+        message: 'Blaze STT error 400: Bad Request',
+        statusCode: 400,
+        retryable: false,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }, 20000);
+
+    it('surfaces retryable APIStatusError after exhausting 5xx retries', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: async () => 'Service Unavailable',
+      });
+
+      const sttInstance = new STT({
+        authToken: 'tok',
+        apiUrl: 'http://stt:8080',
+      }) as STTWithRecognize;
+      const frame = makePcmFrame();
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        ((callback: TimerHandler) => {
+          if (typeof callback === 'function') callback();
+          return 0 as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout,
+      );
+
+      try {
+        const error = await sttInstance._recognize([frame]).catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(APIStatusError);
+        expect(error).toMatchObject({
+          message: 'Blaze STT error 503: Service Unavailable',
+          statusCode: 503,
+          retryable: true,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(MAX_RETRY_COUNT + 1);
+      } finally {
+        setTimeoutSpy.mockRestore();
+      }
     }, 20000);
 
     it('uses language from options in URL', async () => {
