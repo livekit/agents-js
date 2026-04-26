@@ -12,16 +12,14 @@
  * Output: `{ transcription: string, confidence: number }`
  */
 import type { AudioBuffer } from '@livekit/agents';
-import { mergeFrames, stt } from '@livekit/agents';
+import { APIStatusError, mergeFrames, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import {
   type BlazeConfig,
-  BlazeHttpError,
   MAX_RETRY_COUNT,
   RETRY_BASE_DELAY_MS,
   type ResolvedBlazeConfig,
   buildAuthHeaders,
-  isRetryableError,
   resolveConfig,
   sleep,
 } from './config.js';
@@ -67,6 +65,12 @@ function resolveSTTOptions(opts: STTOptions): ResolvedSTTOptions {
     normalizationRules: opts.normalizationRules,
     timeout: opts.timeout ?? cfg.sttTimeout,
   };
+}
+
+function isRetryableRecognizeError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return false;
+  if (err instanceof APIStatusError) return err.retryable;
+  return true;
 }
 
 /**
@@ -192,14 +196,17 @@ export class STT extends stt.STT {
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'unknown error');
-          throw new BlazeHttpError(response.status, `Blaze STT error ${response.status}: ${errorText}`);
+          throw new APIStatusError({
+            message: `Blaze STT error ${response.status}: ${errorText}`,
+            options: { statusCode: response.status },
+          });
         }
 
         // 10. Parse response
         result = (await response.json()) as BlazeSTTResponse;
         break; // Success
       } catch (err) {
-        if (attempt < MAX_RETRY_COUNT && isRetryableError(err)) {
+        if (attempt < MAX_RETRY_COUNT && isRetryableRecognizeError(err)) {
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
           continue;
         }
