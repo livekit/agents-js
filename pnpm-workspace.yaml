@@ -8,6 +8,8 @@ minimumReleaseAgeExclude:
   - '@livekit/*'
   # Renovate security update: vite@7.3.2
   - vite@7.3.2
+  # Renovate security update: uuid@14.0.0
+  - uuid@14.0.0
 
 catalog:
   '@livekit/rtc-node': ^0.13.25

@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.3.0
+
+### Minor Changes
+
+- feat(stt): add FallbackAdapter for automatic STT provider failover - [#1278](https://github.com/livekit/agents-js/pull/1278) ([@drain-zine](https://github.com/drain-zine))
+
+### Patch Changes
+
+- replcae sentencetokenizer with wordtokenizer for python parity - [#1312](https://github.com/livekit/agents-js/pull/1312) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- add `preserveFunctionCallHistory` option to `AgentTask` and `TaskGroup` and use function call history in Phonic plugin - [#1285](https://github.com/livekit/agents-js/pull/1285) ([@qionghuang6](https://github.com/qionghuang6))
+
 ## 1.2.8
 
 ### Patch Changes

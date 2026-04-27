@@ -5,7 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import type { SentenceStream, SentenceTokenizer } from '../../tokenize/index.js';
+import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
@@ -23,11 +23,11 @@ interface TextSyncOptions {
   speed: number;
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
-  sentenceTokenizer: SentenceTokenizer;
+  wordTokenizer: WordTokenizer;
 }
 
 interface TextData {
-  sentenceStream: SentenceStream;
+  wordStream: WordStream;
   pushedText: string;
   done: boolean;
   forwardedHyphens: number;
@@ -164,7 +164,7 @@ class SegmentSynchronizerImpl {
   ) {
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
-      sentenceStream: options.sentenceTokenizer.stream(),
+      wordStream: options.wordTokenizer.stream(),
       pushedText: '',
       done: false,
       forwardedHyphens: 0,
@@ -261,7 +261,7 @@ class SegmentSynchronizerImpl {
       textStr = text;
     }
 
-    this.textData.sentenceStream.pushText(textStr);
+    this.textData.wordStream.pushText(textStr);
     this.textData.pushedText += textStr;
   }
 
@@ -272,7 +272,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.textData.done = true;
-    this.textData.sentenceStream.endInput();
+    this.textData.wordStream.endInput();
   }
 
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
@@ -332,91 +332,93 @@ class SegmentSynchronizerImpl {
       throw new Error('startWallTime is not set when starting SegmentSynchronizerImpl.mainTask');
     }
 
-    for await (const textSegment of this.textData.sentenceStream) {
-      const sentence = textSegment.token;
+    let pushedTextCursor = 0;
 
-      let textCursor = 0;
+    for await (const wordToken of this.textData.wordStream) {
+      const word = wordToken.token;
+
       if (this.closed && !this.playbackCompleted) {
         return;
       }
 
-      for (const [word, _, endPos] of this.options.splitWords(sentence)) {
-        if (this.closed && !this.playbackCompleted) {
-          return;
-        }
+      // Find the word in pushedText, then extend to include trailing attached punctuation
+      const wordIdx = this.textData.pushedText.indexOf(word, pushedTextCursor);
+      if (wordIdx === -1) {
+        continue;
+      }
+      let wordEnd = wordIdx + word.length;
+      while (
+        wordEnd < this.textData.pushedText.length &&
+        !/\s/.test(this.textData.pushedText[wordEnd]!)
+      ) {
+        wordEnd++;
+      }
+      const forwardedWord = this.textData.pushedText.slice(pushedTextCursor, wordEnd);
+      pushedTextCursor = wordEnd;
 
-        if (this.playbackCompleted) {
-          // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 331-333 lines
-          const playedWord = sentence.slice(textCursor, endPos);
-          this.outputStreamWriter.write(
-            createTimedString({
-              text: playedWord,
-              endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
-            }),
-          );
-          textCursor = endPos;
-          continue;
-        }
-
-        const wordHphens = this.options.hyphenateWord(word).length;
-        const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
-
-        let dHyphens = 0;
-        const annotated = this.audioData.annotatedRate;
-
-        if (annotated && annotated.pushedDuration >= elapsedSeconds) {
-          // Use actual TTS timing annotations for accurate sync
-          const targetLen = Math.floor(annotated.accumulateTo(elapsedSeconds));
-          const forwardedLen = this.textData.forwardedText.length;
-
-          if (targetLen >= forwardedLen) {
-            const dText = this.textData.pushedText.slice(forwardedLen, targetLen);
-            dHyphens = this.calcHyphens(dText).length;
-          } else {
-            const dText = this.textData.pushedText.slice(targetLen, forwardedLen);
-            dHyphens = -this.calcHyphens(dText).length;
-          }
-        } else {
-          // Fall back to estimated hyphens-per-second calculation
-          const targetHyphens = elapsedSeconds * this.options.speed;
-          dHyphens = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
-        }
-
-        let delayTime = Math.max(0, wordHphens - dHyphens) / this.speed;
-
-        if (this.playbackCompleted) {
-          delayTime = 0;
-        }
-
-        await this.sleepIfNotClosed(delayTime / 2);
-        const forwardedWord = sentence.slice(textCursor, endPos);
-        // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 363-368 lines
+      if (this.playbackCompleted) {
         this.outputStreamWriter.write(
           createTimedString({
             text: forwardedWord,
             endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
           }),
         );
-
-        await this.sleepIfNotClosed(delayTime / 2);
-
-        this.textData.forwardedHyphens += wordHphens;
+        const cleanWords = this.options.splitWords(word);
+        const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
+        this.textData.forwardedHyphens += this.options.hyphenateWord(cleanWord).length;
         this.textData.forwardedText += forwardedWord;
-        textCursor = endPos;
+        continue;
       }
 
-      if (textCursor < sentence.length) {
-        const remaining = sentence.slice(textCursor);
-        // Keep the trailing fragment (whitespace/punctuation after the last word) shaped like
-        // the word emissions above so downstream consumers (e.g. jsonFormat) see a uniform
-        // stream of TimedString chunks.
-        this.outputStreamWriter.write(
-          createTimedString({
-            text: remaining,
-            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
-          }),
-        );
+      const cleanWords = this.options.splitWords(word);
+      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
+      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
+      const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
+
+      let dHyphens = 0;
+      const annotated = this.audioData.annotatedRate;
+
+      if (annotated && annotated.pushedDuration >= elapsedSeconds) {
+        // Use actual TTS timing annotations for accurate sync
+        const targetLen = Math.floor(annotated.accumulateTo(elapsedSeconds));
+        const forwardedLen = this.textData.forwardedText.length;
+
+        if (targetLen >= forwardedLen) {
+          const dText = this.textData.pushedText.slice(forwardedLen, targetLen);
+          dHyphens = this.calcHyphens(dText).length;
+        } else {
+          const dText = this.textData.pushedText.slice(targetLen, forwardedLen);
+          dHyphens = -this.calcHyphens(dText).length;
+        }
+      } else {
+        // Fall back to estimated hyphens-per-second calculation
+        const targetHyphens = elapsedSeconds * this.speed;
+        dHyphens = Math.max(0, targetHyphens - this.textData.forwardedHyphens);
       }
+
+      let delayTime = Math.max(0, wordHyphens - dHyphens) / this.speed;
+
+      if (this.playbackCompleted) {
+        delayTime = 0;
+      }
+
+      await this.sleepIfNotClosed(delayTime / 2);
+      this.outputStreamWriter.write(forwardedWord);
+      await this.sleepIfNotClosed(delayTime / 2);
+
+      this.textData.forwardedHyphens += wordHyphens;
+      this.textData.forwardedText += forwardedWord;
+    }
+
+    if (pushedTextCursor < this.textData.pushedText.length) {
+      const remaining = this.textData.pushedText.slice(pushedTextCursor);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: remaining,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
+      this.textData.forwardedText += remaining;
     }
   }
 
@@ -442,7 +444,7 @@ class SegmentSynchronizerImpl {
     }
     this.closedFuture.resolve();
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
-    this.textData.sentenceStream.close();
+    this.textData.wordStream.close();
     await this.captureTask;
   }
 }
@@ -451,16 +453,14 @@ export interface TranscriptionSynchronizerOptions {
   speed: number;
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
-  sentenceTokenizer: SentenceTokenizer;
+  wordTokenizer: WordTokenizer;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   speed: 1,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
-  sentenceTokenizer: new basic.SentenceTokenizer({
-    retainFormat: true,
-  }),
+  wordTokenizer: new basic.WordTokenizer(false),
 };
 
 export class TranscriptionSynchronizer {
@@ -488,7 +488,7 @@ export class TranscriptionSynchronizer {
       speed: options.speed,
       hyphenateWord: options.hyphenateWord,
       splitWords: options.splitWords,
-      sentenceTokenizer: options.sentenceTokenizer,
+      wordTokenizer: options.wordTokenizer,
     };
 
     // initial segment/first segment, recreated for each new segment
