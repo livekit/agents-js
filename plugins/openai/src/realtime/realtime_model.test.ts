@@ -263,7 +263,10 @@ describe('RealtimeSession.updateOptions', () => {
     stubTaskRuntime();
 
     const model = new RealtimeModel({ apiKey: 'test-key' });
-    const session = model.session() as unknown as { updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void; sendEvent: (event: api_proto.ClientEvent) => void };
+    const session = model.session() as unknown as {
+      updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void;
+      sendEvent: (event: api_proto.ClientEvent) => void;
+    };
     const sendEventSpy = vi.spyOn(session, 'sendEvent');
     sendEventSpy.mockClear();
 
@@ -285,7 +288,10 @@ describe('RealtimeSession.updateOptions', () => {
     stubTaskRuntime();
 
     const model = new RealtimeModel({ apiKey: 'test-key' });
-    const session = model.session() as unknown as { updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void; sendEvent: (event: api_proto.ClientEvent) => void };
+    const session = model.session() as unknown as {
+      updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void;
+      sendEvent: (event: api_proto.ClientEvent) => void;
+    };
     const sendEventSpy = vi.spyOn(session, 'sendEvent');
     sendEventSpy.mockClear();
 
