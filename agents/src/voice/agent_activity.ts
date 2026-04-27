@@ -67,6 +67,7 @@ import {
 } from './audio_recognition.js';
 import {
   AgentSessionEventTypes,
+  createAgentFalseInterruptionEvent,
   createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
@@ -74,6 +75,7 @@ import {
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
+import type { AgentState } from './events.js';
 import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
 import {
   type _AudioOut,
@@ -152,7 +154,13 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
-// TODO add false interruption handling and barge in handling for https://github.com/livekit/agents/pull/3109/changes
+// Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 130-134 lines
+interface PausedSpeechInfo {
+  handle: SpeechHandle;
+  agentState: AgentState;
+  timeout: number;
+}
+
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
@@ -188,6 +196,12 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 157-160 lines
+  // for false interruption handling
+  private pausedSpeech?: PausedSpeechInfo;
+  private falseInterruptionTimer?: NodeJS.Timeout;
+  private cancelSpeechPauseTask?: Promise<void>;
 
   private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
     this.onGenerationCreated(ev);
@@ -1020,6 +1034,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // recognition hooks
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1650-1684 lines
   onStartOfSpeech(ev: VADEvent): void {
     let speechStartTime = Date.now();
     if (ev) {
@@ -1038,8 +1053,33 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
+
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1666-1669 lines
+    if (this.falseInterruptionTimer) {
+      // cancel the timer when user starts speaking but leave the paused state unchanged
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1671-1684 lines
+    if (
+      this.agentSession.agentState !== 'speaking' &&
+      this.pauseEnabled() &&
+      this._currentSpeech !== undefined &&
+      !this._currentSpeech.interrupted &&
+      this._currentSpeech.allowInterruptions &&
+      (!this.pausedSpeech || this.pausedSpeech.handle !== this._currentSpeech)
+    ) {
+      // pause the audio output if agent is not speaking (in thinking state);
+      // resume immediately when user stops speaking, the timeout will be updated
+      // by interruptByAudioActivity
+      const audioOutput = this.agentSession.output.audio!;
+      this.updatePausedSpeech(this._currentSpeech, 0);
+      audioOutput.pause();
+    }
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1686-1709 lines
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
     if (ev) {
@@ -1057,6 +1097,11 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechEndTime,
       otelContext: otelContext.active(),
     });
+
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1708-1709 lines
+    if (this.pausedSpeech) {
+      this.startFalseInterruptionTimer(this.pausedSpeech.timeout);
+    }
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -1072,7 +1117,8 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(): void {
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1573-1646 lines
+  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
     }
@@ -1117,24 +1163,54 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      this.logger.info(
-        { 'speech id': this._currentSpeech.id },
-        'speech interrupted by audio activity',
-      );
-      this.realtimeSession?.interrupt();
-      this._currentSpeech.interrupt();
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1614-1617 lines
+      // reset the false interruption timer
+      if (this.falseInterruptionTimer) {
+        clearTimeout(this.falseInterruptionTimer);
+        this.falseInterruptionTimer = undefined;
+      }
+
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1629-1646 lines
+      if (this.pauseEnabled()) {
+        const timeout =
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
+        const audioOutput = this.agentSession.output.audio;
+
+        this.updatePausedSpeech(this._currentSpeech, timeout);
+        audioOutput!.pause();
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(
+            options?.ignoreUserTranscriptUntil ?? Date.now(),
+          );
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
+        }
+      } else {
+        this.logger.info(
+          { 'speech id': this._currentSpeech.id },
+          'speech interrupted by audio activity',
+        );
+        this.realtimeSession?.interrupt();
+        this._currentSpeech.interrupt();
+      }
     }
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1737-1747 lines
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
-    this.interruptByAudioActivity();
+    this.interruptByAudioActivity({
+      ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
+    });
     if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
-  onInterimTranscript(ev: SpeechEvent): void {
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1749-1776 lines
+  onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -1150,12 +1226,30 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
-    if (ev.alternatives![0].text) {
+    if (
+      ev.alternatives![0].text &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
       this.interruptByAudioActivity();
+
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1769-1776 lines
+      if (
+        speaking === false &&
+        this.pausedSpeech &&
+        this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout !==
+          undefined
+      ) {
+        // schedule a resume timer if interrupted after end_of_speech
+        this.startFalseInterruptionTimer(
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout,
+        );
+      }
     }
   }
 
-  onFinalTranscript(ev: SpeechEvent): void {
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1778-1812 lines
+  onFinalTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -1180,10 +1274,22 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.interruptByAudioActivity();
 
-      // TODO: resume false interruption - schedule a resume timer if interrupted after end_of_speech
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1801-1808 lines
+      if (
+        speaking === false &&
+        this.pausedSpeech &&
+        this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout !==
+          undefined
+      ) {
+        // schedule a resume timer if interrupted after end_of_speech
+        this.startFalseInterruptionTimer(
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout,
+        );
+      }
     }
 
-    // TODO: resume false interruption - start interrupt paused speech task
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1810-1812 lines
+    this.cancelSpeechPauseTask = this.cancelSpeechPause();
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
@@ -1657,6 +1763,9 @@ export class AgentActivity implements RecognitionHooks {
         );
         return;
       }
+
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1963-1964 lines
+      await this.cancelSpeechPause();
 
       this.logger.info(
         { 'speech id': this._currentSpeech.id },
@@ -3140,6 +3249,10 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech._markDone();
       }
 
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 972-976 lines
+      await this.cancelSpeechPause({ interrupt: false });
+      this.cancelSpeechPauseTask = undefined;
+
       await this._closeSessionResources();
 
       if (this._mainTask) {
@@ -3216,6 +3329,122 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
     }
     return undefined;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3387-3401 lines
+  private updatePausedSpeech(speechHandle: SpeechHandle, timeout: number): void {
+    if (this.pausedSpeech && this.pausedSpeech.handle === speechHandle) {
+      this.pausedSpeech.timeout = timeout;
+    } else {
+      this.pausedSpeech = {
+        handle: speechHandle,
+        agentState: this.agentSession.agentState,
+        timeout,
+      };
+    }
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3403-3410 lines
+  private pauseEnabled(): boolean {
+    const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+    return !!(
+      interruptionOptions.resumeFalseInterruption &&
+      interruptionOptions.falseInterruptionTimeout !== undefined &&
+      this.agentSession.output.audio &&
+      this.agentSession.output.audio.canPause
+    );
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3412-3452 lines
+  private startFalseInterruptionTimer(timeout: number): void {
+    if (this.falseInterruptionTimer !== undefined) {
+      clearTimeout(this.falseInterruptionTimer);
+    }
+
+    this.falseInterruptionTimer = setTimeout(() => {
+      if (
+        !this.pausedSpeech ||
+        (this._currentSpeech && this._currentSpeech !== this.pausedSpeech.handle)
+      ) {
+        // already new speech is scheduled, do nothing
+        this.pausedSpeech = undefined;
+        return;
+      }
+
+      let resumed = false;
+      const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+      const audioOutput = this.agentSession.output.audio;
+      if (
+        interruptionOptions.resumeFalseInterruption &&
+        audioOutput &&
+        audioOutput.canPause &&
+        !this.pausedSpeech.handle.done()
+      ) {
+        this.agentSession._updateAgentState(this.pausedSpeech.agentState, {
+          otelContext: this.pausedSpeech.handle._agentTurnContext,
+        });
+        if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
+          this.audioRecognition.onStartOfAgentSpeech();
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.isInterruptionByAudioActivityEnabled = false;
+        }
+        audioOutput.resume();
+        resumed = true;
+        this.logger.debug({ timeout }, 'resumed false interrupted speech');
+      }
+
+      this.agentSession.emit(
+        AgentSessionEventTypes.AgentFalseInterruption,
+        createAgentFalseInterruptionEvent({ resumed }),
+      );
+
+      this.pausedSpeech = undefined;
+      this.falseInterruptionTimer = undefined;
+    }, timeout);
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3454-3491 lines
+  private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {
+    const { interrupt = true } = options ?? {};
+
+    // await any previously-started cancel task to avoid races
+    if (this.cancelSpeechPauseTask) {
+      try {
+        await this.cancelSpeechPauseTask;
+      } catch {
+        this.logger.debug('previous cancelSpeechPause task failed, ignoring');
+      }
+      this.cancelSpeechPauseTask = undefined;
+    }
+
+    if (this.falseInterruptionTimer !== undefined) {
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    if (!this.pausedSpeech) {
+      return;
+    }
+
+    if (
+      interrupt &&
+      !this.pausedSpeech.handle.interrupted &&
+      this.pausedSpeech.handle.allowInterruptions
+    ) {
+      this.pausedSpeech.handle.interrupt();
+      // ensure the generation is done — but only if a generation
+      // was actually started
+      if (this.pausedSpeech.handle._hasGenerations) {
+        await this.pausedSpeech.handle._waitForGeneration();
+      }
+    }
+    this.pausedSpeech = undefined;
+
+    const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+    if (interruptionOptions.resumeFalseInterruption && this.agentSession.output.audio) {
+      this.agentSession.output.audio.resume();
+    }
   }
 
   private restoreInterruptionByAudioActivity(): void {

@@ -65,8 +65,9 @@ export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
-  onInterimTranscript: (ev: SpeechEvent) => void;
-  onFinalTranscript: (ev: SpeechEvent) => void;
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 69-70 lines
+  onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
+  onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
@@ -586,7 +587,11 @@ export class AudioRecognition {
           return;
         }
 
-        this.hooks.onFinalTranscript(ev);
+        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 735-739 lines
+        this.hooks.onFinalTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
 
         this.logger.debug(
           {
@@ -638,7 +643,11 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
-        this.hooks.onInterimTranscript(ev);
+        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 785-789 lines
+        this.hooks.onInterimTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
         const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
@@ -698,7 +707,11 @@ export class AudioRecognition {
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
-        this.hooks.onInterimTranscript(ev);
+        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 829-833 lines
+        this.hooks.onInterimTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
       case SpeechEventType.START_OF_SPEECH:

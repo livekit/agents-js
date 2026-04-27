@@ -30,6 +30,7 @@ export enum AgentSessionEventTypes {
   MetricsCollected = 'metrics_collected',
   SessionUsageUpdated = 'session_usage_updated',
   SpeechCreated = 'speech_created',
+  AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
   Error = 'error',
   Close = 'close',
@@ -279,6 +280,26 @@ export const createCloseEvent = (
   createdAt,
 });
 
+// Ref: python livekit-agents/livekit/agents/voice/events.py - 133-137 lines
+export type AgentFalseInterruptionEvent = {
+  type: 'agent_false_interruption';
+  /** Whether the false interruption was resumed automatically. */
+  resumed: boolean;
+  createdAt: number;
+};
+
+export const createAgentFalseInterruptionEvent = ({
+  resumed,
+  createdAt = Date.now(),
+}: {
+  resumed: boolean;
+  createdAt?: number;
+}): AgentFalseInterruptionEvent => ({
+  type: 'agent_false_interruption',
+  resumed,
+  createdAt,
+});
+
 export type AgentEvent =
   | UserInputTranscribedEvent
   | UserStateChangedEvent
@@ -288,6 +309,7 @@ export type AgentEvent =
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent
   | SpeechCreatedEvent
+  | AgentFalseInterruptionEvent
   | OverlappingSpeechEvent
   | ErrorEvent
   | CloseEvent;
