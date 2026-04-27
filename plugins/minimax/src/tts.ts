@@ -301,7 +301,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 581-687 lines
   protected async run(): Promise<void> {
     if (!this.#text.trim()) {
-      this.queue.close();
+      // Base class closes the queue via mainTask().finally; no need to close here.
       return;
     }
 
@@ -426,9 +426,10 @@ export class ChunkedStream extends tts.ChunkedStream {
       } catch {
         // ignore
       }
-      if (!this.queue.closed) {
-        this.queue.close();
-      }
+      // Do NOT close this.queue here. The base class wraps run() in
+      // mainTask().finally(() => this.queue.close()) and retries run() on
+      // retryable errors, so closing here would make every retry's
+      // queue.put(...) throw "Queue is closed".
     }
   }
 }
@@ -579,8 +580,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           break;
         }
         if (event === 'task_failed') {
+          // task_failed denotes a permanent server-side failure (invalid
+          // params, unsupported voice, etc.); don't retry.
           throw new APIError(
             `MiniMax task failed (trace_id: ${currentTraceId}): ${JSON.stringify(data)}`,
+            { retryable: false },
           );
         }
         this.#logger.warn({ data }, 'unexpected MiniMax WS event');
