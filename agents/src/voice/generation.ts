@@ -786,6 +786,15 @@ export function performTextForwarding(
 export interface _AudioOut {
   audio: Array<AudioFrame>;
   firstFrameFut: Future<number>;
+  /**
+   * Timestamp (ms, `Date.now()`) when the first audio frame was forwarded to the
+   * `AudioOutput`. Set by `forwardAudio` as soon as the first TTS frame is
+   * appended; remains `undefined` until then. Used together with the playback-started
+   * timestamp from `firstFrameFut` to derive the assistant's `playbackLatency`
+   * metric.
+   */
+  // Ref: python livekit-agents/livekit/agents/voice/generation.py - 380 lines
+  startedForwardingAt?: number;
 }
 
 async function forwardAudio(
@@ -822,6 +831,10 @@ async function forwardAudio(
       if (done) break;
 
       out.audio.push(frame);
+      // Ref: python livekit-agents/livekit/agents/voice/generation.py - 414-416 lines
+      if (out.startedForwardingAt === undefined) {
+        out.startedForwardingAt = Date.now();
+      }
 
       if (
         !out.firstFrameFut.done &&

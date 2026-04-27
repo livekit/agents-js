@@ -89,6 +89,17 @@ export interface MetricsReport {
   onUserTurnCompletedDelay?: number;
   llmNodeTtft?: number;
   ttsNodeTtfb?: number;
+  /**
+   * Delay (in seconds) between forwarding the first audio frame and the `AudioOutput`
+   * reporting playback started. Near-zero for the default room output (self-reported
+   * when the frame is pushed to the track, so it doesn't account for network delivery
+   * to the client); meaningful when a remote avatar worker is in the chain and reports
+   * playback via the `lk.playback_started` RPC.
+   *
+   * Assistant `ChatMessage` only.
+   */
+  // Ref: python livekit-agents/livekit/agents/llm/chat_context.py - 294-301 lines
+  playbackLatency?: number;
   e2eLatency?: number;
 }
 
