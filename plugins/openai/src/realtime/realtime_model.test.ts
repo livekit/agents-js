@@ -251,7 +251,7 @@ describe('RealtimeSession.updateOptions', () => {
   const stubTaskRuntime = () => {
     // Prevent background realtime tasks from opening network connections in unit tests.
     vi.spyOn(llm, 'RealtimeSession', 'get');
-    const agentsModule = require('@livekit/agents') as typeof import('@livekit/agents'); // eslint-disable-line @typescript-eslint/no-require-imports
+    const agentsModule = require('@livekit/agents') as typeof import('@livekit/agents'); // eslint-disable-line @typescript-eslint/no-var-requires
     vi.spyOn(agentsModule.Task, 'from').mockReturnValue({
       cancel: vi.fn(),
       done: true,
