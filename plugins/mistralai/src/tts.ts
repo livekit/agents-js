@@ -66,7 +66,7 @@ export class TTS extends tts.TTS {
 
     this.#opts = {
       model: opts.model ?? DEFAULT_MODEL,
-      voice: opts.refAudio ? undefined : (opts.voice ?? DEFAULT_VOICE),
+      voice: opts.refAudio ? undefined : opts.voice ?? DEFAULT_VOICE,
       refAudio: opts.refAudio,
     };
     this.#client = opts.client ?? new Mistral({ apiKey });
@@ -135,6 +135,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       const requestId = shortuuid();
       const audioByteStream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const speechRequest: any = {
         model: this.#opts.model,
         input: this.inputText,
@@ -160,6 +161,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         }
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for await (const ev of stream as any) {
         if (this.abortController.signal.aborted) break;
 

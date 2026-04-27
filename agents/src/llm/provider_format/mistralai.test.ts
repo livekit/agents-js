@@ -59,7 +59,9 @@ describe('Mistral Provider Format - toChatCtx', () => {
     const [entries, formatData] = toChatCtx(ctx);
 
     expect(entries).toEqual([{ type: 'message.input', role: 'user', content: 'Hello' }]);
-    expect(formatData.instructions).toBe('You are a helpful assistant\nBe concise in your responses');
+    expect(formatData.instructions).toBe(
+      'You are a helpful assistant\nBe concise in your responses',
+    );
   });
 
   it('should handle multi-line text content', () => {
@@ -269,9 +271,7 @@ describe('Mistral Provider Format - toChatCtx', () => {
     const [entries] = toChatCtx(ctx);
 
     // Non-string content is filtered out, text parts are joined
-    expect(entries).toEqual([
-      { type: 'message.input', role: 'user', content: 'Hello\nWorld' },
-    ]);
+    expect(entries).toEqual([{ type: 'message.input', role: 'user', content: 'Hello\nWorld' }]);
   });
 
   it('should skip agent handoff items', () => {
