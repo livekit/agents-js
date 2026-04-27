@@ -112,11 +112,6 @@ export type GroqChatModels =
   | 'gemma-7b-it'
   | 'gemma2-9b-it';
 
-export type GroqAudioModels =
-  | 'whisper-large-v3'
-  | 'distil-whisper-large-v3-en'
-  | 'whisper-large-v3-turbo';
-
 export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 
 export type TogetherChatModels =
