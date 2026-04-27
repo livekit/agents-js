@@ -24,10 +24,18 @@ export interface EndpointingOptions {
    * @defaultValue 3000
    */
   maxDelay: number;
+  /**
+   * Exponential moving average coefficient for dynamic endpointing.
+   * The higher the value, the more weight is given to the history.
+   * Only applies when {@link EndpointingOptions.mode} is `"dynamic"`.
+   * @defaultValue 0.9
+   */
+  alpha: number;
 }
 
 export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  alpha: 0.9,
 } as const satisfies EndpointingOptions;
