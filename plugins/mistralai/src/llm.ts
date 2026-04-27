@@ -114,7 +114,6 @@ export class LLM extends llm.LLM {
     frequencyPenalty?: number;
     randomSeed?: number;
     toolChoice?: llm.ToolChoice;
-    providerTools?: MistralTool[];
   }): void {
     if (opts.model !== undefined) {
       this.#opts.model = opts.model;
@@ -130,7 +129,6 @@ export class LLM extends llm.LLM {
     if (opts.frequencyPenalty !== undefined) this.#opts.frequencyPenalty = opts.frequencyPenalty;
     if (opts.randomSeed !== undefined) this.#opts.randomSeed = opts.randomSeed;
     if (opts.toolChoice !== undefined) this.#opts.toolChoice = opts.toolChoice;
-    if (opts.providerTools !== undefined) this.#providerTools = opts.providerTools;
   }
 
   chat({
