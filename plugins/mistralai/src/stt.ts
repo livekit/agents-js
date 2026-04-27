@@ -139,6 +139,12 @@ export class STT extends stt.STT {
       const statusCode = err.statusCode ?? err.status;
 
       if (statusCode !== undefined) {
+        if (statusCode === 429) {
+          throw new APIStatusError({
+            message: `Mistral STT: rate limit error - ${err.message ?? 'unknown error'}`,
+            options: { statusCode, retryable: true },
+          });
+        }
         if (statusCode === 408 || statusCode === 504) {
           throw new APIStatusError({
             message: `Mistral STT: timeout error - ${err.message ?? 'unknown error'}`,
@@ -246,6 +252,12 @@ export class SpeechStream extends stt.SpeechStream {
       const statusCode = err.statusCode ?? err.status;
 
       if (statusCode !== undefined) {
+        if (statusCode === 429) {
+          throw new APIStatusError({
+            message: `Mistral STT: rate limit error - ${err.message ?? 'unknown error'}`,
+            options: { statusCode, retryable: true },
+          });
+        }
         if (statusCode === 408 || statusCode === 504) {
           throw new APIStatusError({
             message: `Mistral STT: timeout error - ${err.message ?? 'unknown error'}`,
