@@ -371,7 +371,7 @@ export class LLMStream extends llm.LLMStream {
       if (error instanceof APIStatusError) {
         throw new APIStatusError({
           message: error.message,
-          options: { statusCode: error.statusCode, retryable },
+          options: { statusCode: error.statusCode, retryable: retryable && error.retryable },
         });
       }
 

@@ -191,8 +191,6 @@ export class ChunkedStream extends tts.ChunkedStream {
         lastFrame = frame;
       }
       sendLastFrame(requestId, true);
-
-      this.queue.close();
     } catch (error: unknown) {
       if (this.abortController.signal.aborted) return;
 
@@ -228,8 +226,6 @@ export class ChunkedStream extends tts.ChunkedStream {
         message: `Mistral TTS: connection error - ${err.message ?? 'unknown error'}`,
         options: { retryable: true },
       });
-    } finally {
-      this.queue.close();
     }
   }
 }
