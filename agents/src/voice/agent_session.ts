@@ -267,7 +267,6 @@ export class AgentSession<
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
 
-  // Ref: python livekit-agents/livekit/agents/voice/avatar/_types.py - 62-71 lines
   /** @internal - Whether `start()` has been called and completed. */
   get _started(): boolean {
     return this.started;

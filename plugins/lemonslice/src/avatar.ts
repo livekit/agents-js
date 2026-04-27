@@ -192,7 +192,6 @@ export class AvatarSession extends voice.AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<string> {
-    // Ref: python livekit-plugins/livekit-plugins-lemonslice/livekit/plugins/lemonslice/avatar.py - 68 lines
     await super.start(agentSession, room);
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;

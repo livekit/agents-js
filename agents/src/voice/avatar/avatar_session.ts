@@ -6,7 +6,6 @@ import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
 import type { AgentSession } from '../agent_session.js';
 
-// Ref: python livekit-agents/livekit/agents/voice/avatar/_types.py - 53-78 lines
 /**
  * Base class for avatar plugin sessions.
  *

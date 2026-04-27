@@ -450,7 +450,6 @@ export class TranscriptionSynchronizer {
   /** @internal */
   _impl: SegmentSynchronizerImpl;
 
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 416, 434-436 lines
   /** @internal */
   _audioAttached: boolean = true;
   /** @internal */
@@ -493,14 +492,12 @@ export class TranscriptionSynchronizer {
     }
 
     this._enabled = enabled;
-    // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 464-465 lines
     if (enabled) {
       this._warnedAsymmetricDetach = false;
     }
     this.rotateSegment();
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 471-483 lines
   /** @internal */
   _onAttachmentChanged(args: { audioAttached?: boolean; textAttached?: boolean }): void {
     if (args.audioAttached !== undefined) {
@@ -574,7 +571,6 @@ class SyncedAudioOutput extends AudioOutput {
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
 
     if (!this.synchronizer.enabled) {
-      // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 547-557 lines
       if (
         this.synchronizer._audioAttached &&
         !this.synchronizer._textAttached &&
@@ -647,7 +643,6 @@ class SyncedAudioOutput extends AudioOutput {
     this.pushedDuration = 0.0;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 618-624 lines
   onAttached(): void {
     super.onAttached();
     this.synchronizer._onAttachmentChanged({ audioAttached: true });
@@ -676,7 +671,6 @@ class SyncedTextOutput extends TextOutput {
     const textStr = isTimedString(text) ? text.text : text;
 
     if (!this.synchronizer.enabled) {
-      // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 651-664 lines
       if (
         this.synchronizer._textAttached &&
         !this.synchronizer._audioAttached &&
@@ -723,7 +717,6 @@ class SyncedTextOutput extends TextOutput {
     this.synchronizer._impl.endTextInput();
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 692-698 lines
   onAttached(): void {
     super.onAttached();
     this.synchronizer._onAttachmentChanged({ textAttached: true });

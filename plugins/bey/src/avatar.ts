@@ -148,7 +148,6 @@ export class AvatarSession extends voice.AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
-    // Ref: python livekit-plugins/livekit-plugins-bey/livekit/plugins/bey/avatar.py - 78 lines
     await super.start(agentSession, room);
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;

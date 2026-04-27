@@ -113,7 +113,6 @@ export class AvatarSession extends voice.AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
-    // Ref: python livekit-plugins/livekit-plugins-trugen/livekit/plugins/trugen/avatar.py - 83 lines
     await super.start(agentSession, room);
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;

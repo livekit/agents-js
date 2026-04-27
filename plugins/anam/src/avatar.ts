@@ -62,7 +62,6 @@ export class AvatarSession extends voice.AvatarSession {
       livekitApiSecret?: string;
     },
   ) {
-    // Ref: python livekit-plugins/livekit-plugins-anam/livekit/plugins/anam/avatar.py - 76 lines
     await super.start(agentSession, room);
 
     const logger = log().child({ module: 'AnamAvatar' });
