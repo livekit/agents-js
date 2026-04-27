@@ -101,7 +101,6 @@ export interface RoomOutputOptions {
     Defaults to the AudioSource internal default (1000ms).
   */
   queueSizeMs?: number;
-  // Ref: python livekit-agents/livekit/agents/voice/room_io/types.py - 102-103 lines
   /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
     datastream topic, including `start_time`/`end_time` timestamps if the chunk is a
     TimedString. Each JSON object is suffixed with a newline so clients can parse the
@@ -172,7 +171,6 @@ export class RoomIO {
     this.room = room;
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
-
     this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
 
     this.participantIdentity = participant
@@ -347,7 +345,6 @@ export class RoomIO {
         options.isDeltaStream,
         options.participant,
       ),
-      // Ref: python livekit-agents/livekit/agents/voice/room_io/room_io.py - 159 lines
       new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
         jsonFormat: this.outputOptions.jsonFormat,
       }),

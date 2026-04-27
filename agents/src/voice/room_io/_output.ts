@@ -125,7 +125,6 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 363-383 lines
 export interface ParticipantTranscriptionOutputOptions {
   /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
    *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
@@ -154,7 +153,6 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/room_io/_output.py - 447-464 lines
     // When json_format is enabled, serialize each chunk as a protobuf-compatible JSON dict.
     // The Python implementation uses `agent_pb.TimedString` + `MessageToDict(preserving_proto_field_name=True)`.
     // We emit the same snake_case shape directly (no protobuf runtime dependency on the JS side).
@@ -166,7 +164,6 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         ? text.text
         : text;
     this.latestText = payload;
-
     await this.handleCaptureText(payload);
   }
 

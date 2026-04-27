@@ -144,7 +144,6 @@ class SegmentSynchronizerImpl {
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 151 lines
   // Emit TimedString objects so downstream outputs (e.g. RoomIO's json_format) can
   // attach `end_time` reflecting synchronized playback timing.
   private outputStream: IdentityTransform<string | TimedString>;
@@ -403,7 +402,12 @@ class SegmentSynchronizerImpl {
       }
 
       await this.sleepIfNotClosed(delayTime / 2);
-      this.outputStreamWriter.write(forwardedWord);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: forwardedWord,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
       await this.sleepIfNotClosed(delayTime / 2);
 
       this.textData.forwardedHyphens += wordHyphens;
