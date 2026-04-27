@@ -166,7 +166,6 @@ export function parseTTSModelString(model: string): [string, string | undefined]
  * `extra_kwargs` / `modelOptions` payload — the gateway only emits
  * `output_timestamps` events when the provider-specific flag is set.
  */
-// Ref: python livekit-agents/livekit/agents/inference/tts.py - 100-108 lines
 export function hasAlignedTranscript(
   model: string | undefined,
   modelOptions: Record<string, unknown> | undefined,
@@ -247,7 +246,6 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
   pool: ConnectionPool<WebSocket>;
 
   #logger = log();
-  // Ref: python livekit-agents/livekit/agents/inference/tts.py - 354-362 lines
   #alignedTranscript: boolean;
 
   constructor(opts: {
@@ -358,10 +356,6 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'livekit';
   }
 
-  // Ref: python livekit-agents/livekit/agents/inference/tts.py - 540-543 lines
-  // The Python class mutates `self._capabilities.aligned_transcript` when options
-  // change; the JS base holds `#capabilities` as a hard-private field, so we
-  // shadow the getter here and expose the up-to-date alignment flag.
   override get capabilities() {
     return { streaming: true, alignedTranscript: this.#alignedTranscript };
   }
@@ -394,7 +388,6 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
     };
 
-    // Ref: python livekit-agents/livekit/agents/inference/tts.py - 540-542 lines
     this.#alignedTranscript = hasAlignedTranscript(
       this.opts.model,
       this.opts.modelOptions as Record<string, unknown>,
@@ -524,7 +517,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
-    // Ref: python livekit-agents/livekit/agents/inference/tts.py - 651-670 lines
     // Timestamps are delivered in their own WS message; buffer them and attach
     // to the next audio frame that we forward to the output emitter. This
     // mirrors the semantics of `output_emitter.push_timed_transcript` on the
@@ -723,7 +715,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 lastFrame = frame;
               }
               break;
-            // Ref: python livekit-agents/livekit/agents/inference/tts.py - 651-670 lines
             case 'output_timestamps':
               if (serverEvent.words && serverEvent.words.length > 0) {
                 for (const w of serverEvent.words) {

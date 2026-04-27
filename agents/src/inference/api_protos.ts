@@ -54,7 +54,6 @@ export const ttsErrorEventSchema = z.object({
   session_id: z.string().optional(),
 });
 
-// Ref: python livekit-agents/livekit/agents/inference/tts.py - 651-670 lines
 export const ttsWordTimestampSchema = z.object({
   word: z.string(),
   start: z.number(),
