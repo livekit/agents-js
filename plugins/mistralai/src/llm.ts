@@ -30,7 +30,6 @@ import type { MistralTool } from './tools.js';
 
 const DEFAULT_MODEL: MistralChatModels = 'ministral-8b-latest';
 
-
 interface LLMOpts {
   model: MistralChatModels | string;
   maxCompletionTokens: number | null;
@@ -281,6 +280,8 @@ export class LLMStream extends llm.LLMStream {
     this.#providerToolArgs = new Map();
     this.#receivedConversationId = null;
 
+    let retryable = true;
+
     try {
       const [entries, extraData] = (await this.chatCtx.toProviderFormat('mistralai')) as [
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -348,6 +349,7 @@ export class LLMStream extends llm.LLMStream {
         if (this.abortController.signal.aborted) break;
         const chunks = this.#parseEvent(ev, pendingFncCalls);
         for (const chunk of chunks) {
+          retryable = false;
           this.queue.put(chunk);
         }
       }
@@ -365,37 +367,27 @@ export class LLMStream extends llm.LLMStream {
       );
     } catch (error: unknown) {
       if (this.abortController.signal.aborted) throw error;
-      if (error instanceof APIStatusError || error instanceof APIConnectionError) {
-        throw error;
+
+      if (error instanceof APIStatusError) {
+        throw new APIStatusError({
+          message: error.message,
+          options: { statusCode: error.statusCode, retryable },
+        });
       }
 
       const err = error as { statusCode?: number; status?: number; message?: string };
       const statusCode = err.statusCode ?? err.status;
 
       if (statusCode !== undefined) {
-        if (statusCode === 429) {
-          throw new APIStatusError({
-            message: `Mistral LLM: rate limit error - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
-        if (statusCode >= 400 && statusCode < 500) {
-          throw new APIStatusError({
-            message: `Mistral LLM: client error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: false },
-          });
-        }
-        if (statusCode >= 500) {
-          throw new APIStatusError({
-            message: `Mistral LLM: server error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-            options: { statusCode, retryable: true },
-          });
-        }
+        throw new APIStatusError({
+          message: `Mistral LLM: error (${statusCode}) - ${err.message ?? 'unknown error'}`,
+          options: { statusCode, retryable },
+        });
       }
 
       throw new APIConnectionError({
         message: `Mistral LLM: connection error - ${err.message ?? 'unknown error'}`,
-        options: { retryable: true },
+        options: { retryable },
       });
     }
   }

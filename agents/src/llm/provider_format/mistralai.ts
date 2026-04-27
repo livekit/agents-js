@@ -11,9 +11,10 @@ export interface MistralFormatData {
  * Convert a LiveKit ChatContext into Mistral Conversations API entries.
  *
  * - System/developer messages are extracted as `instructions` (passed separately).
- * - User/assistant messages become `MessageInputEntry` items.
- * - Function call outputs become `FunctionResultEntry` items.
- * - Function calls are NOT sent as entries — the Conversations API tracks them internally.
+ * - User messages become `MessageInputEntry` items (`message.input`, role `user`).
+ * - Assistant messages become `MessageOutputEntry` items (`message.output`, role `assistant`).
+ * - Function calls become `FunctionCallEntry` items (`function.call`).
+ * - Function call outputs become `FunctionResultEntry` items (`function.result`).
  * - If entries would be empty (e.g. only system messages), a dummy user message is injected
  *   so the API has a non-empty `inputs` array.
  */
@@ -33,8 +34,15 @@ export function toChatCtx(
       } else if (item.role === 'user') {
         entries.push({ type: 'message.input', role: 'user', content: text });
       } else if (item.role === 'assistant') {
-        entries.push({ type: 'message.input', role: 'assistant', content: text });
+        entries.push({ type: 'message.output', role: 'assistant', content: text });
       }
+    } else if (item.type === 'function_call') {
+      entries.push({
+        type: 'function.call',
+        toolCallId: item.callId,
+        name: item.name,
+        arguments: item.args,
+      });
     } else if (item.type === 'function_call_output') {
       entries.push({
         type: 'function.result',
@@ -42,7 +50,6 @@ export function toChatCtx(
         result: item.output,
       });
     }
-    // function_call items are NOT sent — the Conversations API tracks them server-side
   }
 
   if (entries.length === 0 && injectDummyUserMessage) {

@@ -289,11 +289,6 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
-    try {
-      vadStream.endInput();
-    } catch {
-      // VAD stream may already be closed during shutdown
-    }
     await connection.endAudio();
   }
 
