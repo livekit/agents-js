@@ -122,7 +122,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
-  // Ref: python livekit-agents/livekit/agents/llm/llm.py - 184 lines
   // Provider-known response ids collected from ChatChunks during the current
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
@@ -166,7 +165,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
             attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
-            // Ref: python livekit-agents/livekit/agents/llm/llm.py - 219-221 lines
             // Reset per-attempt response ids; the metrics monitor populates this
             // as ChatChunks arrive.
             this.#providerRequestIds = [];
@@ -176,7 +174,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
               recordException(attemptSpan, toError(error));
               throw error;
             } finally {
-              // Ref: python livekit-agents/livekit/agents/llm/llm.py - 228-232 lines
               if (this.#providerRequestIds.length) {
                 attemptSpan.setAttribute(
                   traceTypes.ATTR_PROVIDER_REQUEST_IDS,
@@ -248,7 +245,6 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       }
       this.output.put(ev);
       requestId = ev.id;
-      // Ref: python livekit-agents/livekit/agents/llm/llm.py - 294-295 lines
       if (requestId && !this.#providerRequestIds.includes(requestId)) {
         this.#providerRequestIds.push(requestId);
       }

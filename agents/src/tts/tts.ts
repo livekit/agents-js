@@ -186,7 +186,6 @@ export abstract class SynthesizeStream
   #ttsRequestSpan?: Span;
   #inputTokens = 0;
   #outputTokens = 0;
-  // Ref: python livekit-agents/livekit/agents/tts/tts.py - 742 lines
   // Deduped provider-known segment ids for the current attempt.
   #providerRequestIds: string[] = [];
   // Current `tts_request_run` span – noteProviderRequestId() updates the
@@ -243,7 +242,6 @@ export abstract class SynthesizeStream
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
             attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
-            // Ref: python livekit-agents/livekit/agents/tts/tts.py - 742 lines
             this.#providerRequestIds = [];
             this.#currentAttemptSpan = attemptSpan;
             try {
@@ -306,7 +304,6 @@ export abstract class SynthesizeStream
     });
   }
 
-  // Ref: python livekit-agents/livekit/agents/tts/tts.py - 808-825 lines
   /**
    * Record a provider-known id for this stream on the current `tts_request_run`
    * span.
@@ -423,7 +420,6 @@ export abstract class SynthesizeStream
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
-      // Ref: python livekit-agents/livekit/agents/tts/tts.py - 807 lines
       // The Python AudioEmitter records each `segment_id` automatically via
       // `start_segment`. JS plugins emit `segmentId` directly on the audio
       // frame, so we mirror that behavior here.

@@ -9,7 +9,6 @@ export const ATTR_START_TIME = 'lk.start_time';
 export const ATTR_END_TIME = 'lk.end_time';
 export const ATTR_RETRY_COUNT = 'lk.retry_count';
 
-// Ref: python livekit-agents/livekit/agents/telemetry/trace_types.py - 6-11 lines
 /**
  * Provider-known correlation ids associated with this span (string[]).
  *

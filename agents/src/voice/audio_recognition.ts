@@ -192,7 +192,6 @@ export class AudioRecognition {
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 188 lines
   // Provider-known STT ids for the current user turn. Written to the
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
@@ -540,7 +539,6 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
-    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 680-685 lines
     // Collect provider-known STT ids for this user turn. The actual attribute is
     // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
     // ordering issues with span creation.
@@ -1355,14 +1353,12 @@ export class AudioRecognition {
         [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
         [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
       });
-      // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 1047-1050 lines
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
       this.userTurnSpan.end();
       this.userTurnSpan = undefined;
     }
-    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 1053 lines
     this.sttRequestIds = [];
   }
 
