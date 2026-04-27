@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-// Ref: python livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/models.py - 3-18 lines
 export type MistralChatModels =
   | 'mistral-large-latest'
   | 'mistral-large-2512'
@@ -20,17 +18,14 @@ export type MistralChatModels =
   | 'ministral-3b-latest'
   | 'ministral-3b-2512';
 
-// Ref: python livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/models.py - 21-26 lines
 export type MistralSTTModels =
   | 'voxtral-mini-transcribe-realtime-2602'
   | 'voxtral-mini-latest'
   | 'voxtral-mini-2602'
   | 'voxtral-mini-2507';
 
-// Ref: python livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/models.py - 28 lines
 export type MistralTTSModels = 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603';
 
-// Ref: python livekit-plugins/livekit-plugins-mistralai/livekit/plugins/mistralai/models.py - 30-60 lines
 export type MistralTTSVoices =
   | 'gb_jane_confident'
   | 'gb_jane_confused'

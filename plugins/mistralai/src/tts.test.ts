@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { llm as llmTest } from '@livekit/agents-plugins-test';
+import { tts } from '@livekit/agents-plugins-test';
 import { describe, it } from 'vitest';
-import { LLM } from './llm.js';
+import { STT } from './stt.js';
+import { TTS } from './tts.js';
 
 const hasMistralApiKey = Boolean(process.env.MISTRAL_API_KEY);
 
 if (hasMistralApiKey) {
-  describe('Mistral LLM', async () => {
-    await llmTest(new LLM({ temperature: 0 }), false);
+  describe('Mistral TTS', async () => {
+    await tts(new TTS(), new STT(), { streaming: false });
   });
 } else {
-  describe('Mistral LLM', () => {
+  describe('Mistral TTS', () => {
     it.skip('requires MISTRAL_API_KEY', () => {});
   });
 }
