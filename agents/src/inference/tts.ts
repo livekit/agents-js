@@ -607,6 +607,10 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           if (result.done) return;
 
           const serverEvent = result.value;
+          const sessionIdFromEvent = (serverEvent as { session_id?: string }).session_id;
+          if (currentSessionId === null && sessionIdFromEvent) {
+            currentSessionId = sessionIdFromEvent;
+          }
           switch (serverEvent.type) {
             case 'session.created':
               currentSessionId = serverEvent.session_id;
