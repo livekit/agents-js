@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as api_proto from './api_proto.js';
-import { livekitItemToOpenAIItem } from './realtime_model.js';
+import { RealtimeModel, livekitItemToOpenAIItem } from './realtime_model.js';
 
 describe('livekitItemToOpenAIItem', () => {
   describe('message items', () => {
@@ -240,5 +240,88 @@ describe('livekitItemToOpenAIItem', () => {
       expect(result.call_id).toBe('call-123');
       expect(result.output).toBe('The weather in San Francisco is sunny.');
     });
+  });
+});
+
+describe('RealtimeSession.updateOptions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const stubTaskRuntime = () => {
+    // Prevent background realtime tasks from opening network connections in unit tests.
+    vi.spyOn(llm, 'RealtimeSession', 'get');
+    const agentsModule = require('@livekit/agents') as typeof import('@livekit/agents'); // eslint-disable-line @typescript-eslint/no-require-imports
+    vi.spyOn(agentsModule.Task, 'from').mockReturnValue({
+      cancel: vi.fn(),
+      done: true,
+      result: Promise.resolve(undefined),
+    } as unknown as import('@livekit/agents').Task<void>);
+  };
+
+  it('emits session.update when toolChoice changes', () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as { updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void; sendEvent: (event: api_proto.ClientEvent) => void };
+    const sendEventSpy = vi.spyOn(session, 'sendEvent');
+    sendEventSpy.mockClear();
+
+    session.updateOptions({ toolChoice: 'required' });
+
+    expect(sendEventSpy).toHaveBeenCalledTimes(1);
+    expect(sendEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.update',
+        session: expect.objectContaining({
+          type: 'realtime',
+          tool_choice: 'required',
+        }),
+      }),
+    );
+  });
+
+  it('does not emit session.update when toolChoice is unchanged', () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as { updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void; sendEvent: (event: api_proto.ClientEvent) => void };
+    const sendEventSpy = vi.spyOn(session, 'sendEvent');
+    sendEventSpy.mockClear();
+
+    session.updateOptions({ toolChoice: 'auto' });
+
+    expect(sendEventSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps toolChoice state isolated across sessions from same model', () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const sessionA = model.session() as unknown as {
+      updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void;
+      sendEvent: (event: api_proto.ClientEvent) => void;
+      _options: { toolChoice?: llm.ToolChoice };
+    };
+    const sessionB = model.session() as unknown as {
+      updateOptions: (opts: { toolChoice?: llm.ToolChoice }) => void;
+      sendEvent: (event: api_proto.ClientEvent) => void;
+      _options: { toolChoice?: llm.ToolChoice };
+    };
+
+    const sendEventSpyA = vi.spyOn(sessionA, 'sendEvent');
+    const sendEventSpyB = vi.spyOn(sessionB, 'sendEvent');
+    sendEventSpyA.mockClear();
+    sendEventSpyB.mockClear();
+
+    sessionA.updateOptions({ toolChoice: 'required' });
+
+    expect(sessionA._options.toolChoice).toBe('required');
+    expect(sessionB._options.toolChoice).toBe('auto');
+    expect(sendEventSpyA).toHaveBeenCalledTimes(1);
+    expect(sendEventSpyB).toHaveBeenCalledTimes(0);
+
+    sessionB.updateOptions({ toolChoice: 'required' });
+    expect(sendEventSpyB).toHaveBeenCalledTimes(1);
   });
 });
