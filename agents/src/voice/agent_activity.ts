@@ -2249,7 +2249,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
-      speechHandle._setInterruptionData(textOut?.text || '', forwardedText);
+      speechHandle._setInterruptionData(llmGenData.generatedText, forwardedText);
 
       if (forwardedText) {
         hasSpeechMessage = true;

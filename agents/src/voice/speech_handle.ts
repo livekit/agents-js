@@ -166,7 +166,7 @@ export class SpeechHandle {
     return this._generatedText;
   }
 
-  /** Text that was actually spoken (heard by the listener) before interruption. Null if not interrupted. */
+  /** Text that was actually spoken (heard by the listener) before interruption. Null if not interrupted or nothing was spoken. */
   get spokenText(): string | null {
     return this._spokenText;
   }
