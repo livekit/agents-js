@@ -7,7 +7,8 @@ const { RealtimeModel: OpenAIRealtimeModel } = realtime;
 type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeModel>[0];
 
 const XAI_BASE_URL = 'wss://api.x.ai/v1';
-const DEFAULT_MODEL = 'grok-4-1-fast-non-reasoning';
+// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/realtime/realtime_model.py - 32 lines
+const DEFAULT_MODEL: GrokRealtimeModels = 'grok-voice-think-fast-1.0';
 const DEFAULT_VOICE = 'ara';
 
 const XAI_DEFAULT_TURN_DETECTION = {
@@ -21,8 +22,11 @@ const XAI_DEFAULT_TURN_DETECTION = {
 
 export type GrokVoices = 'eve' | 'ara' | 'rex' | 'sal' | 'leo';
 
+// Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/types.py - 39-42 lines
+export type GrokRealtimeModels = 'grok-voice-think-fast-1.0' | 'grok-voice-fast-1.0';
+
 export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
-  model?: string;
+  model?: GrokRealtimeModels | string;
   voice?: GrokVoices | string;
   apiKey?: string;
 }

@@ -529,11 +529,22 @@ export class Agent<UserData = any> {
   };
 }
 
+export interface AgentTaskOptions<UserData = any> extends AgentOptions<UserData> {
+  preserveFunctionCallHistory?: boolean;
+}
+
 export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData> {
   private started = false;
   private future = new Future<ResultT>();
+  private _preserveFunctionCallHistory: boolean;
 
   #logger = log();
+
+  constructor(options: AgentTaskOptions<UserData>) {
+    const { preserveFunctionCallHistory = false, ...rest } = options;
+    super(rest);
+    this._preserveFunctionCallHistory = preserveFunctionCallHistory;
+  }
 
   get done(): boolean {
     return this.future.done;
@@ -648,7 +659,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         }
 
         const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {
-          excludeFunctionCall: true,
+          excludeFunctionCall: !this._preserveFunctionCallHistory,
           excludeInstructions: true,
         });
         oldAgent._chatCtx.items = mergedChatCtx.items;

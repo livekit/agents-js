@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-inworld",
-  "version": "1.2.8",
+  "version": "1.3.0",
   "description": "Inworld plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
