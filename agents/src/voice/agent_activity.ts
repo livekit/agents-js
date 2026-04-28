@@ -1829,10 +1829,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let replyStartedSpeakingAt: number | undefined;
+    let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
       replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -1846,7 +1848,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!audioOutput) {
       if (textOut) {
         textOut.firstTextFut.await
-          .then(() => onFirstFrame())
+          .then(() => onFirstFrame(null))
           .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
@@ -1881,8 +1883,9 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(forwardTask);
         audioOut = _audioOut;
       }
+      const audioOutForCb = audioOut;
       audioOut.firstFrameFut.await
-        .then((ts) => onFirstFrame(ts))
+        .then((ts) => onFirstFrame(audioOutForCb, ts))
         .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
@@ -1910,6 +1913,11 @@ export class AgentActivity implements RecognitionHooks {
       if (replyStartedSpeakingAt !== undefined) {
         replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
         replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
+
+        if (replyStartedForwardingAt !== undefined) {
+          replyAssistantMetrics.playbackLatency =
+            (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+        }
       }
 
       const message = ChatMessage.create({
@@ -2107,8 +2115,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let agentStartedSpeakingAt: number | undefined;
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    let agentStartedForwardingAt: number | undefined;
+    const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
       agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -2130,14 +2140,14 @@ export class AgentActivity implements RecognitionHooks {
         audioOut = _audioOut;
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await
-          .then((ts) => onFirstFrame(ts))
+          .then((ts) => onFirstFrame(audioOut, ts))
           .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
       } else {
         throw Error('ttsGenData is null when audioOutput is enabled');
       }
     } else {
       textOut?.firstTextFut.await
-        .then(() => onFirstFrame())
+        .then(() => onFirstFrame(null))
         .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
     }
 
@@ -2185,6 +2195,11 @@ export class AgentActivity implements RecognitionHooks {
     if (agentStartedSpeakingAt !== undefined) {
       assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
       assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
+
+      if (agentStartedForwardingAt !== undefined) {
+        assistantMetrics.playbackLatency =
+          (agentStartedSpeakingAt - agentStartedForwardingAt) / 1000; // ms -> seconds
+      }
 
       if (userMetrics?.stoppedSpeakingAt !== undefined) {
         const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
