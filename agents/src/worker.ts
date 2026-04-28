@@ -132,7 +132,6 @@ export class ServerOptions {
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
-  // Ref: python livekit-agents/livekit/agents/worker.py - 360-360 lines
   agentNameIsEnv: boolean;
   serverType: JobType;
   maxRetry: number;
@@ -193,7 +192,6 @@ export class ServerOptions {
      *
      * By default it uses `LIVEKIT_AGENT_NAME` from environment.
      */
-    // Ref: python livekit-agents/livekit/agents/worker.py - 217-221 lines
     agentName?: string;
     /**
      * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
@@ -225,7 +223,6 @@ export class ServerOptions {
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
-    // Ref: python livekit-agents/livekit/agents/worker.py - 497-507 lines
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
     // cli.ts spreads an existing ServerOptions instance), so prefer it when defined.
     if (agentName) {
@@ -370,7 +367,6 @@ export class AgentServer {
 
     const getWorkerInfo = () => ({
       agent_name: opts.agentName,
-      // Ref: python livekit-agents/livekit/agents/worker.py - 644-644 lines
       agent_name_is_env: opts.agentNameIsEnv,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
