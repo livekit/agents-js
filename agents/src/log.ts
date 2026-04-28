@@ -17,11 +17,15 @@ export type LoggerOptions = {
 // This avoids the "dual package hazard". Symbol.for() returns the same Symbol
 // across all module instances, and globalThis is shared process-wide.
 const LOGGER_KEY = Symbol.for('@livekit/agents:logger');
+const BASE_LOGGER_KEY = Symbol.for('@livekit/agents:baseLogger');
+const JOB_CONTEXT_KEY = Symbol.for('@livekit/agents:jobContext');
 const LOGGER_OPTIONS_KEY = Symbol.for('@livekit/agents:loggerOptions');
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
 
 type GlobalState = {
   [LOGGER_KEY]?: Logger;
+  [BASE_LOGGER_KEY]?: Logger;
+  [JOB_CONTEXT_KEY]?: Record<string, unknown>;
   [LOGGER_OPTIONS_KEY]?: LoggerOptions;
   [OTEL_ENABLED_KEY]?: boolean;
 };
@@ -38,6 +42,29 @@ export const log = () => {
     throw new TypeError('logger not initialized. did you forget to run initializeLogger()?');
   }
   return logger;
+};
+
+/**
+ * Sets per-job context fields on the global logger. All subsequent calls to
+ * {@link log} will return a child logger that includes these fields on every
+ * log line (e.g. `jobId`, `roomName`).
+ *
+ * Call with an empty object to clear the context (e.g. after a job ends).
+ *
+ * @remarks
+ * LiveKit workers process one job at a time, so mutating the global logger
+ * is safe — there is no risk of concurrent jobs interleaving context.
+ *
+ * @internal
+ */
+export const setJobContext = (ctx: Record<string, unknown>) => {
+  if (!globals[BASE_LOGGER_KEY]) {
+    globals[BASE_LOGGER_KEY] = globals[LOGGER_KEY];
+  }
+  const hasFields = Object.keys(ctx).length > 0;
+  globals[JOB_CONTEXT_KEY] = hasFields ? ctx : undefined;
+  const base = globals[BASE_LOGGER_KEY]!;
+  globals[LOGGER_KEY] = hasFields ? base.child(ctx) : base;
 };
 
 /** @internal */
@@ -90,8 +117,11 @@ export const enableOtelLogging = () => {
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
-  globals[LOGGER_KEY] = pino(
+  const newBase = pino(
     { level: logLevel, serializers: { error: pino.stdSerializers.err } },
     multistream(streams),
   );
+  globals[BASE_LOGGER_KEY] = newBase;
+  const activeJobCtx = globals[JOB_CONTEXT_KEY];
+  globals[LOGGER_KEY] = activeJobCtx ? newBase.child(activeJobCtx) : newBase;
 };

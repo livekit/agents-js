@@ -16,7 +16,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
-import { log } from './log.js';
+import { log, setJobContext } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
@@ -139,10 +139,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#onShutdown = onShutdown;
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
-    this.#logger = log().child({
-      jobId: this.#info.job.id,
-      roomName: this.#info.job.room?.name,
-    });
+    setJobContext({ jobId: this.#info.job.id, roomName: this.#info.job.room?.name });
+    this.#logger = log();
     this.#inferenceExecutor = inferenceExecutor;
     this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
