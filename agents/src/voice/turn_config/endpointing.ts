@@ -30,6 +30,7 @@ export interface EndpointingOptions {
    * Only applies when {@link EndpointingOptions.mode} is `"dynamic"`.
    * @defaultValue 0.9
    */
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 63-66 lines
   alpha: number;
 }
 
@@ -37,5 +38,6 @@ export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 73 lines
   alpha: 0.9,
 } as const satisfies EndpointingOptions;
