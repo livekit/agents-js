@@ -54,6 +54,25 @@ export const ttsErrorEventSchema = z.object({
   session_id: z.string().optional(),
 });
 
+export const ttsWordTimestampSchema = z.object({
+  word: z.string(),
+  start: z.number(),
+  end: z.number(),
+});
+
+export const ttsCharTimestampSchema = z.object({
+  char: z.string(),
+  start: z.number(),
+  end: z.number(),
+});
+
+export const ttsOutputTimestampsEventSchema = z.object({
+  type: z.literal('output_timestamps'),
+  session_id: z.string().optional(),
+  words: z.array(ttsWordTimestampSchema).optional(),
+  chars: z.array(ttsCharTimestampSchema).optional(),
+});
+
 export const ttsClientEventSchema = z.discriminatedUnion('type', [
   ttsSessionCreateEventSchema,
   ttsInputTranscriptEventSchema,
@@ -64,6 +83,7 @@ export const ttsClientEventSchema = z.discriminatedUnion('type', [
 export const ttsServerEventSchema = z.discriminatedUnion('type', [
   ttsSessionCreatedEventSchema,
   ttsOutputAudioEventSchema,
+  ttsOutputTimestampsEventSchema,
   ttsDoneEventSchema,
   ttsSessionClosedEventSchema,
   ttsErrorEventSchema,
@@ -75,6 +95,9 @@ export type TtsSessionFlushEvent = z.infer<typeof ttsSessionFlushEventSchema>;
 export type TtsSessionCloseEvent = z.infer<typeof ttsSessionCloseEventSchema>;
 export type TtsSessionCreatedEvent = z.infer<typeof ttsSessionCreatedEventSchema>;
 export type TtsOutputAudioEvent = z.infer<typeof ttsOutputAudioEventSchema>;
+export type TtsWordTimestamp = z.infer<typeof ttsWordTimestampSchema>;
+export type TtsCharTimestamp = z.infer<typeof ttsCharTimestampSchema>;
+export type TtsOutputTimestampsEvent = z.infer<typeof ttsOutputTimestampsEventSchema>;
 export type TtsDoneEvent = z.infer<typeof ttsDoneEventSchema>;
 export type TtsSessionClosedEvent = z.infer<typeof ttsSessionClosedEventSchema>;
 export type TtsErrorEvent = z.infer<typeof ttsErrorEventSchema>;

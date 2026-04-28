@@ -74,7 +74,6 @@ export interface SpeechData {
    *
    * May contain multiple entries when a single utterance spans multiple source languages.
    */
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py - 62-68 lines
   sourceLanguages?: LanguageCode[];
 }
 
