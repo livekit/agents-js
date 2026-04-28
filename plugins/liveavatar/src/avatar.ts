@@ -288,19 +288,27 @@ export class AvatarSession {
   /**
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 180-196 lines
    *
-   * Gates `notifyPlaybackFinished` on the `wasCapturing` flag carried by the
-   * `clear_buffer` event (set synchronously inside `QueueAudioOutput.clearBuffer`)
-   * rather than the asynchronously-set `audioPlaying` field. The async flag races
-   * with the channel reader: `super.captureFrame` increments
-   * `playbackSegmentsCount` before `forwardAudio` reads the frame and flips
-   * `audioPlaying = true`, so an interrupt landing in that window would have
-   * skipped `notifyPlaybackFinished` and stalled `waitForPlayout()` forever.
+   * Gates everything on the `wasCapturing` flag carried by the `clear_buffer`
+   * event (set synchronously inside `QueueAudioOutput.clearBuffer`):
+   *
+   * 1. `notifyPlaybackFinished` only fires when a segment was actually in
+   *    flight, so the base class's segment-count bookkeeping stays balanced
+   *    even when an interrupt lands in the window between `super.captureFrame`
+   *    incrementing `playbackSegmentsCount` and `forwardAudio` consuming the
+   *    frame.
+   * 2. `chunkInterrupted` is only flipped when there's an actual segment to
+   *    interrupt. If `wasCapturing` is false (e.g. `clearBuffer` is called
+   *    after `flush` has already written its `AudioSegmentEnd`), setting
+   *    `chunkInterrupted` would otherwise carry over and discard the first
+   *    frame of the *next* segment.
    */
   private onClearBuffer(ev: voice.QueueAudioOutputClearEvent): void {
-    this.chunkInterrupted = true;
     this.audioPlaying = false;
-
-    if (ev.wasCapturing && this.audioBuffer) {
+    if (!ev.wasCapturing) {
+      return;
+    }
+    this.chunkInterrupted = true;
+    if (this.audioBuffer) {
       this.audioBuffer.notifyPlaybackFinished(this.playbackPosition, true);
       if (this.avatarSpeaking) {
         this.sendEvent({ type: 'agent.interrupt', event_id: shortuuid() });

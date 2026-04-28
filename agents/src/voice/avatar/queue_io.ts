@@ -98,6 +98,19 @@ export class QueueAudioOutput extends AudioOutput {
     // `playbackSegmentsCount > playbackFinishedCount` bookkeeping).
     const wasCapturing = this.startedSegment;
     this.startedSegment = false;
+    // Always close an in-flight segment with an AudioSegmentEnd sentinel.
+    // The producer (e.g. the AgentSession forward-audio task) typically calls
+    // `flush()` *after* `clearBuffer()` once the segment is aborted, but at
+    // that point `startedSegment` is already `false` and `flush()` is a no-op
+    // for the sentinel write. Without writing it here, a downstream consumer
+    // that uses the sentinel as a "drop stale frames" reset signal would
+    // never see a boundary for the interrupted segment and would silently
+    // drop the entire next segment's audio.
+    if (wasCapturing && !this.channel.closed) {
+      void this.channel.write(new AudioSegmentEnd()).catch(() => {
+        // channel closed concurrently; safe to drop the sentinel.
+      });
+    }
     this.emit('clear_buffer', { wasCapturing } satisfies QueueAudioOutputClearEvent);
   }
 
