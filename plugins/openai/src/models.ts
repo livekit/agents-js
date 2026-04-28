@@ -105,6 +105,8 @@ export type GroqChatModels =
   | 'openai/gpt-oss-120b'
   | 'openai/gpt-oss-20b';
 
+export type GroqAudioModels = 'whisper-large-v3' | 'whisper-large-v3-turbo';
+
 export type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat';
 
 export type TogetherChatModels =
