@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Support for [LiveAvatar](https://www.liveavatar.com) interactive avatars.
 
-This is the JS/TS port of the Python `livekit-plugins-liveavatar` plugin. See [https://docs.livekit.io/agents/integrations/avatar/](https://docs.livekit.io/agents/integrations/avatar/) for more information.
+This is the JS/TS port of the Python `livekit-plugins-liveavatar` plugin. See [https://docs.livekit.io/agents/models/avatar/plugins/liveavatar/](https://docs.livekit.io/agents/models/avatar/plugins/liveavatar/) for more information.
 
 ## Installation
 
