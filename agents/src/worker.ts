@@ -132,6 +132,8 @@ export class ServerOptions {
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
+  // Ref: python livekit-agents/livekit/agents/worker.py - 360-360 lines
+  agentNameIsEnv: boolean;
   serverType: JobType;
   maxRetry: number;
   wsURL: string;
@@ -183,6 +185,14 @@ export class ServerOptions {
     shutdownProcessTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
+    /**
+     * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
+     * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
+     * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
+     *
+     * By default it uses `LIVEKIT_AGENT_NAME` from environment.
+     */
+    // Ref: python livekit-agents/livekit/agents/worker.py - 217-221 lines
     agentName?: string;
     serverType?: JobType;
     maxRetry?: number;
@@ -208,7 +218,17 @@ export class ServerOptions {
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
-    this.agentName = agentName;
+    // Ref: python livekit-agents/livekit/agents/worker.py - 497-507 lines
+    if (agentName) {
+      this.agentName = agentName;
+      this.agentNameIsEnv = false;
+    } else if (process.env.LIVEKIT_AGENT_NAME) {
+      this.agentName = process.env.LIVEKIT_AGENT_NAME;
+      this.agentNameIsEnv = true;
+    } else {
+      this.agentName = '';
+      this.agentNameIsEnv = false;
+    }
     this.serverType = serverType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
@@ -341,6 +361,8 @@ export class AgentServer {
 
     const getWorkerInfo = () => ({
       agent_name: opts.agentName,
+      // Ref: python livekit-agents/livekit/agents/worker.py - 644-644 lines
+      agent_name_is_env: opts.agentNameIsEnv,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
