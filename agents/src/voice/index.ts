@@ -22,6 +22,7 @@ export {
   RoomSessionTransport,
 } from './remote_session.js';
 export * from './events.js';
+export * from './endpointing.js';
 export { type TimedString } from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';
