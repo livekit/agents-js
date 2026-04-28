@@ -28,6 +28,7 @@ import {
   type TtsClientEvent,
   type TtsServerEvent,
   ttsClientEventSchema,
+  ttsKnownServerEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
@@ -703,7 +704,13 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           if (signal.aborted) return;
           if (result.done) return;
 
-          const serverEvent = result.value;
+          const parsedServerEvent = ttsKnownServerEventSchema.safeParse(result.value);
+          if (!parsedServerEvent.success) {
+            this.#logger.warn({ serverEvent: result.value }, 'Unexpected message from LiveKit TTS');
+            continue;
+          }
+
+          const serverEvent = parsedServerEvent.data;
           switch (serverEvent.type) {
             case 'session.created':
               currentSessionId = serverEvent.session_id;
@@ -762,9 +769,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 new APIError(`LiveKit TTS returned error: ${serverEvent.message}`),
               );
               return;
-            default:
-              this.#logger.warn('Unexpected message %s', serverEvent);
-              break;
           }
         }
       } catch (e) {
