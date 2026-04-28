@@ -4,7 +4,7 @@
 import { type AudioBuffer, mergeFrames, normalizeLanguage, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { OpenAI } from 'openai';
-import type { GroqAudioModels, WhisperModels } from './models.js';
+import type { WhisperModels } from './models.js';
 
 export interface STTOptions {
   apiKey?: string;
@@ -66,35 +66,6 @@ export class STT extends stt.STT {
         baseURL: this.#opts.baseURL,
         apiKey: this.#opts.apiKey,
       });
-  }
-
-  /**
-   * Create a new instance of Groq STT.
-   *
-   * @remarks
-   * `apiKey` must be set to your Groq API key, either using the argument or by setting the
-   * `GROQ_API_KEY` environment variable.
-   */
-  static withGroq(
-    opts: Partial<{
-      model: string | GroqAudioModels;
-      apiKey?: string;
-      baseURL?: string;
-      client: OpenAI;
-      language: string;
-      detectLanguage: boolean;
-    }> = {},
-  ): STT {
-    opts.apiKey = opts.apiKey || process.env.GROQ_API_KEY;
-    if (opts.apiKey === undefined) {
-      throw new Error('Groq API key is required, whether as an argument or as $GROQ_API_KEY');
-    }
-
-    return new STT({
-      model: 'whisper-large-v3-turbo',
-      baseURL: 'https://api.groq.com/openai/v1',
-      ...opts,
-    });
   }
 
   /**
