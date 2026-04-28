@@ -12,6 +12,6 @@ minimumReleaseAgeExclude:
   - uuid@14.0.0
 
 catalog:
-  '@livekit/rtc-node': ^0.13.25
+  '@livekit/rtc-node': ^0.13.26
   ws: ^8.18.0
   '@types/ws': ^8.5.10

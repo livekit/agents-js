@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@livekit/rtc-node':
-      specifier: ^0.13.25
-      version: 0.13.25
+      specifier: ^0.13.26
+      version: 0.13.26
     '@types/ws':
       specifier: ^8.5.10
       version: 8.5.10
@@ -211,7 +211,7 @@ importers:
     devDependencies:
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.15.30)
@@ -304,7 +304,7 @@ importers:
         version: 0.1.9
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0
@@ -378,7 +378,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -409,7 +409,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -446,7 +446,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -474,7 +474,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -508,7 +508,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -542,7 +542,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -576,7 +576,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -610,7 +610,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -650,7 +650,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -672,7 +672,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -703,7 +703,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -728,7 +728,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -784,7 +784,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -815,7 +815,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -855,7 +855,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -880,7 +880,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -908,7 +908,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -942,7 +942,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -967,7 +967,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -1001,7 +1001,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -1029,7 +1029,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -1060,7 +1060,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@types/node':
         specifier: ^22.5.5
         version: 22.15.30
@@ -1085,7 +1085,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -1122,7 +1122,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.25
+        version: 0.13.26
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -2227,8 +2227,8 @@ packages:
     resolution: {integrity: sha512-e01PH3AAS0/oN93LzgLDycDWzLGCpHqvZ35qzSuBWrG7V9mmQpdW/bOc6r9UFGZx/BcUXov4OTtao4OyDVVyHw==}
     engines: {node: '>= 18'}
 
-  '@livekit/rtc-node@0.13.25':
-    resolution: {integrity: sha512-4tL58O2DdTDP+g1ajyP5mgEOzjymD/u06IxWWVKBee1goEwDSQlMqEog/DJW34FoNNqXp1yRMCsphI4V/T1ILg==}
+  '@livekit/rtc-node@0.13.26':
+    resolution: {integrity: sha512-srgTgIIjWrj+M7n2LbCXCgEbIpyhzc6c12FnUEhn7EtvI8MkC/RjlkeVmBJgl5j7YEe9t4CKnhTwN96ONAdzsA==}
     engines: {node: '>= 18'}
 
   '@livekit/throws-transformer@0.1.8':
@@ -6451,7 +6451,7 @@ snapshots:
 
   '@livekit/noise-cancellation-node@0.1.9':
     dependencies:
-      '@livekit/rtc-node': 0.13.25
+      '@livekit/rtc-node': 0.13.26
       tsx: 4.21.0
     optionalDependencies:
       '@livekit/noise-cancellation-darwin-arm64': 0.1.9
@@ -6492,7 +6492,7 @@ snapshots:
       '@livekit/rtc-ffi-bindings-linux-x64-gnu': 0.12.52-patch.0
       '@livekit/rtc-ffi-bindings-win32-x64-msvc': 0.12.52-patch.0
 
-  '@livekit/rtc-node@0.13.25':
+  '@livekit/rtc-node@0.13.26':
     dependencies:
       '@datastructures-js/deque': 1.0.8
       '@livekit/mutex': 1.1.1
