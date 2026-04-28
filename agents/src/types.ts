@@ -7,6 +7,13 @@
  */
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 
+// Ref: python livekit-agents/livekit/agents/types.py - 54-71 lines
+export const NOT_GIVEN = Symbol('NOT_GIVEN');
+
+// Ref: python livekit-agents/livekit/agents/types.py - 70-71 lines
+export type NotGiven = typeof NOT_GIVEN;
+export type NotGivenOr<T> = T | NotGiven;
+
 /**
  * Connection options for API calls, controlling retry and timeout behavior.
  */

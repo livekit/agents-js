@@ -16,6 +16,7 @@ import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
+import { NOT_GIVEN, type NotGivenOr } from './types.js';
 
 /**
  * Recursively expands all nested properties of a type,
@@ -38,6 +39,11 @@ export type Expand<T> = T extends Function
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
 export const noop = () => {};
+
+// Ref: python livekit-agents/livekit/agents/utils/misc.py - 26-27 lines
+export function isGiven<T>(obj: NotGivenOr<T>): obj is T {
+  return obj !== NOT_GIVEN;
+}
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
@@ -352,43 +358,92 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
 /** @internal */
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private _alpha: number;
+  private _filtered: NotGivenOr<number>;
+  private _maxVal: NotGivenOr<number>;
+  private _minVal: NotGivenOr<number>;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 5-20 lines
+  constructor(
+    alpha: number,
+    maxVal: NotGivenOr<number> = NOT_GIVEN,
+    minVal: NotGivenOr<number> = NOT_GIVEN,
+    initial: NotGivenOr<number> = NOT_GIVEN,
+  ) {
+    if (!(0 < alpha && alpha <= 1)) {
+      throw new RangeError('alpha must be in (0, 1].');
+    }
+
+    this._alpha = alpha;
+    this._filtered = initial;
+    this._maxVal = maxVal;
+    this._minVal = minVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 21-36 lines
+  reset(
+    alpha: NotGivenOr<number> = NOT_GIVEN,
+    initial: NotGivenOr<number> = NOT_GIVEN,
+    minVal: NotGivenOr<number> = NOT_GIVEN,
+    maxVal: NotGivenOr<number> = NOT_GIVEN,
+  ) {
+    if (isGiven(alpha)) {
+      if (!(0 < alpha && alpha <= 1)) {
+        throw new RangeError('alpha must be in (0, 1].');
+      }
+      this._alpha = alpha;
     }
-    this.#filtered = undefined;
+    if (isGiven(initial)) {
+      this._filtered = initial;
+    }
+    if (isGiven(minVal)) {
+      this._minVal = minVal;
+    }
+    if (isGiven(maxVal)) {
+      this._maxVal = maxVal;
+    }
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 38-57 lines
+  apply(exp: number, sample: NotGivenOr<number> = NOT_GIVEN): number {
+    if (!isGiven(sample)) {
+      sample = this._filtered;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (isGiven(sample) && !isGiven(this._filtered)) {
+      this._filtered = sample;
+    } else if (isGiven(sample) && isGiven(this._filtered)) {
+      const a = this._alpha ** exp;
+      this._filtered = a * this._filtered + (1 - a) * sample;
     }
 
-    return this.#filtered;
+    if (!isGiven(this._filtered)) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (isGiven(this._maxVal) && this._filtered > this._maxVal) {
+      this._filtered = this._maxVal;
+    }
+
+    if (isGiven(this._minVal) && this._filtered < this._minVal) {
+      this._filtered = this._minVal;
+    }
+
+    return this._filtered;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 59-61 lines
+  get value(): number | undefined {
+    return isGiven(this._filtered) ? this._filtered : undefined;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this.value;
   }
 
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 63-64 lines
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    this._alpha = alpha;
   }
 }
 

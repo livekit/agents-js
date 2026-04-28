@@ -27,3 +27,11 @@ export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
 export * as testing from './testing/index.js';
+// Ref: python livekit-agents/livekit/agents/voice/endpointing.py - 10-322 lines
+export {
+  BaseEndpointing,
+  DynamicEndpointing,
+  createEndpointing,
+  defaultEndpointingOptions,
+  type EndpointingOptions,
+} from './turn_config/endpointing.js';
