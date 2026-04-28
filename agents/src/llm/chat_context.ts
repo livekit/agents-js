@@ -98,7 +98,6 @@ export interface MetricsReport {
    *
    * Assistant `ChatMessage` only.
    */
-  // Ref: python livekit-agents/livekit/agents/llm/chat_context.py - 294-301 lines
   playbackLatency?: number;
   e2eLatency?: number;
 }

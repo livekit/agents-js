@@ -793,7 +793,6 @@ export interface _AudioOut {
    * timestamp from `firstFrameFut` to derive the assistant's `playbackLatency`
    * metric.
    */
-  // Ref: python livekit-agents/livekit/agents/voice/generation.py - 380 lines
   startedForwardingAt?: number;
 }
 
@@ -831,7 +830,6 @@ async function forwardAudio(
       if (done) break;
 
       out.audio.push(frame);
-      // Ref: python livekit-agents/livekit/agents/voice/generation.py - 414-416 lines
       if (out.startedForwardingAt === undefined) {
         out.startedForwardingAt = Date.now();
       }

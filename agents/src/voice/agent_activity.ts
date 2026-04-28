@@ -1832,7 +1832,6 @@ export class AgentActivity implements RecognitionHooks {
     let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2195-2208 lines
     const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
       replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
@@ -1915,7 +1914,6 @@ export class AgentActivity implements RecognitionHooks {
         replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
         replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
 
-        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2320-2323 lines
         if (replyStartedForwardingAt !== undefined) {
           replyAssistantMetrics.playbackLatency =
             (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
@@ -2118,7 +2116,6 @@ export class AgentActivity implements RecognitionHooks {
 
     let agentStartedSpeakingAt: number | undefined;
     let agentStartedForwardingAt: number | undefined;
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2526-2548 lines
     const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
       agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
@@ -2199,7 +2196,6 @@ export class AgentActivity implements RecognitionHooks {
       assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
       assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2645-2647 lines
       if (agentStartedForwardingAt !== undefined) {
         assistantMetrics.playbackLatency =
           (agentStartedSpeakingAt - agentStartedForwardingAt) / 1000; // ms -> seconds
