@@ -157,6 +157,17 @@ class SegmentSynchronizerImpl {
   constructor(
     private readonly options: TextSyncOptions,
     private readonly nextInChain: TextOutput,
+    /**
+     * When true, fall back to seeding `startWallTime` / resolving `startFuture`
+     * from the first audio frame in `pushAudio` if `onPlaybackStarted` hasn't
+     * fired yet. Used for impls created by mid-flow segment rotation, where the
+     * wrapped `AudioOutput.firstFrameEmitted` stays true and won't propagate
+     * another `playbackStarted` event. The first impl (constructed in the
+     * `TranscriptionSynchronizer` constructor) leaves this `false` so it always
+     * trusts the chain — required for `waitPlaybackStart=true` on
+     * `DataStreamAudioOutput`.
+     */
+    private readonly seedFromPushAudio: boolean = false,
   ) {
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
@@ -227,11 +238,12 @@ class SegmentSynchronizerImpl {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
 
-    // Fallback for mid-playback segment rotation: nextInChainAudio.firstFrameEmitted
-    // can stay true across rotations (only reset on flush()), so onPlaybackStarted
-    // never fires for the new _impl. Seed startWallTime + startFuture from the first
-    // audio frame if onPlaybackStarted hasn't already done so.
-    if (!this.startFuture.done && frameDuration > 0) {
+    // For impls created by mid-flow rotation, nextInChainAudio.firstFrameEmitted
+    // stays true (only reset on flush()), so onPlaybackStarted never propagates
+    // here. Seed startWallTime + startFuture from the first audio frame.
+    // Do NOT do this on the first impl — it would defeat waitPlaybackStart=true
+    // by resolving startFuture before the lk.playback_started RPC arrives.
+    if (this.seedFromPushAudio && !this.startFuture.done && frameDuration > 0) {
       this.startWallTime = Date.now();
       this.startFuture.resolve();
     }
@@ -548,7 +560,7 @@ export class TranscriptionSynchronizer {
     }
 
     await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
+    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
   }
 }
 
