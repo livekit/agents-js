@@ -223,7 +223,9 @@ export class AvatarSession {
 
     // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 166-173 lines
     this.audioBuffer = new voice.QueueAudioOutput(SAMPLE_RATE);
-    this.audioBuffer.on('clear_buffer', () => this.onClearBuffer());
+    this.audioBuffer.on('clear_buffer', (ev: voice.QueueAudioOutputClearEvent) =>
+      this.onClearBuffer(ev),
+    );
     agentSession.output.audio = this.audioBuffer;
 
     // Spawn the main task with an attached error handler so a websocket open or
@@ -285,13 +287,20 @@ export class AvatarSession {
 
   /**
    * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 180-196 lines
+   *
+   * Gates `notifyPlaybackFinished` on the `wasCapturing` flag carried by the
+   * `clear_buffer` event (set synchronously inside `QueueAudioOutput.clearBuffer`)
+   * rather than the asynchronously-set `audioPlaying` field. The async flag races
+   * with the channel reader: `super.captureFrame` increments
+   * `playbackSegmentsCount` before `forwardAudio` reads the frame and flips
+   * `audioPlaying = true`, so an interrupt landing in that window would have
+   * skipped `notifyPlaybackFinished` and stalled `waitForPlayout()` forever.
    */
-  private onClearBuffer(): void {
+  private onClearBuffer(ev: voice.QueueAudioOutputClearEvent): void {
     this.chunkInterrupted = true;
-    const wasPlaying = this.audioPlaying;
     this.audioPlaying = false;
 
-    if (wasPlaying && this.audioBuffer) {
+    if (ev.wasCapturing && this.audioBuffer) {
       this.audioBuffer.notifyPlaybackFinished(this.playbackPosition, true);
       if (this.avatarSpeaking) {
         this.sendEvent({ type: 'agent.interrupt', event_id: shortuuid() });
@@ -354,6 +363,10 @@ export class AvatarSession {
         let chunkBuf: Uint8Array[] = [];
         let chunkDurationMs = 0;
         let isFirstChunk = true;
+        // True between an interrupt and the next AudioSegmentEnd: drops any
+        // frames that were already queued from the interrupted segment so
+        // they don't bleed into the next segment's first chunk.
+        let interruptDraining = false;
 
         const flushChunk = () => {
           if (chunkBuf.length === 0) return;
@@ -386,13 +399,24 @@ export class AvatarSession {
             if (this.chunkInterrupted) {
               this.chunkInterrupted = false;
               discardChunk();
+              interruptDraining = true;
             }
 
             if (value instanceof voice.AudioSegmentEnd) {
+              // The interrupted segment has fully drained; resume normal
+              // operation for the next segment.
+              interruptDraining = false;
               flushChunk();
               this.sendEvent({ type: 'agent.speak_end', event_id: shortuuid() });
               this.sendEvent({ type: 'agent.start_listening', event_id: shortuuid() });
               isFirstChunk = true;
+              continue;
+            }
+
+            if (interruptDraining) {
+              // Drop any frame from the interrupted segment that was already
+              // sitting in the channel; they would otherwise leak into the
+              // next segment's audio.
               continue;
             }
 

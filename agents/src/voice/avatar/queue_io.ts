@@ -22,12 +22,29 @@ export class AudioSegmentEnd {}
 export type QueueAudioOutputItem = AudioFrame | AudioSegmentEnd;
 
 /**
+ * Payload emitted with the {@link QueueAudioOutput} `'clear_buffer'` event.
+ *
+ * `wasCapturing` is set synchronously inside {@link QueueAudioOutput.clearBuffer}
+ * based on whether {@link QueueAudioOutput.captureFrame} had been called for the
+ * current segment. Consumers should use this — not their own asynchronous
+ * "is the avatar speaking?" flag — to decide whether to call
+ * {@link QueueAudioOutput.notifyPlaybackFinished}, otherwise an interrupt that
+ * lands in the window between `captureFrame` and the consumer's reader can leak
+ * `playbackSegmentsCount > playbackFinishedCount` and deadlock
+ * {@link AudioOutput.waitForPlayout}.
+ */
+export interface QueueAudioOutputClearEvent {
+  wasCapturing: boolean;
+}
+
+/**
  * AudioOutput implementation that buffers agent speech frames into a stream/queue so
  * they can be consumed by an external transport (e.g. a custom websocket protocol used
  * by an avatar plugin). Frames captured via {@link captureFrame} flow through the
  * underlying stream as-is; on {@link flush} an {@link AudioSegmentEnd} sentinel is
- * appended; on {@link clearBuffer} a `'clear_buffer'` event is emitted so the consumer
- * can drop any in-flight bytes and notify upstream of an interruption.
+ * appended; on {@link clearBuffer} a `'clear_buffer'` event is emitted with a
+ * {@link QueueAudioOutputClearEvent} payload so the consumer can drop any in-flight
+ * bytes and notify upstream of an interruption.
  *
  * Mirrors Python's `livekit.agents.voice.avatar.QueueAudioOutput`.
  *
@@ -76,8 +93,12 @@ export class QueueAudioOutput extends AudioOutput {
   }
 
   override clearBuffer(): void {
-    this.emit('clear_buffer');
+    // Capture the in-flight state synchronously so consumers can race-free decide
+    // whether to fire `notifyPlaybackFinished` (and avoid leaking the base class's
+    // `playbackSegmentsCount > playbackFinishedCount` bookkeeping).
+    const wasCapturing = this.startedSegment;
     this.startedSegment = false;
+    this.emit('clear_buffer', { wasCapturing } satisfies QueueAudioOutputClearEvent);
   }
 
   /** Close the underlying stream so consumers see a graceful end-of-stream. */
