@@ -512,6 +512,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     }
 
+    const closeWsIfOpen = () => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
+
+    let onAbort: (() => void) | undefined;
+
     try {
       // Wait for connection acknowledgment
       const connMsg = await waitForWsTextMessage(ws);
@@ -653,6 +661,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       });
 
+      // Ensure abort can break out of awaiting audioReaderDone by triggering ws.on('close').
+      onAbort = () => {
+        closeWsIfOpen();
+      };
+      this.abortSignal.addEventListener('abort', onAbort, { once: true });
+      if (this.abortSignal.aborted) {
+        onAbort();
+      }
+
       // --- Text batching loop ---
       let textBuf = '';
       let batchCount = 0;
@@ -757,7 +774,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
 
       // End speech session
-      ws.send(JSON.stringify({ event: 'speech-end' }));
+      if (!this.abortSignal.aborted && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ event: 'speech-end' }));
+      }
 
       // Wait for all audio to be received
       await audioReaderDone;
@@ -765,9 +784,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // Signal end of stream to framework
       this.queue.put(tts.SynthesizeStream.END_OF_STREAM);
     } finally {
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      if (onAbort) {
+        this.abortSignal.removeEventListener('abort', onAbort);
       }
+      closeWsIfOpen();
     }
   }
 }
