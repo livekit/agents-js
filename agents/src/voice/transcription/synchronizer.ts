@@ -227,6 +227,15 @@ class SegmentSynchronizerImpl {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
 
+    // Fallback for mid-playback segment rotation: nextInChainAudio.firstFrameEmitted
+    // can stay true across rotations (only reset on flush()), so onPlaybackStarted
+    // never fires for the new _impl. Seed startWallTime + startFuture from the first
+    // audio frame if onPlaybackStarted hasn't already done so.
+    if (!this.startFuture.done && frameDuration > 0) {
+      this.startWallTime = Date.now();
+      this.startFuture.resolve();
+    }
+
     this.audioData.pushedDuration += frameDuration;
   }
 
