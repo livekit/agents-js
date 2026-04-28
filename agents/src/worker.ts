@@ -132,6 +132,7 @@ export class ServerOptions {
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
+  agentNameIsEnv: boolean;
   serverType: JobType;
   maxRetry: number;
   wsURL: string;
@@ -156,6 +157,7 @@ export class ServerOptions {
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
+    agentNameIsEnv = undefined,
     serverType = JobType.JT_ROOM,
     maxRetry = MAX_RECONNECT_ATTEMPTS,
     wsURL = 'ws://localhost:7880',
@@ -183,7 +185,20 @@ export class ServerOptions {
     shutdownProcessTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
+    /**
+     * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
+     * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
+     * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
+     *
+     * By default it uses `LIVEKIT_AGENT_NAME` from environment.
+     */
     agentName?: string;
+    /**
+     * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
+     * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
+     * lost.
+     */
+    agentNameIsEnv?: boolean;
     serverType?: JobType;
     maxRetry?: number;
     wsURL?: string;
@@ -208,7 +223,18 @@ export class ServerOptions {
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
-    this.agentName = agentName;
+    // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
+    // cli.ts spreads an existing ServerOptions instance), so prefer it when defined.
+    if (agentName) {
+      this.agentName = agentName;
+      this.agentNameIsEnv = agentNameIsEnv ?? false;
+    } else if (process.env.LIVEKIT_AGENT_NAME) {
+      this.agentName = process.env.LIVEKIT_AGENT_NAME;
+      this.agentNameIsEnv = agentNameIsEnv ?? true;
+    } else {
+      this.agentName = '';
+      this.agentNameIsEnv = agentNameIsEnv ?? false;
+    }
     this.serverType = serverType;
     this.maxRetry = maxRetry;
     this.wsURL = wsURL;
@@ -341,6 +367,7 @@ export class AgentServer {
 
     const getWorkerInfo = () => ({
       agent_name: opts.agentName,
+      agent_name_is_env: opts.agentNameIsEnv,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
