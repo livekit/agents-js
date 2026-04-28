@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-elevenlabs",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "ElevenLabs plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

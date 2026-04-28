@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-silero
 
+## 1.4.0
+
+### Patch Changes
+
+- Updated dependencies [[`98635185eb5a9c11f49d4216622cf0ae6195dcd1`](https://github.com/livekit/agents-js/commit/98635185eb5a9c11f49d4216622cf0ae6195dcd1), [`12874304cbfc8d16a1ee225b1b408175457dc747`](https://github.com/livekit/agents-js/commit/12874304cbfc8d16a1ee225b1b408175457dc747), [`54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff`](https://github.com/livekit/agents-js/commit/54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff), [`cd60f8f5217acbf1ed7192d2983685f870b24b4b`](https://github.com/livekit/agents-js/commit/cd60f8f5217acbf1ed7192d2983685f870b24b4b), [`4abc309236dff93202dd24dd3772821faaa295df`](https://github.com/livekit/agents-js/commit/4abc309236dff93202dd24dd3772821faaa295df)]:
+  - @livekit/agents@1.4.0
+
 ## 1.3.0
 
 ### Patch Changes
