@@ -65,7 +65,6 @@ export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
-  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 69-70 lines
   onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
@@ -587,7 +586,6 @@ export class AudioRecognition {
           return;
         }
 
-        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 735-739 lines
         this.hooks.onFinalTranscript(
           ev,
           this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
@@ -643,7 +641,6 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
-        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 785-789 lines
         this.hooks.onInterimTranscript(
           ev,
           this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
@@ -707,7 +704,6 @@ export class AudioRecognition {
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
-        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 829-833 lines
         this.hooks.onInterimTranscript(
           ev,
           this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,

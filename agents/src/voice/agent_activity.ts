@@ -65,6 +65,7 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
+import type { AgentState } from './events.js';
 import {
   AgentSessionEventTypes,
   createAgentFalseInterruptionEvent,
@@ -75,7 +76,6 @@ import {
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
-import type { AgentState } from './events.js';
 import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
 import {
   type _AudioOut,
@@ -154,7 +154,6 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 130-134 lines
 interface PausedSpeechInfo {
   handle: SpeechHandle;
   agentState: AgentState;
@@ -197,7 +196,6 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 157-160 lines
   // for false interruption handling
   private pausedSpeech?: PausedSpeechInfo;
   private falseInterruptionTimer?: NodeJS.Timeout;
@@ -1034,7 +1032,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // recognition hooks
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1650-1684 lines
   onStartOfSpeech(ev: VADEvent): void {
     let speechStartTime = Date.now();
     if (ev) {
@@ -1054,14 +1051,12 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1666-1669 lines
     if (this.falseInterruptionTimer) {
       // cancel the timer when user starts speaking but leave the paused state unchanged
       clearTimeout(this.falseInterruptionTimer);
       this.falseInterruptionTimer = undefined;
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1671-1684 lines
     if (
       this.agentSession.agentState !== 'speaking' &&
       this.pauseEnabled() &&
@@ -1079,7 +1074,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1686-1709 lines
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
     if (ev) {
@@ -1098,7 +1092,6 @@ export class AgentActivity implements RecognitionHooks {
       otelContext: otelContext.active(),
     });
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1708-1709 lines
     if (this.pausedSpeech) {
       this.startFalseInterruptionTimer(this.pausedSpeech.timeout);
     }
@@ -1117,7 +1110,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1573-1646 lines
   private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
@@ -1163,18 +1155,28 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1614-1617 lines
       // reset the false interruption timer
       if (this.falseInterruptionTimer) {
         clearTimeout(this.falseInterruptionTimer);
         this.falseInterruptionTimer = undefined;
       }
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1629-1646 lines
       if (this.pauseEnabled()) {
         const timeout =
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
+
+        if (
+          this.isInterruptionDetectionEnabled &&
+          this.audioRecognition &&
+          this.agentSession.agentState === 'speaking'
+        ) {
+          this.audioRecognition.onStartOfOverlapSpeech(
+            0,
+            Date.now(),
+            this.agentSession._userSpeakingSpan,
+          );
+        }
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
@@ -1198,7 +1200,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1737-1747 lines
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity({
@@ -1209,7 +1210,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1749-1776 lines
   onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
@@ -1233,7 +1233,6 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.interruptByAudioActivity();
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1769-1776 lines
       if (
         speaking === false &&
         this.pausedSpeech &&
@@ -1248,7 +1247,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1778-1812 lines
   onFinalTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
@@ -1274,7 +1272,6 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.interruptByAudioActivity();
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1801-1808 lines
       if (
         speaking === false &&
         this.pausedSpeech &&
@@ -1288,7 +1285,6 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1810-1812 lines
     this.cancelSpeechPauseTask = this.cancelSpeechPause();
   }
 
@@ -1764,7 +1760,6 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1963-1964 lines
       await this.cancelSpeechPause();
 
       this.logger.info(
@@ -3249,7 +3244,6 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech._markDone();
       }
 
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 972-976 lines
       await this.cancelSpeechPause({ interrupt: false });
       this.cancelSpeechPauseTask = undefined;
 
@@ -3331,7 +3325,6 @@ export class AgentActivity implements RecognitionHooks {
     return undefined;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3387-3401 lines
   private updatePausedSpeech(speechHandle: SpeechHandle, timeout: number): void {
     if (this.pausedSpeech && this.pausedSpeech.handle === speechHandle) {
       this.pausedSpeech.timeout = timeout;
@@ -3344,7 +3337,6 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3403-3410 lines
   private pauseEnabled(): boolean {
     const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
     return !!(
@@ -3355,7 +3347,6 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3412-3452 lines
   private startFalseInterruptionTimer(timeout: number): void {
     if (this.falseInterruptionTimer !== undefined) {
       clearTimeout(this.falseInterruptionTimer);
@@ -3404,7 +3395,6 @@ export class AgentActivity implements RecognitionHooks {
     }, timeout);
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3454-3491 lines
   private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {
     const { interrupt = true } = options ?? {};
 

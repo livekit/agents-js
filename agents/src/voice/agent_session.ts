@@ -489,7 +489,6 @@ export class AgentSession<
       `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
     );
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - 832-840 lines
     if (
       this.sessionOptions.turnHandling.interruption.resumeFalseInterruption &&
       this.output.audio &&
@@ -1113,7 +1112,6 @@ export class AgentSession<
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - 1636-1646 lines
   private onAudioOutputChanged(): void {
     if (
       this.started &&

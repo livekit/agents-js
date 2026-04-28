@@ -280,7 +280,6 @@ export const createCloseEvent = (
   createdAt,
 });
 
-// Ref: python livekit-agents/livekit/agents/voice/events.py - 133-137 lines
 export type AgentFalseInterruptionEvent = {
   type: 'agent_false_interruption';
   /** Whether the false interruption was resumed automatically. */
