@@ -165,7 +165,11 @@ export class LiveAvatarAPI {
   ): Promise<unknown> {
     const url = this.apiUrl + endpoint;
     const maxRetry = this.connOptions.maxRetry;
-    for (let i = 0; i < maxRetry; i++) {
+    // `maxRetry` is the number of retries on top of the initial attempt, so we
+    // run up to `maxRetry + 1` total attempts. This matches the convention used
+    // by other agents-js plugins (e.g. lemonslice/runway) and ensures a single
+    // attempt still fires when callers configure `maxRetry: 0`.
+    for (let i = 0; i <= maxRetry; i++) {
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -191,12 +195,12 @@ export class LiveAvatarAPI {
         );
       }
 
-      if (i < maxRetry - 1) {
+      if (i < maxRetry) {
         await new Promise((resolve) => setTimeout(resolve, this.connOptions.retryIntervalMs));
       }
     }
     throw new APIConnectionError({
-      message: `Failed to call LiveAvatar API after ${maxRetry} retries`,
+      message: `Failed to call LiveAvatar API after ${maxRetry + 1} attempts`,
     });
   }
 }

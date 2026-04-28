@@ -27,73 +27,6 @@ const AVATAR_AGENT_IDENTITY = 'liveavatar-avatar-agent';
 const AVATAR_AGENT_NAME = 'liveavatar-avatar-agent';
 
 /**
- * Sentinel pushed onto the audio queue to mark the end of an agent speech segment.
- *
- * Ref: python livekit-agents/livekit/agents/voice/avatar/_types.py (AudioSegmentEnd)
- */
-class AudioSegmentEnd {}
-
-type AudioQueueItem = AudioFrame | AudioSegmentEnd;
-
-/**
- * AudioOutput that captures agent speech frames into a queue for the LiveAvatar
- * websocket forwarder to consume. Mirrors Python's `QueueAudioOutput` in spirit,
- * but with a single queue + segment-end sentinel rather than a typed queue.
- *
- * Ref: python livekit-agents/livekit/agents/voice/avatar/_queue_io.py
- */
-class QueueAudioOutput extends voice.AudioOutput {
-  private channel: streamNs.StreamChannel<AudioQueueItem> = streamNs.createStreamChannel();
-  private startedSegment = false;
-
-  constructor(sampleRate: number) {
-    super(sampleRate, undefined, { pause: false });
-  }
-
-  /** Returns the underlying readable stream of audio frames + segment-end sentinels. */
-  stream(): ReturnType<streamNs.StreamChannel<AudioQueueItem>['stream']> {
-    return this.channel.stream();
-  }
-
-  override async captureFrame(frame: AudioFrame): Promise<void> {
-    await super.captureFrame(frame);
-    this.startedSegment = true;
-    if (!this.channel.closed) {
-      await this.channel.write(frame);
-    }
-  }
-
-  override flush(): void {
-    super.flush();
-    if (this.startedSegment && !this.channel.closed) {
-      // Best-effort write — the consumer will drain on its own loop.
-      void this.channel.write(new AudioSegmentEnd());
-      this.startedSegment = false;
-    }
-  }
-
-  override clearBuffer(): void {
-    this.emit('clear_buffer');
-    this.startedSegment = false;
-  }
-
-  async aclose(): Promise<void> {
-    if (!this.channel.closed) {
-      await this.channel.close();
-    }
-  }
-
-  // Convenience helpers exposed for the AvatarSession driver.
-  notifyPlaybackStarted(createdAt: number = Date.now()): void {
-    this.onPlaybackStarted(createdAt);
-  }
-
-  notifyPlaybackFinished(playbackPosition: number, interrupted: boolean): void {
-    this.onPlaybackFinished({ playbackPosition, interrupted });
-  }
-}
-
-/**
  * Options for configuring an AvatarSession.
  *
  * Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 47-58 lines
@@ -162,7 +95,7 @@ export class AvatarSession {
   private sessionToken: string | null = null;
   private wsUrl: string | null = null;
 
-  private audioBuffer?: QueueAudioOutput;
+  private audioBuffer?: voice.QueueAudioOutput;
   private msgChannel?: streamNs.StreamChannel<Record<string, unknown>>;
   private msgChannelClosed = false;
   private mainTaskPromise?: Promise<void>;
@@ -289,11 +222,16 @@ export class AvatarSession {
     });
 
     // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 166-173 lines
-    this.audioBuffer = new QueueAudioOutput(SAMPLE_RATE);
+    this.audioBuffer = new voice.QueueAudioOutput(SAMPLE_RATE);
     this.audioBuffer.on('clear_buffer', () => this.onClearBuffer());
     agentSession.output.audio = this.audioBuffer;
 
-    this.mainTaskPromise = this.mainTask();
+    // Spawn the main task with an attached error handler so a websocket open or
+    // protocol failure does not surface as an unhandled rejection. The main task
+    // itself handles its own cleanup in finally.
+    this.mainTaskPromise = this.mainTask().catch((e) => {
+      this.#logger.warn({ error: String(e) }, 'LiveAvatar main task failed');
+    });
 
     // Best-effort cleanup on job shutdown.
     try {
@@ -394,206 +332,210 @@ export class AvatarSession {
     if (!this.wsUrl) {
       throw new LiveAvatarException('ws_url not set');
     }
-    const ws = new WebSocket(this.wsUrl);
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', resolve);
-      ws.once('error', reject);
-    });
 
+    let ws: WebSocket | null = null;
     let resetKeepAlive = () => {};
     const closingResolver = new Future<void>();
 
-    const forwardAudio = async (): Promise<void> => {
-      if (!this.audioBuffer) return;
-      await this.sessionConnectedFuture.await;
-
-      let chunkBuf: Uint8Array[] = [];
-      let chunkDurationMs = 0;
-      let isFirstChunk = true;
-
-      const flushChunk = () => {
-        if (chunkBuf.length === 0) return;
-        const total = chunkBuf.reduce((acc, c) => acc + c.length, 0);
-        const merged = new Uint8Array(total);
-        let offset = 0;
-        for (const c of chunkBuf) {
-          merged.set(c, offset);
-          offset += c.length;
-        }
-        const encoded = Buffer.from(merged).toString('base64');
-        this.sendEvent({ type: 'agent.speak', event_id: shortuuid(), audio: encoded });
-        this.playbackPosition += chunkDurationMs / 1000;
-        chunkBuf = [];
-        chunkDurationMs = 0;
-        isFirstChunk = false;
-      };
-
-      const discardChunk = () => {
-        chunkBuf = [];
-        chunkDurationMs = 0;
-        isFirstChunk = true;
-      };
-
-      const reader = this.audioBuffer.stream().getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (this.chunkInterrupted) {
-            this.chunkInterrupted = false;
-            discardChunk();
-          }
-
-          if (value instanceof AudioSegmentEnd) {
-            flushChunk();
-            this.sendEvent({ type: 'agent.speak_end', event_id: shortuuid() });
-            this.sendEvent({ type: 'agent.start_listening', event_id: shortuuid() });
-            isFirstChunk = true;
-            continue;
-          }
-
-          if (!this.audioPlaying) {
-            this.audioPlaying = true;
-          }
-          for (const resampled of this.resampleAudio(value)) {
-            chunkBuf.push(new Uint8Array(resampled.data.buffer));
-            const frameDurationMs = (resampled.samplesPerChannel / resampled.sampleRate) * 1000;
-            chunkDurationMs += frameDurationMs;
-            const thresholdMs = isFirstChunk
-              ? FIRST_CHUNK_THRESHOLD_MS
-              : SUBSEQUENT_CHUNK_THRESHOLD_MS;
-            if (chunkDurationMs >= thresholdMs) {
-              flushChunk();
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    };
-
-    const sendTask = async (): Promise<void> => {
-      if (!this.msgChannel) return;
-      const reader = this.msgChannel.stream().getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          try {
-            ws.send(JSON.stringify(value));
-            resetKeepAlive();
-          } catch (e) {
-            this.#logger.warn({ error: String(e) }, 'failed to send LiveAvatar event');
-            break;
-          }
-        }
-      } finally {
-        reader.releaseLock();
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-        this.closing = true;
-        closingResolver.resolve();
-      }
-    };
-
-    const recvTask = async (): Promise<void> => {
-      const messages: Promise<RawData>[] = [];
-      const queue: RawData[] = [];
-      let waiter: ((m: RawData) => void) | null = null;
-
-      ws.on('message', (data: RawData) => {
-        if (waiter) {
-          const w = waiter;
-          waiter = null;
-          w(data);
-        } else {
-          queue.push(data);
-        }
+    try {
+      // Open the websocket inside the guarded section so DNS/TLS/network failures
+      // are routed through the same cleanup path as runtime errors.
+      const wsRef = new WebSocket(this.wsUrl);
+      await new Promise<void>((resolve, reject) => {
+        wsRef.once('open', resolve);
+        wsRef.once('error', reject);
       });
-      const closedFuture = new Future<void>();
-      ws.on('close', () => closedFuture.resolve());
-      ws.on('error', () => closedFuture.resolve());
+      ws = wsRef;
 
-      const nextMessage = (): Promise<RawData | null> =>
-        new Promise((resolve) => {
-          if (queue.length > 0) {
-            resolve(queue.shift()!);
-            return;
-          }
-          waiter = (m: RawData) => resolve(m);
-          void closedFuture.await.then(() => {
-            if (waiter) {
-              waiter = null;
-              resolve(null);
-            }
-          });
-        });
+      const forwardAudio = async (): Promise<void> => {
+        if (!this.audioBuffer) return;
+        await this.sessionConnectedFuture.await;
 
-      while (true) {
-        const msg = await nextMessage();
-        if (msg === null) {
-          if (this.closing) return;
-          if (this.isSandbox) {
-            this.#logger.warn('The LiveAvatar Sandbox connection surpassed the 1 minute limit');
-            return;
+        let chunkBuf: Uint8Array[] = [];
+        let chunkDurationMs = 0;
+        let isFirstChunk = true;
+
+        const flushChunk = () => {
+          if (chunkBuf.length === 0) return;
+          const total = chunkBuf.reduce((acc, c) => acc + c.length, 0);
+          const merged = new Uint8Array(total);
+          let offset = 0;
+          for (const c of chunkBuf) {
+            merged.set(c, offset);
+            offset += c.length;
           }
-          throw new APIConnectionError({ message: 'LiveAvatar connection closed unexpectedly.' });
-        }
-        let parsed: { type?: string; state?: string };
+          const encoded = Buffer.from(merged).toString('base64');
+          this.sendEvent({ type: 'agent.speak', event_id: shortuuid(), audio: encoded });
+          this.playbackPosition += chunkDurationMs / 1000;
+          chunkBuf = [];
+          chunkDurationMs = 0;
+          isFirstChunk = false;
+        };
+
+        const discardChunk = () => {
+          chunkBuf = [];
+          chunkDurationMs = 0;
+          isFirstChunk = true;
+        };
+
+        const reader = this.audioBuffer.stream().getReader();
         try {
-          parsed = JSON.parse(msg.toString()) as { type?: string; state?: string };
-        } catch {
-          continue;
-        }
-        switch (parsed.type) {
-          case 'session.state_updated':
-            this.#logger.debug({ state: parsed.state }, 'LiveAvatar session state');
-            if (parsed.state === 'connected') {
-              if (!this.sessionConnectedFuture.done) {
-                this.sessionConnectedFuture.resolve();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (this.chunkInterrupted) {
+              this.chunkInterrupted = false;
+              discardChunk();
+            }
+
+            if (value instanceof voice.AudioSegmentEnd) {
+              flushChunk();
+              this.sendEvent({ type: 'agent.speak_end', event_id: shortuuid() });
+              this.sendEvent({ type: 'agent.start_listening', event_id: shortuuid() });
+              isFirstChunk = true;
+              continue;
+            }
+
+            if (!this.audioPlaying) {
+              this.audioPlaying = true;
+            }
+            for (const resampled of this.resampleAudio(value)) {
+              chunkBuf.push(new Uint8Array(resampled.data.buffer));
+              const frameDurationMs = (resampled.samplesPerChannel / resampled.sampleRate) * 1000;
+              chunkDurationMs += frameDurationMs;
+              const thresholdMs = isFirstChunk
+                ? FIRST_CHUNK_THRESHOLD_MS
+                : SUBSEQUENT_CHUNK_THRESHOLD_MS;
+              if (chunkDurationMs >= thresholdMs) {
+                flushChunk();
               }
             }
-            break;
-          case 'agent.speak_interrupted':
-            this.handleAgentSpeakInterrupted();
-            break;
-          case 'agent.speak_ended':
-            this.handleAgentSpeakEnded();
-            break;
-          case 'agent.speak_started':
-            this.handleAgentSpeakStarted();
-            break;
-          default:
-            this.#logger.debug({ type: parsed.type }, 'Unhandled LiveAvatar event');
+          }
+        } finally {
+          reader.releaseLock();
         }
-      }
-      // unreachable
-      void messages;
-    };
-
-    const keepAliveTask = async (): Promise<void> => {
-      await this.sessionConnectedFuture.await;
-      let timer: NodeJS.Timeout | null = null;
-      const tick = () => {
-        if (this.closing) return;
-        this.sendEvent({ type: 'session.keep_alive', event_id: shortuuid() });
-        timer = setTimeout(tick, KEEP_ALIVE_INTERVAL_MS);
       };
-      timer = setTimeout(tick, KEEP_ALIVE_INTERVAL_MS);
-      resetKeepAlive = () => {
-        if (timer) clearTimeout(timer);
-        if (!this.closing) {
+
+      const sendTask = async (): Promise<void> => {
+        if (!this.msgChannel) return;
+        const reader = this.msgChannel.stream().getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            try {
+              wsRef.send(JSON.stringify(value));
+              resetKeepAlive();
+            } catch (e) {
+              this.#logger.warn({ error: String(e) }, 'failed to send LiveAvatar event');
+              break;
+            }
+          }
+        } finally {
+          reader.releaseLock();
+          try {
+            wsRef.close();
+          } catch {
+            // ignore
+          }
+          this.closing = true;
+          closingResolver.resolve();
+        }
+      };
+
+      const recvTask = async (): Promise<void> => {
+        const queue: RawData[] = [];
+        let waiter: ((m: RawData) => void) | null = null;
+
+        wsRef.on('message', (data: RawData) => {
+          if (waiter) {
+            const w = waiter;
+            waiter = null;
+            w(data);
+          } else {
+            queue.push(data);
+          }
+        });
+        const closedFuture = new Future<void>();
+        wsRef.on('close', () => closedFuture.resolve());
+        wsRef.on('error', () => closedFuture.resolve());
+
+        const nextMessage = (): Promise<RawData | null> =>
+          new Promise((resolve) => {
+            if (queue.length > 0) {
+              resolve(queue.shift()!);
+              return;
+            }
+            waiter = (m: RawData) => resolve(m);
+            void closedFuture.await.then(() => {
+              if (waiter) {
+                waiter = null;
+                resolve(null);
+              }
+            });
+          });
+
+        while (true) {
+          const msg = await nextMessage();
+          if (msg === null) {
+            if (this.closing) return;
+            if (this.isSandbox) {
+              this.#logger.warn('The LiveAvatar Sandbox connection surpassed the 1 minute limit');
+              return;
+            }
+            throw new APIConnectionError({
+              message: 'LiveAvatar connection closed unexpectedly.',
+            });
+          }
+          let parsed: { type?: string; state?: string };
+          try {
+            parsed = JSON.parse(msg.toString()) as { type?: string; state?: string };
+          } catch {
+            continue;
+          }
+          switch (parsed.type) {
+            case 'session.state_updated':
+              this.#logger.debug({ state: parsed.state }, 'LiveAvatar session state');
+              if (parsed.state === 'connected') {
+                if (!this.sessionConnectedFuture.done) {
+                  this.sessionConnectedFuture.resolve();
+                }
+              }
+              break;
+            case 'agent.speak_interrupted':
+              this.handleAgentSpeakInterrupted();
+              break;
+            case 'agent.speak_ended':
+              this.handleAgentSpeakEnded();
+              break;
+            case 'agent.speak_started':
+              this.handleAgentSpeakStarted();
+              break;
+            default:
+              this.#logger.debug({ type: parsed.type }, 'Unhandled LiveAvatar event');
+          }
+        }
+      };
+
+      const keepAliveTask = async (): Promise<void> => {
+        await this.sessionConnectedFuture.await;
+        let timer: NodeJS.Timeout | null = null;
+        const tick = () => {
+          if (this.closing) return;
+          this.sendEvent({ type: 'session.keep_alive', event_id: shortuuid() });
           timer = setTimeout(tick, KEEP_ALIVE_INTERVAL_MS);
-        }
+        };
+        timer = setTimeout(tick, KEEP_ALIVE_INTERVAL_MS);
+        resetKeepAlive = () => {
+          if (timer) clearTimeout(timer);
+          if (!this.closing) {
+            timer = setTimeout(tick, KEEP_ALIVE_INTERVAL_MS);
+          }
+        };
+        await closingResolver.await;
+        if (timer) clearTimeout(timer);
       };
-      await closingResolver.await;
-      if (timer) clearTimeout(timer);
-    };
 
-    try {
       await Promise.race([forwardAudio(), sendTask(), recvTask(), keepAliveTask()]);
     } catch (e) {
       this.#logger.warn({ error: String(e) }, 'LiveAvatar main task error');
@@ -604,6 +546,7 @@ export class AvatarSession {
       try {
         if (this.sessionId && this.sessionToken) {
           const data = await this.api.stopStreamingSession(this.sessionId, this.sessionToken);
+          // Mirrors python livekit-plugins-liveavatar/.../avatar.py - 304 line
           if (data.code <= 200) {
             this.#logger.info({ sessionId: this.sessionId }, 'LiveAvatar session stopped');
           }
@@ -623,10 +566,12 @@ export class AvatarSession {
         }
         this.audioResampler = null;
       }
-      try {
-        ws.close();
-      } catch {
-        // ignore
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
       }
     }
   }

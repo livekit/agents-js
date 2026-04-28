@@ -2,3 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export * from './datastream_io.js';
+export * from './queue_io.js';

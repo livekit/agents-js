@@ -1,6 +1,6 @@
 ---
 '@livekit/agents-plugin-liveavatar': patch
-'@livekit/agents': minor
+'@livekit/agents': patch
 ---
 
 Port the `liveavatar` plugin from the Python `livekit-agents` repo, including the new `videoQuality` parameter from livekit/agents#5552.
