@@ -204,6 +204,22 @@ class SegmentSynchronizerImpl {
     return this.outputStream.readable;
   }
 
+  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 174-187 lines
+  onPlaybackStarted(startTime: number): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after close');
+      return;
+    }
+
+    if (this.startFuture.done) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after startFuture is set');
+      return;
+    }
+
+    this.startWallTime = startTime;
+    this.startFuture.resolve();
+  }
+
   pushAudio(frame: AudioFrame) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushAudio called after close');
@@ -211,11 +227,6 @@ class SegmentSynchronizerImpl {
     }
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-
-    if (!this.startWallTime && frameDuration > 0) {
-      this.startWallTime = Date.now();
-      this.startFuture.resolve();
-    }
 
     this.audioData.pushedDuration += frameDuration;
   }
@@ -594,6 +605,15 @@ class SyncedAudioOutput extends AudioOutput {
 
   clearBuffer() {
     this.nextInChainAudio.clearBuffer();
+  }
+
+  // this is going to be automatically called by the next_in_chain
+  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 599-602 lines
+  onPlaybackStarted(createdAt: number): void {
+    super.onPlaybackStarted(createdAt);
+    if (this.synchronizer.enabled) {
+      this.synchronizer._impl.onPlaybackStarted(createdAt);
+    }
   }
 
   // this is going to be automatically called by the next_in_chain

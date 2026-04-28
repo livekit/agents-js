@@ -22,6 +22,8 @@ import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
 const RPC_PLAYBACK_FINISHED = 'lk.playback_finished';
+// Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 21 lines
+const RPC_PLAYBACK_STARTED = 'lk.playback_started';
 const AUDIO_STREAM_TOPIC = 'lk.audio_stream';
 
 export interface DataStreamAudioOutputOptions {
@@ -29,6 +31,14 @@ export interface DataStreamAudioOutputOptions {
   destinationIdentity: string;
   sampleRate?: number;
   waitRemoteTrack?: TrackKind;
+  /**
+   * When true, defer the `playbackStarted` event until the remote participant invokes the
+   * `lk.playback_started` RPC. When false (default), the event fires eagerly the moment the
+   * first audio frame is captured. Set to true when the remote avatar worker can notify
+   * actual playout start (e.g. an `AvatarRunner`).
+   */
+  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 46 lines
+  waitPlaybackStart?: boolean;
 }
 
 /**
@@ -37,11 +47,15 @@ export interface DataStreamAudioOutputOptions {
 export class DataStreamAudioOutput extends AudioOutput {
   static _playbackFinishedRpcRegistered: boolean = false;
   static _playbackFinishedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
+  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 35 lines
+  static _playbackStartedRpcRegistered: boolean = false;
+  static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
 
   private room: Room;
   private destinationIdentity: string;
   private roomConnectedFuture: Future<void>;
   private waitRemoteTrack?: TrackKind;
+  private waitPlaybackStart: boolean;
   private streamWriter?: ByteStreamWriter;
   private pushedDuration: number = 0;
   private started: boolean = false;
@@ -54,11 +68,12 @@ export class DataStreamAudioOutput extends AudioOutput {
   constructor(opts: DataStreamAudioOutputOptions) {
     super(opts.sampleRate, undefined, { pause: false });
 
-    const { room, destinationIdentity, sampleRate, waitRemoteTrack } = opts;
+    const { room, destinationIdentity, sampleRate, waitRemoteTrack, waitPlaybackStart } = opts;
     this.room = room;
     this.destinationIdentity = destinationIdentity;
     this.sampleRate = sampleRate;
     this.waitRemoteTrack = waitRemoteTrack;
+    this.waitPlaybackStart = waitPlaybackStart ?? false;
 
     const onRoomConnected = async () => {
       if (this.startTask) return;
@@ -71,6 +86,15 @@ export class DataStreamAudioOutput extends AudioOutput {
         callerIdentity: this.destinationIdentity,
         handler: (data) => this.handlePlaybackFinished(data),
       });
+
+      // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 79-84 lines
+      if (this.waitPlaybackStart) {
+        DataStreamAudioOutput.registerPlaybackStartedRpc({
+          room,
+          callerIdentity: this.destinationIdentity,
+          handler: (data) => this.handlePlaybackStarted(data),
+        });
+      }
 
       this.startTask = Task.from(({ signal }) => this._start(signal));
     };
@@ -149,7 +173,12 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
-      this.onPlaybackStarted(Date.now());
+      // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 158-161 lines
+      if (!this.waitPlaybackStart) {
+        // approximate the playback_started time; the frame isn't actually playing yet,
+        // used when the remote avatar doesn't send lk.playback_started notifications
+        this.onPlaybackStarted(Date.now());
+      }
     }
 
     if (!this.streamWriter) {
@@ -251,5 +280,58 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     room.localParticipant?.registerRpcMethod(RPC_PLAYBACK_FINISHED, rpcHandler);
     DataStreamAudioOutput._playbackFinishedRpcRegistered = true;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 252-266 lines
+  private handlePlaybackStarted(data: RpcInvocationData): string {
+    if (data.callerIdentity !== this.destinationIdentity) {
+      this.#logger.warn(
+        {
+          callerIdentity: data.callerIdentity,
+          destinationIdentity: this.destinationIdentity,
+        },
+        'playback started event received from unexpected participant',
+      );
+      return 'reject';
+    }
+
+    this.onPlaybackStarted(Date.now());
+    return 'ok';
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 303-334 lines
+  static registerPlaybackStartedRpc({
+    room,
+    callerIdentity,
+    handler,
+  }: {
+    room: Room;
+    callerIdentity: string;
+    handler: (data: RpcInvocationData) => string;
+  }) {
+    DataStreamAudioOutput._playbackStartedHandlers[callerIdentity] = handler;
+
+    if (DataStreamAudioOutput._playbackStartedRpcRegistered) {
+      return;
+    }
+
+    const rpcHandler = async (data: RpcInvocationData): Promise<string> => {
+      const handler = DataStreamAudioOutput._playbackStartedHandlers[data.callerIdentity];
+      if (!handler) {
+        log().warn(
+          {
+            callerIdentity: data.callerIdentity,
+            expectedIdentities: Object.keys(DataStreamAudioOutput._playbackStartedHandlers),
+          },
+          'playback started event received from unexpected participant',
+        );
+
+        return 'reject';
+      }
+      return handler(data);
+    };
+
+    room.localParticipant?.registerRpcMethod(RPC_PLAYBACK_STARTED, rpcHandler);
+    DataStreamAudioOutput._playbackStartedRpcRegistered = true;
   }
 }
