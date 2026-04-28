@@ -278,7 +278,7 @@ importers:
       '@livekit/agents-plugin-minimax':
         specifier: workspace:*
         version: link:../plugins/minimax
-      '@livekit/agents-plugin-mistral':
+      '@livekit/agents-plugin-mistralai':
         specifier: workspace:*
         version: link:../plugins/mistralai
       '@livekit/agents-plugin-neuphonic':

@@ -1,5 +1,5 @@
 {
-  "name": "@livekit/agents-plugin-mistral",
+  "name": "@livekit/agents-plugin-mistralai",
   "version": "1.3.0",
   "description": "Mistral AI plugin for LiveKit Node Agents",
   "main": "dist/index.js",

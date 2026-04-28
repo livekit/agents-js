@@ -16,7 +16,7 @@ capabilities via the official `@mistralai/mistralai` SDK.
 ## Installation
 
 ```bash
-npm install @livekit/agents-plugin-mistral
+npm install @livekit/agents-plugin-mistralai
 ```
 
 ## Usage
@@ -27,7 +27,7 @@ Uses the Mistral [Conversations API](https://docs.mistral.ai/capabilities/conver
 with stateful sessions and incremental context.
 
 ```ts
-import * as mistral from '@livekit/agents-plugin-mistral';
+import * as mistral from '@livekit/agents-plugin-mistralai';
 
 const llm = new mistral.LLM({
   model: 'mistral-small-latest',
