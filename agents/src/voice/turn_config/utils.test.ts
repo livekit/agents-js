@@ -84,6 +84,19 @@ describe('migrateLegacyOptions', () => {
 
     expect(result.turnHandling.turnDetection).toBe('vad');
   });
+
+  it('should preserve dynamic endpointing mode and alpha from turnHandling', () => {
+    const { agentSessionOptions: result } = migrateLegacyOptions({
+      turnHandling: {
+        endpointing: { mode: 'dynamic', alpha: 0.3 },
+      },
+    });
+
+    expect(result.turnHandling.endpointing.mode).toBe('dynamic');
+    expect(result.turnHandling.endpointing.alpha).toBe(0.3);
+    expect(result.turnHandling.endpointing.minDelay).toBe(defaultEndpointingOptions.minDelay);
+    expect(result.turnHandling.endpointing.maxDelay).toBe(defaultEndpointingOptions.maxDelay);
+  });
 });
 
 describe('migrateTurnHandling', () => {

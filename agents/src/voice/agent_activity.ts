@@ -65,6 +65,7 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
+import { createEndpointing } from './endpointing.js';
 import {
   AgentSessionEventTypes,
   createErrorEvent,
@@ -88,6 +89,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -186,6 +188,8 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGenerationCount = 0;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 207-207 lines
+  private interruptionDetected = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -206,6 +210,8 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1494-1499 lines
+    this.interruptionDetected = ev.isInterruption;
     this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
@@ -477,12 +483,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.minDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.maxDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 779-786 lines
+      endpointing: createEndpointing(this.endpointingOptions),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -661,19 +663,18 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
-  // get minEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.minDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.minDelay
-  //   );
-  // }
+  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 330-339 lines
+  get endpointingOptions(): EndpointingOptions {
+    const agentEndpointing = this.agent.turnHandling?.endpointing ?? {};
+    const sessionEndpointing = this.agentSession.sessionOptions.turnHandling.endpointing;
 
-  // get maxEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.maxDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-  //   );
-  // }
+    return {
+      mode: agentEndpointing.mode ?? sessionEndpointing.mode,
+      minDelay: agentEndpointing.minDelay ?? sessionEndpointing.minDelay,
+      maxDelay: agentEndpointing.maxDelay ?? sessionEndpointing.maxDelay,
+      alpha: agentEndpointing.alpha ?? sessionEndpointing.alpha,
+    };
+  }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -715,13 +716,14 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({
-    toolChoice,
-    turnDetection,
-  }: {
+  updateOptions(options: {
     toolChoice?: ToolChoice | null;
-    turnDetection?: TurnDetectionMode;
+    endpointingOpts?: EndpointingOptions;
+    turnDetection?: TurnDetectionMode | null;
   }): void {
+    const { toolChoice, endpointingOpts, turnDetection } = options;
+    const hasTurnDetection = Object.hasOwn(options, 'turnDetection');
+
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
@@ -730,8 +732,10 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
 
-    if (turnDetection !== undefined) {
-      this.turnDetectionMode = turnDetection;
+    if (hasTurnDetection) {
+      const updatedTurnDetection = turnDetection ?? undefined;
+      this.turnDetectionMode =
+        typeof updatedTurnDetection === 'string' ? updatedTurnDetection : undefined;
       this.isDefaultInterruptionByAudioActivityEnabled =
         this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
 
@@ -743,7 +747,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.audioRecognition) {
-      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 487-493 lines
+      this.audioRecognition.updateOptions({
+        ...(endpointingOpts !== undefined
+          ? { endpointing: createEndpointing(endpointingOpts) }
+          : {}),
+        ...(hasTurnDetection ? { turnDetection } : {}),
+      });
     }
   }
 
@@ -922,12 +932,9 @@ export class AgentActivity implements RecognitionHooks {
 
     if (!this.vad) {
       this.agentSession._updateUserState('speaking');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfOverlapSpeech(
-          0,
-          Date.now(),
-          this.agentSession._userSpeakingSpan,
-        );
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1501-1508 lines
+        this.audioRecognition.onStartOfSpeech(Date.now(), 0, this.agentSession._userSpeakingSpan);
       }
     }
 
@@ -947,8 +954,9 @@ export class AgentActivity implements RecognitionHooks {
     this.logger.info(ev, 'onInputSpeechStopped');
 
     if (!this.vad) {
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1519-1525 lines
+        this.audioRecognition.onEndOfSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
       this.agentSession._updateUserState('listening');
     }
@@ -1030,14 +1038,15 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechStartTime,
       otelContext: otelContext.active(),
     });
-    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-      // Pass speechStartTime as the absolute startedAt timestamp.
-      this.audioRecognition.onStartOfOverlapSpeech(
-        ev.speechDuration,
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1653-1667 lines
+    if (this.audioRecognition) {
+      this.audioRecognition.onStartOfSpeech(
         speechStartTime,
+        ev.speechDuration,
         this.agentSession._userSpeakingSpan,
       );
     }
+    this.interruptionDetected = false;
   }
 
   onEndOfSpeech(ev: VADEvent): void {
@@ -1046,11 +1055,12 @@ export class AgentActivity implements RecognitionHooks {
       // Subtract both silenceDuration and inferenceDuration to correct for VAD model latency.
       speechEndTime = speechEndTime - ev.silenceDuration - ev.inferenceDuration;
     }
-    if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-      // Pass speechEndTime as the absolute endedAt timestamp.
-      this.audioRecognition.onEndOfOverlapSpeech(
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1689-1703 lines
+    if (this.audioRecognition) {
+      this.audioRecognition.onEndOfSpeech(
         speechEndTime,
         this.agentSession._userSpeakingSpan,
+        this.isInterruptionDetectionEnabled ? this.interruptionDetected : undefined,
       );
     }
     this.agentSession._updateUserState('listening', {
@@ -1117,6 +1127,15 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
+      if (
+        this.audioRecognition &&
+        !this.audioRecognition.endpointing.overlapping &&
+        this.agentSession.agentState === 'speaking'
+      ) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1622-1630 lines
+        this.audioRecognition.onStartOfSpeech(Date.now());
+      }
+
       this.logger.info(
         { 'speech id': this._currentSpeech.id },
         'speech interrupted by audio activity',
@@ -1839,8 +1858,11 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2214-2222 lines
+        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.isInterruptionByAudioActivityEnabled = false;
       }
     };
@@ -1932,7 +1954,8 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2111-2114 lines
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
@@ -2123,8 +2146,11 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2570-2579 lines
+        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.isInterruptionByAudioActivityEnabled = false;
       }
     };
@@ -2286,8 +2312,11 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (this.audioRecognition) {
+          // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2340-2343 lines
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2329,11 +2358,12 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+      if (this.audioRecognition) {
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2711-2714 lines
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
 

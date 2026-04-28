@@ -128,6 +128,7 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
 export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
     turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
+    // Ref: python livekit-agents/livekit/agents/voice/turn.py - 186-190 lines
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
     preemptiveGeneration: {

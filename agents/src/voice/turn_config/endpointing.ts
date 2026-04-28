@@ -7,7 +7,7 @@
 export interface EndpointingOptions {
   /**
    * Endpointing mode. `"fixed"` uses a fixed delay, `"dynamic"` adjusts delay based on
-   * end-of-utterance prediction.
+   * observed speech activity.
    * @defaultValue "fixed"
    */
   mode: 'fixed' | 'dynamic';
@@ -24,10 +24,19 @@ export interface EndpointingOptions {
    * @defaultValue 3000
    */
   maxDelay: number;
+  /**
+   * Exponential moving average coefficient for dynamic endpointing. Higher values give more weight
+   * to history.
+   * @defaultValue 0.9
+   */
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 63-66 lines
+  alpha: number;
 }
 
+// Ref: python livekit-agents/livekit/agents/voice/turn.py - 69-74 lines
 export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  alpha: 0.9,
 } as const satisfies EndpointingOptions;

@@ -81,6 +81,7 @@ import {
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
@@ -920,6 +921,68 @@ export class AgentSession<
 
   async close(): Promise<void> {
     await this.closeImpl(CloseReason.USER_INITIATED);
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py - 1016-1073 lines
+  updateOptions(
+    options: {
+      endpointingOpts?: Partial<EndpointingOptions>;
+      turnDetection?: TurnDetectionMode | null;
+      minEndpointingDelay?: number;
+      maxEndpointingDelay?: number;
+    } = {},
+  ): void {
+    const hasMinEndpointingDelay =
+      Object.hasOwn(options, 'minEndpointingDelay') && options.minEndpointingDelay !== undefined;
+    const hasMaxEndpointingDelay =
+      Object.hasOwn(options, 'maxEndpointingDelay') && options.maxEndpointingDelay !== undefined;
+    const hasTurnDetection = Object.hasOwn(options, 'turnDetection');
+    let endpointingOpts = options.endpointingOpts;
+    let hasEndpointingOpts = Object.hasOwn(options, 'endpointingOpts');
+
+    if (hasMinEndpointingDelay || hasMaxEndpointingDelay) {
+      this.logger.warn(
+        'minEndpointingDelay and maxEndpointingDelay are deprecated, use endpointingOpts instead',
+      );
+      endpointingOpts = {
+        mode: this.sessionOptions.turnHandling.endpointing.mode,
+        minDelay: hasMinEndpointingDelay
+          ? options.minEndpointingDelay
+          : this.sessionOptions.turnHandling.endpointing.minDelay,
+        maxDelay: hasMaxEndpointingDelay
+          ? options.maxEndpointingDelay
+          : this.sessionOptions.turnHandling.endpointing.maxDelay,
+      };
+      hasEndpointingOpts = true;
+    }
+
+    if (hasEndpointingOpts && endpointingOpts !== undefined) {
+      if (endpointingOpts.mode !== undefined) {
+        this.sessionOptions.turnHandling.endpointing.mode = endpointingOpts.mode;
+      }
+      if (endpointingOpts.minDelay !== undefined) {
+        this.sessionOptions.turnHandling.endpointing.minDelay = endpointingOpts.minDelay;
+      }
+      if (endpointingOpts.maxDelay !== undefined) {
+        this.sessionOptions.turnHandling.endpointing.maxDelay = endpointingOpts.maxDelay;
+      }
+      if (endpointingOpts.alpha !== undefined) {
+        this.sessionOptions.turnHandling.endpointing.alpha = endpointingOpts.alpha;
+      }
+    }
+
+    if (hasTurnDetection) {
+      this.turnDetection = options.turnDetection ?? undefined;
+    }
+
+    if (this.activity) {
+      this.activity.updateOptions({
+        ...(hasEndpointingOpts
+          ? { endpointingOpts: this.sessionOptions.turnHandling.endpointing }
+          : {}),
+        ...(hasTurnDetection ? { turnDetection: options.turnDetection } : {}),
+      });
+    }
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {

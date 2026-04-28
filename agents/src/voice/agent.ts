@@ -127,6 +127,11 @@ export interface AgentOptions<UserData> {
   useTtsAlignedTranscript?: boolean;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
+  // Ref: python livekit-agents/livekit/agents/voice/agent.py - 52-56 lines
+  /** @deprecated use turnHandling.endpointing.minDelay instead */
+  minEndpointingDelay?: number;
+  /** @deprecated use turnHandling.endpointing.maxDelay instead */
+  maxEndpointingDelay?: number;
   /** @deprecated use turnHandling.interruption.enabled instead */
   allowInterruptions?: boolean;
 }
@@ -165,6 +170,8 @@ export class Agent<UserData = any> {
     llm,
     tts,
     allowInterruptions,
+    minEndpointingDelay,
+    maxEndpointingDelay,
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
@@ -191,9 +198,12 @@ export class Agent<UserData = any> {
         })
       : ChatContext.empty();
 
+    // Ref: python livekit-agents/livekit/agents/voice/agent.py - 64-73 lines
     const resolvedTurnHandling = migrateTurnHandling({
       turnDetection,
       allowInterruptions,
+      minEndpointingDelay,
+      maxEndpointingDelay,
       turnHandling,
     });
     this._turnHandling =
