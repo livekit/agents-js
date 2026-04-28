@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-liveavatar': minor
+'@livekit/agents-plugin-liveavatar': patch
 '@livekit/agents': minor
 ---
 
