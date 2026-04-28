@@ -2771,6 +2771,8 @@ export class AgentActivity implements RecognitionHooks {
           { speech_id: speechHandle.id, message: forwardedText },
           'playout completed with interrupt',
         );
+      } else {
+        speechHandle._setInterruptionData('', '');
       }
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
