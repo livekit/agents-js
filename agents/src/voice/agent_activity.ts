@@ -2718,10 +2718,14 @@ export class AgentActivity implements RecognitionHooks {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
+      let generatedText = '';
+      let forwardedText = '';
+
       if (messageOutputs.length > 0) {
         // there should be only one message
         const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
-        let forwardedText = textOut?.text || '';
+        generatedText = textOut?.text || '';
+        forwardedText = generatedText;
 
         if (audioOutput) {
           audioOutput.clearBuffer();
@@ -2752,8 +2756,6 @@ export class AgentActivity implements RecognitionHooks {
           });
         }
 
-        speechHandle._setInterruptionData(textOut?.text || '', forwardedText);
-
         if (forwardedText && addToChatCtx) {
           const message = ChatMessage.create({
             role: 'assistant',
@@ -2771,9 +2773,9 @@ export class AgentActivity implements RecognitionHooks {
           { speech_id: speechHandle.id, message: forwardedText },
           'playout completed with interrupt',
         );
-      } else {
-        speechHandle._setInterruptionData('', '');
       }
+
+      speechHandle._setInterruptionData(generatedText, forwardedText);
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
