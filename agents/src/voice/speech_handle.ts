@@ -69,6 +69,8 @@ export class SpeechHandle {
   private doneFut = new Future<void>();
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
+  private _generatedText: string | null = null;
+  private _spokenText: string | null = null;
 
   /** @internal */
   _tasks: Task<void>[] = [];
@@ -157,6 +159,22 @@ export class SpeechHandle {
 
   get chatItems(): ChatItem[] {
     return this._chatItems;
+  }
+
+  /** Full text the model generated before the speech was interrupted. Null if not interrupted or no text was generated. */
+  get generatedText(): string | null {
+    return this._generatedText;
+  }
+
+  /** Text that was actually spoken (heard by the listener) before interruption. Null if not interrupted. */
+  get spokenText(): string | null {
+    return this._spokenText;
+  }
+
+  /** @internal */
+  _setInterruptionData(generatedText: string, spokenText: string): void {
+    this._generatedText = generatedText;
+    this._spokenText = spokenText;
   }
 
   /**

@@ -2249,6 +2249,8 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
+      speechHandle._setInterruptionData(textOut?.text || '', forwardedText);
+
       if (forwardedText) {
         hasSpeechMessage = true;
         const message = ChatMessage.create({
@@ -2749,6 +2751,8 @@ export class AgentActivity implements RecognitionHooks {
             audioTranscript: forwardedText,
           });
         }
+
+        speechHandle._setInterruptionData(textOut?.text || '', forwardedText);
 
         if (forwardedText && addToChatCtx) {
           const message = ChatMessage.create({
