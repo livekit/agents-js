@@ -352,43 +352,80 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 
 /** @internal */
 export class ExpFilter {
-  #alpha: number;
-  #max?: number;
-  #filtered?: number = undefined;
+  private _alpha: number;
+  private _filtered?: number = undefined;
+  private _maxVal?: number = undefined;
+  private _minVal?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 6-20 lines
+  constructor(alpha: number, maxVal?: number, minVal?: number, initial?: number) {
+    if (!(0 < alpha && alpha <= 1)) {
+      throw new Error('alpha must be in (0, 1].');
+    }
+
+    this._alpha = alpha;
+    this._filtered = initial;
+    this._maxVal = maxVal;
+    this._minVal = minVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 21-37 lines
+  reset(alpha?: number, initial?: number, minVal?: number, maxVal?: number): void {
+    if (alpha !== undefined) {
+      if (!(0 < alpha && alpha <= 1)) {
+        throw new Error('alpha must be in (0, 1].');
+      }
+      this._alpha = alpha;
     }
-    this.#filtered = undefined;
+    if (initial !== undefined) {
+      this._filtered = initial;
+    }
+    if (minVal !== undefined) {
+      this._minVal = minVal;
+    }
+    if (maxVal !== undefined) {
+      this._maxVal = maxVal;
+    }
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
-      this.#filtered = sample;
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 38-57 lines
+  apply(exp: number, sample?: number): number {
+    const sampleValue = sample === undefined ? this._filtered : sample;
+
+    if (sampleValue !== undefined && this._filtered === undefined) {
+      this._filtered = sampleValue;
+    } else if (sampleValue !== undefined && this._filtered !== undefined) {
+      const a = this._alpha ** exp;
+      this._filtered = a * this._filtered + (1 - a) * sampleValue;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
-      this.#filtered = this.#max;
+    if (this._filtered === undefined) {
+      throw new Error('sample or initial value must be given.');
     }
 
-    return this.#filtered;
+    if (this._maxVal !== undefined && this._filtered > this._maxVal) {
+      this._filtered = this._maxVal;
+    }
+
+    if (this._minVal !== undefined && this._filtered < this._minVal) {
+      this._filtered = this._minVal;
+    }
+
+    return this._filtered;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 59-61 lines
+  get value(): number | undefined {
+    return this._filtered;
   }
 
   get filtered(): number | undefined {
-    return this.#filtered;
+    return this.value;
   }
 
+  // Ref: python livekit-agents/livekit/agents/utils/exp_filter.py - 63-64 lines
   set alpha(alpha: number) {
-    this.#alpha = alpha;
+    this._alpha = alpha;
   }
 }
 

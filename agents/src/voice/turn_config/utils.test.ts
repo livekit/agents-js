@@ -46,6 +46,20 @@ describe('migrateLegacyOptions', () => {
     expect(result.turnHandling.endpointing!.maxDelay).toBe(5000);
   });
 
+  it('should preserve dynamic endpointing alpha from turnHandling config', () => {
+    const { agentSessionOptions: result } = migrateLegacyOptions({
+      turnHandling: {
+        endpointing: {
+          mode: 'dynamic',
+          alpha: 0.7,
+        },
+      },
+    });
+
+    expect(result.turnHandling.endpointing!.mode).toBe('dynamic');
+    expect(result.turnHandling.endpointing!.alpha).toBe(0.7);
+  });
+
   it('should set interruption.enabled to false when allowInterruptions is false', () => {
     const { agentSessionOptions: result } = migrateLegacyOptions({
       voiceOptions: { allowInterruptions: false },
