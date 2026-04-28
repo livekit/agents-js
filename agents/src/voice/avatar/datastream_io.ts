@@ -22,7 +22,6 @@ import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
 const RPC_PLAYBACK_FINISHED = 'lk.playback_finished';
-// Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 21 lines
 const RPC_PLAYBACK_STARTED = 'lk.playback_started';
 const AUDIO_STREAM_TOPIC = 'lk.audio_stream';
 
@@ -37,7 +36,6 @@ export interface DataStreamAudioOutputOptions {
    * first audio frame is captured. Set to true when the remote avatar worker can notify
    * actual playout start (e.g. an `AvatarRunner`).
    */
-  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 46 lines
   waitPlaybackStart?: boolean;
 }
 
@@ -47,7 +45,6 @@ export interface DataStreamAudioOutputOptions {
 export class DataStreamAudioOutput extends AudioOutput {
   static _playbackFinishedRpcRegistered: boolean = false;
   static _playbackFinishedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
-  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 35 lines
   static _playbackStartedRpcRegistered: boolean = false;
   static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
 
@@ -87,7 +84,6 @@ export class DataStreamAudioOutput extends AudioOutput {
         handler: (data) => this.handlePlaybackFinished(data),
       });
 
-      // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 79-84 lines
       if (this.waitPlaybackStart) {
         DataStreamAudioOutput.registerPlaybackStartedRpc({
           room,
@@ -173,7 +169,6 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
-      // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 158-161 lines
       if (!this.waitPlaybackStart) {
         // approximate the playback_started time; the frame isn't actually playing yet,
         // used when the remote avatar doesn't send lk.playback_started notifications
@@ -282,7 +277,6 @@ export class DataStreamAudioOutput extends AudioOutput {
     DataStreamAudioOutput._playbackFinishedRpcRegistered = true;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 252-266 lines
   private handlePlaybackStarted(data: RpcInvocationData): string {
     if (data.callerIdentity !== this.destinationIdentity) {
       this.#logger.warn(
@@ -299,7 +293,6 @@ export class DataStreamAudioOutput extends AudioOutput {
     return 'ok';
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/avatar/_datastream_io.py - 303-334 lines
   static registerPlaybackStartedRpc({
     room,
     callerIdentity,

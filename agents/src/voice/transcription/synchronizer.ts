@@ -204,7 +204,6 @@ class SegmentSynchronizerImpl {
     return this.outputStream.readable;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 174-187 lines
   onPlaybackStarted(startTime: number): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after close');
@@ -608,7 +607,6 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   // this is going to be automatically called by the next_in_chain
-  // Ref: python livekit-agents/livekit/agents/voice/transcription/synchronizer.py - 599-602 lines
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
     if (this.synchronizer.enabled) {
