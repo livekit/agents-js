@@ -173,8 +173,8 @@ export class SpeechHandle {
 
   /** @internal */
   _setInterruptionData(generatedText: string, spokenText: string): void {
-    this._generatedText = generatedText;
-    this._spokenText = spokenText;
+    this._generatedText = generatedText || null;
+    this._spokenText = spokenText || null;
   }
 
   /**
