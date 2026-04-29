@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-anam",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Anam plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

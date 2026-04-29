@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.4.0
+
+### Minor Changes
+
+- feat(inference/tts): detect aligned transcript capability from provider `modelOptions` (`cartesia.add_timestamps`, `elevenlabs.sync_alignment`, `inworld.timestamp_type`) and forward the gateway's `output_timestamps` WebSocket events as `TimedString` word/character timings attached to the next synthesized audio frame. Ported from livekit/agents#5534. - [#1311](https://github.com/livekit/agents-js/pull/1311) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix(voice): await initRecording() to prevent OTEL trace loss in short sessions - [#1300](https://github.com/livekit/agents-js/pull/1300) ([@moyounishimself](https://github.com/moyounishimself))
+
+- support LIVEKIT_AGENT_NAME env var - [#1332](https://github.com/livekit/agents-js/pull/1332) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(deps): update dependency uuid to v14 [security] - [#1313](https://github.com/livekit/agents-js/pull/1313) ([@renovate](https://github.com/apps/renovate))
+
+- feat(metrics): add `playbackLatency` metric on assistant `ChatMessage`s - [#1323](https://github.com/livekit/agents-js/pull/1323) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.3.0
 
 ### Minor Changes
