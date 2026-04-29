@@ -89,11 +89,25 @@ export const ttsKnownServerEventSchema = z.discriminatedUnion('type', [
   ttsErrorEventSchema,
 ]);
 
-export const ttsUnknownServerEventSchema = z.object({
-  type: z.string(),
-}).passthrough();
+const knownTtsServerEventTypes = new Set([
+  'session.created',
+  'output_audio',
+  'output_timestamps',
+  'done',
+  'session.closed',
+  'error',
+]);
 
-export const ttsServerEventSchema = z.union([ttsKnownServerEventSchema, ttsUnknownServerEventSchema]);
+export const ttsUnknownServerEventSchema = z
+  .object({
+    type: z.string().refine((type) => !knownTtsServerEventTypes.has(type)),
+  })
+  .passthrough();
+
+export const ttsServerEventSchema = z.union([
+  ttsKnownServerEventSchema,
+  ttsUnknownServerEventSchema,
+]);
 
 export type TtsSessionCreateEvent = z.infer<typeof ttsSessionCreateEventSchema>;
 export type TtsInputTranscriptEvent = z.infer<typeof ttsInputTranscriptEventSchema>;
