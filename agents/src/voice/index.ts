@@ -22,7 +22,13 @@ export {
   RoomSessionTransport,
 } from './remote_session.js';
 export * from './events.js';
-export { type TimedString } from './io.js';
+export {
+  AudioOutput,
+  type AudioOutputCapabilities,
+  type PlaybackFinishedEvent,
+  type PlaybackStartedEvent,
+  type TimedString,
+} from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
