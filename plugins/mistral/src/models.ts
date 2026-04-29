@@ -13,3 +13,11 @@ export type MistralChatModels =
   | 'ministral-8b-latest'
   | 'open-mistral-nemo'
   | 'open-codestral-mamba';
+
+export type MistralSTTModels =
+  | 'voxtral-mini-transcribe-realtime-2602' //realtime streaming
+  | 'voxtral-small-latest' //chat completions
+  | 'voxtral-mini-latest' //chat completions
+  | 'voxtral-mini-transcribe'; //chat completions
+
+export type MistralTTSModels = 'mistral-tts-latest';
