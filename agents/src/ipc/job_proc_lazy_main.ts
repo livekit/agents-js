@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
+import { setJobContext } from '../log.js';
 import { initializeLogger, log } from '../log.js';
 import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
@@ -184,6 +185,7 @@ const startJob = (
       logger.error({ error }, 'error while shutting down the job'),
     );
 
+    setJobContext({});
     safeSend({ case: 'done', value: undefined });
     joinFuture.resolve();
   })();
