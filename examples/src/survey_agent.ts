@@ -21,7 +21,7 @@ type SurveyAgentProps = {
 };
 
 // Sub-tasks share the filename and a reference to the parent agent's
-// candidateName signal. Passing the signal (not its value) keeps the
+// candidateName state. Passing the signal (not its value) keeps the
 // durable storage on the parent agent while letting tasks read/write it.
 type SubTaskProps = {
   filename: string;
@@ -237,8 +237,8 @@ const BehavioralTask = defineAgentTask<BehavioralResults, SubTaskProps>((ctx, pr
 
   ctx.use(disqualifyComposable(props));
 
-  // Partial results survive restarts because the signal is persisted.
-  const partial = ctx.signal<Partial<BehavioralResults>>(() => ({}));
+  // Partial results survive restarts because state is persisted.
+  const partial = ctx.state<Partial<BehavioralResults>>(() => ({}));
 
   const checkCompletion = () => {
     const p = partial.value;
@@ -305,7 +305,7 @@ const BehavioralTask = defineAgentTask<BehavioralResults, SubTaskProps>((ctx, pr
 const SurveyAgent = defineAgent<SurveyAgentProps>((ctx, { filename }) => {
   // Durable candidate name — lives here so it survives checkpoint/restore
   // and is visible to every sub-task via props.
-  const candidateName = ctx.signal<string>(() => '');
+  const candidateName = ctx.state<string>(() => '');
 
   ctx.configure({
     instructions: dedent`

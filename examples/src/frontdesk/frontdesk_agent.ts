@@ -59,7 +59,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
     `,
   });
 
-  const slots = ctx.signal<Map<string, AvailableSlot>>(() => new Map());
+  const slots = ctx.state<Map<string, AvailableSlot>>(() => new Map());
 
   ctx.tool('scheduleAppointment', {
     description: 'Schedule an appointment at the given slot.',
