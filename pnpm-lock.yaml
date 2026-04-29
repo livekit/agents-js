@@ -692,6 +692,30 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/hume:
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/inworld:
     dependencies:
       ws:
