@@ -65,8 +65,10 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
+import type { AgentState } from './events.js';
 import {
   AgentSessionEventTypes,
+  createAgentFalseInterruptionEvent,
   createErrorEvent,
   createFunctionToolsExecutedEvent,
   createMetricsCollectedEvent,
@@ -152,7 +154,12 @@ interface PreemptiveGeneration {
   createdAt: number;
 }
 
-// TODO add false interruption handling and barge in handling for https://github.com/livekit/agents/pull/3109/changes
+interface PausedSpeechInfo {
+  handle: SpeechHandle;
+  agentState: AgentState;
+  timeout: number;
+}
+
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
@@ -188,6 +195,11 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
+
+  // for false interruption handling
+  private pausedSpeech?: PausedSpeechInfo;
+  private falseInterruptionTimer?: NodeJS.Timeout;
+  private cancelSpeechPauseTask?: Promise<void>;
 
   private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
     this.onGenerationCreated(ev);
@@ -1038,6 +1050,28 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
+
+    if (this.falseInterruptionTimer) {
+      // cancel the timer when user starts speaking but leave the paused state unchanged
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    if (
+      this.agentSession.agentState !== 'speaking' &&
+      this.pauseEnabled() &&
+      this._currentSpeech !== undefined &&
+      !this._currentSpeech.interrupted &&
+      this._currentSpeech.allowInterruptions &&
+      (!this.pausedSpeech || this.pausedSpeech.handle !== this._currentSpeech)
+    ) {
+      // pause the audio output if agent is not speaking (in thinking state);
+      // resume immediately when user stops speaking, the timeout will be updated
+      // by interruptByAudioActivity
+      const audioOutput = this.agentSession.output.audio!;
+      this.updatePausedSpeech(this._currentSpeech, 0);
+      audioOutput.pause();
+    }
   }
 
   onEndOfSpeech(ev: VADEvent): void {
@@ -1057,6 +1091,10 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechEndTime,
       otelContext: otelContext.active(),
     });
+
+    if (this.pausedSpeech) {
+      this.startFalseInterruptionTimer(this.pausedSpeech.timeout);
+    }
   }
 
   onVADInferenceDone(ev: VADEvent): void {
@@ -1072,7 +1110,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(): void {
+  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
     }
@@ -1117,24 +1155,62 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      this.logger.info(
-        { 'speech id': this._currentSpeech.id },
-        'speech interrupted by audio activity',
-      );
-      this.realtimeSession?.interrupt();
-      this._currentSpeech.interrupt();
+      // reset the false interruption timer
+      if (this.falseInterruptionTimer) {
+        clearTimeout(this.falseInterruptionTimer);
+        this.falseInterruptionTimer = undefined;
+      }
+
+      if (this.pauseEnabled()) {
+        const timeout =
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
+        const audioOutput = this.agentSession.output.audio;
+
+        if (
+          this.isInterruptionDetectionEnabled &&
+          this.audioRecognition &&
+          this.agentSession.agentState === 'speaking'
+        ) {
+          this.audioRecognition.onStartOfOverlapSpeech(
+            0,
+            Date.now(),
+            this.agentSession._userSpeakingSpan,
+          );
+        }
+
+        this.updatePausedSpeech(this._currentSpeech, timeout);
+        audioOutput!.pause();
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(
+            options?.ignoreUserTranscriptUntil ?? Date.now(),
+          );
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
+        }
+      } else {
+        this.logger.info(
+          { 'speech id': this._currentSpeech.id },
+          'speech interrupted by audio activity',
+        );
+        this.realtimeSession?.interrupt();
+        this._currentSpeech.interrupt();
+      }
     }
   }
 
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
-    this.interruptByAudioActivity();
+    this.interruptByAudioActivity({
+      ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
+    });
     if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
 
-  onInterimTranscript(ev: SpeechEvent): void {
+  onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -1150,12 +1226,28 @@ export class AgentActivity implements RecognitionHooks {
       }),
     );
 
-    if (ev.alternatives![0].text) {
+    if (
+      ev.alternatives![0].text &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
       this.interruptByAudioActivity();
+
+      if (
+        speaking === false &&
+        this.pausedSpeech &&
+        this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout !==
+          undefined
+      ) {
+        // schedule a resume timer if interrupted after end_of_speech
+        this.startFalseInterruptionTimer(
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout,
+        );
+      }
     }
   }
 
-  onFinalTranscript(ev: SpeechEvent): void {
+  onFinalTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.userTranscription) {
       // skip stt transcription if userTranscription is enabled on the realtime model
       return;
@@ -1180,10 +1272,20 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.interruptByAudioActivity();
 
-      // TODO: resume false interruption - schedule a resume timer if interrupted after end_of_speech
+      if (
+        speaking === false &&
+        this.pausedSpeech &&
+        this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout !==
+          undefined
+      ) {
+        // schedule a resume timer if interrupted after end_of_speech
+        this.startFalseInterruptionTimer(
+          this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout,
+        );
+      }
     }
 
-    // TODO: resume false interruption - start interrupt paused speech task
+    this.cancelSpeechPauseTask = this.cancelSpeechPause();
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
@@ -1658,6 +1760,8 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
+      await this.cancelSpeechPause();
+
       this.logger.info(
         { 'speech id': this._currentSpeech.id },
         'speech interrupted, new user turn detected',
@@ -1829,10 +1933,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let replyStartedSpeakingAt: number | undefined;
+    let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
       replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -1846,7 +1952,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!audioOutput) {
       if (textOut) {
         textOut.firstTextFut.await
-          .then(() => onFirstFrame())
+          .then(() => onFirstFrame(null))
           .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
@@ -1881,8 +1987,9 @@ export class AgentActivity implements RecognitionHooks {
         tasks.push(forwardTask);
         audioOut = _audioOut;
       }
+      const audioOutForCb = audioOut;
       audioOut.firstFrameFut.await
-        .then((ts) => onFirstFrame(ts))
+        .then((ts) => onFirstFrame(audioOutForCb, ts))
         .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
@@ -1910,6 +2017,11 @@ export class AgentActivity implements RecognitionHooks {
       if (replyStartedSpeakingAt !== undefined) {
         replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
         replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
+
+        if (replyStartedForwardingAt !== undefined) {
+          replyAssistantMetrics.playbackLatency =
+            (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+        }
       }
 
       const message = ChatMessage.create({
@@ -2107,8 +2219,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let agentStartedSpeakingAt: number | undefined;
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    let agentStartedForwardingAt: number | undefined;
+    const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
       agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+      agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
@@ -2130,14 +2244,14 @@ export class AgentActivity implements RecognitionHooks {
         audioOut = _audioOut;
         tasks.push(forwardTask);
         audioOut.firstFrameFut.await
-          .then((ts) => onFirstFrame(ts))
+          .then((ts) => onFirstFrame(audioOut, ts))
           .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
       } else {
         throw Error('ttsGenData is null when audioOutput is enabled');
       }
     } else {
       textOut?.firstTextFut.await
-        .then(() => onFirstFrame())
+        .then(() => onFirstFrame(null))
         .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
     }
 
@@ -2185,6 +2299,11 @@ export class AgentActivity implements RecognitionHooks {
     if (agentStartedSpeakingAt !== undefined) {
       assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
       assistantMetrics.stoppedSpeakingAt = agentStoppedSpeakingAt / 1000; // ms -> seconds
+
+      if (agentStartedForwardingAt !== undefined) {
+        assistantMetrics.playbackLatency =
+          (agentStartedSpeakingAt - agentStartedForwardingAt) / 1000; // ms -> seconds
+      }
 
       if (userMetrics?.stoppedSpeakingAt !== undefined) {
         const e2eLatency = agentStartedSpeakingAt / 1000 - userMetrics.stoppedSpeakingAt;
@@ -3140,6 +3259,9 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech._markDone();
       }
 
+      await this.cancelSpeechPause({ interrupt: false });
+      this.cancelSpeechPauseTask = undefined;
+
       await this._closeSessionResources();
 
       if (this._mainTask) {
@@ -3216,6 +3338,118 @@ export class AgentActivity implements RecognitionHooks {
       this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
     }
     return undefined;
+  }
+
+  private updatePausedSpeech(speechHandle: SpeechHandle, timeout: number): void {
+    if (this.pausedSpeech && this.pausedSpeech.handle === speechHandle) {
+      this.pausedSpeech.timeout = timeout;
+    } else {
+      this.pausedSpeech = {
+        handle: speechHandle,
+        agentState: this.agentSession.agentState,
+        timeout,
+      };
+    }
+  }
+
+  private pauseEnabled(): boolean {
+    const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+    return !!(
+      interruptionOptions.resumeFalseInterruption &&
+      interruptionOptions.falseInterruptionTimeout !== undefined &&
+      this.agentSession.output.audio &&
+      this.agentSession.output.audio.canPause
+    );
+  }
+
+  private startFalseInterruptionTimer(timeout: number): void {
+    if (this.falseInterruptionTimer !== undefined) {
+      clearTimeout(this.falseInterruptionTimer);
+    }
+
+    this.falseInterruptionTimer = setTimeout(() => {
+      if (
+        !this.pausedSpeech ||
+        (this._currentSpeech && this._currentSpeech !== this.pausedSpeech.handle)
+      ) {
+        // already new speech is scheduled, do nothing
+        this.pausedSpeech = undefined;
+        return;
+      }
+
+      let resumed = false;
+      const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+      const audioOutput = this.agentSession.output.audio;
+      if (
+        interruptionOptions.resumeFalseInterruption &&
+        audioOutput &&
+        audioOutput.canPause &&
+        !this.pausedSpeech.handle.done()
+      ) {
+        this.agentSession._updateAgentState(this.pausedSpeech.agentState, {
+          otelContext: this.pausedSpeech.handle._agentTurnContext,
+        });
+        if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
+          this.audioRecognition.onStartOfAgentSpeech();
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.isInterruptionByAudioActivityEnabled = false;
+        }
+        audioOutput.resume();
+        resumed = true;
+        this.logger.debug({ timeout }, 'resumed false interrupted speech');
+      }
+
+      this.agentSession.emit(
+        AgentSessionEventTypes.AgentFalseInterruption,
+        createAgentFalseInterruptionEvent({ resumed }),
+      );
+
+      this.pausedSpeech = undefined;
+      this.falseInterruptionTimer = undefined;
+    }, timeout);
+  }
+
+  private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {
+    const { interrupt = true } = options ?? {};
+
+    // await any previously-started cancel task to avoid races
+    if (this.cancelSpeechPauseTask) {
+      try {
+        await this.cancelSpeechPauseTask;
+      } catch {
+        this.logger.debug('previous cancelSpeechPause task failed, ignoring');
+      }
+      this.cancelSpeechPauseTask = undefined;
+    }
+
+    if (this.falseInterruptionTimer !== undefined) {
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    if (!this.pausedSpeech) {
+      return;
+    }
+
+    if (
+      interrupt &&
+      !this.pausedSpeech.handle.interrupted &&
+      this.pausedSpeech.handle.allowInterruptions
+    ) {
+      this.pausedSpeech.handle.interrupt();
+      // ensure the generation is done — but only if a generation
+      // was actually started
+      if (this.pausedSpeech.handle._hasGenerations) {
+        await this.pausedSpeech.handle._waitForGeneration();
+      }
+    }
+    this.pausedSpeech = undefined;
+
+    const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
+    if (interruptionOptions.resumeFalseInterruption && this.agentSession.output.audio) {
+      this.agentSession.output.audio.resume();
+    }
   }
 
   private restoreInterruptionByAudioActivity(): void {

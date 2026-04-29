@@ -49,6 +49,7 @@ import {
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
+  type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -140,6 +141,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
+  [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
@@ -487,6 +489,19 @@ export class AgentSession<
       `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
     );
 
+    if (
+      this.sessionOptions.turnHandling.interruption.resumeFalseInterruption &&
+      this.output.audio &&
+      !this.output.audio.canPause
+    ) {
+      this.logger.warn(
+        {
+          audioOutput: this.output.audio.constructor.name,
+        },
+        'resumeFalseInterruption is enabled but audio output does not support pause, it will be ignored',
+      );
+    }
+
     this.logger.debug(
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
@@ -526,7 +541,7 @@ export class AgentSession<
       this._enableRecording = record;
 
       if (this._enableRecording) {
-        ctx.initRecording();
+        await ctx.initRecording();
       }
     }
 
@@ -1097,7 +1112,21 @@ export class AgentSession<
     }
   }
 
-  private onAudioOutputChanged(): void {}
+  private onAudioOutputChanged(): void {
+    if (
+      this.started &&
+      this.sessionOptions.turnHandling.interruption.resumeFalseInterruption &&
+      this.output.audio &&
+      !this.output.audio.canPause
+    ) {
+      this.logger.warn(
+        {
+          audioOutput: this.output.audio.constructor.name,
+        },
+        'resumeFalseInterruption is enabled, but the audio output does not support pause, ignored',
+      );
+    }
+  }
 
   private onTextOutputChanged(): void {}
 
