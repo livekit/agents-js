@@ -269,6 +269,9 @@ importers:
       '@livekit/agents-plugin-lemonslice':
         specifier: workspace:*
         version: link:../plugins/lemonslice
+      '@livekit/agents-plugin-liveavatar':
+        specifier: workspace:*
+        version: link:../plugins/liveavatar
       '@livekit/agents-plugin-livekit':
         specifier: workspace:*
         version: link:../plugins/livekit
