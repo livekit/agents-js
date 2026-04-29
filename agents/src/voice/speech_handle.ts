@@ -272,6 +272,11 @@ export class SpeechHandle {
   }
 
   /** @internal */
+  get _hasGenerations(): boolean {
+    return this.generations.length > 0;
+  }
+
+  /** @internal */
   _authorizeGeneration(): void {
     const fut = new Future<void>();
     this.generations.push(fut);
