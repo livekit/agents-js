@@ -5,7 +5,6 @@ import {
   type JobContext,
   type JobProcess,
   createAgentServer,
-  createSnapshotable,
   dedent,
   defineAgent,
   llm,
@@ -18,7 +17,6 @@ import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
-import superjson from 'superjson';
 import { z } from 'zod';
 import {
   type AvailableSlot,
@@ -33,23 +31,6 @@ type FrontDeskProps = {
   cal: Calendar;
   timezone: string;
 };
-
-// Props carry a live calendar connection, so only the serializable parts
-// are persisted. On restore we rebuild the calendar from env.
-const frontDeskPropsSnapshotable = createSnapshotable<FrontDeskProps>({
-  snapshot: async ({ timezone }) => superjson.stringify({ timezone }),
-  restore: async (snapshot) => {
-    const { timezone } = superjson.parse<{ timezone: string }>(snapshot);
-    const cal = await loadCalendar(timezone);
-    return { cal, timezone };
-  },
-});
-
-// superjson handles Date (and Map) round-trips for us.
-const slotsSnapshotable = createSnapshotable<Map<string, AvailableSlot>>({
-  snapshot: async (slots) => superjson.stringify(slots),
-  restore: async (s) => superjson.parse<Map<string, AvailableSlot>>(s),
-});
 
 const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
   const { cal, timezone } = props;
@@ -78,7 +59,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
     `,
   });
 
-  const slots = ctx.signal<Map<string, AvailableSlot>>(() => new Map(), slotsSnapshotable);
+  const slots = ctx.signal<Map<string, AvailableSlot>>(() => new Map());
 
   ctx.tool('scheduleAppointment', {
     description: 'Schedule an appointment at the given slot.',
@@ -218,7 +199,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
   ctx.onEnter(async () => {
     await ctx.generateReply({ userInput: 'Greet to the user' });
   });
-}, frontDeskPropsSnapshotable);
+});
 
 async function loadCalendar(timezone: string): Promise<Calendar> {
   const calApiKey = process.env.CAL_API_KEY;

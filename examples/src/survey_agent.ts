@@ -7,7 +7,6 @@ import {
   beta,
   createAgentServer,
   createComposable,
-  createSnapshotable,
   dedent,
   defineAgent,
   defineAgentTask,
@@ -20,12 +19,6 @@ import { z } from 'zod';
 type SurveyAgentProps = {
   filename: string;
 };
-
-// Props are plain JSON; a trivial snapshotable is enough.
-const surveyPropsSnapshotable = createSnapshotable<SurveyAgentProps>({
-  snapshot: async ({ filename }) => JSON.stringify({ filename }),
-  restore: async (s) => JSON.parse(s) as SurveyAgentProps,
-});
 
 // Sub-tasks share the filename and a reference to the parent agent's
 // candidateName signal. Passing the signal (not its value) keeps the
@@ -376,7 +369,7 @@ const SurveyAgent = defineAgent<SurveyAgentProps>((ctx, { filename }) => {
       'The interview is now complete. Thank you for your time. We will follow up within three business days.',
     );
   });
-}, surveyPropsSnapshotable);
+});
 
 const app = createAgentServer();
 
