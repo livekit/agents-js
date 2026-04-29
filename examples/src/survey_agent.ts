@@ -8,6 +8,7 @@ import {
   createAgentServer,
   createComposable,
   createSnapshotable,
+  dedent,
   defineAgent,
   defineAgentTask,
   voice,
@@ -86,8 +87,9 @@ async function writeCsvRow(path: string, data: Record<string, unknown>): Promise
 // so the value survives checkpoint/restore.
 const disqualifyComposable = createComposable((ctx, props: SubTaskProps) => {
   ctx.tool('disqualify', {
-    description:
-      'End the interview if the candidate refuses to cooperate, provides inappropriate answers, or is not a fit.',
+    description: dedent`
+      End the interview if the candidate refuses to cooperate, provides inappropriate answers, or is not a fit.
+    `,
     parameters: z.object({
       disqualificationReason: z.string().describe('Why the interview should end immediately'),
     }),
@@ -112,8 +114,10 @@ const disqualifyComposable = createComposable((ctx, props: SubTaskProps) => {
 
 const IntroTask = defineAgentTask<IntroResults, SubTaskProps>((ctx, props) => {
   ctx.configure({
-    instructions:
-      'You are Alex, an interviewer screening a software engineer candidate. Gather the candidate name and short self-introduction.',
+    instructions: dedent`
+      You are Alex, an interviewer screening a software engineer candidate.
+      Gather the candidate name and short self-introduction.
+    `,
   });
 
   ctx.tool('saveIntro', {
@@ -132,16 +136,19 @@ const IntroTask = defineAgentTask<IntroResults, SubTaskProps>((ctx, props) => {
 
   ctx.onEnter(async () => {
     await ctx.generateReply({
-      instructions:
-        'Welcome the candidate and collect their name plus a brief self-introduction, then call saveIntro.',
+      instructions: dedent`
+        Welcome the candidate and collect their name plus a brief self-introduction, then call saveIntro.
+      `,
     });
   });
 });
 
 const EmailTask = defineAgentTask<EmailResults, SubTaskProps>((ctx, props) => {
   ctx.configure({
-    instructions:
-      'Collect a valid email address. If the candidate refuses, call disqualify immediately.',
+    instructions: dedent`
+      Collect a valid email address.
+      If the candidate refuses, call disqualify immediately.
+    `,
   });
 
   ctx.use(disqualifyComposable(props));
@@ -159,15 +166,19 @@ const EmailTask = defineAgentTask<EmailResults, SubTaskProps>((ctx, props) => {
 
   ctx.onEnter(async () => {
     await ctx.generateReply({
-      instructions: 'Ask for the candidate email and call saveEmail as soon as you get it.',
+      instructions: dedent`
+        Ask for the candidate email and call saveEmail as soon as you get it.
+      `,
     });
   });
 });
 
 const CommuteTask = defineAgentTask<CommuteResults, SubTaskProps>((ctx, props) => {
   ctx.configure({
-    instructions:
-      'Collect commute flexibility. The role expects office attendance three days per week.',
+    instructions: dedent`
+      Collect commute flexibility.
+      The role expects office attendance three days per week.
+    `,
   });
 
   ctx.use(disqualifyComposable(props));
@@ -186,16 +197,18 @@ const CommuteTask = defineAgentTask<CommuteResults, SubTaskProps>((ctx, props) =
 
   ctx.onEnter(async () => {
     await ctx.generateReply({
-      instructions:
-        'Ask if the candidate can commute to office regularly and capture the commute method, then call saveCommute.',
+      instructions: dedent`
+        Ask if the candidate can commute to office regularly and capture the commute method, then call saveCommute.
+      `,
     });
   });
 });
 
 const ExperienceTask = defineAgentTask<ExperienceResults, SubTaskProps>((ctx, props) => {
   ctx.configure({
-    instructions:
-      'Collect years of experience and a concise timeline of previous roles relevant to software engineering.',
+    instructions: dedent`
+      Collect years of experience and a concise timeline of previous roles relevant to software engineering.
+    `,
   });
 
   ctx.use(disqualifyComposable(props));
@@ -214,16 +227,19 @@ const ExperienceTask = defineAgentTask<ExperienceResults, SubTaskProps>((ctx, pr
 
   ctx.onEnter(async () => {
     await ctx.generateReply({
-      instructions:
-        'Ask about years of experience and previous roles, then call saveExperience once gathered.',
+      instructions: dedent`
+        Ask about years of experience and previous roles, then call saveExperience once gathered.
+      `,
     });
   });
 });
 
 const BehavioralTask = defineAgentTask<BehavioralResults, SubTaskProps>((ctx, props) => {
   ctx.configure({
-    instructions:
-      'Collect strengths, weaknesses, and work style. Keep a natural conversational tone and avoid bullet lists.',
+    instructions: dedent`
+      Collect strengths, weaknesses, and work style.
+      Keep a natural conversational tone and avoid bullet lists.
+    `,
   });
 
   ctx.use(disqualifyComposable(props));
@@ -242,8 +258,9 @@ const BehavioralTask = defineAgentTask<BehavioralResults, SubTaskProps>((ctx, pr
       return;
     }
     ctx.generateReply({
-      instructions:
-        'Continue gathering missing behavioral details in a concise, natural dialogue and use save* tools.',
+      instructions: dedent`
+        Continue gathering missing behavioral details in a concise, natural dialogue and use save* tools.
+      `,
     });
   };
 
@@ -285,8 +302,9 @@ const BehavioralTask = defineAgentTask<BehavioralResults, SubTaskProps>((ctx, pr
 
   ctx.onEnter(async () => {
     await ctx.generateReply({
-      instructions:
-        'In a conversational way, gather strengths, weaknesses, and work style, then call save* tools.',
+      instructions: dedent`
+        In a conversational way, gather strengths, weaknesses, and work style, then call save* tools.
+      `,
     });
   });
 });
@@ -297,8 +315,11 @@ const SurveyAgent = defineAgent<SurveyAgentProps>((ctx, { filename }) => {
   const candidateName = ctx.signal<string>(() => '');
 
   ctx.configure({
-    instructions:
-      'You are a survey interviewer for a software engineer screening. Be concise, professional, and natural. Call endScreening when the process is complete.',
+    instructions: dedent`
+      You are a survey interviewer for a software engineer screening.
+      Be concise, professional, and natural.
+      Call endScreening when the process is complete.
+    `,
   });
 
   ctx.tool('endScreening', {

@@ -6,6 +6,7 @@ import {
   type JobProcess,
   createAgentServer,
   createSnapshotable,
+  dedent,
   defineAgent,
   llm,
   voice,
@@ -62,18 +63,19 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
   });
 
   ctx.configure({
-    instructions:
-      `You are Front-Desk, a helpful and efficient voice assistant. ` +
-      `Today is ${today}. Your main goal is to schedule an appointment for the user. ` +
-      `This is a voice conversation — speak naturally, clearly, and concisely. ` +
-      `When the user says hello or greets you, don't just respond with a greeting — use it as an opportunity to move things forward. ` +
-      `For example, follow up with a helpful question like: 'Would you like to book a time?' ` +
-      `When asked for availability, call list_available_slots and offer a few clear, simple options. ` +
-      `Say things like 'Monday at 2 PM' — avoid timezones, timestamps, and avoid saying 'AM' or 'PM'. ` +
-      `Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one. ` +
-      `Offer a few options at a time, pause for a response, then guide the user to confirm. ` +
-      `If the time is no longer available, let them know gently and offer the next options. ` +
-      `Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.`,
+    instructions: dedent`
+      You are Front-Desk, a helpful and efficient voice assistant.
+      Today is ${today}. Your main goal is to schedule an appointment for the user.
+      This is a voice conversation — speak naturally, clearly, and concisely.
+      When the user says hello or greets you, don't just respond with a greeting — use it as an opportunity to move things forward.
+      For example, follow up with a helpful question like: 'Would you like to book a time?'
+      When asked for availability, call list_available_slots and offer a few clear, simple options.
+      Say things like 'Monday at 2 PM' — avoid timezones, timestamps, and avoid saying 'AM' or 'PM'.
+      Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one.
+      Offer a few options at a time, pause for a response, then guide the user to confirm.
+      If the time is no longer available, let them know gently and offer the next options.
+      Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.
+    `,
   });
 
   const slots = ctx.signal<Map<string, AvailableSlot>>(() => new Map(), slotsSnapshotable);
@@ -131,11 +133,13 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
   });
 
   ctx.tool('listAvailableSlots', {
-    description: `Return a plain-text list of available slots, one per line.
+    description: dedent`
+      Return a plain-text list of available slots, one per line.
 
-<slot_id> - <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
+      <slot_id> - <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
 
-You must infer the appropriate range implicitly from the conversational context and must not prompt the user to pick a value explicitly.`,
+      You must infer the appropriate range implicitly from the conversational context and must not prompt the user to pick a value explicitly.
+    `,
     parameters: z.object({
       range: z
         .enum(['+2week', '+1month', '+3month', 'default'])
