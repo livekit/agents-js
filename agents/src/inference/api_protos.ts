@@ -54,6 +54,25 @@ export const ttsErrorEventSchema = z.object({
   session_id: z.string().optional(),
 });
 
+export const ttsWordTimestampSchema = z.object({
+  word: z.string(),
+  start: z.number(),
+  end: z.number(),
+});
+
+export const ttsCharTimestampSchema = z.object({
+  char: z.string(),
+  start: z.number(),
+  end: z.number(),
+});
+
+export const ttsOutputTimestampsEventSchema = z.object({
+  type: z.literal('output_timestamps'),
+  session_id: z.string().optional(),
+  words: z.array(ttsWordTimestampSchema).optional(),
+  chars: z.array(ttsCharTimestampSchema).optional(),
+});
+
 export const ttsClientEventSchema = z.discriminatedUnion('type', [
   ttsSessionCreateEventSchema,
   ttsInputTranscriptEventSchema,
@@ -61,12 +80,33 @@ export const ttsClientEventSchema = z.discriminatedUnion('type', [
   ttsSessionCloseEventSchema,
 ]);
 
-export const ttsServerEventSchema = z.discriminatedUnion('type', [
+export const ttsKnownServerEventSchema = z.discriminatedUnion('type', [
   ttsSessionCreatedEventSchema,
   ttsOutputAudioEventSchema,
+  ttsOutputTimestampsEventSchema,
   ttsDoneEventSchema,
   ttsSessionClosedEventSchema,
   ttsErrorEventSchema,
+]);
+
+const knownTtsServerEventTypes = new Set([
+  'session.created',
+  'output_audio',
+  'output_timestamps',
+  'done',
+  'session.closed',
+  'error',
+]);
+
+export const ttsUnknownServerEventSchema = z
+  .object({
+    type: z.string().refine((type) => !knownTtsServerEventTypes.has(type)),
+  })
+  .passthrough();
+
+export const ttsServerEventSchema = z.union([
+  ttsKnownServerEventSchema,
+  ttsUnknownServerEventSchema,
 ]);
 
 export type TtsSessionCreateEvent = z.infer<typeof ttsSessionCreateEventSchema>;
@@ -75,6 +115,9 @@ export type TtsSessionFlushEvent = z.infer<typeof ttsSessionFlushEventSchema>;
 export type TtsSessionCloseEvent = z.infer<typeof ttsSessionCloseEventSchema>;
 export type TtsSessionCreatedEvent = z.infer<typeof ttsSessionCreatedEventSchema>;
 export type TtsOutputAudioEvent = z.infer<typeof ttsOutputAudioEventSchema>;
+export type TtsWordTimestamp = z.infer<typeof ttsWordTimestampSchema>;
+export type TtsCharTimestamp = z.infer<typeof ttsCharTimestampSchema>;
+export type TtsOutputTimestampsEvent = z.infer<typeof ttsOutputTimestampsEventSchema>;
 export type TtsDoneEvent = z.infer<typeof ttsDoneEventSchema>;
 export type TtsSessionClosedEvent = z.infer<typeof ttsSessionClosedEventSchema>;
 export type TtsErrorEvent = z.infer<typeof ttsErrorEventSchema>;
