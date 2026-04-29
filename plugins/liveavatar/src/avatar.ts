@@ -179,11 +179,18 @@ export class AvatarSession {
       name: this.avatarParticipantName,
     });
     at.kind = 'agent';
-    at.addGrant({ roomJoin: true, room: room.name } as VideoGrant);
     at.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: this.localParticipantIdentity };
-    const livekitToken = await at.toJwt();
+    at.addGrant({
+      roomJoin: true,
+      room: room.name,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+      canUpdateOwnMetadata: true,
+      canSubscribeMetrics: true,
+    } as VideoGrant);
 
-    this.#logger.debug('starting avatar session');
+    const livekitToken = await at.toJwt();
 
     if (!this.avatarId) {
       throw new LiveAvatarException('avatar_id must be set');

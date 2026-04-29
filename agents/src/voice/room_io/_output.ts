@@ -80,7 +80,12 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.trackId = track.sid;
   };
 
-  protected onLocalTrackPublished = (track: LocalTrackPublication) => {
+  protected onLocalTrackPublished = (track: LocalTrackPublication | undefined) => {
+    if (!track) {
+      this.logger.warn('LocalTrackPublished event without publication payload');
+      return;
+    }
+
     if (
       !this.participantIdentity ||
       this.participantIdentity !== this.room.localParticipant?.identity ||
