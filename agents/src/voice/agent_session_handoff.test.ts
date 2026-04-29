@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext } from '../llm/chat_context.js';
 import { Agent } from './agent.js';
 import { AgentActivity, type ReusableResources } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -22,6 +22,8 @@ function createFakeSession() {
     nextActivity: undefined,
     _globalRunState: undefined,
     _chatCtx: ChatContext.empty(),
+    _conversationItemAdded: vi.fn(),
+    emit: vi.fn(),
     logger: {
       debug: vi.fn(),
       warn: vi.fn(),
@@ -186,6 +188,39 @@ describe('AgentSession reusable resources handoff', () => {
     expect(activity.drain).not.toHaveBeenCalled();
     expect(activity.pause).not.toHaveBeenCalled();
     expect(activity.resume).toHaveBeenCalledWith({ reuseResources: undefined });
+  });
+
+  it('emits ConversationItemAdded with an AgentHandoffItem on handoff', async () => {
+    const previousAgent = new Agent({ instructions: 'old' });
+    const nextAgent = new Agent({ instructions: 'new' });
+    const previousActivity = {
+      agent: previousAgent,
+      drain: vi.fn(async () => undefined),
+      close: vi.fn(async () => {}),
+      pause: vi.fn(async () => undefined),
+    };
+    const nextActivity = {
+      agent: nextAgent,
+      resume: vi.fn(async () => {}),
+      start: vi.fn(async () => {}),
+      attachAudioInput: vi.fn(),
+      _onEnterTask: undefined,
+    };
+    nextAgent._agentActivity = nextActivity as any;
+
+    const session = createFakeSession();
+    (session as any).activity = previousActivity as any;
+
+    await AgentSession.prototype._updateActivity.call(session, nextAgent, {
+      newActivity: 'resume',
+      waitOnEnter: false,
+    });
+
+    expect((session as any)._conversationItemAdded).toHaveBeenCalledOnce();
+    const item = (session as any)._conversationItemAdded.mock.calls[0][0];
+    expect(item).toBeInstanceOf(AgentHandoffItem);
+    expect(item.oldAgentId).toBe(previousAgent.id);
+    expect(item.newAgentId).toBe(nextAgent.id);
   });
 
   it('skips starting a new activity while the session is closing and cleans up resources', async () => {

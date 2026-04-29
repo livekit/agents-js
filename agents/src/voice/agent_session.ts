@@ -873,7 +873,7 @@ export class AgentSession<
           });
         }
 
-        this._chatCtx.insert(handoffItem);
+        this._conversationItemAdded(handoffItem);
         this.logger.debug(
           { previousAgentId: prevActivityObj?.agent.id, newAgentId: agent.id },
           'Agent handoff inserted into chat context',
@@ -1003,7 +1003,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _conversationItemAdded(item: ChatMessage): void {
+  _conversationItemAdded(item: ChatMessage | AgentHandoffItem): void {
     this._chatCtx.insert(item);
     this.emit(AgentSessionEventTypes.ConversationItemAdded, createConversationItemAddedEvent(item));
   }
