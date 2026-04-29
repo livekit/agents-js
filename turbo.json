@@ -73,6 +73,8 @@
     "TRUGEN_API_KEY",
     "TRUGEN_API_URL",
     "TRUGEN_AVATAR_ID",
+    "MINIMAX_API_KEY",
+    "MINIMAX_BASE_URL",
     "MISTRAL_API_KEY",
     "VITEST"
   ],
