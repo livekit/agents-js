@@ -30,7 +30,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type STT, type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
@@ -148,6 +148,11 @@ export interface AudioRecognitionOptions {
   sttModel?: string;
   /** STT provider name for tracing */
   sttProvider?: string;
+  /**
+   * STT instance, used to read fresh model/provider on each turn — required
+   * for STTs that may switch underlying providers (e.g. {@link FallbackAdapter}).
+   */
+  sttInstance?: STT;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
 }
@@ -176,6 +181,11 @@ export class AudioRecognition {
   private rootSpanContext?: Context;
   private sttModel?: string;
   private sttProvider?: string;
+  // Last (model, provider) stamped on `user_turn` — used to skip redundant
+  // setAttribute calls on every STT event when nothing has changed.
+  private lastStampedSttModel?: string;
+  private lastStampedSttProvider?: string;
+  private sttInstance?: STT;
   private getLinkedParticipant?: () => ParticipantLike | undefined;
 
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
@@ -230,6 +240,7 @@ export class AudioRecognition {
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
+    this.sttInstance = opts.sttInstance;
     this.getLinkedParticipant = opts.getLinkedParticipant;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
@@ -513,20 +524,46 @@ export class AudioRecognition {
       context: this.rootSpanContext,
       startTime,
     });
+    this.lastStampedSttModel = undefined;
+    this.lastStampedSttProvider = undefined;
 
     const participant = this.getLinkedParticipant?.();
     if (participant) {
       setParticipantSpanAttributes(this.userTurnSpan, participant);
     }
 
-    if (this.sttModel) {
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.sttModel);
-    }
-    if (this.sttProvider) {
-      this.userTurnSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, this.sttProvider);
-    }
+    this.refreshUserTurnSttAttributes();
 
     return this.userTurnSpan;
+  }
+
+  /**
+   * Set/refresh the STT model and provider attributes on `user_turn`. Called
+   * from `ensureUserTurnSpan` and again on each STT event so providers that
+   * switch mid-turn (e.g. {@link FallbackAdapter}) update the span instead of
+   * being frozen at construction-time labels.
+   */
+  private refreshUserTurnSttAttributes(): void {
+    const span = this.userTurnSpan;
+    if (!span || !span.isRecording()) return;
+
+    let model = this.sttModel;
+    let provider = this.sttProvider;
+    if (this.sttInstance) {
+      const m = this.sttInstance.model;
+      const p = this.sttInstance.provider;
+      if (m && m !== 'unknown') model = m;
+      if (p && p !== 'unknown') provider = p;
+    }
+
+    if (model && model !== this.lastStampedSttModel) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+      this.lastStampedSttModel = model;
+    }
+    if (provider && provider !== this.lastStampedSttProvider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
+      this.lastStampedSttProvider = provider;
+    }
   }
 
   private userTurnContext(span: Span): Context {
@@ -535,6 +572,10 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
+    // Refresh model/provider on user_turn whenever an STT event arrives —
+    // FallbackAdapter only knows its active child after the first event lands.
+    this.refreshUserTurnSttAttributes();
+
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&

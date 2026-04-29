@@ -486,6 +486,7 @@ export class AgentActivity implements RecognitionHooks {
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
+      sttInstance: this.stt instanceof STT ? this.stt : undefined,
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
     });
 

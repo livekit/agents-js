@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioResampler } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Span, trace } from '@opentelemetry/api';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { basic } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Task, cancelAndWait } from '../utils.js';
+import { Task, cancelAndWait, toError } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
 import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tts.js';
 
@@ -243,6 +245,7 @@ export class FallbackAdapter extends TTS {
       text,
       connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
       abortSignal,
+      trace.getActiveSpan(),
     );
   }
 
@@ -255,6 +258,7 @@ export class FallbackAdapter extends TTS {
     return new FallbackSynthesizeStream(
       this,
       options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
+      trace.getActiveSpan(),
     );
   }
 
@@ -293,6 +297,7 @@ class FallbackChunkedStream extends ChunkedStream {
   private adapter: FallbackAdapter;
   private connOptions: APIConnectOptions;
   private _logger = log();
+  private _callerSpan?: Span;
 
   label: string = 'tts.FallbackChunkedStream';
 
@@ -301,10 +306,12 @@ class FallbackChunkedStream extends ChunkedStream {
     text: string,
     connOptions: APIConnectOptions,
     abortSignal?: AbortSignal,
+    callerSpan?: Span,
   ) {
     super(text, adapter, connOptions, abortSignal);
     this.adapter = adapter;
     this.connOptions = connOptions;
+    this._callerSpan = callerSpan;
   }
 
   /**
@@ -312,6 +319,7 @@ class FallbackChunkedStream extends ChunkedStream {
    */
   protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
+    const runSpan = trace.getActiveSpan();
     let lastRequestId: string = '';
     let lastSegmentId: string = '';
     if (allTTSFailed) {
@@ -326,71 +334,95 @@ class FallbackChunkedStream extends ChunkedStream {
       }
       const resampler = this.adapter.createResamplerForTTS(i);
 
-      try {
-        this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
-        const connOptions: APIConnectOptions = {
-          ...this.connOptions,
-          maxRetry: this.adapter.maxRetryPerTTS,
-        };
-        const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
-        // Tracks whether the inner stream yielded any real audio frames.
-        // A phantom `AudioResampler.flush()` frame (observed on rtc-node
-        // 0.13.25) could otherwise mask a silent failure as a success.
-        let sawRawAudio = false;
-        for await (const audio of stream) {
-          if (this.abortController.signal.aborted) {
-            stream.close();
-            return;
-          }
+      const succeeded = await tracer.startActiveSpan(
+        async (attemptSpan): Promise<boolean> => {
+          attemptSpan.setAttribute(traceTypes.ATTR_FALLBACK_ATTEMPT_INDEX, i);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, tts.model);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, tts.provider);
 
-          sawRawAudio = true;
+          try {
+            this._logger.debug({ tts: tts.label }, 'attempting TTS synthesis');
+            const connOptions: APIConnectOptions = {
+              ...this.connOptions,
+              maxRetry: this.adapter.maxRetryPerTTS,
+            };
+            const stream = tts.synthesize(this.inputText, connOptions, this.abortSignal);
+            // Tracks whether the inner stream yielded any real audio frames.
+            // A phantom `AudioResampler.flush()` frame (observed on rtc-node
+            // 0.13.25) could otherwise mask a silent failure as a success.
+            let sawRawAudio = false;
+            for await (const audio of stream) {
+              if (this.abortController.signal.aborted) {
+                stream.close();
+                return true;
+              }
 
-          if (resampler) {
-            for (const frame of resampler.push(audio.frame)) {
-              this.queue.put({
-                ...audio,
-                frame,
+              sawRawAudio = true;
+
+              if (resampler) {
+                for (const frame of resampler.push(audio.frame)) {
+                  this.queue.put({
+                    ...audio,
+                    frame,
+                  });
+                }
+              } else {
+                this.queue.put(audio);
+              }
+              lastRequestId = audio.requestId;
+              lastSegmentId = audio.segmentId;
+            }
+
+            // Only flush the resampler if real audio actually went in — otherwise
+            // flush() can return phantom frames that would mask a silent failure
+            // from the primary provider.
+            if (resampler && sawRawAudio) {
+              for (const frame of resampler.flush()) {
+                this.queue.put({
+                  requestId: lastRequestId || '',
+                  segmentId: lastSegmentId || '',
+                  frame,
+                  final: true,
+                });
+              }
+            }
+
+            // Silent failures must trigger fallback.
+            if (!sawRawAudio) {
+              throw new APIConnectionError({
+                message: 'TTS synthesis completed but no audio was received',
               });
             }
-          } else {
-            this.queue.put(audio);
+
+            this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+
+            // Update parent spans so traces reflect the actual provider used
+            // instead of the FallbackAdapter wrapper.
+            for (const span of [this._callerSpan, this._ttsRequestSpan, runSpan]) {
+              span?.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, tts.model);
+              span?.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, tts.provider);
+            }
+            return true;
+          } catch (error) {
+            recordException(attemptSpan, toError(error));
+            if (error instanceof APIError || error instanceof APIConnectionError) {
+              this._logger.warn(
+                { tts: tts.label, error },
+                'TTS failed, switching to next instance',
+              );
+              this.adapter.markUnAvailable(i);
+              return false;
+            }
+            throw error;
+          } finally {
+            resampler?.close();
           }
-          lastRequestId = audio.requestId;
-          lastSegmentId = audio.segmentId;
-        }
+        },
+        { name: 'tts_fallback_chunked_attempt' },
+      );
 
-        // Only flush the resampler if real audio actually went in — otherwise
-        // flush() can return phantom frames that would mask a silent failure
-        // from the primary provider.
-        if (resampler && sawRawAudio) {
-          for (const frame of resampler.flush()) {
-            this.queue.put({
-              requestId: lastRequestId || '',
-              segmentId: lastSegmentId || '',
-              frame,
-              final: true,
-            });
-          }
-        }
-
-        // Silent failures must trigger fallback.
-        if (!sawRawAudio) {
-          throw new APIConnectionError({
-            message: 'TTS synthesis completed but no audio was received',
-          });
-        }
-
-        this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
+      if (succeeded) {
         return;
-      } catch (error) {
-        if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
-          this.adapter.markUnAvailable(i);
-        } else {
-          throw error;
-        }
-      } finally {
-        resampler?.close();
       }
     }
     const labels = this.adapter.ttsInstances.map((t) => t.label).join(', ');
@@ -409,12 +441,14 @@ class FallbackSynthesizeStream extends SynthesizeStream {
   )[] = [];
   private audioPushed = false;
   private _logger = log();
+  private _callerSpan?: Span;
 
   label: string = 'tts.FallbackSynthesizeStream';
 
-  constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
+  constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions, callerSpan?: Span) {
     super(adapter, connOptions);
     this.adapter = adapter;
+    this._callerSpan = callerSpan;
   }
 
   /**
@@ -422,6 +456,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
    */
   protected async run(): Promise<Throws<void, APIConnectionError>> {
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
+    const runSpan = trace.getActiveSpan();
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
@@ -452,148 +487,178 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       }
       const resampler = this.adapter.createResamplerForTTS(i);
 
-      try {
-        this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
+      const succeeded = await tracer.startActiveSpan(
+        async (attemptSpan): Promise<boolean> => {
+          attemptSpan.setAttribute(traceTypes.ATTR_FALLBACK_ATTEMPT_INDEX, i);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, originalTts.model);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, originalTts.provider);
 
-        const connOptions: APIConnectOptions = {
-          ...this.connOptions,
-          maxRetry: this.adapter.maxRetryPerTTS,
-        };
-
-        const stream = tts.stream({ connOptions });
-        let bufferIndex = 0;
-        let streamOutputCompleted = false;
-        const forwardBufferToTTS = async () => {
-          while (true) {
-            while (bufferIndex < this.tokenBuffer.length) {
-              const token = this.tokenBuffer[bufferIndex++]!;
-              if (token === SynthesizeStream.FLUSH_SENTINEL) {
-                stream.flush();
-              } else if (token === SynthesizeStream.END_OF_STREAM) {
-                stream.endInput();
-                return;
-              } else {
-                stream.pushText(token);
-              }
-            }
-            await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, FORWARD_POLL_MS));
-            if (this.abortController.signal.aborted || streamOutputCompleted) {
-              stream.endInput();
-              return;
-            }
-          }
-        };
-
-        // Tracks whether the inner stream yielded any real audio frames.
-        // `audioPushed` can be flipped on by a phantom `AudioResampler.flush()`
-        // frame even when nothing was pushed in (rtc-node 0.13.25), so we
-        // cannot use it to detect silent failures.
-        let sawRawAudio = false;
-        const processOutput = async () => {
           try {
-            for await (const audio of stream) {
-              if (this.abortController.signal.aborted) {
-                stream.close();
-                return;
-              }
+            this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
-              if (audio === SynthesizeStream.END_OF_STREAM) {
-                // Don't forward END_OF_STREAM yet — only emit after we verify audio
-                // was received. Otherwise a silent failure would signal completion
-                // to consumers before fallback can try the next TTS.
-                continue;
-              }
+            const connOptions: APIConnectOptions = {
+              ...this.connOptions,
+              maxRetry: this.adapter.maxRetryPerTTS,
+            };
 
-              sawRawAudio = true;
-
-              if (resampler) {
-                for (const frame of resampler.push(audio.frame)) {
-                  this.queue.put({
-                    ...audio,
-                    frame,
-                  });
-                  this.audioPushed = true;
+            const stream = tts.stream({ connOptions });
+            let bufferIndex = 0;
+            let streamOutputCompleted = false;
+            const forwardBufferToTTS = async () => {
+              while (true) {
+                while (bufferIndex < this.tokenBuffer.length) {
+                  const token = this.tokenBuffer[bufferIndex++]!;
+                  if (token === SynthesizeStream.FLUSH_SENTINEL) {
+                    stream.flush();
+                  } else if (token === SynthesizeStream.END_OF_STREAM) {
+                    stream.endInput();
+                    return;
+                  } else {
+                    stream.pushText(token);
+                  }
                 }
-              } else {
-                this.queue.put(audio);
-                this.audioPushed = true;
+                await new ThrowsPromise<void, never>((resolve) =>
+                  setTimeout(resolve, FORWARD_POLL_MS),
+                );
+                if (this.abortController.signal.aborted || streamOutputCompleted) {
+                  stream.endInput();
+                  return;
+                }
               }
-              lastRequestId = audio.requestId;
-              lastSegmentId = audio.segmentId;
+            };
+
+            // Tracks whether the inner stream yielded any real audio frames.
+            // `audioPushed` can be flipped on by a phantom `AudioResampler.flush()`
+            // frame even when nothing was pushed in (rtc-node 0.13.25), so we
+            // cannot use it to detect silent failures.
+            let sawRawAudio = false;
+            const processOutput = async () => {
+              try {
+                for await (const audio of stream) {
+                  if (this.abortController.signal.aborted) {
+                    stream.close();
+                    return;
+                  }
+
+                  if (audio === SynthesizeStream.END_OF_STREAM) {
+                    // Don't forward END_OF_STREAM yet — only emit after we verify audio
+                    // was received. Otherwise a silent failure would signal completion
+                    // to consumers before fallback can try the next TTS.
+                    continue;
+                  }
+
+                  sawRawAudio = true;
+
+                  if (resampler) {
+                    for (const frame of resampler.push(audio.frame)) {
+                      this.queue.put({
+                        ...audio,
+                        frame,
+                      });
+                      this.audioPushed = true;
+                    }
+                  } else {
+                    this.queue.put(audio);
+                    this.audioPushed = true;
+                  }
+                  lastRequestId = audio.requestId;
+                  lastSegmentId = audio.segmentId;
+                }
+
+                // Only flush the resampler if real audio actually went in —
+                // otherwise flush() can return phantom frames that would mask a
+                // silent failure from the primary provider.
+                if (resampler && sawRawAudio) {
+                  for (const frame of resampler.flush()) {
+                    this.queue.put({
+                      requestId: lastRequestId || '',
+                      segmentId: lastSegmentId || '',
+                      frame,
+                      final: true,
+                    });
+                    this.audioPushed = true;
+                  }
+                }
+              } finally {
+                // processOutput and forwardBufferToTTS run in parallel.
+                // forwardBufferToTTS polls tokenBuffer and only exits when it sees END_OF_STREAM.
+                // But END_OF_STREAM is only added when the LLM finishes streaming (line 417).
+                // If the TTS fails while the LLM is still streaming, forwardBufferToTTS would
+                // keep polling indefinitely, blocking fallback to the next TTS.
+                // This flag tells it to exit early.
+                streamOutputCompleted = true;
+              }
+            };
+            const [outputResult, forwardBufferResult] = await ThrowsPromise.allSettled([
+              processOutput(),
+              forwardBufferToTTS().catch((err) => {
+                stream.close(); // Close stream so processOutput can exit
+                throw err;
+              }),
+            ]);
+            if (outputResult.status === 'rejected') {
+              stream.close();
+              throw outputResult.reason;
+            }
+            if (forwardBufferResult.status === 'rejected') {
+              stream.close();
+              throw forwardBufferResult.reason;
             }
 
-            // Only flush the resampler if real audio actually went in —
-            // otherwise flush() can return phantom frames that would mask a
-            // silent failure from the primary provider.
-            if (resampler && sawRawAudio) {
-              for (const frame of resampler.flush()) {
-                this.queue.put({
-                  requestId: lastRequestId || '',
-                  segmentId: lastSegmentId || '',
-                  frame,
-                  final: true,
-                });
-                this.audioPushed = true;
+            // Silent failures must trigger fallback. See `sawRawAudio` above for
+            // why we don't check `audioPushed` here. A caller-initiated abort
+            // (e.g. user interruption before TTFA) is not a provider failure —
+            // emit END_OF_STREAM and exit without marking the primary
+            // unavailable.
+            if (!sawRawAudio) {
+              if (this.abortController.signal.aborted) {
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+                return true;
               }
+              throw new APIConnectionError({
+                message: 'TTS stream completed but no audio was received',
+              });
             }
+
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
+
+            // Update parent spans so traces reflect the actual provider used
+            // instead of the FallbackAdapter wrapper.
+            for (const span of [this._callerSpan, this._ttsRequestSpan, runSpan]) {
+              span?.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, originalTts.model);
+              span?.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, originalTts.provider);
+            }
+            await readInputLLMStream.catch(() => {});
+            return true;
+          } catch (error) {
+            recordException(attemptSpan, toError(error));
+            if (this.audioPushed) {
+              this._logger.error(
+                { tts: originalTts.label },
+                'TTS failed after audio pushed, cannot fallback mid-utterance',
+              );
+              throw error;
+            }
+
+            if (error instanceof APIError || error instanceof APIConnectionError) {
+              this._logger.warn(
+                { tts: originalTts.label, error },
+                'TTS failed, switching to next instance',
+              );
+              this.adapter.markUnAvailable(i);
+              return false;
+            }
+            throw error;
           } finally {
-            // processOutput and forwardBufferToTTS run in parallel.
-            // forwardBufferToTTS polls tokenBuffer and only exits when it sees END_OF_STREAM.
-            // But END_OF_STREAM is only added when the LLM finishes streaming (line 417).
-            // If the TTS fails while the LLM is still streaming, forwardBufferToTTS would
-            // keep polling indefinitely, blocking fallback to the next TTS.
-            // This flag tells it to exit early.
-            streamOutputCompleted = true;
+            resampler?.close();
           }
-        };
-        const [outputResult, forwardBufferResult] = await ThrowsPromise.allSettled([
-          processOutput(),
-          forwardBufferToTTS().catch((err) => {
-            stream.close(); // Close stream so processOutput can exit
-            throw err;
-          }),
-        ]);
-        if (outputResult.status === 'rejected') {
-          stream.close();
-          throw outputResult.reason;
-        }
-        if (forwardBufferResult.status === 'rejected') {
-          stream.close();
-          throw forwardBufferResult.reason;
-        }
+        },
+        { name: 'tts_fallback_stream_attempt' },
+      );
 
-        // Silent failures must trigger fallback. See `sawRawAudio` above for
-        // why we don't check `audioPushed` here.
-        if (!sawRawAudio) {
-          throw new APIConnectionError({
-            message: 'TTS stream completed but no audio was received',
-          });
-        }
-
-        this.queue.put(SynthesizeStream.END_OF_STREAM);
-        this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
-        await readInputLLMStream.catch(() => {});
+      if (succeeded) {
         return;
-      } catch (error) {
-        if (this.audioPushed) {
-          this._logger.error(
-            { tts: originalTts.label },
-            'TTS failed after audio pushed, cannot fallback mid-utterance',
-          );
-          throw error;
-        }
-
-        if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn(
-            { tts: originalTts.label, error },
-            'TTS failed, switching to next instance',
-          );
-          this.adapter.markUnAvailable(i);
-        } else {
-          throw error;
-        }
-      } finally {
-        resampler?.close();
       }
     }
     await readInputLLMStream.catch(() => {});

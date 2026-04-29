@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
+import { type Span, trace } from '@opentelemetry/api';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { toError } from '../utils.js';
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
 import { LLM, LLMStream } from './llm.js';
@@ -126,6 +129,7 @@ export class FallbackAdapter extends LLM {
       parallelToolCalls: opts.parallelToolCalls,
       toolChoice: opts.toolChoice,
       extraKwargs: opts.extraKwargs,
+      callerSpan: trace.getActiveSpan(),
     });
   }
 
@@ -154,6 +158,7 @@ class FallbackLLMStream extends LLMStream {
   private extraKwargs?: Record<string, unknown>;
   private _currentStream?: LLMStream;
   private _log = log();
+  private _callerSpan?: Span;
 
   constructor(
     adapter: FallbackAdapter,
@@ -164,6 +169,7 @@ class FallbackLLMStream extends LLMStream {
       parallelToolCalls?: boolean;
       toolChoice?: ToolChoice;
       extraKwargs?: Record<string, unknown>;
+      callerSpan?: Span;
     },
   ) {
     super(adapter, {
@@ -175,6 +181,7 @@ class FallbackLLMStream extends LLMStream {
     this.parallelToolCalls = opts.parallelToolCalls;
     this.toolChoice = opts.toolChoice;
     this.extraKwargs = opts.extraKwargs;
+    this._callerSpan = opts.callerSpan;
   }
 
   /**
@@ -302,6 +309,7 @@ class FallbackLLMStream extends LLMStream {
    */
   protected async run(): Promise<Throws<void, APIConnectionError>> {
     const startTime = Date.now();
+    const runSpan = trace.getActiveSpan();
 
     // Check if all LLMs are unavailable
     const allFailed = this.adapter._status.every((s) => !s.available);
@@ -325,33 +333,57 @@ class FallbackLLMStream extends LLMStream {
         try {
           this._log.info({ llm: llm.label() }, 'FallbackAdapter: Attempting provider');
 
-          let chunkCount = 0;
-          for await (const chunk of this.tryGenerate(llm, false)) {
-            chunkCount++;
-            // Track what's been sent
-            if (chunk.delta) {
-              if (chunk.delta.content) {
-                textSent += chunk.delta.content;
-              }
-              if (chunk.delta.toolCalls) {
-                for (const tc of chunk.delta.toolCalls) {
-                  if (tc.name) {
-                    toolCallsSent.push(tc.name);
+          await tracer.startActiveSpan(
+            async (attemptSpan) => {
+              attemptSpan.setAttribute(traceTypes.ATTR_FALLBACK_ATTEMPT_INDEX, i);
+              attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, llm.model);
+              attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, llm.provider);
+
+              let chunkCount = 0;
+              try {
+                for await (const chunk of this.tryGenerate(llm, false)) {
+                  chunkCount++;
+                  // Track what's been sent
+                  if (chunk.delta) {
+                    if (chunk.delta.content) {
+                      textSent += chunk.delta.content;
+                    }
+                    if (chunk.delta.toolCalls) {
+                      for (const tc of chunk.delta.toolCalls) {
+                        if (tc.name) {
+                          toolCallsSent.push(tc.name);
+                        }
+                      }
+                    }
                   }
+
+                  // Forward chunk to queue
+                  this._log.debug(
+                    { llm: llm.label(), chunkCount },
+                    'run: forwarding chunk to queue',
+                  );
+                  this.queue.put(chunk);
                 }
+
+                this._log.info(
+                  { llm: llm.label(), totalChunks: chunkCount, textLength: textSent.length },
+                  'FallbackAdapter: Provider succeeded',
+                );
+
+                // Update parent spans so traces reflect the actual provider used
+                // instead of the FallbackAdapter wrapper.
+                for (const span of [this._callerSpan, this._llmRequestSpan, runSpan]) {
+                  span?.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, llm.model);
+                  span?.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, llm.provider);
+                }
+              } catch (error) {
+                recordException(attemptSpan, toError(error));
+                throw error;
               }
-            }
-
-            // Forward chunk to queue
-            this._log.debug({ llm: llm.label(), chunkCount }, 'run: forwarding chunk to queue');
-            this.queue.put(chunk);
-          }
-
-          // Success!
-          this._log.info(
-            { llm: llm.label(), totalChunks: chunkCount, textLength: textSent.length },
-            'FallbackAdapter: Provider succeeded',
+            },
+            { name: 'llm_fallback_attempt' },
           );
+
           return;
         } catch (error) {
           // Mark as unavailable if it was available before
