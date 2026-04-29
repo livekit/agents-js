@@ -287,7 +287,9 @@ export class RoomIO {
     }
     const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
     const nativeTranscriptSync =
-      sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
+      this.outputOptions.nativeTranscriptSync !== false &&
+      sessionLlm instanceof RealtimeModel &&
+      !!sessionLlm.capabilities.nativeTranscriptSync;
     this.transcriptionSynchronizer.nativeTranscriptSync = nativeTranscriptSync;
   };
 
@@ -516,10 +518,6 @@ export class RoomIO {
             ? { ...defaultTextSyncOptions, nativeTranscriptSync: true }
             : undefined,
         );
-        const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
-        if (sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync) {
-          this.transcriptionSynchronizer.nativeTranscriptSync = true;
-        }
       }
     }
 
