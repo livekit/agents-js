@@ -192,6 +192,10 @@ export class AudioRecognition {
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
+  // Provider-known STT ids for the current user turn. Written to the
+  // `user_turn` span when it ends so we can correlate traces with the
+  // provider's logs for debugging.
+  private sttRequestIds: string[] = [];
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -535,6 +539,13 @@ export class AudioRecognition {
   }
 
   private async onSTTEvent(ev: SpeechEvent) {
+    // Collect provider-known STT ids for this user turn. The actual attribute is
+    // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
+    // ordering issues with span creation.
+    if (ev.requestId && !this.sttRequestIds.includes(ev.requestId)) {
+      this.sttRequestIds.push(ev.requestId);
+    }
+
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
@@ -1351,9 +1362,13 @@ export class AudioRecognition {
         [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
         [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
       });
+      if (this.sttRequestIds.length) {
+        this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
+      }
       this.userTurnSpan.end();
       this.userTurnSpan = undefined;
     }
+    this.sttRequestIds = [];
   }
 
   private get vadBaseTurnDetection() {
