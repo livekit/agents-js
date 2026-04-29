@@ -10,6 +10,7 @@ export {
   LLMStream,
   type ChatCompletionOptions,
   type GatewayOptions,
+  type InferenceClass,
   type InferenceLLMOptions,
   type LLMModels,
   type XAIModels,

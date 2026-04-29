@@ -526,7 +526,7 @@ export class AgentSession<
       this._enableRecording = record;
 
       if (this._enableRecording) {
-        ctx.initRecording();
+        await ctx.initRecording();
       }
     }
 
