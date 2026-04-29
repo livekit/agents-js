@@ -121,7 +121,6 @@ export class AvatarSession {
     this.apiUrl = options.apiUrl;
     this.apiKey = options.apiKey ?? process.env.LIVEAVATAR_API_KEY ?? '';
     this.isSandbox = options.isSandbox ?? false;
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 75 line
     this.videoQuality = options.videoQuality ?? null;
     this.avatarParticipantIdentity = options.avatarParticipantIdentity || AVATAR_AGENT_IDENTITY;
     this.avatarParticipantName = options.avatarParticipantName || AVATAR_AGENT_NAME;
@@ -156,7 +155,6 @@ export class AvatarSession {
       );
     }
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 109-115 lines
     try {
       const jobCtx = getJobContext();
       this.localParticipantIdentity = jobCtx.agent?.identity || '';
@@ -173,7 +171,6 @@ export class AvatarSession {
       throw new LiveAvatarException('failed to get local participant identity');
     }
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 117-128 lines
     const at = new AccessToken(livekitApiKey, livekitApiSecret, {
       identity: this.avatarParticipantIdentity,
       name: this.avatarParticipantName,
@@ -196,7 +193,6 @@ export class AvatarSession {
       throw new LiveAvatarException('avatar_id must be set');
     }
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 135-145 lines
     const sessionConfig = await this.api.createStreamingSession({
       livekitUrl,
       livekitToken,
@@ -217,7 +213,6 @@ export class AvatarSession {
     this.wsUrl = startData.data.ws_url;
     this.#logger.info('LiveAvatar streaming session started');
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 158-164 lines
     this.msgChannel = streamNs.createStreamChannel<Record<string, unknown>>();
     agentSession.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev) => {
       if (ev.newState === 'idle') {
@@ -228,7 +223,6 @@ export class AvatarSession {
       this.closeMsgChannel();
     });
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 166-173 lines
     this.audioBuffer = new voice.QueueAudioOutput(SAMPLE_RATE);
     this.audioBuffer.on('clear_buffer', (ev: voice.QueueAudioOutputClearEvent) =>
       this.onClearBuffer(ev),

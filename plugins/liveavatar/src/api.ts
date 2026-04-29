@@ -11,7 +11,6 @@ import { log } from './log.js';
 
 export const DEFAULT_API_URL = 'https://api.liveavatar.com/v1/sessions';
 
-// Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/avatar.py - 41 line
 export type VideoQuality = 'very_high' | 'high' | 'medium' | 'low';
 
 /**
@@ -30,7 +29,6 @@ export interface CreateStreamingSessionOptions {
   roomName: string;
   avatarId: string;
   isSandbox?: boolean;
-  // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/api.py - 62 line
   videoQuality?: VideoQuality | null;
 }
 
@@ -106,7 +104,6 @@ export class LiveAvatarAPI {
       livekit_config: livekitConfig,
     };
 
-    // Ref: python livekit-plugins/livekit-plugins-liveavatar/livekit/plugins/liveavatar/api.py - 75-76 lines
     if (opts.videoQuality != null) {
       payload.video_quality = opts.videoQuality;
     }
