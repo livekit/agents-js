@@ -183,7 +183,7 @@ export abstract class SynthesizeStream
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
-  #ttsRequestSpan?: Span;
+  protected _ttsRequestSpan?: Span;
   #inputTokens = 0;
   #outputTokens = 0;
 
@@ -226,10 +226,13 @@ export abstract class SynthesizeStream
   }
 
   private _mainTaskImpl = async (span: Span) => {
-    this.#ttsRequestSpan = span;
+    this._ttsRequestSpan = span;
     span.setAttributes({
       [traceTypes.ATTR_TTS_STREAMING]: true,
       [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+      // Cost is billed at `tts_node`. Marking tts_request as `span` prevents
+      // Langfuse double-counting on FallbackAdapter wrapper + provider layers.
+      [traceTypes.ATTR_LANGFUSE_OBSERVATION_TYPE]: 'span',
     });
 
     for (let i = 0; i < this.connOptions.maxRetry + 1; i++) {
@@ -369,8 +372,8 @@ export abstract class SynthesizeStream
             modelName: this.#tts.model,
           },
         };
-        if (this.#ttsRequestSpan) {
-          this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+        if (this._ttsRequestSpan) {
+          this._ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
         }
         this.#tts.emit('metrics_collected', metrics);
 
@@ -401,9 +404,9 @@ export abstract class SynthesizeStream
       emit();
     }
 
-    if (this.#ttsRequestSpan) {
-      this.#ttsRequestSpan.end();
-      this.#ttsRequestSpan = undefined;
+    if (this._ttsRequestSpan) {
+      this._ttsRequestSpan.end();
+      this._ttsRequestSpan = undefined;
     }
   }
 
@@ -497,7 +500,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
-  #ttsRequestSpan?: Span;
+  protected _ttsRequestSpan?: Span;
   private _connOptions: APIConnectOptions;
   private logger = log();
   #inputTokens = 0;
@@ -529,10 +532,12 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   private _mainTaskImpl = async (span: Span) => {
-    this.#ttsRequestSpan = span;
+    this._ttsRequestSpan = span;
     span.setAttributes({
       [traceTypes.ATTR_TTS_STREAMING]: false,
       [traceTypes.ATTR_TTS_LABEL]: this.#tts.label,
+      // See note on streaming variant above — billing happens at `tts_node`.
+      [traceTypes.ATTR_LANGFUSE_OBSERVATION_TYPE]: 'span',
     });
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
@@ -657,10 +662,10 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       },
     };
 
-    if (this.#ttsRequestSpan) {
-      this.#ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
-      this.#ttsRequestSpan.end();
-      this.#ttsRequestSpan = undefined;
+    if (this._ttsRequestSpan) {
+      this._ttsRequestSpan.setAttribute(traceTypes.ATTR_TTS_METRICS, JSON.stringify(metrics));
+      this._ttsRequestSpan.end();
+      this._ttsRequestSpan = undefined;
     }
 
     this.#tts.emit('metrics_collected', metrics);

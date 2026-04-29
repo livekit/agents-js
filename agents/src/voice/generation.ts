@@ -13,7 +13,7 @@ import {
   FunctionCall,
   FunctionCallOutput,
 } from '../llm/chat_context.js';
-import type { ChatChunk } from '../llm/llm.js';
+import type { ChatChunk, CompletionUsage } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
@@ -457,6 +457,10 @@ export function performLLMInference(
     let llmStream: ReadableStream<string | ChatChunk> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
+    // Captured from the final ChatChunk so we can attribute exact provider
+    // token counts to `llm_node` (where Langfuse bills the cost). Without this
+    // Langfuse falls back to a local-tokenizer estimate of the prompt text.
+    let usage: CompletionUsage | undefined;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
@@ -489,6 +493,7 @@ export function performLLMInference(
           await textWriter.write(chunk);
           // TODO(shubhra): better way to check??
         } else {
+          if (chunk.usage) usage = chunk.usage;
           if (chunk.delta === undefined) {
             continue;
           }
@@ -526,6 +531,16 @@ export function performLLMInference(
       }
 
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      if (usage) {
+        // Bill cost here. `llm_request` spans below also carry these tokens
+        // (for LiveKit Cloud), but they're marked `langfuse.observation.type=span`
+        // so Langfuse only counts this layer.
+        span.setAttributes({
+          [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: usage.promptTokens,
+          [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: usage.completionTokens,
+          [traceTypes.ATTR_LANGFUSE_OBSERVATION_TYPE]: 'generation',
+        });
+      }
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }

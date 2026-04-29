@@ -4,8 +4,9 @@
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Task, cancelAndWait } from '../utils.js';
+import { Task, cancelAndWait, toError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
 import {
@@ -97,8 +98,11 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
+  private _activeStt: STT | undefined;
 
-  label = 'stt.FallbackAdapter';
+  override get label(): string {
+    return this._activeStt?.label ?? 'stt.FallbackAdapter';
+  }
 
   constructor(opts: FallbackAdapterOptions) {
     if (!opts.sttInstances || opts.sttInstances.length < 1) {
@@ -148,11 +152,16 @@ export class FallbackAdapter extends STT {
   }
 
   override get model(): string {
-    return 'FallbackAdapter';
+    return this._activeStt?.model ?? 'FallbackAdapter';
   }
 
   override get provider(): string {
-    return 'livekit';
+    return this._activeStt?.provider ?? 'livekit';
+  }
+
+  /** @internal Set by FallbackSpeechStream when a child stream produces events. */
+  _setActiveStt(stt: STT): void {
+    this._activeStt = stt;
   }
 
   /**
@@ -232,7 +241,22 @@ export class FallbackAdapter extends STT {
       const status = this._status[i]!;
       if (status.available || allFailed) {
         try {
-          return await stt.recognize(frame, abortSignal);
+          return await tracer.startActiveSpan(
+            async (attemptSpan) => {
+              attemptSpan.setAttribute(traceTypes.ATTR_FALLBACK_ATTEMPT_INDEX, i);
+              attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, stt.model);
+              attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, stt.provider);
+              try {
+                const result = await stt.recognize(frame, abortSignal);
+                this._activeStt = stt;
+                return result;
+              } catch (e) {
+                recordException(attemptSpan, toError(e));
+                throw e;
+              }
+            },
+            { name: 'stt_fallback_recognize_attempt' },
+          );
         } catch (e) {
           if (e instanceof APIError) {
             this._logger.warn(
@@ -443,66 +467,85 @@ class FallbackSpeechStream extends SpeechStream {
       };
       sttInstance.on('error', errListener);
 
-      try {
-        const child = sttInstance.stream({
-          connOptions: {
-            maxRetry: this.fallbackAdapter.maxRetryPerSTT,
-            timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
-            retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
-          },
-        });
-        mainRef.current = child;
-        // If the forwarder has already drained and exited (input EOF), it
-        // will never call endInput() on this child. End it here so the
-        // child's `for await (input)` loop can terminate cleanly instead
-        // of hanging forever.
-        if (forwarderFinished) {
+      const cleanlyEnded = await tracer.startActiveSpan(
+        async (attemptSpan): Promise<boolean> => {
+          attemptSpan.setAttribute(traceTypes.ATTR_FALLBACK_ATTEMPT_INDEX, i);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, sttInstance.model);
+          attemptSpan.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, sttInstance.provider);
+
           try {
-            child.endInput();
-          } catch {
-            /* already ended */
-          }
-        }
+            const child = sttInstance.stream({
+              connOptions: {
+                maxRetry: this.fallbackAdapter.maxRetryPerSTT,
+                timeoutMs: this.fallbackAdapter.attemptTimeoutMs,
+                retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
+              },
+            });
+            mainRef.current = child;
+            // If the forwarder has already drained and exited (input EOF), it
+            // will never call endInput() on this child. End it here so the
+            // child's `for await (input)` loop can terminate cleanly instead
+            // of hanging forever.
+            if (forwarderFinished) {
+              try {
+                child.endInput();
+              } catch {
+                /* already ended */
+              }
+            }
 
-        try {
-          for await (const ev of child) {
-            this.queue.put(ev);
-          }
-        } finally {
-          child.close();
-        }
+            try {
+              for await (const ev of child) {
+                this.fallbackAdapter._setActiveStt(sttInstance);
+                this.queue.put(ev);
+              }
+            } finally {
+              child.close();
+            }
 
-        if (!childErrored) {
-          // Main stream ended cleanly (input EOF).
-          return;
-        }
-        if (status.available) {
-          status.available = false;
-          this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
-        }
-        this._logger.warn(
-          { stt: sttInstance.label },
-          `${sttInstance.label} failed, switching to next STT`,
-        );
-      } catch (e) {
-        if (e instanceof APIError) {
-          this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} failed, switching to next STT`,
-          );
-        } else {
-          this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} unexpected error, switching to next STT`,
-          );
-        }
-        if (status.available) {
-          status.available = false;
-          this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
-        }
-      } finally {
-        sttInstance.off('error', errListener);
-        mainRef.current = null;
+            if (!childErrored) {
+              return true;
+            }
+            if (status.available) {
+              status.available = false;
+              this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
+            }
+            this._logger.warn(
+              { stt: sttInstance.label },
+              `${sttInstance.label} failed, switching to next STT`,
+            );
+            recordException(
+              attemptSpan,
+              toError(new APIConnectionError({ message: `${sttInstance.label} child errored` })),
+            );
+          } catch (e) {
+            recordException(attemptSpan, toError(e));
+            if (e instanceof APIError) {
+              this._logger.warn(
+                { stt: sttInstance.label, err: e },
+                `${sttInstance.label} failed, switching to next STT`,
+              );
+            } else {
+              this._logger.warn(
+                { stt: sttInstance.label, err: e },
+                `${sttInstance.label} unexpected error, switching to next STT`,
+              );
+            }
+            if (status.available) {
+              status.available = false;
+              this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
+            }
+          } finally {
+            sttInstance.off('error', errListener);
+            mainRef.current = null;
+          }
+          return false;
+        },
+        { name: 'stt_fallback_stream_attempt' },
+      );
+
+      if (cleanlyEnded) {
+        return;
       }
 
       this.tryRecoverStream(sttInstance);

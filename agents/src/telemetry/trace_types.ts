@@ -73,6 +73,9 @@ export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration'
 export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
 export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';
 
+// fallback adapter
+export const ATTR_FALLBACK_ATTEMPT_INDEX = 'lk.fallback.attempt_index';
+
 // metrics
 export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';
@@ -113,3 +116,11 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
+/**
+ * Langfuse observation type. Forces a span to be classified as a non-billable
+ * `span` (instead of inferred `generation`) so Langfuse skips cost calculation
+ * on layers that wrap a real provider call (e.g. FallbackAdapter wrappers and
+ * the inner provider `llm_request` / `tts_request`). LiveKit Cloud tracing
+ * ignores this attribute and continues to read `gen_ai.usage.*` directly.
+ */
+export const ATTR_LANGFUSE_OBSERVATION_TYPE = 'langfuse.observation.type';

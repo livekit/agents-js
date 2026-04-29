@@ -121,7 +121,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #llm: LLM;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
-  #llmRequestSpan?: Span;
+  protected _llmRequestSpan?: Span;
 
   constructor(
     llm: LLM,
@@ -154,7 +154,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   }
 
   private _mainTaskImpl = async (span: Span) => {
-    this.#llmRequestSpan = span;
+    this._llmRequestSpan = span;
     span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
@@ -268,23 +268,26 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       },
     };
 
-    if (this.#llmRequestSpan) {
-      this.#llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
+    if (this._llmRequestSpan) {
+      this._llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
 
-      this.#llmRequestSpan.setAttributes({
+      this._llmRequestSpan.setAttributes({
         [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
         [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
+        // Cost is billed at `llm_node`. Marking llm_request as `span` prevents
+        // Langfuse double-counting on FallbackAdapter wrapper + provider layers.
+        [traceTypes.ATTR_LANGFUSE_OBSERVATION_TYPE]: 'span',
       });
 
       if (completionStartTime) {
-        this.#llmRequestSpan.setAttribute(
+        this._llmRequestSpan.setAttribute(
           traceTypes.ATTR_LANGFUSE_COMPLETION_START_TIME,
           completionStartTime,
         );
       }
 
       // End the span now that metrics are collected
-      this.#llmRequestSpan.end();
+      this._llmRequestSpan.end();
     }
 
     this.#llm.emit('metrics_collected', metrics);
