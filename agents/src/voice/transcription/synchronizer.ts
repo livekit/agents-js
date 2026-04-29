@@ -157,6 +157,17 @@ class SegmentSynchronizerImpl {
   constructor(
     private readonly options: TextSyncOptions,
     private readonly nextInChain: TextOutput,
+    /**
+     * When true, fall back to seeding `startWallTime` / resolving `startFuture`
+     * from the first audio frame in `pushAudio` if `onPlaybackStarted` hasn't
+     * fired yet. Used for impls created by mid-flow segment rotation, where the
+     * wrapped `AudioOutput.firstFrameEmitted` stays true and won't propagate
+     * another `playbackStarted` event. The first impl (constructed in the
+     * `TranscriptionSynchronizer` constructor) leaves this `false` so it always
+     * trusts the chain — required for `waitPlaybackStart=true` on
+     * `DataStreamAudioOutput`.
+     */
+    private readonly seedFromPushAudio: boolean = false,
   ) {
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
@@ -204,6 +215,21 @@ class SegmentSynchronizerImpl {
     return this.outputStream.readable;
   }
 
+  onPlaybackStarted(startTime: number): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after close');
+      return;
+    }
+
+    if (this.startFuture.done) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after startFuture is set');
+      return;
+    }
+
+    this.startWallTime = startTime;
+    this.startFuture.resolve();
+  }
+
   pushAudio(frame: AudioFrame) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushAudio called after close');
@@ -212,7 +238,12 @@ class SegmentSynchronizerImpl {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
 
-    if (!this.startWallTime && frameDuration > 0) {
+    // For impls created by mid-flow rotation, nextInChainAudio.firstFrameEmitted
+    // stays true (only reset on flush()), so onPlaybackStarted never propagates
+    // here. Seed startWallTime + startFuture from the first audio frame.
+    // Do NOT do this on the first impl — it would defeat waitPlaybackStart=true
+    // by resolving startFuture before the lk.playback_started RPC arrives.
+    if (this.seedFromPushAudio && !this.startFuture.done && frameDuration > 0) {
       this.startWallTime = Date.now();
       this.startFuture.resolve();
     }
@@ -418,7 +449,13 @@ class SegmentSynchronizerImpl {
     if (this.closed) {
       return;
     }
+
     this.closedFuture.resolve();
+    if (this.startWallTime === undefined) {
+      // avoid error in mainTask if playback completed before any audio frame arrived
+      this.startWallTime = Date.now();
+    }
+
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
     this.textData.wordStream.close();
     await this.captureTask;
@@ -523,7 +560,7 @@ export class TranscriptionSynchronizer {
     }
 
     await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
+    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
   }
 }
 
@@ -589,6 +626,14 @@ class SyncedAudioOutput extends AudioOutput {
 
   clearBuffer() {
     this.nextInChainAudio.clearBuffer();
+  }
+
+  // this is going to be automatically called by the next_in_chain
+  onPlaybackStarted(createdAt: number): void {
+    super.onPlaybackStarted(createdAt);
+    if (this.synchronizer.enabled) {
+      this.synchronizer._impl.onPlaybackStarted(createdAt);
+    }
   }
 
   // this is going to be automatically called by the next_in_chain
