@@ -23,10 +23,11 @@ interface TextSyncOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
+  nativeTranscriptSync?: boolean;
 }
 
 interface TextData {
-  wordStream: WordStream;
+  wordStream?: WordStream;
   pushedText: string;
   done: boolean;
   forwardedHyphens: number;
@@ -171,7 +172,7 @@ class SegmentSynchronizerImpl {
   ) {
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
-      wordStream: options.wordTokenizer.stream(),
+      wordStream: options.nativeTranscriptSync ? undefined : options.wordTokenizer.stream(),
       pushedText: '',
       done: false,
       forwardedHyphens: 0,
@@ -185,13 +186,15 @@ class SegmentSynchronizerImpl {
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
 
-    this.mainTask()
-      .then(() => {
-        this.outputStreamWriter.close();
-      })
-      .catch((error) => {
-        this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
-      });
+    if (!options.nativeTranscriptSync) {
+      this.mainTask()
+        .then(() => {
+          this.outputStreamWriter.close();
+        })
+        .catch((error) => {
+          this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
+        });
+    }
     this.captureTask = this.captureTaskImpl();
   }
 
@@ -266,29 +269,30 @@ class SegmentSynchronizerImpl {
       return;
     }
 
-    // Check if text is a TimedString (has timing information)
-    let textStr: string;
+    const textStr = isTimedString(text) ? text.text : text;
+
+    if (this.options.nativeTranscriptSync) {
+      this.textData.pushedText += textStr;
+      this.textData.forwardedText += textStr;
+      this.outputStreamWriter.write(textStr);
+      return;
+    }
+
     let startTime: number | undefined;
     let endTime: number | undefined;
 
     if (isTimedString(text)) {
-      // This is a TimedString
-      textStr = text.text;
       startTime = text.startTime;
       endTime = text.endTime;
 
-      // Create annotatedRate if it doesn't exist
       if (!this.audioData.annotatedRate) {
         this.audioData.annotatedRate = new SpeakingRateData();
       }
 
-      // Add the timing annotation
       this.audioData.annotatedRate.addByAnnotation(textStr, startTime, endTime);
-    } else {
-      textStr = text;
     }
 
-    this.textData.wordStream.pushText(textStr);
+    this.textData.wordStream!.pushText(textStr);
     this.textData.pushedText += textStr;
   }
 
@@ -299,7 +303,11 @@ class SegmentSynchronizerImpl {
     }
 
     this.textData.done = true;
-    this.textData.wordStream.endInput();
+    if (this.options.nativeTranscriptSync) {
+      this.outputStreamWriter.close();
+    } else {
+      this.textData.wordStream!.endInput();
+    }
   }
 
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
@@ -361,7 +369,7 @@ class SegmentSynchronizerImpl {
 
     let pushedTextCursor = 0;
 
-    for await (const wordToken of this.textData.wordStream) {
+    for await (const wordToken of this.textData.wordStream!) {
       const word = wordToken.token;
 
       if (this.closed && !this.playbackCompleted) {
@@ -457,7 +465,14 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
-    this.textData.wordStream.close();
+    if (this.options.nativeTranscriptSync) {
+      // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
+      if (!this.textData.done) {
+        this.outputStreamWriter.close();
+      }
+    } else {
+      this.textData.wordStream!.close();
+    }
     await this.captureTask;
   }
 }
@@ -467,6 +482,7 @@ export interface TranscriptionSynchronizerOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
+  nativeTranscriptSync?: boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -511,6 +527,7 @@ export class TranscriptionSynchronizer {
       hyphenateWord: options.hyphenateWord,
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
+      nativeTranscriptSync: options.nativeTranscriptSync,
     };
 
     // initial segment/first segment, recreated for each new segment
@@ -533,6 +550,14 @@ export class TranscriptionSynchronizer {
     if (enabled) {
       this._warnedAsymmetricDetach = false;
     }
+    this.rotateSegment();
+  }
+
+  set nativeTranscriptSync(value: boolean) {
+    if (this.options.nativeTranscriptSync === value) {
+      return;
+    }
+    this.options.nativeTranscriptSync = value;
     this.rotateSegment();
   }
 

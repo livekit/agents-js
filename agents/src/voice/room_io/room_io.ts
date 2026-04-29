@@ -18,6 +18,7 @@ import {
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
+import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future, Task, waitForAbort } from '../../utils.js';
@@ -26,11 +27,15 @@ import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
   CloseReason,
+  type ConversationItemAddedEvent,
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import type { TextInputCallback } from '../remote_session.js';
-import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
+import {
+  TranscriptionSynchronizer,
+  defaultTextSyncOptions,
+} from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
 import {
   ParalellTextOutput,
@@ -92,6 +97,11 @@ export interface RoomOutputOptions {
     Otherwise, transcription is emitted as quickly as available.
   */
   syncTranscription: boolean;
+  /** Set to true when the realtime model already streams transcripts synchronized with audio
+    output, bypassing the word tokenizer and writing directly to the output stream.
+    Matches the `nativeTranscriptSync` capability on `RealtimeCapabilities`.
+  */
+  nativeTranscriptSync?: boolean;
   /** The name of the audio track to publish. If not provided, default to "roomio_audio".
    */
   audioPublishOptions: TrackPublishOptions;
@@ -269,6 +279,16 @@ export class RoomIO {
     this.userTranscriptWriter.write(ev).catch((error) => {
       this.logger.error({ error }, 'Failed to write transcript event to stream');
     });
+  };
+
+  private onConversationItemAdded = (ev: ConversationItemAddedEvent) => {
+    if (ev.item.type !== 'agent_handoff' || !this.transcriptionSynchronizer) {
+      return;
+    }
+    const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
+    const nativeTranscriptSync =
+      sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
+    this.transcriptionSynchronizer.nativeTranscriptSync = nativeTranscriptSync;
   };
 
   private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
@@ -492,7 +512,14 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
+          this.outputOptions.nativeTranscriptSync
+            ? { ...defaultTextSyncOptions, nativeTranscriptSync: true }
+            : undefined,
         );
+        const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
+        if (sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync) {
+          this.transcriptionSynchronizer.nativeTranscriptSync = true;
+        }
       }
     }
 
@@ -519,6 +546,10 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.on(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.onConversationItemAdded,
+    );
   }
 
   async close() {
@@ -527,6 +558,10 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    this.agentSession.off(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.onConversationItemAdded,
+    );
 
     if (this.textStreamHandlerRegistered) {
       this.room.unregisterTextStreamHandler(TOPIC_CHAT);
