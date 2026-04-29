@@ -122,7 +122,7 @@ export interface StartOptions {
  * await avatar.start(agentSession, room);
  * ```
  */
-export class AvatarSession {
+export class AvatarSession extends voice.AvatarSession {
   private agentId: string | null;
   private agentImageUrl: string | null;
   private agentPrompt: string | null;
@@ -143,6 +143,7 @@ export class AvatarSession {
    * @throws LemonSliceException if invalid agentId or agentImageUrl is provided, or if LemonSlice API key is not set
    */
   constructor(options: AvatarSessionOptions = {}) {
+    super();
     this.agentId = options.agentId ?? null;
     this.agentImageUrl = options.agentImageUrl ?? null;
 
@@ -191,6 +192,8 @@ export class AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<string> {
+    await super.start(agentSession, room);
+
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;

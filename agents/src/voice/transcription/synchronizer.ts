@@ -488,6 +488,15 @@ export class TranscriptionSynchronizer {
   /** @internal */
   _impl: SegmentSynchronizerImpl;
 
+  /** @internal */
+  _audioAttached: boolean = true;
+  /** @internal */
+  _textAttached: boolean = true;
+  // warn once per enabled cycle when only one of audio/text is detached; reset when
+  // the synchronizer transitions back to enabled
+  /** @internal */
+  _warnedAsymmetricDetach: boolean = false;
+
   private logger = log();
 
   constructor(
@@ -521,7 +530,21 @@ export class TranscriptionSynchronizer {
     }
 
     this._enabled = enabled;
+    if (enabled) {
+      this._warnedAsymmetricDetach = false;
+    }
     this.rotateSegment();
+  }
+
+  /** @internal */
+  _onAttachmentChanged(args: { audioAttached?: boolean; textAttached?: boolean }): void {
+    if (args.audioAttached !== undefined) {
+      this._audioAttached = args.audioAttached;
+    }
+    if (args.textAttached !== undefined) {
+      this._textAttached = args.textAttached;
+    }
+    this.enabled = this._audioAttached && this._textAttached;
   }
 
   rotateSegment() {
@@ -586,6 +609,18 @@ class SyncedAudioOutput extends AudioOutput {
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
 
     if (!this.synchronizer.enabled) {
+      if (
+        this.synchronizer._audioAttached &&
+        !this.synchronizer._textAttached &&
+        !this.synchronizer._warnedAsymmetricDetach
+      ) {
+        this.synchronizer._warnedAsymmetricDetach = true;
+        this.logger.warn(
+          'TranscriptSynchronizer text output was detached while audio output is ' +
+            'still active; transcription sync is disabled. This usually means ' +
+            'session.output.transcription was replaced after AgentSession.start().',
+        );
+      }
       return;
     }
 
@@ -653,6 +688,16 @@ class SyncedAudioOutput extends AudioOutput {
     this.synchronizer.rotateSegment();
     this.pushedDuration = 0.0;
   }
+
+  onAttached(): void {
+    super.onAttached();
+    this.synchronizer._onAttachmentChanged({ audioAttached: true });
+  }
+
+  onDetached(): void {
+    super.onDetached();
+    this.synchronizer._onAttachmentChanged({ audioAttached: false });
+  }
 }
 
 class SyncedTextOutput extends TextOutput {
@@ -672,6 +717,18 @@ class SyncedTextOutput extends TextOutput {
     const textStr = isTimedString(text) ? text.text : text;
 
     if (!this.synchronizer.enabled) {
+      if (
+        this.synchronizer._textAttached &&
+        !this.synchronizer._audioAttached &&
+        !this.synchronizer._warnedAsymmetricDetach
+      ) {
+        this.synchronizer._warnedAsymmetricDetach = true;
+        this.logger.warn(
+          'TranscriptSynchronizer audio output was detached while text output is ' +
+            'still active; transcription sync is disabled. This usually means ' +
+            'session.output.audio was replaced after AgentSession.start().',
+        );
+      }
       // pass through to the next in chain (extract string from TimedString if needed)
       await this.nextInChain.captureText(textStr);
       return;
@@ -704,5 +761,15 @@ class SyncedTextOutput extends TextOutput {
 
     this.capturing = false;
     this.synchronizer._impl.endTextInput();
+  }
+
+  onAttached(): void {
+    super.onAttached();
+    this.synchronizer._onAttachmentChanged({ textAttached: true });
+  }
+
+  onDetached(): void {
+    super.onDetached();
+    this.synchronizer._onAttachmentChanged({ textAttached: false });
   }
 }
