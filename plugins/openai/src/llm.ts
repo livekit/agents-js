@@ -240,7 +240,7 @@ export class LLM extends llm.LLM {
     }
 
     return new LLM({
-      model: 'llama3-8b-8192',
+      model: 'openai/gpt-oss-120b',
       baseURL: 'https://api.groq.com/openai/v1',
       ...opts,
     });

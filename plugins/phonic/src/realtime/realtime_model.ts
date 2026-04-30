@@ -24,6 +24,7 @@ const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
 const WS_CLOSE_NORMAL = 1000;
 const TOOL_CALL_OUTPUT_TIMEOUT_MS = 60_000;
+const TOOL_CALL_OUTPUT_MAX_CHARS_FOR_HISTORY = 16_000;
 const CONVERSATION_HISTORY_PREFIX =
   '\n\nThis conversation is being continued from an existing ' +
   'conversation. You are the assistant speaking to the user. ' +
@@ -301,17 +302,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   async updateChatCtx(chatCtx: llm.ChatContext): Promise<void> {
     if (!this.configSent) {
       if (chatCtx.items.length > 0) {
-        const turnHistory = chatCtx.items
-          .filter(
-            (item): item is llm.ChatMessage =>
-              item.type === 'message' &&
-              'textContent' in item &&
-              item.textContent !== undefined &&
-              item.textContent.trim() !== '',
-          )
-          .map((item) => `${item.role}: ${item.textContent}`)
-          .join('\n');
-        if (turnHistory.trim() !== '') {
+        const turnHistory = this.buildTurnHistory(chatCtx);
+        if (turnHistory) {
           this.#logger.debug(
             'updateChatCtx called with messages prior to config being sent to Phonic. Including conversation state in system instructions.',
           );
@@ -894,16 +886,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private buildTurnHistory(chatCtx: llm.ChatContext): string | undefined {
-    const messages = chatCtx.items.filter(
-      (item): item is llm.ChatMessage =>
-        item.type === 'message' &&
-        'textContent' in item &&
-        item.textContent !== undefined &&
-        item.textContent.trim() !== '',
-    );
-    if (messages.length === 0) return undefined;
-    const history = messages.map((m) => `${m.role}: ${m.textContent}`).join('\n');
-    return history.trim() || undefined;
+    const lines: string[] = [];
+    for (const item of chatCtx.items) {
+      const text = chatItemToText(item);
+      if (text) lines.push(text);
+    }
+    if (lines.length === 0) return undefined;
+    return lines.join('\n');
   }
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
@@ -935,4 +924,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       yield frame;
     }
   }
+}
+
+function chatItemToText(item: llm.ChatItem): string | undefined {
+  if (item.type === 'message') {
+    const text = item.textContent?.trim();
+    if (!text) return undefined;
+    return `<${item.role}>${text}</${item.role}>`;
+  }
+  if (item.type === 'function_call') {
+    return `<tool_call name="${item.name}">${item.args}</tool_call>`;
+  }
+  if (item.type === 'function_call_output') {
+    const tag = item.isError ? 'tool_error' : 'tool_output';
+    return `<${tag} name="${item.name}">${item.output.slice(0, TOOL_CALL_OUTPUT_MAX_CHARS_FOR_HISTORY)}</${tag}>`;
+  }
+  return undefined;
 }

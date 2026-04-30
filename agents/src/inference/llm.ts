@@ -9,6 +9,8 @@ import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
 import {
   type AnyString,
+  INFERENCE_PRIORITY_HEADER,
+  INFERENCE_PROVIDER_HEADER,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
@@ -150,6 +152,8 @@ function dropUnsupportedParams(
   return result;
 }
 
+export type InferenceClass = 'priority' | 'standard';
+
 export interface InferenceLLMOptions {
   model: LLMModels;
   provider?: string;
@@ -158,6 +162,7 @@ export interface InferenceLLMOptions {
   apiSecret: string;
   modelOptions: ChatCompletionOptions;
   strictToolSchema?: boolean;
+  inferenceClass?: InferenceClass;
 }
 
 export interface GatewayOptions {
@@ -180,6 +185,7 @@ export class LLM extends llm.LLM {
     apiSecret?: string;
     modelOptions?: InferenceLLMOptions['modelOptions'];
     strictToolSchema?: boolean;
+    inferenceClass?: InferenceClass;
   }) {
     super();
 
@@ -191,6 +197,7 @@ export class LLM extends llm.LLM {
       apiSecret,
       modelOptions,
       strictToolSchema = false,
+      inferenceClass,
     } = opts;
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
@@ -213,6 +220,7 @@ export class LLM extends llm.LLM {
       apiSecret: lkApiSecret,
       modelOptions: modelOptions || {},
       strictToolSchema,
+      inferenceClass,
     };
 
     this.client = new OpenAI({
@@ -243,6 +251,7 @@ export class LLM extends llm.LLM {
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
+    inferenceClass,
     // TODO(AJS-270): Add response_format parameter support
     extraKwargs,
   }: {
@@ -251,6 +260,7 @@ export class LLM extends llm.LLM {
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
+    inferenceClass?: InferenceClass;
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
@@ -274,6 +284,9 @@ export class LLM extends llm.LLM {
       modelOptions.tool_choice = toolChoice as ToolChoice;
     }
 
+    const resolvedInferenceClass =
+      inferenceClass !== undefined ? inferenceClass : this.opts.inferenceClass;
+
     // TODO(AJS-270): Add response_format support here
 
     modelOptions = { ...modelOptions, ...this.opts.modelOptions };
@@ -291,6 +304,7 @@ export class LLM extends llm.LLM {
         apiKey: this.opts.apiKey,
         apiSecret: this.opts.apiSecret,
       },
+      inferenceClass: resolvedInferenceClass,
     });
   }
 }
@@ -302,6 +316,7 @@ export class LLMStream extends llm.LLMStream {
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
   private strictToolSchema: boolean;
+  private inferenceClass?: InferenceClass;
 
   private gatewayOptions?: GatewayOptions;
   private toolCallId?: string;
@@ -323,6 +338,7 @@ export class LLMStream extends llm.LLMStream {
       modelOptions,
       providerFmt,
       strictToolSchema,
+      inferenceClass,
     }: {
       model: LLMModels;
       provider?: string;
@@ -334,6 +350,7 @@ export class LLMStream extends llm.LLMStream {
       modelOptions: Record<string, unknown>;
       providerFmt?: llm.ProviderFormat;
       strictToolSchema: boolean;
+      inferenceClass?: InferenceClass;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -344,6 +361,7 @@ export class LLMStream extends llm.LLMStream {
     this.modelOptions = modelOptions;
     this.model = model;
     this.strictToolSchema = strictToolSchema;
+    this.inferenceClass = inferenceClass;
   }
 
   protected async run(): Promise<void> {
@@ -403,7 +421,10 @@ export class LLMStream extends llm.LLMStream {
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
       if (this.provider) {
-        extraHeaders['X-LiveKit-Inference-Provider'] = this.provider;
+        extraHeaders[INFERENCE_PROVIDER_HEADER] = this.provider;
+      }
+      if (this.inferenceClass !== undefined) {
+        extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
       delete requestOptions.extra_headers;
 

@@ -37,6 +37,7 @@ export interface TaskGroupOptions {
   returnExceptions?: boolean;
   chatCtx?: ChatContext;
   onTaskCompleted?: (event: TaskCompletedEvent) => Promise<void>;
+  preserveFunctionCallHistory?: boolean;
 }
 
 export class TaskGroup extends AgentTask<TaskGroupResult> {
@@ -48,9 +49,15 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
   private _currentTask?: AgentTask;
 
   constructor(options: TaskGroupOptions = {}) {
-    const { summarizeChatCtx = true, returnExceptions = false, chatCtx, onTaskCompleted } = options;
+    const {
+      summarizeChatCtx = true,
+      returnExceptions = false,
+      chatCtx,
+      onTaskCompleted,
+      preserveFunctionCallHistory = false,
+    } = options;
 
-    super({ instructions: '*empty*', chatCtx });
+    super({ instructions: '*empty*', chatCtx, preserveFunctionCallHistory });
 
     this._summarizeChatCtx = summarizeChatCtx;
     this._returnExceptions = returnExceptions;

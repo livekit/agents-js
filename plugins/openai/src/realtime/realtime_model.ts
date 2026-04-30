@@ -415,6 +415,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   private inputResampler?: AudioResampler;
   private instructions?: string;
   private oaiRealtimeModel: RealtimeModel;
+  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
+  // per-session copy of options so updateOptions can diff against the session's
+  // own state instead of the shared model-level state.
+  private _options: RealtimeOptions;
   private currentGeneration?: ResponseGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
 
@@ -443,6 +447,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
+    // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 796-797 lines
+    // Shallow copy (equivalent to Python's `dataclasses.replace`) so each
+    // session has independent option state. Without this, updateOptions would
+    // mutate the shared model._options before computing its diff, causing the
+    // diff to always see "no change" and never send session.update.
+    this._options = { ...realtimeModel._options };
 
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
@@ -460,7 +470,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
-    const opts = this.oaiRealtimeModel._options;
+    const opts = this._options;
     const maxOutputTokens =
       opts.maxResponseOutputTokens === Infinity ? 'inf' : opts.maxResponseOutputTokens;
 
@@ -722,13 +732,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    const isLegacyAzure =
-      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     return {
       type: 'session.update',
       session: {
         ...(!isLegacyAzure && { type: 'realtime' }),
-        model: this.oaiRealtimeModel._options.model,
+        model: this._options.model,
         tools: oaiTools,
       },
       event_id: shortuuid('tools_update_'),
@@ -736,8 +745,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateInstructions(_instructions: string): Promise<void> {
-    const isLegacyAzure =
-      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     const eventId = shortuuid('instructions_update_');
     this.sendEvent({
       type: 'session.update',
@@ -751,20 +759,19 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
-    const currentToolChoice = toOaiToolChoice(this.oaiRealtimeModel._options.toolChoice);
+    const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
     const nextToolChoice = toOaiToolChoice(toolChoice);
     if (currentToolChoice === nextToolChoice) {
-      this.oaiRealtimeModel._options.toolChoice = toolChoice;
+      this._options.toolChoice = toolChoice;
       return;
     }
 
-    const isLegacyAzure =
-      this.oaiRealtimeModel._options.isAzure && !!this.oaiRealtimeModel._options.apiVersion;
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     const options: api_proto.SessionUpdateEvent['session'] = {
       ...(!isLegacyAzure && { type: 'realtime' }),
     };
 
-    this.oaiRealtimeModel._options.toolChoice = toolChoice;
+    this._options.toolChoice = toolChoice;
     options.tool_choice = toOaiToolChoice(toolChoice);
 
     // TODO(brian): add other options here
@@ -889,32 +896,32 @@ export class RealtimeSession extends llm.RealtimeSession {
       'User-Agent': 'LiveKit-Agents-JS',
     };
 
-    if (this.oaiRealtimeModel._options.isAzure) {
+    if (this._options.isAzure) {
       // Microsoft API has two ways of authentication
       // 1. Entra token set as `Bearer` token
       // 2. API key set as `api_key` header (also accepts query string)
-      if (this.oaiRealtimeModel._options.entraToken) {
-        headers.Authorization = `Bearer ${this.oaiRealtimeModel._options.entraToken}`;
-      } else if (this.oaiRealtimeModel._options.apiKey) {
-        headers['api-key'] = this.oaiRealtimeModel._options.apiKey;
+      if (this._options.entraToken) {
+        headers.Authorization = `Bearer ${this._options.entraToken}`;
+      } else if (this._options.apiKey) {
+        headers['api-key'] = this._options.apiKey;
       } else {
         throw new Error('Microsoft API key or entraToken is required');
       }
     } else {
-      if (!this.oaiRealtimeModel._options.apiKey) {
+      if (!this._options.apiKey) {
         throw new Error(
           'OpenAI API key is required but not set. Check OPENAI_API_KEY environment variable.',
         );
       }
-      headers.Authorization = `Bearer ${this.oaiRealtimeModel._options.apiKey}`;
+      headers.Authorization = `Bearer ${this._options.apiKey}`;
     }
 
     const url = processBaseURL({
-      baseURL: this.oaiRealtimeModel._options.baseURL,
-      model: this.oaiRealtimeModel._options.model,
-      isAzure: this.oaiRealtimeModel._options.isAzure,
-      apiVersion: this.oaiRealtimeModel._options.apiVersion,
-      azureDeployment: this.oaiRealtimeModel._options.azureDeployment,
+      baseURL: this._options.baseURL,
+      model: this._options.model,
+      isAzure: this._options.isAzure,
+      apiVersion: this._options.apiVersion,
+      azureDeployment: this._options.azureDeployment,
     });
 
     if (lkOaiDebug) {
@@ -928,7 +935,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const timeout = setTimeout(() => {
         ws.close();
         reject(new Error('WebSocket connection timeout'));
-      }, this.oaiRealtimeModel._options.connOptions.timeoutMs);
+      }, this._options.connOptions.timeoutMs);
 
       ws.once('open', () => {
         if (!waiting) return;
@@ -950,12 +957,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     let reconnecting = false;
     let numRetries = 0;
     let wsConn: WebSocket | null = null;
-    const maxRetries = this.oaiRealtimeModel._options.connOptions.maxRetry;
+    const maxRetries = this._options.connOptions.maxRetry;
 
     const reconnect = async () => {
       this.#logger.debug(
         {
-          maxSessionDuration: this.oaiRealtimeModel._options.maxSessionDuration,
+          maxSessionDuration: this._options.maxSessionDuration,
         },
         'Reconnecting to OpenAI Realtime API',
       );
@@ -1005,7 +1012,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       try {
         for (const ev of events) {
           this.emit('openai_client_event_queued', ev);
-          if (this.oaiRealtimeModel._options.isAzure && this.oaiRealtimeModel._options.apiVersion) {
+          if (this._options.isAzure && this._options.apiVersion) {
             normalizeAzureClientEvent(ev as unknown as Record<string, unknown>);
           }
           wsConn!.send(JSON.stringify(ev));
@@ -1063,7 +1070,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         const retryInterval =
           numRetries === 0
             ? DEFAULT_FIRST_RETRY_INTERVAL_MS
-            : this.oaiRealtimeModel._options.connOptions.retryIntervalMs;
+            : this._options.connOptions.retryIntervalMs;
         this.#logger.warn(
           {
             attempt: numRetries,
@@ -1098,7 +1105,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
 
           this.emit('openai_client_event_queued', event);
-          if (this.oaiRealtimeModel._options.isAzure && this.oaiRealtimeModel._options.apiVersion) {
+          if (this._options.isAzure && this._options.apiVersion) {
             normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
           }
           wsConn.send(JSON.stringify(event));
@@ -1214,7 +1221,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     const waitReconnectTask = Task.from(async ({ signal }) => {
-      await delay(this.oaiRealtimeModel._options.maxSessionDuration, { signal });
+      await delay(this._options.maxSessionDuration, { signal });
       return new APIConnectionError({
         message: 'OpenAI Realtime API connection timeout',
       });
@@ -1269,7 +1276,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         gen.textChannel.close();
         gen.audioChannel.close();
         if (!gen.modalities.done) {
-          gen.modalities.resolve(this.oaiRealtimeModel._options.modalities);
+          gen.modalities.resolve(this._options.modalities);
         }
       }
       this.currentGeneration.messages.clear();
@@ -1295,7 +1302,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     _event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
     this.emit('input_speech_stopped', {
-      userTranscriptionEnabled: this.oaiRealtimeModel._options.inputAudioTranscription !== null,
+      userTranscriptionEnabled: this._options.inputAudioTranscription !== null,
     } as llm.InputSpeechStoppedEvent);
   }
 
@@ -1644,7 +1651,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       itemGeneration.audioChannel.close();
       if (!itemGeneration.modalities.done) {
         // In case message modalities is not set, this shouldn't happen
-        itemGeneration.modalities.resolve(this.oaiRealtimeModel._options.modalities);
+        itemGeneration.modalities.resolve(this._options.modalities);
       }
     }
   }
@@ -1670,7 +1677,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       generation.textChannel.close();
       generation.audioChannel.close();
       if (!generation.modalities.done) {
-        generation.modalities.resolve(this.oaiRealtimeModel._options.modalities);
+        generation.modalities.resolve(this._options.modalities);
       }
     }
 

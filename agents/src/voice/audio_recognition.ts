@@ -65,8 +65,8 @@ export interface RecognitionHooks {
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
-  onInterimTranscript: (ev: SpeechEvent) => void;
-  onFinalTranscript: (ev: SpeechEvent) => void;
+  onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
+  onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
 
@@ -202,6 +202,10 @@ export class AudioRecognition {
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
+  // Provider-known STT ids for the current user turn. Written to the
+  // `user_turn` span when it ends so we can correlate traces with the
+  // provider's logs for debugging.
+  private sttRequestIds: string[] = [];
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
@@ -576,6 +580,13 @@ export class AudioRecognition {
     // FallbackAdapter only knows its active child after the first event lands.
     this.refreshUserTurnSttAttributes();
 
+    // Collect provider-known STT ids for this user turn. The actual attribute is
+    // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
+    // ordering issues with span creation.
+    if (ev.requestId && !this.sttRequestIds.includes(ev.requestId)) {
+      this.sttRequestIds.push(ev.requestId);
+    }
+
     if (
       this.turnDetectionMode === 'manual' &&
       this.userTurnCommitted &&
@@ -627,7 +638,10 @@ export class AudioRecognition {
           return;
         }
 
-        this.hooks.onFinalTranscript(ev);
+        this.hooks.onFinalTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
 
         this.logger.debug(
           {
@@ -679,7 +693,10 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.PREFLIGHT_TRANSCRIPT:
-        this.hooks.onInterimTranscript(ev);
+        this.hooks.onInterimTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
         const preflightTranscript = ev.alternatives?.[0]?.text ?? '';
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
@@ -739,7 +756,10 @@ export class AudioRecognition {
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
         this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
-        this.hooks.onInterimTranscript(ev);
+        this.hooks.onInterimTranscript(
+          ev,
+          this.vad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
+        );
         this.audioInterimTranscript = ev.alternatives?.[0]?.text ?? '';
         break;
       case SpeechEventType.START_OF_SPEECH:
@@ -1383,9 +1403,13 @@ export class AudioRecognition {
         [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
         [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
       });
+      if (this.sttRequestIds.length) {
+        this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
+      }
       this.userTurnSpan.end();
       this.userTurnSpan = undefined;
     }
+    this.sttRequestIds = [];
   }
 
   private get vadBaseTurnDetection() {

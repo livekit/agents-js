@@ -68,6 +68,7 @@ Key classes and their roles:
 - **`AgentSession`** — Orchestrates the full session lifecycle: connects to LiveKit room, manages turn detection, handles interruptions, collects metrics. Entry point: `session.start({ agent, room })`.
 - **`AgentActivity`** (`agent_activity.ts`, ~100KB) — Complex state machine managing individual turns: VAD trigger → STT → endpointing → LLM inference → TTS generation → playout. Supports preemptive generation (starts LLM while user still speaking).
 - **`SpeechHandle`** — Represents a unit of agent speech with lifecycle tracking and priority levels (`LOW=0`, `NORMAL=5`, `HIGH=10`). Sources: `'say'`, `'generate_reply'`, `'tool_response'`.
+- **`AvatarSession`** — Base class for avatar plugin sessions. Registers `aclose()` as a job shutdown callback and warns when started after `AgentSession.start()` (which would replace the existing audio output). Plugin implementations extend this class and call `super.start(agentSession, room)` first.
 
 Turn detection modes: `"stt"` | `"vad"` | `"realtime_llm"` | `"manual"` (configured in `turn_config/`).
 
@@ -91,7 +92,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 - **Stream** (`stream/`): Composable Web Streams API primitives (`StreamChannel`, `DeferredStream`, `MultiInputStream`).
 - **IPC** (`ipc/`): Process pool for running agents in child processes. Two-way IPC: child sends inference requests back to parent.
 - **Worker** (`worker.ts`): Main process connecting to LiveKit server, receives job assignments, spawns agent processes.
-- **Telemetry** (`telemetry/`): OpenTelemetry tracing with custom span attributes (TTFT, TTFB, interruption probability, speech IDs). Pino transport for structured logging.
+- **Telemetry** (`telemetry/`): OpenTelemetry tracing with custom span attributes (TTFT, TTFB, interruption probability, speech IDs, provider request IDs). Pino transport for structured logging.
 - **Metrics** (`metrics/`): `AgentMetrics` union type covering LLM, STT, TTS, VAD, EOU, Realtime, and Interruption metrics. `ModelUsageCollector` for aggregating per-provider usage.
 - **Beta** (`beta/`): `TaskGroup` for multi-task orchestration with optional chat context summarization between tasks.
 
@@ -110,7 +111,7 @@ Plugin capabilities by type:
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
 - **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam
+- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns

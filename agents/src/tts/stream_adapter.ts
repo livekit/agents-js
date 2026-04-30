@@ -2,18 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import type { TTSMetrics } from '../metrics/base.js';
 import type { SentenceStream, SentenceTokenizer } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
 import { createTimedString } from '../voice/io.js';
-import type { ChunkedStream } from './tts.js';
+import type { ChunkedStream, TTSError } from './tts.js';
 import { SynthesizeStream, TTS } from './tts.js';
 
 export class StreamAdapter extends TTS {
   #tts: TTS;
   #sentenceTokenizer: SentenceTokenizer;
   label: string;
+
+  #forwardMetrics = (metrics: TTSMetrics) => {
+    this.emit('metrics_collected', metrics);
+  };
+
+  #forwardError = (error: TTSError) => {
+    this.emit('error', error);
+  };
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer) {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
@@ -22,12 +31,14 @@ export class StreamAdapter extends TTS {
     this.label = this.#tts.label;
     this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
-    this.#tts.on('metrics_collected', (metrics) => {
-      this.emit('metrics_collected', metrics);
-    });
-    this.#tts.on('error', (error) => {
-      this.emit('error', error);
-    });
+    this.#tts.on('metrics_collected', this.#forwardMetrics);
+    this.#tts.on('error', this.#forwardError);
+  }
+
+  async close(): Promise<void> {
+    this.#tts.off('metrics_collected', this.#forwardMetrics);
+    this.#tts.off('error', this.#forwardError);
+    await super.close();
   }
 
   synthesize(
