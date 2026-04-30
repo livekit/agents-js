@@ -49,6 +49,7 @@ import {
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
+  type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -140,6 +141,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
+  [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
@@ -266,6 +268,11 @@ export class AgentSession<
 
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
+
+  /** @internal - Whether `start()` has been called and completed. */
+  get _started(): boolean {
+    return this.started;
+  }
 
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
@@ -487,6 +494,19 @@ export class AgentSession<
       `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
     );
 
+    if (
+      this.sessionOptions.turnHandling.interruption.resumeFalseInterruption &&
+      this.output.audio &&
+      !this.output.audio.canPause
+    ) {
+      this.logger.warn(
+        {
+          audioOutput: this.output.audio.constructor.name,
+        },
+        'resumeFalseInterruption is enabled but audio output does not support pause, it will be ignored',
+      );
+    }
+
     this.logger.debug(
       `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
@@ -526,7 +546,7 @@ export class AgentSession<
       this._enableRecording = record;
 
       if (this._enableRecording) {
-        ctx.initRecording();
+        await ctx.initRecording();
       }
     }
 
@@ -853,7 +873,7 @@ export class AgentSession<
           });
         }
 
-        this._chatCtx.insert(handoffItem);
+        this._conversationItemAdded(handoffItem);
         this.logger.debug(
           { previousAgentId: prevActivityObj?.agent.id, newAgentId: agent.id },
           'Agent handoff inserted into chat context',
@@ -983,7 +1003,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _conversationItemAdded(item: ChatMessage): void {
+  _conversationItemAdded(item: ChatMessage | AgentHandoffItem): void {
     this._chatCtx.insert(item);
     this.emit(AgentSessionEventTypes.ConversationItemAdded, createConversationItemAddedEvent(item));
   }
@@ -1097,7 +1117,21 @@ export class AgentSession<
     }
   }
 
-  private onAudioOutputChanged(): void {}
+  private onAudioOutputChanged(): void {
+    if (
+      this.started &&
+      this.sessionOptions.turnHandling.interruption.resumeFalseInterruption &&
+      this.output.audio &&
+      !this.output.audio.canPause
+    ) {
+      this.logger.warn(
+        {
+          audioOutput: this.output.audio.constructor.name,
+        },
+        'resumeFalseInterruption is enabled, but the audio output does not support pause, ignored',
+      );
+    }
+  }
 
   private onTextOutputChanged(): void {}
 

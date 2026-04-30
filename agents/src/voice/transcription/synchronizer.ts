@@ -160,6 +160,17 @@ class SegmentSynchronizerImpl {
   constructor(
     private readonly options: TextSyncOptions,
     private readonly nextInChain: TextOutput,
+    /**
+     * When true, fall back to seeding `startWallTime` / resolving `startFuture`
+     * from the first audio frame in `pushAudio` if `onPlaybackStarted` hasn't
+     * fired yet. Used for impls created by mid-flow segment rotation, where the
+     * wrapped `AudioOutput.firstFrameEmitted` stays true and won't propagate
+     * another `playbackStarted` event. The first impl (constructed in the
+     * `TranscriptionSynchronizer` constructor) leaves this `false` so it always
+     * trusts the chain — required for `waitPlaybackStart=true` on
+     * `DataStreamAudioOutput`.
+     */
+    private readonly seedFromPushAudio: boolean = false,
   ) {
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
@@ -207,6 +218,21 @@ class SegmentSynchronizerImpl {
     return this.outputStream.readable;
   }
 
+  onPlaybackStarted(startTime: number): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after close');
+      return;
+    }
+
+    if (this.startFuture.done) {
+      this.logger.warn('SegmentSynchronizerImpl.onPlaybackStarted called after startFuture is set');
+      return;
+    }
+
+    this.startWallTime = startTime;
+    this.startFuture.resolve();
+  }
+
   pushAudio(frame: AudioFrame) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushAudio called after close');
@@ -215,7 +241,12 @@ class SegmentSynchronizerImpl {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     const frameDuration = frame.samplesPerChannel / frame.sampleRate;
 
-    if (!this.startWallTime && frameDuration > 0) {
+    // For impls created by mid-flow rotation, nextInChainAudio.firstFrameEmitted
+    // stays true (only reset on flush()), so onPlaybackStarted never propagates
+    // here. Seed startWallTime + startFuture from the first audio frame.
+    // Do NOT do this on the first impl — it would defeat waitPlaybackStart=true
+    // by resolving startFuture before the lk.playback_started RPC arrives.
+    if (this.seedFromPushAudio && !this.startFuture.done && frameDuration > 0) {
       this.startWallTime = Date.now();
       this.startFuture.resolve();
     }
@@ -446,7 +477,13 @@ class SegmentSynchronizerImpl {
     if (this.closed) {
       return;
     }
+
     this.closedFuture.resolve();
+    if (this.startWallTime === undefined) {
+      // avoid error in mainTask if playback completed before any audio frame arrived
+      this.startWallTime = Date.now();
+    }
+
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
     this.textData.wordStream.close();
     await this.captureTask;
@@ -478,6 +515,15 @@ export class TranscriptionSynchronizer {
 
   /** @internal */
   _impl: SegmentSynchronizerImpl;
+
+  /** @internal */
+  _audioAttached: boolean = true;
+  /** @internal */
+  _textAttached: boolean = true;
+  // warn once per enabled cycle when only one of audio/text is detached; reset when
+  // the synchronizer transitions back to enabled
+  /** @internal */
+  _warnedAsymmetricDetach: boolean = false;
 
   private logger = log();
 
@@ -512,7 +558,21 @@ export class TranscriptionSynchronizer {
     }
 
     this._enabled = enabled;
+    if (enabled) {
+      this._warnedAsymmetricDetach = false;
+    }
     this.rotateSegment();
+  }
+
+  /** @internal */
+  _onAttachmentChanged(args: { audioAttached?: boolean; textAttached?: boolean }): void {
+    if (args.audioAttached !== undefined) {
+      this._audioAttached = args.audioAttached;
+    }
+    if (args.textAttached !== undefined) {
+      this._textAttached = args.textAttached;
+    }
+    this.enabled = this._audioAttached && this._textAttached;
   }
 
   rotateSegment() {
@@ -551,7 +611,7 @@ export class TranscriptionSynchronizer {
     }
 
     await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain);
+    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
   }
 }
 
@@ -577,6 +637,18 @@ class SyncedAudioOutput extends AudioOutput {
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
 
     if (!this.synchronizer.enabled) {
+      if (
+        this.synchronizer._audioAttached &&
+        !this.synchronizer._textAttached &&
+        !this.synchronizer._warnedAsymmetricDetach
+      ) {
+        this.synchronizer._warnedAsymmetricDetach = true;
+        this.logger.warn(
+          'TranscriptSynchronizer text output was detached while audio output is ' +
+            'still active; transcription sync is disabled. This usually means ' +
+            'session.output.transcription was replaced after AgentSession.start().',
+        );
+      }
       return;
     }
 
@@ -620,6 +692,14 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   // this is going to be automatically called by the next_in_chain
+  onPlaybackStarted(createdAt: number): void {
+    super.onPlaybackStarted(createdAt);
+    if (this.synchronizer.enabled) {
+      this.synchronizer._impl.onPlaybackStarted(createdAt);
+    }
+  }
+
+  // this is going to be automatically called by the next_in_chain
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
     if (!this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
@@ -635,6 +715,16 @@ class SyncedAudioOutput extends AudioOutput {
 
     this.synchronizer.rotateSegment();
     this.pushedDuration = 0.0;
+  }
+
+  onAttached(): void {
+    super.onAttached();
+    this.synchronizer._onAttachmentChanged({ audioAttached: true });
+  }
+
+  onDetached(): void {
+    super.onDetached();
+    this.synchronizer._onAttachmentChanged({ audioAttached: false });
   }
 }
 
@@ -655,6 +745,18 @@ class SyncedTextOutput extends TextOutput {
     const textStr = isTimedString(text) ? text.text : text;
 
     if (!this.synchronizer.enabled) {
+      if (
+        this.synchronizer._textAttached &&
+        !this.synchronizer._audioAttached &&
+        !this.synchronizer._warnedAsymmetricDetach
+      ) {
+        this.synchronizer._warnedAsymmetricDetach = true;
+        this.logger.warn(
+          'TranscriptSynchronizer audio output was detached while text output is ' +
+            'still active; transcription sync is disabled. This usually means ' +
+            'session.output.audio was replaced after AgentSession.start().',
+        );
+      }
       // pass through to the next in chain (extract string from TimedString if needed)
       await this.nextInChain.captureText(textStr);
       return;
@@ -687,5 +789,15 @@ class SyncedTextOutput extends TextOutput {
 
     this.capturing = false;
     this.synchronizer._impl.endTextInput();
+  }
+
+  onAttached(): void {
+    super.onAttached();
+    this.synchronizer._onAttachmentChanged({ textAttached: true });
+  }
+
+  onDetached(): void {
+    super.onDetached();
+    this.synchronizer._onAttachmentChanged({ textAttached: false });
   }
 }

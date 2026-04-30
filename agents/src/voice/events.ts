@@ -5,6 +5,7 @@ import type { InterruptionDetectionError } from '../inference/interruption/error
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
 import type {
+  AgentHandoffItem,
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
@@ -30,6 +31,7 @@ export enum AgentSessionEventTypes {
   MetricsCollected = 'metrics_collected',
   SessionUsageUpdated = 'session_usage_updated',
   SpeechCreated = 'speech_created',
+  AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
   Error = 'error',
   Close = 'close',
@@ -155,12 +157,12 @@ export const createSessionUsageUpdatedEvent = ({
 
 export type ConversationItemAddedEvent = {
   type: 'conversation_item_added';
-  item: ChatMessage;
+  item: ChatMessage | AgentHandoffItem;
   createdAt: number;
 };
 
 export const createConversationItemAddedEvent = (
-  item: ChatMessage,
+  item: ChatMessage | AgentHandoffItem,
   createdAt: number = Date.now(),
 ): ConversationItemAddedEvent => ({
   type: 'conversation_item_added',
@@ -279,6 +281,25 @@ export const createCloseEvent = (
   createdAt,
 });
 
+export type AgentFalseInterruptionEvent = {
+  type: 'agent_false_interruption';
+  /** Whether the false interruption was resumed automatically. */
+  resumed: boolean;
+  createdAt: number;
+};
+
+export const createAgentFalseInterruptionEvent = ({
+  resumed,
+  createdAt = Date.now(),
+}: {
+  resumed: boolean;
+  createdAt?: number;
+}): AgentFalseInterruptionEvent => ({
+  type: 'agent_false_interruption',
+  resumed,
+  createdAt,
+});
+
 export type AgentEvent =
   | UserInputTranscribedEvent
   | UserStateChangedEvent
@@ -288,6 +309,7 @@ export type AgentEvent =
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent
   | SpeechCreatedEvent
+  | AgentFalseInterruptionEvent
   | OverlappingSpeechEvent
   | ErrorEvent
   | CloseEvent;

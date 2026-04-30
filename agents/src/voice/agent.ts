@@ -485,6 +485,9 @@ export class Agent<UserData = any> {
         if (cleaned) return;
         cleaned = true;
         stream.close();
+        if (wrappedTts !== activity.tts) {
+          wrappedTts.close();
+        }
       };
 
       return new ReadableStream({

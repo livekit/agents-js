@@ -9,6 +9,16 @@ export const ATTR_START_TIME = 'lk.start_time';
 export const ATTR_END_TIME = 'lk.end_time';
 export const ATTR_RETRY_COUNT = 'lk.retry_count';
 
+/**
+ * Provider-known correlation ids associated with this span (string[]).
+ *
+ * Populated by STT/TTS plugins when the id is either sent to the provider
+ * (e.g. WS context_id) or returned by it (e.g. response request_id /
+ * session_id), so it can be cross-referenced with the provider's logs for
+ * debugging.
+ */
+export const ATTR_PROVIDER_REQUEST_IDS = 'lk.provider_request_ids';
+
 export const ATTR_PARTICIPANT_ID = 'lk.participant_id';
 export const ATTR_PARTICIPANT_IDENTITY = 'lk.participant_identity';
 export const ATTR_PARTICIPANT_KIND = 'lk.participant_kind';
