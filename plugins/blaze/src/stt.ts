@@ -190,6 +190,8 @@ export class STT extends stt.STT {
 
         // Retry on 5xx server errors
         if (response.status >= 500 && attempt < MAX_RETRY_COUNT) {
+          // Drain/cancel response body so undici can release the socket back to the pool.
+          await response.body?.cancel().catch(() => {});
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
           continue;
         }
