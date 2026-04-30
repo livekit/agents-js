@@ -39,7 +39,7 @@ const defaultTTSOptions: TTSOptions = {
 
 export class TTS extends tts.TTS {
   label = 'hume.TTS';
-  #opts: Required<Pick<TTSOptions, 'apiKey' | 'baseUrl' | 'modelVersion'>> & TTSOptions;
+  private opts: Required<Pick<TTSOptions, 'apiKey' | 'baseUrl' | 'modelVersion'>> & TTSOptions;
 
   get model(): string {
     return 'Octave';
@@ -68,7 +68,7 @@ export class TTS extends tts.TTS {
     const voice = opts.voice ?? DEFAULT_VOICE;
     const instantMode = opts.instantMode;
 
-    this.#opts = {
+    this.opts = {
       ...merged,
       apiKey,
       baseUrl: merged.baseUrl ?? DEFAULT_BASE_URL,
@@ -84,13 +84,13 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseUrl'>>): void {
-    if (opts.description !== undefined) this.#opts.description = opts.description;
-    if (opts.speed !== undefined) this.#opts.speed = opts.speed;
-    if (opts.voice !== undefined) this.#opts.voice = opts.voice;
-    if (opts.trailingSilence !== undefined) this.#opts.trailingSilence = opts.trailingSilence;
-    if (opts.context !== undefined) this.#opts.context = opts.context;
-    if (opts.instantMode !== undefined) this.#opts.instantMode = opts.instantMode;
-    if (opts.modelVersion !== undefined) this.#opts.modelVersion = opts.modelVersion;
+    if (opts.description !== undefined) this.opts.description = opts.description;
+    if (opts.speed !== undefined) this.opts.speed = opts.speed;
+    if (opts.voice !== undefined) this.opts.voice = opts.voice;
+    if (opts.trailingSilence !== undefined) this.opts.trailingSilence = opts.trailingSilence;
+    if (opts.context !== undefined) this.opts.context = opts.context;
+    if (opts.instantMode !== undefined) this.opts.instantMode = opts.instantMode;
+    if (opts.modelVersion !== undefined) this.opts.modelVersion = opts.modelVersion;
   }
 
   synthesize(
@@ -98,7 +98,7 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
-    return new ChunkedStream(this, text, { ...this.#opts }, connOptions, abortSignal);
+    return new ChunkedStream(this, text, { ...this.opts }, connOptions, abortSignal);
   }
 
   stream(): tts.SynthesizeStream {
@@ -108,8 +108,8 @@ export class TTS extends tts.TTS {
 
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'hume.ChunkedStream';
-  #opts: Required<Pick<TTSOptions, 'apiKey' | 'baseUrl' | 'modelVersion'>> & TTSOptions;
-  #text: string;
+  private opts: Required<Pick<TTSOptions, 'apiKey' | 'baseUrl' | 'modelVersion'>> & TTSOptions;
+  private text: string;
 
   constructor(
     ttsInstance: TTS,
@@ -119,43 +119,52 @@ export class ChunkedStream extends tts.ChunkedStream {
     abortSignal?: AbortSignal,
   ) {
     super(text, ttsInstance, connOptions, abortSignal);
-    this.#text = text;
-    this.#opts = opts;
+    this.text = text;
+    this.opts = opts;
   }
 
   protected async run(): Promise<void> {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(SUPPORTED_SAMPLE_RATE, NUM_CHANNELS);
 
-    const utterance: Record<string, unknown> = { text: this.#text };
-    if (this.#opts.voice !== undefined) utterance.voice = this.#opts.voice;
-    if (this.#opts.description !== undefined) utterance.description = this.#opts.description;
-    if (this.#opts.speed !== undefined) utterance.speed = this.#opts.speed;
-    if (this.#opts.trailingSilence !== undefined)
-      utterance.trailing_silence = this.#opts.trailingSilence;
+    const utterance: Record<string, unknown> = {
+      text: this.text,
+    };
+    if (this.opts.voice !== undefined) {
+      utterance.voice = this.opts.voice;
+    };
+    if (this.opts.description !== undefined) {
+      utterance.description = this.opts.description;
+    }
+    if (this.opts.speed !== undefined) {
+      utterance.speed = this.opts.speed;
+    }
+    if (this.opts.trailingSilence !== undefined) {
+      utterance.trailing_silence = this.opts.trailingSilence;
+    }
 
     const payload: Record<string, unknown> = {
       utterances: [utterance],
-      version: this.#opts.modelVersion,
+      version: this.opts.modelVersion,
       strip_headers: true,
-      instant_mode: this.#opts.instantMode,
+      instant_mode: this.opts.instantMode,
       format: { type: 'pcm' },
     };
 
-    if (typeof this.#opts.context === 'string') {
-      payload.context = { generation_id: this.#opts.context };
-    } else if (Array.isArray(this.#opts.context)) {
-      payload.context = { utterances: this.#opts.context };
+    if (typeof this.opts.context === 'string') {
+      payload.context = { generation_id: this.opts.context };
+    } else if (Array.isArray(this.opts.context)) {
+      payload.context = { utterances: this.opts.context };
     }
 
-    const url = `${this.#opts.baseUrl}${STREAM_PATH}`;
+    const url = `${this.opts.baseUrl}${STREAM_PATH}`;
 
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           ...DEFAULT_HEADERS,
-          [API_AUTH_HEADER]: this.#opts.apiKey,
+          [API_AUTH_HEADER]: this.opts.apiKey,
         },
         body: JSON.stringify(payload),
         signal: this.abortSignal,
