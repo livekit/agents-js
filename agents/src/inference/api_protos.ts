@@ -239,5 +239,6 @@ export type SttSessionCreatedEvent = z.infer<typeof sttSessionCreatedEventSchema
 export type SttSessionFinalizedEvent = z.infer<typeof sttSessionFinalizedEventSchema>;
 export type SttSessionClosedEvent = z.infer<typeof sttSessionClosedEventSchema>;
 export type SttErrorEvent = z.infer<typeof sttErrorEventSchema>;
+export type SttKnownServerEvent = z.infer<typeof sttKnownServerEventSchema>;
 export type SttUnknownServerEvent = z.infer<typeof sttUnknownServerEventSchema>;
 export type SttServerEvent = z.infer<typeof sttServerEventSchema>;

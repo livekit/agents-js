@@ -22,6 +22,7 @@ import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
   type SttTranscriptEvent,
+  sttKnownServerEventSchema,
   sttServerEventSchema,
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
@@ -557,7 +558,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (signal.aborted) return;
             if (result.done) return;
 
-            // Parse and validate with Zod schema
+            // Parse broadly first; warn only on genuinely malformed messages.
             const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
             if (!parseResult.success) {
               this.#logger.warn(
@@ -567,7 +568,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               continue;
             }
 
-            const event: SttServerEvent = parseResult.data;
+            // Narrow to known event types; unknown types are silently skipped.
+            const knownResult = sttKnownServerEventSchema.safeParse(parseResult.data);
+            if (!knownResult.success) {
+              continue;
+            }
+
+            const event = knownResult.data;
 
             switch (event.type) {
               case 'session.created':
