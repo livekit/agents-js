@@ -263,6 +263,9 @@ importers:
       '@livekit/agents-plugin-google':
         specifier: workspace:*
         version: link:../plugins/google
+      '@livekit/agents-plugin-hume':
+        specifier: workspace:*
+        version: link:../plugins/hume
       '@livekit/agents-plugin-inworld':
         specifier: workspace:*
         version: link:../plugins/inworld
