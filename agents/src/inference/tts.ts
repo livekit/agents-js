@@ -398,7 +398,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     // `extra` (modelOptions) when the WebSocket is first opened via
     // `session.create`. Pooled sockets keep the old session settings and, for
     // example, would keep reporting `alignedTranscript=true` while the server
-      // never emits `output_alignment`. Invalidate so the next `stream()` opens
+    // never emits `output_alignment`. Invalidate so the next `stream()` opens
     // a fresh connection with the up-to-date payload.
     if (sessionAffectingChange) {
       this.pool.invalidate();

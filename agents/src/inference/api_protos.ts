@@ -221,7 +221,10 @@ export const sttUnknownServerEventSchema = z
   })
   .passthrough();
 
-export const sttServerEventSchema = z.union([sttKnownServerEventSchema, sttUnknownServerEventSchema]);
+export const sttServerEventSchema = z.union([
+  sttKnownServerEventSchema,
+  sttUnknownServerEventSchema,
+]);
 
 // Type exports for STT
 export type SttWord = z.infer<typeof sttWordSchema>;
