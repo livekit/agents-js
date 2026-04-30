@@ -92,7 +92,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 - **Stream** (`stream/`): Composable Web Streams API primitives (`StreamChannel`, `DeferredStream`, `MultiInputStream`).
 - **IPC** (`ipc/`): Process pool for running agents in child processes. Two-way IPC: child sends inference requests back to parent.
 - **Worker** (`worker.ts`): Main process connecting to LiveKit server, receives job assignments, spawns agent processes.
-- **Telemetry** (`telemetry/`): OpenTelemetry tracing with custom span attributes (TTFT, TTFB, interruption probability, speech IDs). Pino transport for structured logging.
+- **Telemetry** (`telemetry/`): OpenTelemetry tracing with custom span attributes (TTFT, TTFB, interruption probability, speech IDs, provider request IDs). Pino transport for structured logging.
 - **Metrics** (`metrics/`): `AgentMetrics` union type covering LLM, STT, TTS, VAD, EOU, Realtime, and Interruption metrics. `ModelUsageCollector` for aggregating per-provider usage.
 - **Beta** (`beta/`): `TaskGroup` for multi-task orchestration with optional chat context summarization between tasks.
 
