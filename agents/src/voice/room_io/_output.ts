@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AgentSession as pb } from '@livekit/protocol';
 import type { RemoteParticipant } from '@livekit/rtc-node';
 import {
   type AudioFrame,
@@ -153,9 +154,6 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
-    // When json_format is enabled, serialize each chunk as a protobuf-compatible JSON dict.
-    // The Python implementation uses `agent_pb.TimedString` + `MessageToDict(preserving_proto_field_name=True)`.
-    // We emit the same snake_case shape directly (no protobuf runtime dependency on the JS side).
     // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
     // same newline-delimited JSON format as the interim chunks.
     const payload = this.jsonFormat
@@ -168,24 +166,15 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   }
 
   private encodeJsonChunk(text: string | TimedString): string {
-    const obj: Record<string, unknown> = {
-      text: isTimedString(text) ? text.text : String(text),
-    };
-    if (isTimedString(text)) {
-      if (text.startTime !== undefined) {
-        obj.start_time = text.startTime;
-      }
-      if (text.endTime !== undefined) {
-        obj.end_time = text.endTime;
-      }
-      if (text.confidence !== undefined) {
-        obj.confidence = text.confidence;
-      }
-      if (text.startTimeOffset !== undefined) {
-        obj.start_time_offset = text.startTimeOffset;
-      }
-    }
-    return JSON.stringify(obj) + '\n';
+    const isTimed = isTimedString(text);
+    const message = new pb.TimedString({
+      text: isTimed ? text.text : text,
+      startTime: isTimed ? text.startTime : undefined,
+      endTime: isTimed ? text.endTime : undefined,
+      confidence: isTimed ? text.confidence : undefined,
+      startTimeOffset: isTimed ? text.startTimeOffset : undefined,
+    });
+    return message.toJsonString({ useProtoFieldName: true }) + '\n';
   }
 
   protected async handleCaptureText(text: string): Promise<void> {
