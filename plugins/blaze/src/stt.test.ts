@@ -175,10 +175,12 @@ describe('STT', () => {
     }, 20000);
 
     it('surfaces retryable APIStatusError after exhausting 5xx retries', async () => {
+      const cancelBody = vi.fn().mockResolvedValue(undefined);
       fetchMock.mockResolvedValue({
         ok: false,
         status: 503,
         text: async () => 'Service Unavailable',
+        body: { cancel: cancelBody },
       });
 
       const sttInstance = new STT({
@@ -204,6 +206,7 @@ describe('STT', () => {
           retryable: true,
         });
         expect(fetchMock).toHaveBeenCalledTimes(MAX_RETRY_COUNT + 1);
+        expect(cancelBody).toHaveBeenCalledTimes(MAX_RETRY_COUNT);
       } finally {
         setTimeoutSpy.mockRestore();
       }
