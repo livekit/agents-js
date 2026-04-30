@@ -66,11 +66,7 @@ export class TTS extends tts.TTS {
     }
 
     const voice = opts.voice ?? DEFAULT_VOICE;
-    const instantMode = opts.instantMode ?? voice !== undefined;
-
-    if (instantMode && !voice) {
-      throw new Error('Hume TTS: instantMode cannot be enabled without specifying a voice');
-    }
+    const instantMode = opts.instantMode;
 
     this.#opts = {
       ...merged,
@@ -220,6 +216,9 @@ export class ChunkedStream extends tts.ChunkedStream {
       // Process remaining buffer
       if (buffer.trim()) {
         const data = JSON.parse(buffer.trim());
+        if (data.type === 'error') {
+          throw new Error(`Hume TTS error: ${JSON.stringify(data)}`);
+        }
         const audioB64: string | undefined = data.audio;
         if (audioB64) {
           const audioBytes = Buffer.from(audioB64, 'base64');
