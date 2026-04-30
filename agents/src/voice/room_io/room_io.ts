@@ -510,7 +510,9 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          nativeTranscriptSync ? { ...defaultTextSyncOptions, nativeTranscriptSync: true } : undefined,
+          nativeTranscriptSync
+            ? { ...defaultTextSyncOptions, nativeTranscriptSync: true }
+            : undefined,
         );
       }
     }
