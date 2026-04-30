@@ -24,6 +24,12 @@ export class ParticipantAudioInputStream extends AudioInput {
   private numChannels: number;
   private noiseCancellation?: NoiseCancellationOptions;
   private frameProcessor?: FrameProcessor<AudioFrame>;
+  // Tracks whether the current frameProcessor was created internally (owned by
+  // this stream) vs. supplied externally by the caller. JS currently only
+  // accepts an externally-provided FrameProcessor, so this is always false for
+  // processors set from the constructor; the flag is retained for structural
+  // symmetry with Python and to document the invariant.
+  private processorOwned = false;
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private currentInputId: string | null = null;
@@ -53,6 +59,21 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.on(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
+  }
+
+  // Ownership-aware replacement: only close the previous processor when this
+  // stream owns it. External processors survive stream transitions; only
+  // `close()` below closes them unconditionally.
+  private updateProcessor(processor: FrameProcessor<AudioFrame> | undefined) {
+    if (processor === undefined && !this.processorOwned) {
+      return;
+    }
+    const old = this.frameProcessor;
+    if (old && old !== processor && this.processorOwned) {
+      old.close();
+    }
+    this.frameProcessor = processor;
+    this.processorOwned = processor !== undefined;
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -130,6 +151,8 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
 
     this.publication = null;
+    // Ownership-aware teardown: no-op for externally-provided processors.
+    this.updateProcessor(undefined);
   }
 
   private onTrackSubscribed = (
@@ -190,7 +213,11 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.closeStream();
     await super.close();
 
+    // close() closes the processor unconditionally, regardless of ownership —
+    // owned processors are already cleared via closeStream(); this handles the
+    // externally-provided case.
     this.frameProcessor?.close();
     this.frameProcessor = undefined;
+    this.processorOwned = false;
   }
 }
