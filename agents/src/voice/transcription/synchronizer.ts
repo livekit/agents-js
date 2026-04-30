@@ -13,6 +13,7 @@ import {
   type PlaybackFinishedEvent,
   TextOutput,
   type TimedString,
+  createTimedString,
   isTimedString,
 } from '../io.js';
 
@@ -143,8 +144,10 @@ class SegmentSynchronizerImpl {
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
-  private outputStream: IdentityTransform<string>;
-  private outputStreamWriter: WritableStreamDefaultWriter<string>;
+  // Emit TimedString objects so downstream outputs (e.g. RoomIO's json_format) can
+  // attach `end_time` reflecting synchronized playback timing.
+  private outputStream: IdentityTransform<string | TimedString>;
+  private outputStreamWriter: WritableStreamDefaultWriter<string | TimedString>;
   private captureTask: Promise<void>;
   private startWallTime?: number;
 
@@ -211,7 +214,7 @@ class SegmentSynchronizerImpl {
     return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
-  get readable(): ReadableStream<string> {
+  get readable(): ReadableStream<string | TimedString> {
     return this.outputStream.readable;
   }
 
@@ -384,7 +387,16 @@ class SegmentSynchronizerImpl {
       pushedTextCursor = wordEnd;
 
       if (this.playbackCompleted) {
-        this.outputStreamWriter.write(forwardedWord);
+        this.outputStreamWriter.write(
+          createTimedString({
+            text: forwardedWord,
+            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          }),
+        );
+        const cleanWords = this.options.splitWords(word);
+        const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
+        this.textData.forwardedHyphens += this.options.hyphenateWord(cleanWord).length;
+        this.textData.forwardedText += forwardedWord;
         continue;
       }
 
@@ -421,11 +433,27 @@ class SegmentSynchronizerImpl {
       }
 
       await this.sleepIfNotClosed(delayTime / 2);
-      this.outputStreamWriter.write(forwardedWord);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: forwardedWord,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
       await this.sleepIfNotClosed(delayTime / 2);
 
       this.textData.forwardedHyphens += wordHyphens;
       this.textData.forwardedText += forwardedWord;
+    }
+
+    if (pushedTextCursor < this.textData.pushedText.length) {
+      const remaining = this.textData.pushedText.slice(pushedTextCursor);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: remaining,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
+      this.textData.forwardedText += remaining;
     }
   }
 
