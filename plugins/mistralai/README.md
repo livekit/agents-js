@@ -23,8 +23,7 @@ npm install @livekit/agents-plugin-mistralai
 
 ### LLM
 
-Uses the Mistral [Conversations API](https://docs.mistral.ai/capabilities/conversations/)
-with stateful sessions and incremental context.
+Uses the Mistral [Conversations API](https://docs.mistral.ai/capabilities/conversations/).
 
 ```ts
 import * as mistral from '@livekit/agents-plugin-mistralai';
@@ -32,21 +31,6 @@ import * as mistral from '@livekit/agents-plugin-mistralai';
 const llm = new mistral.LLM({
   model: 'mistral-small-latest',
   // apiKey defaults to process.env.MISTRAL_API_KEY
-});
-```
-
-#### Provider tools
-
-Mistral built-in tools can be attached directly to the LLM:
-
-```ts
-const llm = new mistral.LLM({
-  model: 'mistral-small-latest',
-  providerTools: [
-    new mistral.WebSearch(),
-    new mistral.CodeInterpreter(),
-    new mistral.DocumentLibrary(['lib_abc123']),
-  ],
 });
 ```
 

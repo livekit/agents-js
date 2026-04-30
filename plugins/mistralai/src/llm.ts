@@ -7,7 +7,6 @@ import {
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
-  log,
   shortuuid,
 } from '@livekit/agents';
 import { Mistral } from '@mistralai/mistralai';
@@ -21,12 +20,8 @@ import type {
   ResponseErrorEvent,
   ResponseStartedEvent,
   TextChunk,
-  ToolExecutionDeltaEvent,
-  ToolExecutionDoneEvent,
-  ToolExecutionStartedEvent,
 } from '@mistralai/mistralai/models/components';
 import type { MistralChatModels } from './models.js';
-import type { MistralTool } from './tools.js';
 
 const DEFAULT_MODEL: MistralChatModels = 'ministral-8b-latest';
 
@@ -59,16 +54,11 @@ export interface LLMOptions {
   randomSeed?: number;
   toolChoice?: llm.ToolChoice;
   maxCompletionTokens?: number;
-  providerTools?: MistralTool[];
 }
 
 export class LLM extends llm.LLM {
   #opts: LLMOpts;
   #client: Mistral;
-  #conversationId: string | null = null;
-  #prevChatCtx: llm.ChatContext | null = null;
-  #pendingToolCalls: Set<string> = new Set();
-  #providerTools: MistralTool[];
 
   constructor(opts: LLMOptions = {}) {
     super();
@@ -90,7 +80,6 @@ export class LLM extends llm.LLM {
     }
 
     this.#client = opts.client ?? new Mistral({ apiKey });
-    this.#providerTools = opts.providerTools ?? [];
   }
 
   label(): string {
@@ -115,12 +104,7 @@ export class LLM extends llm.LLM {
     randomSeed?: number;
     toolChoice?: llm.ToolChoice;
   }): void {
-    if (opts.model !== undefined) {
-      this.#opts.model = opts.model;
-      this.#conversationId = null;
-      this.#prevChatCtx = null;
-      this.#pendingToolCalls = new Set();
-    }
+    if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.maxCompletionTokens !== undefined)
       this.#opts.maxCompletionTokens = opts.maxCompletionTokens;
     if (opts.temperature !== undefined) this.#opts.temperature = opts.temperature;
@@ -163,9 +147,8 @@ export class LLM extends llm.LLM {
     // Resolve tool choice
     const resolvedToolChoice = toolChoice ?? this.#opts.toolChoice;
     if (resolvedToolChoice !== null && resolvedToolChoice !== undefined) {
-      const hasProviderTools = this.#providerTools.length > 0;
       if (typeof resolvedToolChoice === 'object' || resolvedToolChoice === 'required') {
-        completionArgs.toolChoice = hasProviderTools ? 'auto' : 'required';
+        completionArgs.toolChoice = 'required';
       } else if (resolvedToolChoice === 'auto' || resolvedToolChoice === 'none') {
         completionArgs.toolChoice = resolvedToolChoice;
       }
@@ -175,69 +158,21 @@ export class LLM extends llm.LLM {
       extra.completionArgs = completionArgs;
     }
 
-    // Determine incremental context
-    let inputChatCtx = chatCtx;
-    let conversationId: string | null = null;
-
-    if (this.#prevChatCtx !== null && this.#conversationId) {
-      const n = this.#prevChatCtx.items.length;
-      const prefixCtx = new llm.ChatContext(chatCtx.items.slice(0, n));
-      if (
-        prefixCtx.isEquivalent(this.#prevChatCtx) &&
-        this.#pendingToolCallsCompleted(chatCtx.items.slice(n))
-      ) {
-        inputChatCtx = new llm.ChatContext(chatCtx.items.slice(n));
-        conversationId = this.#conversationId;
-      }
-    }
-
     return new LLMStream(this, {
       client: this.#client,
       opts: this.#opts,
-      chatCtx: inputChatCtx,
-      fullChatCtx: chatCtx,
-      conversationId,
+      chatCtx,
       toolCtx,
-      providerTools: this.#providerTools,
       connOptions,
       extraKwargs: extra,
     });
-  }
-
-  /** @internal */
-  _setConversationState(
-    conversationId: string | null,
-    prevChatCtx: llm.ChatContext,
-    pendingToolCalls: Set<string>,
-  ): void {
-    this.#conversationId = conversationId;
-    this.#prevChatCtx = prevChatCtx;
-    this.#pendingToolCalls = pendingToolCalls;
-  }
-
-  #pendingToolCallsCompleted(items: llm.ChatItem[]): boolean {
-    if (this.#pendingToolCalls.size === 0) return true;
-    const completed = new Set<string>();
-    for (const item of items) {
-      if (item.type === 'function_call_output') {
-        completed.add(item.callId);
-      }
-    }
-    return [...this.#pendingToolCalls].every((callId) => completed.has(callId));
   }
 }
 
 export class LLMStream extends llm.LLMStream {
   #client: Mistral;
   #opts: LLMOpts;
-  #mistralLlm: LLM;
-  #fullChatCtx: llm.ChatContext;
-  #conversationId: string | null;
   #extraKwargs: Record<string, unknown>;
-  #providerTools: MistralTool[];
-  #emittedToolCalls: Set<string> = new Set();
-  #providerToolArgs: Map<string, string> = new Map();
-  #receivedConversationId: string | null = null;
 
   constructor(
     llmInstance: LLM,
@@ -245,20 +180,14 @@ export class LLMStream extends llm.LLMStream {
       client,
       opts,
       chatCtx,
-      fullChatCtx,
-      conversationId,
       toolCtx,
-      providerTools,
       connOptions,
       extraKwargs,
     }: {
       client: Mistral;
       opts: LLMOpts;
       chatCtx: llm.ChatContext;
-      fullChatCtx: llm.ChatContext;
-      conversationId: string | null;
       toolCtx?: llm.ToolContext;
-      providerTools: MistralTool[];
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, unknown>;
     },
@@ -266,18 +195,10 @@ export class LLMStream extends llm.LLMStream {
     super(llmInstance, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#opts = opts;
-    this.#mistralLlm = llmInstance;
-    this.#fullChatCtx = fullChatCtx.copy();
-    this.#conversationId = conversationId;
-    this.#providerTools = providerTools;
     this.#extraKwargs = extraKwargs;
   }
 
   protected async run(): Promise<void> {
-    this.#emittedToolCalls = new Set();
-    this.#providerToolArgs = new Map();
-    this.#receivedConversationId = null;
-
     let retryable = true;
 
     try {
@@ -288,7 +209,6 @@ export class LLMStream extends llm.LLMStream {
       ];
       const { instructions } = extraData;
 
-      // Build tools list: function tools + provider tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
       if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
@@ -303,43 +223,23 @@ export class LLMStream extends llm.LLMStream {
           });
         }
       }
-      for (const tool of this.#providerTools) {
-        toolsList.push(tool.toDict());
-      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const startKwargs: Record<string, any> = {};
       if (toolsList.length > 0) startKwargs.tools = toolsList;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let asyncResponse: AsyncIterable<ConversationEvents>;
-
-      if (this.#conversationId === null) {
-        // Start new conversation
-        asyncResponse = await this.#client.beta.conversations.startStream({
+      // Always start a fresh conversation with the full message history (stateless usage)
+      const asyncResponse = await this.#client.beta.conversations.startStream(
+        {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           inputs: entries as any,
           model: this.#opts.model,
           instructions: instructions || undefined,
           ...startKwargs,
           ...this.#extraKwargs,
-        });
-      } else {
-        // Append to existing conversation — only send message inputs and function results
-        const appendEntries = entries.filter(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (e: any) => e.type === 'function.result' || e.type === 'message.input',
-        );
-
-        asyncResponse = await this.#client.beta.conversations.appendStream({
-          conversationId: this.#conversationId,
-          conversationAppendStreamRequest: {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            inputs: appendEntries as any,
-            ...this.#extraKwargs,
-          },
-        });
-      }
+        },
+        { timeoutMs: this._connOptions.timeoutMs },
+      );
 
       const pendingFncCalls = new Map<string, PendingFunctionCall>();
 
@@ -352,17 +252,9 @@ export class LLMStream extends llm.LLMStream {
         }
       }
 
-      // Flush any remaining pending function calls
       for (const chunk of this.#flushPendingFncCalls(pendingFncCalls)) {
         this.queue.put(chunk);
       }
-
-      // Update parent LLM state
-      this.#mistralLlm._setConversationState(
-        this.#receivedConversationId,
-        this.#fullChatCtx,
-        this.#emittedToolCalls,
-      );
     } catch (error: unknown) {
       if (this.abortController.signal.aborted) throw error;
 
@@ -406,7 +298,6 @@ export class LLMStream extends llm.LLMStream {
           ],
         },
       });
-      this.#emittedToolCalls.add(fnc.toolCallId);
     }
     pending.clear();
     return chunks;
@@ -420,7 +311,6 @@ export class LLMStream extends llm.LLMStream {
     const chunks: llm.ChatChunk[] = [];
 
     if ((data as ResponseStartedEvent).type === 'conversation.response.started') {
-      this.#receivedConversationId = (data as ResponseStartedEvent).conversationId;
       return chunks;
     }
 
@@ -484,23 +374,6 @@ export class LLMStream extends llm.LLMStream {
         message: errData.message,
         options: { statusCode: errData.code, retryable: false },
       });
-    }
-
-    if ((data as ToolExecutionStartedEvent).type === 'tool.execution.started') {
-      const toolData = data as ToolExecutionStartedEvent;
-      this.#providerToolArgs.set(toolData.id, toolData.arguments);
-    } else if ((data as ToolExecutionDeltaEvent).type === 'tool.execution.delta') {
-      const toolData = data as ToolExecutionDeltaEvent;
-      const existing = this.#providerToolArgs.get(toolData.id) ?? '';
-      this.#providerToolArgs.set(toolData.id, existing + toolData.arguments);
-    } else if ((data as ToolExecutionDoneEvent).type === 'tool.execution.done') {
-      const toolData = data as ToolExecutionDoneEvent;
-      const args = this.#providerToolArgs.get(toolData.id) ?? '';
-      this.#providerToolArgs.delete(toolData.id);
-      log().debug(
-        { function: toolData.name, arguments: args, info: toolData.info },
-        'executed provider tool',
-      );
     }
 
     return chunks;
