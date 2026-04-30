@@ -1498,6 +1498,22 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
         await speechHandle.waitIfNotInterrupted([speechHandle._waitForGeneration()]);
+
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1365-1373 lines
+        // Clear stale paused-speech state captured by an earlier generation step
+        // (e.g. a silent tool-call step) so it doesn't leak into the next step
+        // running on the same SpeechHandle (e.g. the tool reply).
+        if (this.pausedSpeech && this.pausedSpeech.handle === this._currentSpeech) {
+          this.pausedSpeech = undefined;
+          if (this.falseInterruptionTimer) {
+            clearTimeout(this.falseInterruptionTimer);
+            this.falseInterruptionTimer = undefined;
+          }
+          const audioOutput = this.agentSession.output.audio;
+          if (audioOutput && audioOutput.canPause) {
+            audioOutput.resume();
+          }
+        }
         this._currentSpeech = undefined;
       }
 
