@@ -2368,6 +2368,8 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
 
+      speechHandle._setInterruptionData(llmGenData.generatedText, forwardedText);
+
       if (forwardedText) {
         hasSpeechMessage = true;
         const message = ChatMessage.create({
@@ -2835,10 +2837,14 @@ export class AgentActivity implements RecognitionHooks {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
+      let generatedText = '';
+      let forwardedText = '';
+
       if (messageOutputs.length > 0) {
         // there should be only one message
         const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
-        let forwardedText = textOut?.text || '';
+        generatedText = textOut?.text || '';
+        forwardedText = generatedText;
 
         if (audioOutput) {
           audioOutput.clearBuffer();
@@ -2887,6 +2893,8 @@ export class AgentActivity implements RecognitionHooks {
           'playout completed with interrupt',
         );
       }
+
+      speechHandle._setInterruptionData(generatedText, forwardedText);
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
