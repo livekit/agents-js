@@ -557,13 +557,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (signal.aborted) return;
             if (result.done) return;
 
-            // Parse and validate with Zod schema
+            // Ref: python livekit-agents/livekit/agents/inference/stt.py - 660-665 lines
+            // Unknown / unexpected messages are silently dropped to avoid noisy warnings
+            // when the gateway introduces new event types.
             const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
             if (!parseResult.success) {
-              this.#logger.warn(
-                { error: parseResult.error, rawData: result.value },
-                'Failed to parse STT server event',
-              );
               continue;
             }
 
