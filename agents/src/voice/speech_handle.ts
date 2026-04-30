@@ -74,7 +74,7 @@ export class SpeechHandle {
   _tasks: Task<void>[] = [];
 
   /** @internal */
-  _numSteps = 1;
+  _numSteps: number;
 
   /** @internal - OpenTelemetry context for the agent turn span */
   _agentTurnContext?: Context;
@@ -95,6 +95,7 @@ export class SpeechHandle {
     public _stepIndex: number,
     readonly parent?: SpeechHandle,
   ) {
+    this._numSteps = _stepIndex;
     this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
         callback(this);
