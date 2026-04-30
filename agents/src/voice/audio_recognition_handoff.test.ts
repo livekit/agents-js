@@ -7,6 +7,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { AudioRecognition, type RecognitionHooks, STTPipeline } from './audio_recognition.js';
+import { BaseEndpointing } from './endpointing.js';
 import type { STTNode } from './io.js';
 
 function createHooks() {
@@ -45,8 +46,7 @@ function createRecognition(sttNode: STTNode, hooks = createHooks()) {
     recognition: new AudioRecognition({
       recognitionHooks: hooks,
       stt: sttNode,
-      minEndpointingDelay: 0,
-      maxEndpointingDelay: 0,
+      endpointing: new BaseEndpointing(0, 0),
     }),
   };
 }
