@@ -17,7 +17,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, appendQueryParams } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -195,15 +195,7 @@ export class SpeechStream extends stt.SpeechStream {
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
       };
-      Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined) {
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            streamURL.searchParams.append(k, encodeURIComponent(v));
-          } else {
-            v.forEach((x) => streamURL.searchParams.append(k, encodeURIComponent(x)));
-          }
-        }
-      });
+      appendQueryParams(streamURL, params);
 
       ws = new WebSocket(streamURL, {
         headers: { Authorization: `Token ${this.#opts.apiKey}` },
