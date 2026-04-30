@@ -22,6 +22,7 @@ export interface TTSOptions {
   model: TTSModels | string;
   encoding: TTSEncoding;
   sampleRate: number;
+  speed?: number;
   apiKey?: string;
   baseUrl?: string;
   sentenceTokenizer: tokenize.SentenceTokenizer;
@@ -69,6 +70,10 @@ export class TTS extends tts.TTS {
         'Deepgram API key is required, whether as an argument or as $DEEPGRAM_API_KEY',
       );
     }
+
+    if (this.opts.speed !== undefined && (this.opts.speed < 0.7 || this.opts.speed > 1.5)) {
+      throw new Error(`Deepgram TTS speed must be between 0.7 and 1.5, got ${this.opts.speed}`);
+    }
   }
 
   synthesize(
@@ -110,6 +115,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    if (this.opts.speed !== undefined) {
+      url.searchParams.append('speed', this.opts.speed.toString());
+    }
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -262,6 +270,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    if (this.opts.speed !== undefined) {
+      url.searchParams.append('speed', this.opts.speed.toString());
+    }
 
     const ws = new WebSocket(url, {
       headers: {
