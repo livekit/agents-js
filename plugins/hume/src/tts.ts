@@ -163,9 +163,10 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        throw new Error(
-          `Hume TTS request failed: ${response.status} ${response.statusText} ${body}`,
-        );
+        throw new APIStatusError({
+          message: `Hume TTS request failed: ${response.status} ${response.statusText} ${body}`,
+          options: { statusCode: response.status },
+        });
       }
 
       if (!response.body) {
