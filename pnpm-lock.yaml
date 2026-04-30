@@ -835,6 +835,28 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/mistral:
+    dependencies:
+      '@livekit/agents-plugin-mistralai':
+        specifier: workspace:*
+        version: link:../mistralai
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/mistralai:
     dependencies:
       '@livekit/agents-plugin-silero':
