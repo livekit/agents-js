@@ -316,13 +316,12 @@ export class LLMStream extends llm.LLMStream {
 
     if ((data as FunctionCallEvent).type === 'function.call.delta') {
       const fncData = data as FunctionCallEvent;
-      const callId = fncData.toolCallId || shortuuid('tool_call_');
-      const existing = pendingFncCalls.get(callId);
+      const existing = pendingFncCalls.get(fncData.id);
       if (!existing) {
-        pendingFncCalls.set(callId, {
+        pendingFncCalls.set(fncData.id, {
           id: fncData.id,
           name: fncData.name,
-          toolCallId: callId,
+          toolCallId: fncData.toolCallId || shortuuid('tool_call_'),
           arguments: fncData.arguments,
         });
       } else {
