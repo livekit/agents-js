@@ -68,6 +68,7 @@ Key classes and their roles:
 - **`AgentSession`** — Orchestrates the full session lifecycle: connects to LiveKit room, manages turn detection, handles interruptions, collects metrics. Entry point: `session.start({ agent, room })`.
 - **`AgentActivity`** (`agent_activity.ts`, ~100KB) — Complex state machine managing individual turns: VAD trigger → STT → endpointing → LLM inference → TTS generation → playout. Supports preemptive generation (starts LLM while user still speaking).
 - **`SpeechHandle`** — Represents a unit of agent speech with lifecycle tracking and priority levels (`LOW=0`, `NORMAL=5`, `HIGH=10`). Sources: `'say'`, `'generate_reply'`, `'tool_response'`.
+- **`AvatarSession`** — Base class for avatar plugin sessions. Registers `aclose()` as a job shutdown callback and warns when started after `AgentSession.start()` (which would replace the existing audio output). Plugin implementations extend this class and call `super.start(agentSession, room)` first.
 
 Turn detection modes: `"stt"` | `"vad"` | `"realtime_llm"` | `"manual"` (configured in `turn_config/`).
 
