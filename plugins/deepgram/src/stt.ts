@@ -198,9 +198,9 @@ export class SpeechStream extends stt.SpeechStream {
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
           if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            streamURL.searchParams.append(k, encodeURIComponent(v));
+            streamURL.searchParams.append(k, String(v));
           } else {
-            v.forEach((x) => streamURL.searchParams.append(k, encodeURIComponent(x)));
+            v.forEach((x) => streamURL.searchParams.append(k, x));
           }
         }
       });
