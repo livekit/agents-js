@@ -34,7 +34,7 @@ import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
-import type { TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
@@ -142,8 +142,8 @@ export interface AudioRecognitionOptions {
   minEndpointingDelay: number;
   /** Maximum endpointing delay in milliseconds. */
   maxEndpointingDelay: number;
-  /** Root span context for tracing. */
-  rootSpanContext?: Context;
+  /** Live reference to AgentSession — used to read rootSpanContext fresh on each span creation. */
+  agentSession?: AgentSession;
   /** STT model name for tracing */
   sttModel?: string;
   /** STT provider name for tracing */
@@ -173,7 +173,7 @@ export class AudioRecognition {
   private minEndpointingDelay: number;
   private maxEndpointingDelay: number;
   private lastLanguage?: LanguageCode;
-  private rootSpanContext?: Context;
+  private agentSession?: AgentSession;
   private sttModel?: string;
   private sttProvider?: string;
   private getLinkedParticipant?: () => ParticipantLike | undefined;
@@ -231,7 +231,7 @@ export class AudioRecognition {
     this.minEndpointingDelay = opts.minEndpointingDelay;
     this.maxEndpointingDelay = opts.maxEndpointingDelay;
     this.lastLanguage = undefined;
-    this.rootSpanContext = opts.rootSpanContext;
+    this.agentSession = opts.agentSession;
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
     this.getLinkedParticipant = opts.getLinkedParticipant;
@@ -514,7 +514,7 @@ export class AudioRecognition {
 
     this.userTurnSpan = tracer.startSpan({
       name: 'user_turn',
-      context: this.rootSpanContext,
+      context: this.agentSession?.rootSpanContext,
       startTime,
     });
 
@@ -534,7 +534,7 @@ export class AudioRecognition {
   }
 
   private userTurnContext(span: Span): Context {
-    const base = this.rootSpanContext ?? ROOT_CONTEXT;
+    const base = this.agentSession?.rootSpanContext ?? ROOT_CONTEXT;
     return trace.setSpan(base, span);
   }
 
