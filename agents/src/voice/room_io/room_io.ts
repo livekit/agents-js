@@ -97,11 +97,6 @@ export interface RoomOutputOptions {
     Otherwise, transcription is emitted as quickly as available.
   */
   syncTranscription: boolean;
-  /** Set to true when the realtime model already streams transcripts synchronized with audio
-    output, bypassing the word tokenizer and writing directly to the output stream.
-    Matches the `nativeTranscriptSync` capability on `RealtimeCapabilities`.
-  */
-  nativeTranscriptSync?: boolean;
   /** The name of the audio track to publish. If not provided, default to "roomio_audio".
    */
   audioPublishOptions: TrackPublishOptions;
@@ -287,9 +282,7 @@ export class RoomIO {
     }
     const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
     const nativeTranscriptSync =
-      this.outputOptions.nativeTranscriptSync !== false &&
-      sessionLlm instanceof RealtimeModel &&
-      !!sessionLlm.capabilities.nativeTranscriptSync;
+      sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
     this.transcriptionSynchronizer.nativeTranscriptSync = nativeTranscriptSync;
   };
 
@@ -507,21 +500,17 @@ export class RoomIO {
         participant: null,
       });
 
-      const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
-      if (sessionLlm instanceof RealtimeModel && sessionLlm.capabilities.nativeTranscriptSync) {
-        this.outputOptions.nativeTranscriptSync ??= true;
-      }
-
       // use the RoomIO's audio output if available, otherwise use the agent's audio output
       // TODO(AJS-176): check for agent output
       const audioOutput = this.participantAudioOutput;
       if (this.outputOptions.syncTranscription && audioOutput) {
+        const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
+        const nativeTranscriptSync =
+          sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          this.outputOptions.nativeTranscriptSync
-            ? { ...defaultTextSyncOptions, nativeTranscriptSync: true }
-            : undefined,
+          nativeTranscriptSync ? { ...defaultTextSyncOptions, nativeTranscriptSync: true } : undefined,
         );
       }
     }
