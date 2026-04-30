@@ -23,8 +23,7 @@ import type { OverlappingSpeechEvent } from '../inference/interruption/types.js'
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
-import { RealtimeModel } from '../llm/index.js';
-import type { LLM, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -432,17 +431,11 @@ export class AgentSession<
         );
       }
 
-      const resolvedOutputOptions = { ...outputOptions };
-      const sessionLlm = this.agent?.llm ?? this.llm;
-      if (sessionLlm instanceof RealtimeModel && sessionLlm.capabilities.nativeTranscriptSync) {
-        resolvedOutputOptions.nativeTranscriptSync ??= true;
-      }
-
       this._roomIO = new RoomIO({
         agentSession: this,
         room,
         inputOptions,
-        outputOptions: resolvedOutputOptions,
+        outputOptions,
       });
 
       this._roomIO.start();

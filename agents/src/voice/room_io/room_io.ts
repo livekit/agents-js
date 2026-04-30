@@ -507,6 +507,11 @@ export class RoomIO {
         participant: null,
       });
 
+      const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
+      if (sessionLlm instanceof RealtimeModel && sessionLlm.capabilities.nativeTranscriptSync) {
+        this.outputOptions.nativeTranscriptSync ??= true;
+      }
+
       // use the RoomIO's audio output if available, otherwise use the agent's audio output
       // TODO(AJS-176): check for agent output
       const audioOutput = this.participantAudioOutput;
