@@ -186,6 +186,11 @@ export abstract class SynthesizeStream
   #ttsRequestSpan?: Span;
   #inputTokens = 0;
   #outputTokens = 0;
+  // Deduped provider-known segment ids for the current attempt.
+  #providerRequestIds: string[] = [];
+  // Current `tts_request_run` span – noteProviderRequestId() updates the
+  // attribute on this span as new provider ids become known.
+  #currentAttemptSpan?: Span;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -237,11 +242,15 @@ export abstract class SynthesizeStream
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
             attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            this.#providerRequestIds = [];
+            this.#currentAttemptSpan = attemptSpan;
             try {
               return await this.run();
             } catch (error) {
               recordException(attemptSpan, toError(error));
               throw error;
+            } finally {
+              this.#currentAttemptSpan = undefined;
             }
           },
           { name: 'tts_request_run' },
@@ -293,6 +302,30 @@ export abstract class SynthesizeStream
       error,
       recoverable,
     });
+  }
+
+  /**
+   * Record a provider-known id for this stream on the current `tts_request_run`
+   * span.
+   *
+   * Exposed on the span as `lk.provider_request_ids` so users can correlate
+   * traces with the provider's server-side logs for debugging. Plugins should
+   * call this when the provider-known id becomes available – either the
+   * outbound `context_id`/`segment_id` (echoed back by the provider) or a
+   * `request_id` / `session_id` returned in a response message. Deduped
+   * internally, so calling on every message is fine.
+   */
+  protected noteProviderRequestId(contextId: string): void {
+    if (!contextId || this.#providerRequestIds.includes(contextId)) {
+      return;
+    }
+    this.#providerRequestIds.push(contextId);
+    if (this.#currentAttemptSpan && this.#currentAttemptSpan.isRecording()) {
+      this.#currentAttemptSpan.setAttribute(
+        traceTypes.ATTR_PROVIDER_REQUEST_IDS,
+        this.#providerRequestIds,
+      );
+    }
   }
 
   // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
@@ -387,6 +420,12 @@ export abstract class SynthesizeStream
       this.output.put(audio);
       if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
+      // The Python AudioEmitter records each `segment_id` automatically via
+      // `start_segment`. JS plugins emit `segmentId` directly on the audio
+      // frame, so we mirror that behavior here.
+      if (audio.segmentId) {
+        this.noteProviderRequestId(audio.segmentId);
+      }
       if (ttfb === BigInt(-1)) {
         ttfb = process.hrtime.bigint() - startTime;
       }

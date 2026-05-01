@@ -80,13 +80,33 @@ export const ttsClientEventSchema = z.discriminatedUnion('type', [
   ttsSessionCloseEventSchema,
 ]);
 
-export const ttsServerEventSchema = z.discriminatedUnion('type', [
+export const ttsKnownServerEventSchema = z.discriminatedUnion('type', [
   ttsSessionCreatedEventSchema,
   ttsOutputAudioEventSchema,
   ttsOutputTimestampsEventSchema,
   ttsDoneEventSchema,
   ttsSessionClosedEventSchema,
   ttsErrorEventSchema,
+]);
+
+const knownTtsServerEventTypes = new Set([
+  'session.created',
+  'output_audio',
+  'output_timestamps',
+  'done',
+  'session.closed',
+  'error',
+]);
+
+export const ttsUnknownServerEventSchema = z
+  .object({
+    type: z.string().refine((type) => !knownTtsServerEventTypes.has(type)),
+  })
+  .passthrough();
+
+export const ttsServerEventSchema = z.union([
+  ttsKnownServerEventSchema,
+  ttsUnknownServerEventSchema,
 ]);
 
 export type TtsSessionCreateEvent = z.infer<typeof ttsSessionCreateEventSchema>;

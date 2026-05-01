@@ -63,7 +63,7 @@ export interface StartOptions {
   livekitApiSecret?: string;
 }
 
-export class AvatarSession {
+export class AvatarSession extends voice.AvatarSession {
   private avatar: Record<string, string>;
   private maxDuration?: number;
   private apiUrl: string;
@@ -75,6 +75,7 @@ export class AvatarSession {
   #logger = log();
 
   constructor(options: AvatarSessionOptions = {}) {
+    super();
     if (!options.avatarId && !options.presetId) {
       throw new RunwayException('Either avatarId or presetId must be provided');
     }
@@ -106,6 +107,8 @@ export class AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
+    await super.start(agentSession, room);
+
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;

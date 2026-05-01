@@ -70,8 +70,9 @@ export default defineAgent({
       turnHandling: {
         turnDetection: new livekit.turnDetector.MultilingualModel(),
         interruption: {
+          // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,
-          falseInterruptionTimeout: 1,
+          falseInterruptionTimeout: 1000,
           mode: 'adaptive',
         },
         // Preemptive generation speculatively starts LLM inference while the user is still

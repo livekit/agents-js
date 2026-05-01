@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
-import { SpeakingRateData } from './synchronizer.js';
+import { AudioFrame } from '@livekit/rtc-node';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as logModule from '../../log.js';
+import { AudioOutput, TextOutput } from '../io.js';
+import { SpeakingRateData, TranscriptionSynchronizer } from './synchronizer.js';
 
 describe('SpeakingRateData', () => {
   describe('constructor', () => {
@@ -202,5 +205,91 @@ describe('SpeakingRateData', () => {
       expect(data.timestamps).toEqual([0.5, 1.0]);
       expect(data.speakIntegrals).toEqual([2.0, 6.0]);
     });
+  });
+});
+
+class MockAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+  }
+
+  clearBuffer(): void {}
+}
+
+class MockTextOutput extends TextOutput {
+  captured: string[] = [];
+
+  async captureText(text: string): Promise<void> {
+    this.captured.push(text);
+  }
+
+  flush(): void {}
+}
+
+describe('TranscriptionSynchronizer attachment warnings', () => {
+  const textDetachedWarning =
+    'TranscriptSynchronizer text output was detached while audio output is still active; ' +
+    'transcription sync is disabled. This usually means session.output.transcription was ' +
+    'replaced after AgentSession.start().';
+  const audioDetachedWarning =
+    'TranscriptSynchronizer audio output was detached while text output is still active; ' +
+    'transcription sync is disabled. This usually means session.output.audio was replaced after ' +
+    'AgentSession.start().';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('warns once per enabled cycle when text output is detached while audio is still attached', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    synchronizer.textOutput.onDetached();
+    await synchronizer.audioOutput.captureFrame(frame);
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    expect(warn.mock.calls.filter((c) => c[0] === textDetachedWarning)).toHaveLength(1);
+
+    synchronizer.textOutput.onAttached();
+    synchronizer.textOutput.onDetached();
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    expect(warn.mock.calls.filter((c) => c[0] === textDetachedWarning)).toHaveLength(2);
+    await synchronizer.close();
+  });
+
+  it('warns once per enabled cycle when audio output is detached while text is still attached', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+
+    synchronizer.audioOutput.onDetached();
+    await synchronizer.textOutput.captureText('hello');
+    await synchronizer.textOutput.captureText('again');
+
+    expect(warn.mock.calls.filter((c) => c[0] === audioDetachedWarning)).toHaveLength(1);
+
+    synchronizer.audioOutput.onAttached();
+    synchronizer.audioOutput.onDetached();
+    await synchronizer.textOutput.captureText('third');
+
+    expect(warn.mock.calls.filter((c) => c[0] === audioDetachedWarning)).toHaveLength(2);
+    await synchronizer.close();
   });
 });
