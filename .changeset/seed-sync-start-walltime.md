@@ -1,5 +1,5 @@
 ---
-"@livekit/agents": minor
+"@livekit/agents": patch
 ---
 
 Port livekit/agents#5511 + #5532:

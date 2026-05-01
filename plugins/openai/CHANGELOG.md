@@ -1,6 +1,6 @@
-# @livekit/agents-plugin-openai
+﻿# @livekit/agents-plugin-openai
 
-## 1.4.0
+## 1.3.1
 
 ### Patch Changes
 
@@ -9,7 +9,7 @@
 - chore(openai): update production models on groq - [#1317](https://github.com/livekit/agents-js/pull/1317) ([@davidzhao](https://github.com/davidzhao))
 
 - Updated dependencies [[`98635185eb5a9c11f49d4216622cf0ae6195dcd1`](https://github.com/livekit/agents-js/commit/98635185eb5a9c11f49d4216622cf0ae6195dcd1), [`12874304cbfc8d16a1ee225b1b408175457dc747`](https://github.com/livekit/agents-js/commit/12874304cbfc8d16a1ee225b1b408175457dc747), [`54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff`](https://github.com/livekit/agents-js/commit/54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff), [`cd60f8f5217acbf1ed7192d2983685f870b24b4b`](https://github.com/livekit/agents-js/commit/cd60f8f5217acbf1ed7192d2983685f870b24b4b), [`4abc309236dff93202dd24dd3772821faaa295df`](https://github.com/livekit/agents-js/commit/4abc309236dff93202dd24dd3772821faaa295df)]:
-  - @livekit/agents@1.4.0
+  - @livekit/agents@1.3.1
 
 ## 1.3.0
 
@@ -657,7 +657,7 @@
 
 - ignore apiKey if isAzure & entraToken - [#339](https://github.com/livekit/agents-js/pull/339) ([@nbsp](https://github.com/nbsp))
 
-- feat(openai): add new TTS model and voices, include optional instruct… - [#351](https://github.com/livekit/agents-js/pull/351) ([@tomc98](https://github.com/tomc98))
+- feat(openai): add new TTS model and voices, include optional instructâ€¦ - [#351](https://github.com/livekit/agents-js/pull/351) ([@tomc98](https://github.com/tomc98))
 
 - Updated dependencies [[`d44445934cc291df987013068f5c43491634dfa1`](https://github.com/livekit/agents-js/commit/d44445934cc291df987013068f5c43491634dfa1), [`a7350c92f8968e0fd833e7679a607eaf9a1d7e7f`](https://github.com/livekit/agents-js/commit/a7350c92f8968e0fd833e7679a607eaf9a1d7e7f), [`2dcfeab76ace2e1851993771d769ebcb7c188144`](https://github.com/livekit/agents-js/commit/2dcfeab76ace2e1851993771d769ebcb7c188144), [`2bb936c55233ac0747582a5045caa595c6338651`](https://github.com/livekit/agents-js/commit/2bb936c55233ac0747582a5045caa595c6338651)]:
   - @livekit/agents@0.7.2
