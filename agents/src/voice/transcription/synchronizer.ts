@@ -141,7 +141,7 @@ interface AudioData {
 }
 
 class SegmentSynchronizerImpl {
-  private nativeTranscriptSync: boolean;
+  private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
@@ -171,10 +171,10 @@ class SegmentSynchronizerImpl {
      */
     private readonly seedFromPushAudio: boolean = false,
   ) {
-    this.nativeTranscriptSync = !!options.nativeTranscriptSync;
+    this.enabled = !options.nativeTranscriptSync;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
-      wordStream: this.nativeTranscriptSync ? undefined : options.wordTokenizer.stream(),
+      wordStream: this.enabled ? options.wordTokenizer.stream() : undefined,
       pushedText: '',
       done: false,
       forwardedHyphens: 0,
@@ -188,7 +188,7 @@ class SegmentSynchronizerImpl {
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
 
-    if (!this.nativeTranscriptSync) {
+    if (this.enabled) {
       this.mainTask()
         .then(() => {
           this.outputStreamWriter.close();
@@ -273,7 +273,7 @@ class SegmentSynchronizerImpl {
 
     const textStr = isTimedString(text) ? text.text : text;
 
-    if (this.nativeTranscriptSync) {
+    if (!this.enabled) {
       this.textData.pushedText += textStr;
       this.textData.forwardedText += textStr;
       this.outputStreamWriter.write(textStr);
@@ -305,7 +305,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.textData.done = true;
-    if (this.nativeTranscriptSync) {
+    if (!this.enabled) {
       this.outputStreamWriter.close();
     } else {
       this.textData.wordStream!.endInput();
@@ -467,7 +467,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
-    if (this.nativeTranscriptSync) {
+    if (!this.enabled) {
       // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
       if (!this.textData.done) {
         this.outputStreamWriter.close();
