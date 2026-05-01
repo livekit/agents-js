@@ -38,12 +38,12 @@
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/ws": "catalog:",
-    "onnxruntime-common": "1.21.0",
+    "onnxruntime-common": "1.24.3",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "onnxruntime-node": "1.21.0",
+    "onnxruntime-node": "1.24.3",
     "ws": "catalog:"
   },
   "peerDependencies": {
