@@ -4,6 +4,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
+import { FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
@@ -147,5 +148,88 @@ describe('AMD', () => {
 
     await expect(promise).rejects.toThrow('AMD closed');
     expect(session.resumeReplyAuthorization).toHaveBeenCalled();
+  });
+
+  it('should settle from a save_prediction tool call', async () => {
+    class ToolCallLLM extends LLM {
+      label(): string {
+        return 'tool-call-llm';
+      }
+      chat({}: {
+        chatCtx: ChatContext;
+        toolCtx?: ToolContext;
+        connOptions?: APIConnectOptions;
+      }): LLMStream {
+        return {
+          async *[Symbol.asyncIterator](): AsyncGenerator<ChatChunk> {
+            yield {
+              id: 'tc',
+              delta: {
+                role: 'assistant',
+                toolCalls: [
+                  new FunctionCall({
+                    callId: 'call_1',
+                    name: 'save_prediction',
+                    args: JSON.stringify({ label: AMDCategory.MACHINE_IVR }),
+                  }),
+                ],
+              },
+            };
+          },
+        } as unknown as LLMStream;
+      }
+    }
+
+    const session = new MockSession();
+    const llm = new ToolCallLLM();
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+
+    const promise = amd.execute();
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+      type: 'user_input_transcribed',
+      transcript: 'Press 1 for sales, 2 for support',
+      isFinal: true,
+      speakerId: null,
+      createdAt: Date.now(),
+      language: null,
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.MACHINE_IVR,
+      reason: 'llm',
+      isMachine: true,
+    });
+    expect(session.interrupt).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('should accept the new tunable parameters', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      humanSpeechThresholdMs: 1_000,
+      humanSilenceThresholdMs: 250,
+      machineSilenceThresholdMs: 750,
+      prompt: 'custom prompt',
+      participantIdentity: 'caller-1',
+      suppressCompatibilityWarning: true,
+      detectionTimeoutMs: 50,
+    });
+
+    const promise = amd.execute();
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+      type: 'user_input_transcribed',
+      transcript: 'Hello?',
+      isFinal: true,
+      speakerId: null,
+      createdAt: Date.now(),
+      language: null,
+    });
+
+    await expect(promise).resolves.toMatchObject({ category: AMDCategory.HUMAN });
   });
 });
