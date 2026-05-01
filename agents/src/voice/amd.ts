@@ -18,6 +18,22 @@ export enum AMDCategory {
   MACHINE_IVR = 'machine-ivr',
   MACHINE_VM = 'machine-vm',
   MACHINE_UNAVAILABLE = 'machine-unavailable',
+  /**
+   * A carrier-injected call-screening prompt — Google Pixel Call Screen,
+   * iOS 18 Call Screening, or a similar service that intercepts the call
+   * and asks the caller to identify themselves before reaching the human
+   * owner. Distinct from MACHINE_VM because the callee is reachable; the
+   * caller is being asked to record a brief identification.
+   *
+   * NOTE: intentionally NOT a member of `MACHINE_CATEGORIES`, so
+   * `interruptOnMachine: true` does NOT auto-interrupt on screening.
+   * Callers handling screening typically need to play a short
+   * identification greeting in response, which an automatic interrupt
+   * would cancel. `result.isMachine` still reads `true` for screening
+   * verdicts, so consumers' "did a machine answer?" checks behave
+   * intuitively.
+   */
+  MACHINE_SCREENING = 'machine-screening',
   UNCERTAIN = 'uncertain',
 }
 
@@ -46,16 +62,30 @@ const DEFAULT_NO_SPEECH_TIMEOUT_MS = 10_000;
 const DEFAULT_DETECTION_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_TRANSCRIPT_TURNS = 2;
 
+// Categories that drive `interruptOnMachine` auto-interrupt logic.
+// `MACHINE_SCREENING` is intentionally absent — see the enum doc.
 const MACHINE_CATEGORIES: ReadonlySet<AMDCategory> = new Set([
   AMDCategory.MACHINE_IVR,
   AMDCategory.MACHINE_VM,
   AMDCategory.MACHINE_UNAVAILABLE,
 ]);
 
+// Categories that count as "a machine answered" for `result.isMachine`.
+// Includes `MACHINE_SCREENING` so consumers see screening as a machine
+// event without it triggering auto-interrupt.
+const MACHINE_RESULT_CATEGORIES: ReadonlySet<AMDCategory> = new Set([
+  ...MACHINE_CATEGORIES,
+  AMDCategory.MACHINE_SCREENING,
+]);
+
 const VALID_CATEGORIES: ReadonlySet<string> = new Set(Object.values(AMDCategory));
 
 function isMachineCategory(category: AMDCategory): boolean {
   return MACHINE_CATEGORIES.has(category);
+}
+
+function isMachineResult(category: AMDCategory): boolean {
+  return MACHINE_RESULT_CATEGORIES.has(category);
 }
 
 function parseCategory(raw: string | undefined): AMDCategory {
@@ -66,11 +96,12 @@ function parseCategory(raw: string | undefined): AMDCategory {
 
 const AMD_PROMPT = `You classify the start of a phone call.
 Return strict JSON with keys "category" and "reason".
-Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "uncertain".
+Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "machine-screening", "uncertain".
 - "human": a live person answered.
 - "machine-ivr": an IVR, phone tree, or menu system answered.
 - "machine-vm": a voicemail greeting or mailbox prompt answered.
 - "machine-unavailable": the call reached an unavailable mailbox, failed mailbox, or generic machine state where no message should be left.
+- "machine-screening": a carrier-injected call-screening prompt (Google Pixel Call Screen, iOS 18 Call Screening, or similar) asking the caller to identify themselves before reaching the human owner. Examples: "If you record your name and reason for calling, I'll see if this person is available.", "Please state your name and the reason for calling.", "Hi, the person you're calling is using a screening service from Google.", "After the tone, please say your name."
 - "uncertain": not enough evidence yet.
 Do not include markdown fences or extra text.`;
 
@@ -244,7 +275,11 @@ export class AMD {
     this.settled = true;
     this.cleanup();
     this.setSpanAttributes(result);
-    if (result.isMachine && this.interruptOnMachine) {
+    // Auto-interrupt gates on `isMachineCategory`, NOT `result.isMachine`,
+    // so MACHINE_SCREENING does not trigger auto-interrupt — callers
+    // handling screening typically need to play a short identification
+    // greeting in response, which an automatic interrupt would cancel.
+    if (isMachineCategory(result.category) && this.interruptOnMachine) {
       this.session.interrupt({ force: true }).await.catch(() => {});
     }
     this.resolveRun?.(result);
@@ -264,7 +299,7 @@ export class AMD {
         reason,
         transcript: this.joinTranscript(),
         rawResponse: '',
-        isMachine: isMachineCategory(category),
+        isMachine: isMachineResult(category),
       });
     }
     this.machineSilenceReached = true;
@@ -420,7 +455,7 @@ export class AMD {
       ...parsed,
       transcript,
       rawResponse,
-      isMachine: isMachineCategory(parsed.category),
+      isMachine: isMachineResult(parsed.category),
     };
   }
 
