@@ -27,7 +27,7 @@ interface TextSyncOptions {
 }
 
 interface TextData {
-  wordStream?: WordStream;
+  wordStream: WordStream;
   pushedText: string;
   done: boolean;
   forwardedHyphens: number;
@@ -174,7 +174,7 @@ class SegmentSynchronizerImpl {
     this.enabled = !options.enabled;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
-      wordStream: this.enabled ? options.wordTokenizer.stream() : undefined,
+      wordStream: options.wordTokenizer.stream(),
       pushedText: '',
       done: false,
       forwardedHyphens: 0,
@@ -294,7 +294,7 @@ class SegmentSynchronizerImpl {
       this.audioData.annotatedRate.addByAnnotation(textStr, startTime, endTime);
     }
 
-    this.textData.wordStream!.pushText(textStr);
+    this.textData.wordStream.pushText(textStr);
     this.textData.pushedText += textStr;
   }
 
@@ -308,7 +308,7 @@ class SegmentSynchronizerImpl {
     if (!this.enabled) {
       this.outputStreamWriter.close();
     } else {
-      this.textData.wordStream!.endInput();
+      this.textData.wordStream.endInput();
     }
   }
 
@@ -371,7 +371,7 @@ class SegmentSynchronizerImpl {
 
     let pushedTextCursor = 0;
 
-    for await (const wordToken of this.textData.wordStream!) {
+    for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
       if (this.closed && !this.playbackCompleted) {
@@ -467,14 +467,11 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
-    if (!this.enabled) {
-      // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
-      if (!this.textData.done) {
-        this.outputStreamWriter.close();
-      }
-    } else {
-      this.textData.wordStream!.close();
+    // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
+    if (!this.enabled && !this.textData.done) {
+      this.outputStreamWriter.close();
     }
+    this.textData.wordStream.close();
     await this.captureTask;
   }
 }
@@ -543,8 +540,12 @@ export class TranscriptionSynchronizer {
     return this._outputsAttached;
   }
 
+  get enabled(): boolean {
+    return !!this.options.enabled;
+  }
+
   set enabled(value: boolean) {
-    if (this.options.enabled === value) {
+    if (!!this.options.enabled === value) {
       return;
     }
     this.options.enabled = value;
@@ -738,6 +739,11 @@ class SyncedTextOutput extends TextOutput {
     await this.synchronizer.barrier();
 
     const textStr = isTimedString(text) ? text.text : text;
+
+    if (this.synchronizer.enabled) {
+      await this.nextInChain.captureText(textStr);
+      return;
+    }
 
     if (!this.synchronizer.outputsAttached) {
       if (

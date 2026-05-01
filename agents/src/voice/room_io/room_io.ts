@@ -280,7 +280,7 @@ export class RoomIO {
     if (ev.item.type !== 'agent_handoff' || !this.transcriptionSynchronizer) {
       return;
     }
-    const sessionLlm = this.agentSession.currentAgent.llm ?? this.agentSession.llm;
+    const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
     const nativeTranscriptSync =
       sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
     this.transcriptionSynchronizer.enabled = nativeTranscriptSync;
