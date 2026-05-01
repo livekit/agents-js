@@ -1,5 +1,48 @@
 # @livekit/agents
 
+## 1.3.2
+
+### Patch Changes
+
+- Add `voice.AvatarSession` base class and port the asymmetric-detach warning from the Python `TranscriptSynchronizer`. The new base class registers `aclose` as a job shutdown callback and warns when an avatar session is started after `AgentSession.start()` has already wired an audio output. The transcript synchronizer now tracks `_audioAttached` / `_textAttached` via `onAttached` / `onDetached` and logs a one-shot warning when audio or text is detached asymmetrically (covering external avatars and manual `session.output.audio` / `.transcription` replacement). Existing avatar plugins (anam, bey, lemonslice, trugen) now inherit from `voice.AvatarSession` and call `super.start(agentSession, room)` first. - [#1280](https://github.com/livekit/agents-js/pull/1280) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(inference): drop streamed assistant text from tool call chunks - [#1359](https://github.com/livekit/agents-js/pull/1359) ([@Genmin](https://github.com/Genmin))
+
+- fix(inference): update tts event name and drop unkown type warning - [#1354](https://github.com/livekit/agents-js/pull/1354) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Port the `liveavatar` plugin from the Python `livekit-agents` repo, including the new `videoQuality` parameter from livekit/agents#5552. - [#1324](https://github.com/livekit/agents-js/pull/1324) ([@toubatbrian](https://github.com/toubatbrian))
+
+  The new `@livekit/agents-plugin-liveavatar` package adds a LiveAvatar `AvatarSession` that mirrors the Python plugin: it brings up a LiveAvatar streaming session, opens the realtime websocket, captures the agent's audio output through a queue-based `AudioOutput`, resamples to 24 kHz mono, and forwards base64-encoded chunks (~600 ms first chunk, ~1 s subsequent) to the LiveAvatar service. Inbound websocket events drive playback start/finish notifications back into the `AgentSession`.
+
+  Also exports `voice.AudioOutput` (and its companion `AudioOutputCapabilities` / `PlaybackFinishedEvent` / `PlaybackStartedEvent` types) from `@livekit/agents` so plugin authors can subclass the abstract audio sink.
+
+- feat(telemetry): expose provider request ids on STT/TTS/LLM spans for debugging - [#1319](https://github.com/livekit/agents-js/pull/1319) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Adds the `lk.provider_request_ids` (string[], deduped) span attribute to the
+  `user_turn` (STT), `tts_request_run` (TTS), and `llm_request_run` (LLM) spans
+  so users can correlate traces with the provider's server-side logs.
+
+- emit agent handoffs under conversationitemadded - [#1347](https://github.com/livekit/agents-js/pull/1347) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- feat(room-io): add `jsonFormat` option on `RoomOutputOptions` for timed transcription output. When enabled, each chunk published on the `lk.transcription` datastream topic is a JSON object with `text`, and `start_time`/`end_time` when the chunk is a `TimedString`. Ported from livekit/agents#5472. - [#1305](https://github.com/livekit/agents-js/pull/1305) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Port livekit/agents#5511 + #5532: - [#1304](https://github.com/livekit/agents-js/pull/1304) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - **feat(avatar): add `lk.playback_started` RPC support to `DataStreamAudioOutput`** — new `waitPlaybackStart` constructor option (default `false`). When `true`, the `playbackStarted` event is deferred until the remote avatar worker invokes the `lk.playback_started` RPC instead of firing eagerly on the first captured frame.
+  - **fix/refactor(transcription): drive `SegmentSynchronizerImpl` start-time off `onPlaybackStarted`** — `startWallTime` and `startFuture` are now set when the audio output reports playback start (chained automatically through `SyncedAudioOutput.onPlaybackStarted`), rather than when the first audio frame is pushed. Combined with the close-path fallback from #5532 this keeps the synchronizer correct for both eager (room) and deferred (avatar RPC) playback timing.
+
+  Note: only the consumer side (the agent registering the RPC handler and surfacing the event) is included; agents-js does not have an `AvatarRunner` / `DataStreamAudioReceiver`, so the producer-side `notifyPlaybackStarted` is skipped.
+
+- Gracefully handle unknown inference TTS event type - [#1333](https://github.com/livekit/agents-js/pull/1333) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(deps): update @livekit/rtc-node to 0.13.27 - [#1331](https://github.com/livekit/agents-js/pull/1331) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix lockfile - [#1340](https://github.com/livekit/agents-js/pull/1340) ([@toubatbrian](https://github.com/toubatbrian))
+
+- support new realtime model capability for native transcript synchronization, set to true for phonic - [#1329](https://github.com/livekit/agents-js/pull/1329) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- feat: Resume false interruption feature - [#1320](https://github.com/livekit/agents-js/pull/1320) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.3.1
 
 ### Minor Changes
