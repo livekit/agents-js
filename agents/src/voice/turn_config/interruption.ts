@@ -43,6 +43,20 @@ export interface InterruptionOptions {
    * @defaultValue true
    */
   resumeFalseInterruption: boolean;
+  /**
+   * Milliseconds to suppress adaptive interruption handling when the agent starts or stops
+   * speaking each turn to allow for easier turn correction.
+   *
+   * Pass a single number to use the same value for both the start and end boundaries, or a
+   * `[start, end]` tuple to configure them separately. The end value should be higher than the
+   * start to account for STT transcript timestamp inaccuracy.
+   *
+   * `null` disables.
+   *
+   * @defaultValue [1000, 3500]
+   */
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 103-108 lines
+  backchannelBoundary: number | [number, number] | null;
 }
 
 export const defaultInterruptionOptions = {
@@ -53,4 +67,6 @@ export const defaultInterruptionOptions = {
   minWords: 0,
   falseInterruptionTimeout: 2000,
   resumeFalseInterruption: true,
+  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 118-121 lines
+  backchannelBoundary: [1000, 3500],
 } as const satisfies InterruptionOptions;

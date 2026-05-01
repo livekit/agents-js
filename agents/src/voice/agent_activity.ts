@@ -489,6 +489,9 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
+      // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 187-198 lines
+      backchannelBoundary:
+        this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
       minEndpointingDelay:
         this.agent.turnHandling?.endpointing?.minDelay ??
         this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
@@ -1945,7 +1948,8 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2220 lines
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -2229,7 +2233,8 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2577 lines
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -3393,7 +3398,8 @@ export class AgentActivity implements RecognitionHooks {
           this.audioRecognition.onStartOfAgentSpeech();
         }
         if (this.isInterruptionDetectionEnabled) {
-          this.isInterruptionByAudioActivityEnabled = false;
+          // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3475 lines
+          this.disableVadInterruptionSoon();
         }
         audioOutput.resume();
         resumed = true;
@@ -3452,7 +3458,34 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  /**
+   * Disable VAD-based interruption either immediately or after the backchannel boundary
+   * cooldown expires. While the cooldown is active the VAD path stays enabled, allowing the
+   * user to correct themselves at the very start of agent speech.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3529-3544 lines
+   */
+  private disableVadInterruptionSoon(): void {
+    const audioRecognition = this.audioRecognition;
+    if (audioRecognition && audioRecognition.backchannelBoundaryActive) {
+      audioRecognition.backchannelBoundaryCallback = () => {
+        // Only disable VAD interruption if the agent is still speaking when the timer expires.
+        if (
+          this.agentSession.agentState === 'speaking' &&
+          this.isInterruptionByAudioActivityEnabled
+        ) {
+          this.logger.trace('backchannel boundary expired');
+          this.isInterruptionByAudioActivityEnabled = false;
+        }
+      };
+    } else {
+      this.isInterruptionByAudioActivityEnabled = false;
+    }
+  }
+
   private restoreInterruptionByAudioActivity(): void {
+    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3546-3548 lines
+    this.audioRecognition?.cancelBackchannelBoundary();
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }
 

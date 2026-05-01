@@ -138,6 +138,15 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
+  /**
+   * Backchannel boundary for adaptive interruption suppression, expressed in milliseconds.
+   *
+   * A single number applies to both the start and end of agent speech; a `[start, end]` tuple
+   * configures them separately. `null` (or `undefined`) disables.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 187-198 lines
+   */
+  backchannelBoundary?: number | [number, number] | null;
   /** Minimum endpointing delay in milliseconds. */
   minEndpointingDelay: number;
   /** Maximum endpointing delay in milliseconds. */
@@ -222,6 +231,13 @@ export class AudioRecognition {
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
+  // backchannel boundary for adaptive interruption suppression
+  // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 187-198 lines
+  private backchannelBoundary?: [number, number];
+  private backchannelBoundaryTimer?: ReturnType<typeof setTimeout>;
+  /** Callback invoked when the backchannel boundary timer expires naturally. */
+  backchannelBoundaryCallback?: () => void;
+
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
@@ -241,6 +257,23 @@ export class AudioRecognition {
     this.transcriptBuffer = [];
     this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
+
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 187-198 lines
+    const rawBoundary = opts.backchannelBoundary;
+    if (rawBoundary === undefined || rawBoundary === null) {
+      this.backchannelBoundary = undefined;
+    } else if (typeof rawBoundary === 'number') {
+      if (rawBoundary < 0) {
+        throw new Error('backchannelBoundary must be a non-negative number');
+      }
+      this.backchannelBoundary = [rawBoundary, rawBoundary];
+    } else {
+      const [start, end] = rawBoundary;
+      if (rawBoundary.length !== 2 || start < 0 || end < 0) {
+        throw new Error('backchannelBoundary must be a tuple of two non-negative numbers');
+      }
+      this.backchannelBoundary = [start, end];
+    }
 
     if (opts.interruptionDetection) {
       const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
@@ -313,14 +346,65 @@ export class AudioRecognition {
     this.interruptionTask = undefined;
     await this.interruptionStreamChannel?.close();
     this.interruptionStreamChannel = undefined;
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 639 lines
+    this.cancelBackchannelBoundary();
+  }
+
+  /**
+   * Whether the backchannel boundary timer is currently running.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 256-258 lines
+   */
+  get backchannelBoundaryActive(): boolean {
+    return this.backchannelBoundaryTimer !== undefined;
+  }
+
+  /**
+   * Fires when the backchannel boundary timer expires naturally. Drops the timer handle and
+   * invokes the registered callback exactly once.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 260-267 lines
+   */
+  private onBackchannelBoundaryDone(): void {
+    this.backchannelBoundaryTimer = undefined;
+    const cb = this.backchannelBoundaryCallback;
+    this.backchannelBoundaryCallback = undefined;
+    cb?.();
+  }
+
+  /**
+   * Cancel any pending backchannel boundary timer and clear the registered callback.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 269-273 lines
+   */
+  cancelBackchannelBoundary(): void {
+    if (this.backchannelBoundaryTimer !== undefined) {
+      clearTimeout(this.backchannelBoundaryTimer);
+      this.backchannelBoundaryTimer = undefined;
+    }
+    this.backchannelBoundaryCallback = undefined;
   }
 
   async onStartOfAgentSpeech() {
     this.isAgentSpeaking = true;
+
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 282-287 lines
+    if (this.backchannelBoundary && this.backchannelBoundary[0] > 0) {
+      this.cancelBackchannelBoundary();
+      const startCooldown = this.backchannelBoundary[0];
+      this.backchannelBoundaryTimer = setTimeout(
+        () => this.onBackchannelBoundaryDone(),
+        startCooldown,
+      );
+    }
+
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 292 lines
+    this.cancelBackchannelBoundary();
+
     if (!this.isInterruptionEnabled) {
       this.isAgentSpeaking = false;
       return;
@@ -338,12 +422,19 @@ export class AudioRecognition {
       if (this.ignoreUserTranscriptUntil === undefined) {
         this.onEndOfOverlapSpeech(Date.now());
       }
-      this.ignoreUserTranscriptUntil = this.ignoreUserTranscriptUntil
+
+      // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 307-326 lines
+      const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+      const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
         : ignoreUserTranscriptUntil;
+      this.logger.trace({ ignoreUntil, endCooldown }, 'flushing held transcripts');
+      // Subtracting `endCooldown` widens the release window so transcripts that ended just
+      // before the agent finished speaking (premature corrections) are surfaced.
+      this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
 
       // flush held transcripts if possible
-      await this.flushHeldTranscripts();
+      await this.flushHeldTranscripts(endCooldown);
     }
     this.isAgentSpeaking = false;
   }
@@ -374,10 +465,13 @@ export class AudioRecognition {
   }
 
   /**
-   * Flush held transcripts whose *end time* is after the ignoreUserTranscriptUntil timestamp.
-   * If the event has no timestamps, we assume it is the same as the next valid event.
+   * Flush held transcripts whose *end time* is after the
+   * `ignoreUserTranscriptUntil - cooldown` timestamp. If the event has no timestamps, we
+   * assume it is the same as the next valid event.
+   *
+   * Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 392-460 lines
    */
-  private async flushHeldTranscripts() {
+  private async flushHeldTranscripts(cooldown: number = 0) {
     if (
       !this.isInterruptionEnabled ||
       this.ignoreUserTranscriptUntil === undefined ||
@@ -423,14 +517,33 @@ export class AudioRecognition {
     const eventsToEmit =
       emitFromIndex !== null && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
 
+    // Snapshot the ignore-until before resetting so the added-delay diagnostic below mirrors
+    // the value the holding decision was made against.
+    const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
+    const prevInputStartedAt = this._inputStartedAt;
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
 
     for (const event of eventsToEmit) {
+      // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 437-456 lines
+      let addedDelay = 0;
+      const firstAlternative = event.alternatives?.[0];
+      if (
+        firstAlternative &&
+        firstAlternative.endTime > 0 &&
+        prevIgnoreUserTranscriptUntil !== undefined &&
+        prevInputStartedAt !== undefined
+      ) {
+        addedDelay = Math.max(
+          0,
+          firstAlternative.endTime * 1000 +
+            prevInputStartedAt -
+            prevIgnoreUserTranscriptUntil +
+            cooldown,
+        );
+      }
       this.logger.trace(
-        {
-          event: event.type,
-        },
+        { event: event.type, cooldown, addedDelay },
         're-emitting held user transcript',
       );
       this.onSTTEvent(event);
@@ -580,8 +693,10 @@ export class AudioRecognition {
         );
         this.transcriptBuffer.push(ev);
         return;
-      } else {
-        await this.flushHeldTranscripts();
+      } else if (this.transcriptBuffer.length > 0) {
+        // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 797-803 lines
+        const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+        await this.flushHeldTranscripts(endCooldown);
         // no return here to allow the new event to be processed normally
       }
     }
@@ -790,6 +905,12 @@ export class AudioRecognition {
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 1006-1009 lines
+    if (this.backchannelBoundaryActive) {
+      this.logger.trace('ignoring overlap speech event during backchannel boundary cooldown');
+      return;
+    }
+
     if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
     }
@@ -1342,6 +1463,8 @@ export class AudioRecognition {
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
     await this.interruptionStreamChannel?.close();
+    // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 548-551 lines
+    this.cancelBackchannelBoundary();
   }
 
   private _endUserTurnSpan({
