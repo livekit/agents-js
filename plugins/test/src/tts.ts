@@ -15,7 +15,10 @@ const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, thresho
   const event = await stt.recognize(frames);
   const eventText = event.alternatives![0].text.toLowerCase().replace(/\s/g, ' ').trim();
   text = text.toLowerCase().replace(/\s/g, ' ').trim();
-  expect(distance(text, eventText) / text.length).toBeLessThanOrEqual(threshold);
+  const ratio = distance(text, eventText) / text.length;
+  if (ratio > threshold) {
+    throw new Error('DUMP: ' + eventText + ' || EXPECTED: ' + text);
+  }
 };
 
 export const tts = async (
