@@ -272,7 +272,6 @@ class SegmentSynchronizerImpl {
     }
 
     const textStr = isTimedString(text) ? text.text : text;
-
     if (!this.enabled) {
       this.textData.pushedText += textStr;
       this.textData.forwardedText += textStr;
@@ -649,6 +648,10 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
+    if (!this.synchronizer.enabled) {
+      return;
+    }
+
     if (this.synchronizer._impl.audioInputEnded) {
       this.logger.warn(
         'SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment',
@@ -663,7 +666,7 @@ class SyncedAudioOutput extends AudioOutput {
     super.flush();
     this.nextInChainAudio.flush();
 
-    if (!this.synchronizer.outputsAttached) {
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       return;
     }
 
@@ -691,14 +694,14 @@ class SyncedAudioOutput extends AudioOutput {
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
-    if (this.synchronizer.outputsAttached) {
+    if (this.synchronizer.outputsAttached && this.synchronizer.enabled) {
       this.synchronizer._impl.onPlaybackStarted(createdAt);
     }
   }
 
   // this is going to be automatically called by the next_in_chain
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
-    if (!this.synchronizer.outputsAttached) {
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
       return;
     }
