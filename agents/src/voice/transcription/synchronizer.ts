@@ -23,7 +23,7 @@ interface TextSyncOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  nativeTranscriptSync?: boolean;
+  enabled?: boolean;
 }
 
 interface TextData {
@@ -171,7 +171,7 @@ class SegmentSynchronizerImpl {
      */
     private readonly seedFromPushAudio: boolean = false,
   ) {
-    this.enabled = !options.nativeTranscriptSync;
+    this.enabled = !options.enabled;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
       wordStream: this.enabled ? options.wordTokenizer.stream() : undefined,
@@ -484,7 +484,7 @@ export interface TranscriptionSynchronizerOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  nativeTranscriptSync?: boolean;
+  enabled?: boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -500,7 +500,7 @@ export class TranscriptionSynchronizer {
 
   private options: TextSyncOptions;
   private rotateSegmentTask: Task<void>;
-  private _enabled: boolean = true;
+  private _outputsAttached: boolean = true;
   private closed: boolean = false;
 
   /** @internal */
@@ -529,7 +529,7 @@ export class TranscriptionSynchronizer {
       hyphenateWord: options.hyphenateWord,
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
-      nativeTranscriptSync: options.nativeTranscriptSync,
+      enabled: options.enabled,
     };
 
     // initial segment/first segment, recreated for each new segment
@@ -539,27 +539,15 @@ export class TranscriptionSynchronizer {
     );
   }
 
-  get enabled(): boolean {
-    return this._enabled;
+  get outputsAttached(): boolean {
+    return this._outputsAttached;
   }
 
-  set enabled(enabled: boolean) {
-    if (this._enabled === enabled) {
+  set enabled(value: boolean) {
+    if (this.options.enabled === value) {
       return;
     }
-
-    this._enabled = enabled;
-    if (enabled) {
-      this._warnedAsymmetricDetach = false;
-    }
-    this.rotateSegment();
-  }
-
-  set nativeTranscriptSync(value: boolean) {
-    if (this.options.nativeTranscriptSync === value) {
-      return;
-    }
-    this.options.nativeTranscriptSync = value;
+    this.options.enabled = value;
     this.rotateSegment();
   }
 
@@ -571,7 +559,15 @@ export class TranscriptionSynchronizer {
     if (args.textAttached !== undefined) {
       this._textAttached = args.textAttached;
     }
-    this.enabled = this._audioAttached && this._textAttached;
+    const outputsAttached = this._audioAttached && this._textAttached;
+    if (this._outputsAttached === outputsAttached) {
+      return;
+    }
+    this._outputsAttached = outputsAttached;
+    if (outputsAttached) {
+      this._warnedAsymmetricDetach = false;
+    }
+    this.rotateSegment();
   }
 
   rotateSegment() {
@@ -635,7 +631,7 @@ class SyncedAudioOutput extends AudioOutput {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       if (
         this.synchronizer._audioAttached &&
         !this.synchronizer._textAttached &&
@@ -665,7 +661,7 @@ class SyncedAudioOutput extends AudioOutput {
     super.flush();
     this.nextInChainAudio.flush();
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       return;
     }
 
@@ -693,14 +689,14 @@ class SyncedAudioOutput extends AudioOutput {
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
-    if (this.synchronizer.enabled) {
+    if (this.synchronizer.outputsAttached) {
       this.synchronizer._impl.onPlaybackStarted(createdAt);
     }
   }
 
   // this is going to be automatically called by the next_in_chain
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       super.onPlaybackFinished(ev);
       return;
     }
@@ -743,7 +739,7 @@ class SyncedTextOutput extends TextOutput {
 
     const textStr = isTimedString(text) ? text.text : text;
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       if (
         this.synchronizer._textAttached &&
         !this.synchronizer._audioAttached &&
@@ -777,7 +773,7 @@ class SyncedTextOutput extends TextOutput {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       this.nextInChain.flush(); // passthrough text if the synchronizer is disabled
       return;
     }
