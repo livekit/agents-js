@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-resemble
+# @livekit/agents-plugin-resemble
 
 ## 1.3.1
 

@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-elevenlabs
+# @livekit/agents-plugin-elevenlabs
 
 ## 1.3.1
 

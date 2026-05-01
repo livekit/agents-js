@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-cartesia
+# @livekit/agents-plugin-cartesia
 
 ## 1.3.1
 

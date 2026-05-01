@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-rime
+# @livekit/agents-plugin-rime
 
 ## 1.3.1
 

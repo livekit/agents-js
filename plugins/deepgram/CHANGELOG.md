@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-deepgram
+# @livekit/agents-plugin-deepgram
 
 ## 1.3.1
 

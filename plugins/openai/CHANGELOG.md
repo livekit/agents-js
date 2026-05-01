@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-openai
+# @livekit/agents-plugin-openai
 
 ## 1.3.1
 

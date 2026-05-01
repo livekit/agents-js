@@ -1,4 +1,4 @@
-﻿# @livekit/agents
+# @livekit/agents
 
 ## 1.3.1
 

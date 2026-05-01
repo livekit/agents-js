@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-bey
+# @livekit/agents-plugin-bey
 
 ## 1.3.1
 

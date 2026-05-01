@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-neuphonic
+# @livekit/agents-plugin-neuphonic
 
 ## 1.3.1
 

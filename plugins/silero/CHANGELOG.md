@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-silero
+# @livekit/agents-plugin-silero
 
 ## 1.3.1
 

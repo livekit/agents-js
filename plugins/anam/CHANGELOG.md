@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugin-anam
+# @livekit/agents-plugin-anam
 
 ## 1.3.1
 

@@ -1,4 +1,4 @@
-﻿# @livekit/agents-plugins-test
+# @livekit/agents-plugins-test
 
 ## 1.3.1
 
