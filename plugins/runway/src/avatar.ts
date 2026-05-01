@@ -72,6 +72,7 @@ export class AvatarSession extends voice.AvatarSession {
   private avatarParticipantName: string;
   private connOptions: APIConnectOptions;
   private room?: Room;
+  private realtimeSessionId?: string;
   private endSessionPromise?: Promise<void>;
 
   #logger = log();
@@ -197,6 +198,10 @@ export class AvatarSession extends voice.AvatarSession {
             options: { statusCode: response.status, body: { error: text } },
           });
         }
+        const payload = (await response.json()) as { id?: unknown };
+        if (typeof payload.id === 'string') {
+          this.realtimeSessionId = payload.id;
+        }
         return;
       } catch (e) {
         if (e instanceof APIStatusError && !e.retryable) throw e;
@@ -234,28 +239,66 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async endRunwayRealtimeSession(room: Room): Promise<void> {
-    if (!room.isConnected) {
-      this.#logger.warn('could not end Runway realtime session; room is disconnected');
+    // Preferred path: data-channel END_CALL while the room is still connected.
+    // The Runway worker handles this message and shuts the session down through
+    // the normal "user ended call" lifecycle (COMPLETED, not CANCELLED).
+    const localParticipant = room.localParticipant;
+    if (room.isConnected && localParticipant) {
+      try {
+        await localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ type: 'END_CALL' })),
+          {
+            reliable: true,
+            destination_identities: [this.avatarParticipantIdentity],
+          },
+        );
+        this.#logger.debug('sent Runway realtime session end call');
+        return;
+      } catch (error) {
+        this.#logger.warn(
+          { error: String(error) },
+          'error ending Runway realtime session via data channel',
+        );
+      }
+    }
+
+    // Fallback for hard shutdowns where the room is already disconnected
+    // (e.g. aclose() registered as a job shutdown callback runs after
+    // room.disconnect()): cancel the session via API so we don't keep
+    // billing until maxDuration.
+    await this.cancelRunwayRealtimeSession();
+  }
+
+  private async cancelRunwayRealtimeSession(): Promise<void> {
+    const sessionId = this.realtimeSessionId;
+    if (sessionId === undefined) {
+      this.#logger.warn('could not cancel Runway realtime session; no session id available');
       return;
     }
 
     try {
-      const localParticipant = room.localParticipant;
-      if (!localParticipant) {
-        this.#logger.warn('could not end Runway realtime session; room has no local participant');
-        return;
-      }
-
-      await localParticipant.publishData(
-        new TextEncoder().encode(JSON.stringify({ type: 'END_CALL' })),
-        {
-          reliable: true,
-          destination_identities: [this.avatarParticipantIdentity],
+      const response = await fetch(`${this.apiUrl}/v1/realtime_sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'X-Runway-Version': API_VERSION,
+          'User-Agent': USER_AGENT,
         },
-      );
-      this.#logger.debug('sent Runway realtime session end call');
+        signal: AbortSignal.timeout(this.connOptions.timeoutMs),
+      });
+      if (response.ok) {
+        this.#logger.debug({ sessionId }, 'cancelled Runway realtime session');
+      } else {
+        this.#logger.warn(
+          { sessionId, status: response.status, body: await response.text() },
+          'could not cancel Runway realtime session',
+        );
+      }
     } catch (error) {
-      this.#logger.warn({ error: String(error) }, 'error ending Runway realtime session');
+      this.#logger.warn(
+        { sessionId, error: String(error) },
+        'error cancelling Runway realtime session',
+      );
     }
   }
 
