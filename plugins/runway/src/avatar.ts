@@ -6,6 +6,7 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
+  getJobContext,
   intervalForRetry,
   voice,
 } from '@livekit/agents';
@@ -138,7 +139,15 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitToken = await at.toJwt();
 
     this.#logger.debug('starting Runway avatar session');
-    await this.createSession(livekitUrl, livekitToken, room.name || '', localParticipantIdentity);
+    const sessionId = await this.createSession(
+      livekitUrl,
+      livekitToken,
+      room.name || '',
+      localParticipantIdentity,
+    );
+    getJobContext(false)?.addShutdownCallback(async () => {
+      await this.cancelRunwayRealtimeSession(sessionId);
+    });
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
@@ -153,7 +162,7 @@ export class AvatarSession extends voice.AvatarSession {
     livekitToken: string,
     roomName: string,
     agentIdentity: string,
-  ): Promise<void> {
+  ): Promise<string> {
     const body: Record<string, unknown> = {
       model: 'gwm1_avatars',
       avatar: this.avatar,
@@ -191,7 +200,22 @@ export class AvatarSession extends voice.AvatarSession {
             options: { statusCode: response.status, body: { error: text } },
           });
         }
-        return;
+        const payload = (await response.json()) as unknown;
+        const sessionId =
+          typeof payload === 'object' && payload !== null && 'id' in payload
+            ? payload.id
+            : undefined;
+        if (!sessionId || typeof sessionId !== 'string') {
+          throw new APIStatusError({
+            message: 'Runway API response missing session id',
+            options: {
+              statusCode: response.status,
+              body: { error: JSON.stringify(payload) },
+              retryable: false,
+            },
+          });
+        }
+        return sessionId;
       } catch (e) {
         if (e instanceof APIStatusError && !e.retryable) throw e;
 
@@ -212,5 +236,33 @@ export class AvatarSession extends voice.AvatarSession {
     throw new APIConnectionError({
       message: 'Failed to start Runway avatar session after all retries',
     });
+  }
+
+  private async cancelRunwayRealtimeSession(sessionId: string): Promise<void> {
+    try {
+      const response = await fetch(`${this.apiUrl}/v1/realtime_sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'X-Runway-Version': API_VERSION,
+          'User-Agent': USER_AGENT,
+        },
+        signal: AbortSignal.timeout(this.connOptions.timeoutMs),
+      });
+
+      if (response.ok) {
+        this.#logger.debug({ sessionId }, 'cancelled Runway realtime session');
+      } else {
+        this.#logger.warn(
+          { sessionId, status: response.status },
+          'could not cancel Runway realtime session',
+        );
+      }
+    } catch (error) {
+      this.#logger.warn(
+        { sessionId, error: String(error) },
+        'error cancelling Runway realtime session',
+      );
+    }
   }
 }

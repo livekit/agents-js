@@ -13,6 +13,7 @@ import {
   type PlaybackFinishedEvent,
   TextOutput,
   type TimedString,
+  createTimedString,
   isTimedString,
 } from '../io.js';
 
@@ -23,6 +24,7 @@ interface TextSyncOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
+  enabled: boolean;
 }
 
 interface TextData {
@@ -140,11 +142,14 @@ interface AudioData {
 }
 
 class SegmentSynchronizerImpl {
+  private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
-  private outputStream: IdentityTransform<string>;
-  private outputStreamWriter: WritableStreamDefaultWriter<string>;
+  // Emit TimedString objects so downstream outputs (e.g. RoomIO's json_format) can
+  // attach `end_time` reflecting synchronized playback timing.
+  private outputStream: IdentityTransform<string | TimedString>;
+  private outputStreamWriter: WritableStreamDefaultWriter<string | TimedString>;
   private captureTask: Promise<void>;
   private startWallTime?: number;
 
@@ -169,6 +174,7 @@ class SegmentSynchronizerImpl {
      */
     private readonly seedFromPushAudio: boolean = false,
   ) {
+    this.enabled = options.enabled;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
       wordStream: options.wordTokenizer.stream(),
@@ -185,13 +191,15 @@ class SegmentSynchronizerImpl {
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
 
-    this.mainTask()
-      .then(() => {
-        this.outputStreamWriter.close();
-      })
-      .catch((error) => {
-        this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
-      });
+    if (this.enabled) {
+      this.mainTask()
+        .then(() => {
+          this.outputStreamWriter.close();
+        })
+        .catch((error) => {
+          this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
+        });
+    }
     this.captureTask = this.captureTaskImpl();
   }
 
@@ -211,7 +219,7 @@ class SegmentSynchronizerImpl {
     return this.textData.pushedText.length > this.textData.forwardedText.length;
   }
 
-  get readable(): ReadableStream<string> {
+  get readable(): ReadableStream<string | TimedString> {
     return this.outputStream.readable;
   }
 
@@ -266,26 +274,19 @@ class SegmentSynchronizerImpl {
       return;
     }
 
-    // Check if text is a TimedString (has timing information)
-    let textStr: string;
+    const textStr = isTimedString(text) ? text.text : text;
     let startTime: number | undefined;
     let endTime: number | undefined;
 
     if (isTimedString(text)) {
-      // This is a TimedString
-      textStr = text.text;
       startTime = text.startTime;
       endTime = text.endTime;
 
-      // Create annotatedRate if it doesn't exist
       if (!this.audioData.annotatedRate) {
         this.audioData.annotatedRate = new SpeakingRateData();
       }
 
-      // Add the timing annotation
       this.audioData.annotatedRate.addByAnnotation(textStr, startTime, endTime);
-    } else {
-      textStr = text;
     }
 
     this.textData.wordStream.pushText(textStr);
@@ -299,7 +300,11 @@ class SegmentSynchronizerImpl {
     }
 
     this.textData.done = true;
-    this.textData.wordStream.endInput();
+    if (!this.enabled) {
+      this.outputStreamWriter.close();
+    } else {
+      this.textData.wordStream.endInput();
+    }
   }
 
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
@@ -384,7 +389,16 @@ class SegmentSynchronizerImpl {
       pushedTextCursor = wordEnd;
 
       if (this.playbackCompleted) {
-        this.outputStreamWriter.write(forwardedWord);
+        this.outputStreamWriter.write(
+          createTimedString({
+            text: forwardedWord,
+            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          }),
+        );
+        const cleanWords = this.options.splitWords(word);
+        const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
+        this.textData.forwardedHyphens += this.options.hyphenateWord(cleanWord).length;
+        this.textData.forwardedText += forwardedWord;
         continue;
       }
 
@@ -421,11 +435,27 @@ class SegmentSynchronizerImpl {
       }
 
       await this.sleepIfNotClosed(delayTime / 2);
-      this.outputStreamWriter.write(forwardedWord);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: forwardedWord,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
       await this.sleepIfNotClosed(delayTime / 2);
 
       this.textData.forwardedHyphens += wordHyphens;
       this.textData.forwardedText += forwardedWord;
+    }
+
+    if (pushedTextCursor < this.textData.pushedText.length) {
+      const remaining = this.textData.pushedText.slice(pushedTextCursor);
+      this.outputStreamWriter.write(
+        createTimedString({
+          text: remaining,
+          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+        }),
+      );
+      this.textData.forwardedText += remaining;
     }
   }
 
@@ -457,6 +487,10 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
+    // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
+    if (!this.enabled && !this.textData.done) {
+      this.outputStreamWriter.close();
+    }
     this.textData.wordStream.close();
     await this.captureTask;
   }
@@ -467,6 +501,7 @@ export interface TranscriptionSynchronizerOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
+  enabled: boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -474,6 +509,7 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   wordTokenizer: new basic.WordTokenizer(false),
+  enabled: true,
 };
 
 export class TranscriptionSynchronizer {
@@ -482,7 +518,7 @@ export class TranscriptionSynchronizer {
 
   private options: TextSyncOptions;
   private rotateSegmentTask: Task<void>;
-  private _enabled: boolean = true;
+  private _outputsAttached: boolean = true;
   private closed: boolean = false;
 
   /** @internal */
@@ -511,6 +547,7 @@ export class TranscriptionSynchronizer {
       hyphenateWord: options.hyphenateWord,
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
+      enabled: options.enabled,
     };
 
     // initial segment/first segment, recreated for each new segment
@@ -520,19 +557,19 @@ export class TranscriptionSynchronizer {
     );
   }
 
-  get enabled(): boolean {
-    return this._enabled;
+  get outputsAttached(): boolean {
+    return this._outputsAttached;
   }
 
-  set enabled(enabled: boolean) {
-    if (this._enabled === enabled) {
+  get enabled(): boolean {
+    return this.options.enabled;
+  }
+
+  set enabled(value: boolean) {
+    if (this.options.enabled === value) {
       return;
     }
-
-    this._enabled = enabled;
-    if (enabled) {
-      this._warnedAsymmetricDetach = false;
-    }
+    this.options.enabled = value;
     this.rotateSegment();
   }
 
@@ -544,7 +581,15 @@ export class TranscriptionSynchronizer {
     if (args.textAttached !== undefined) {
       this._textAttached = args.textAttached;
     }
-    this.enabled = this._audioAttached && this._textAttached;
+    const outputsAttached = this._audioAttached && this._textAttached;
+    if (this._outputsAttached === outputsAttached) {
+      return;
+    }
+    this._outputsAttached = outputsAttached;
+    if (outputsAttached) {
+      this._warnedAsymmetricDetach = false;
+    }
+    this.rotateSegment();
   }
 
   rotateSegment() {
@@ -608,7 +653,7 @@ class SyncedAudioOutput extends AudioOutput {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       if (
         this.synchronizer._audioAttached &&
         !this.synchronizer._textAttached &&
@@ -621,6 +666,10 @@ class SyncedAudioOutput extends AudioOutput {
             'session.output.transcription was replaced after AgentSession.start().',
         );
       }
+      return;
+    }
+
+    if (!this.synchronizer.enabled) {
       return;
     }
 
@@ -638,7 +687,7 @@ class SyncedAudioOutput extends AudioOutput {
     super.flush();
     this.nextInChainAudio.flush();
 
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       return;
     }
 
@@ -666,14 +715,14 @@ class SyncedAudioOutput extends AudioOutput {
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
-    if (this.synchronizer.enabled) {
+    if (this.synchronizer.outputsAttached && this.synchronizer.enabled) {
       this.synchronizer._impl.onPlaybackStarted(createdAt);
     }
   }
 
   // this is going to be automatically called by the next_in_chain
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
-    if (!this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
       return;
     }
@@ -717,6 +766,11 @@ class SyncedTextOutput extends TextOutput {
     const textStr = isTimedString(text) ? text.text : text;
 
     if (!this.synchronizer.enabled) {
+      await this.nextInChain.captureText(textStr);
+      return;
+    }
+
+    if (!this.synchronizer.outputsAttached) {
       if (
         this.synchronizer._textAttached &&
         !this.synchronizer._audioAttached &&
@@ -750,8 +804,9 @@ class SyncedTextOutput extends TextOutput {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 
-    if (!this.synchronizer.enabled) {
-      this.nextInChain.flush(); // passthrough text if the synchronizer is disabled
+    if (!this.synchronizer.enabled || !this.synchronizer.outputsAttached) {
+      this.capturing = false;
+      this.nextInChain.flush();
       return;
     }
 

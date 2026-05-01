@@ -618,7 +618,6 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content || undefined,
         extra: deltaExtra,
         toolCalls: [
           llm.FunctionCall.create({

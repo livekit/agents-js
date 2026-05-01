@@ -5,6 +5,7 @@ import type { InterruptionDetectionError } from '../inference/interruption/error
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
 import type {
+  AgentHandoffItem,
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
@@ -156,12 +157,12 @@ export const createSessionUsageUpdatedEvent = ({
 
 export type ConversationItemAddedEvent = {
   type: 'conversation_item_added';
-  item: ChatMessage;
+  item: ChatMessage | AgentHandoffItem;
   createdAt: number;
 };
 
 export const createConversationItemAddedEvent = (
-  item: ChatMessage,
+  item: ChatMessage | AgentHandoffItem,
   createdAt: number = Date.now(),
 ): ConversationItemAddedEvent => ({
   type: 'conversation_item_added',

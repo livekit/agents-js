@@ -11,6 +11,7 @@ beforeAll(() => {
 });
 
 type CapturedHeaders = Record<string, string>;
+type CompletionChunk = Record<string, unknown>;
 
 /**
  * Build an LLM, stub its OpenAI client's chat.completions.create, start a chat
@@ -61,6 +62,36 @@ async function captureHeaders(opts: {
   return capturedHeaders;
 }
 
+async function collectChatChunks(completionChunks: CompletionChunk[]) {
+  const llm = new LLM({
+    model: 'openai/gpt-4o-mini',
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: 'https://example.livekit.cloud',
+  });
+
+  const stub = async () => ({
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of completionChunks) {
+        yield chunk;
+      }
+    },
+  });
+
+  const internal = llm as unknown as {
+    client: { chat: { completions: { create: typeof stub } } };
+  };
+  internal.client.chat.completions.create = stub;
+
+  const stream = llm.chat({ chatCtx: new ChatContext() });
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+
+  return chunks;
+}
+
 describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   // --- no value anywhere ---
 
@@ -103,5 +134,43 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   it("per-call 'priority' overrides constructor 'standard'", async () => {
     const headers = await captureHeaders({ ctor: 'standard', perCall: 'priority' });
     expect(headers['X-LiveKit-Inference-Priority']).toBe('priority');
+  });
+});
+
+describe('inference.LLM streamed tool calls', () => {
+  it('does not forward assistant content on tool call chunks', async () => {
+    const chunks = await collectChatChunks([
+      {
+        id: 'chatcmpl_test',
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'tool_calls',
+            delta: {
+              role: 'assistant',
+              content: 'saveAnswer({"answer":"yes"})',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_123',
+                  type: 'function',
+                  function: {
+                    name: 'saveAnswer',
+                    arguments: '{"answer":"yes"}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.delta?.content).toBeUndefined();
+    expect(chunks[0]?.delta?.toolCalls).toHaveLength(1);
+    expect(chunks[0]?.delta?.toolCalls?.[0]?.callId).toBe('call_123');
+    expect(chunks[0]?.delta?.toolCalls?.[0]?.name).toBe('saveAnswer');
+    expect(chunks[0]?.delta?.toolCalls?.[0]?.args).toBe('{"answer":"yes"}');
   });
 });

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AgentSession as pb } from '@livekit/protocol';
 import type { RemoteParticipant } from '@livekit/rtc-node';
 import {
   type AudioFrame,
@@ -130,9 +131,56 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected abstract handleFlush(): void;
 }
 
+export interface ParticipantTranscriptionOutputOptions {
+  /** When true, each chunk sent on the `lk.transcription` datastream topic is serialized
+   *  as a JSON object with `text`, and `start_time`/`end_time`/`confidence`/
+   *  `start_time_offset` when the captured value is a TimedString. Each object is
+   *  suffixed with a newline so subscribers can parse the stream line-by-line. */
+  jsonFormat?: boolean;
+}
+
 export class ParticipantTranscriptionOutput extends BaseParticipantTranscriptionOutput {
   private writer: TextStreamWriter | null = null;
   private flushTask: Task<void> | null = null;
+  private jsonFormat: boolean;
+
+  constructor(
+    room: Room,
+    isDeltaStream: boolean,
+    participant: Participant | string | null,
+    options: ParticipantTranscriptionOutputOptions = {},
+  ) {
+    super(room, isDeltaStream, participant);
+    this.jsonFormat = options.jsonFormat ?? false;
+  }
+
+  override async captureText(text: string | TimedString) {
+    if (!this.participantIdentity) {
+      return;
+    }
+
+    // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
+    // same newline-delimited JSON format as the interim chunks.
+    const payload = this.jsonFormat
+      ? this.encodeJsonChunk(text)
+      : isTimedString(text)
+        ? text.text
+        : text;
+    this.latestText = payload;
+    await this.handleCaptureText(payload);
+  }
+
+  private encodeJsonChunk(text: string | TimedString): string {
+    const isTimed = isTimedString(text);
+    const message = new pb.TimedString({
+      text: isTimed ? text.text : text,
+      startTime: isTimed ? text.startTime : undefined,
+      endTime: isTimed ? text.endTime : undefined,
+      confidence: isTimed ? text.confidence : undefined,
+      startTimeOffset: isTimed ? text.startTimeOffset : undefined,
+    });
+    return message.toJsonString({ useProtoFieldName: true }) + '\n';
+  }
 
   protected async handleCaptureText(text: string): Promise<void> {
     if (this.flushTask && !this.flushTask.done) {

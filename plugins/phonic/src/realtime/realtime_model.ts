@@ -165,6 +165,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
       perResponseToolChoice: false,
+      nativeTranscriptSync: true,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;

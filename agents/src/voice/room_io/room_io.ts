@@ -18,6 +18,7 @@ import {
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
+import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { Future, Task, waitForAbort } from '../../utils.js';
@@ -26,11 +27,15 @@ import {
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
   CloseReason,
+  type ConversationItemAddedEvent,
   type UserInputTranscribedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import type { TextInputCallback } from '../remote_session.js';
-import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
+import {
+  TranscriptionSynchronizer,
+  defaultTextSyncOptions,
+} from '../transcription/synchronizer.js';
 import { ParticipantAudioInputStream } from './_input.js';
 import {
   ParalellTextOutput,
@@ -101,6 +106,12 @@ export interface RoomOutputOptions {
     Defaults to the AudioSource internal default (1000ms).
   */
   queueSizeMs?: number;
+  /** Send the transcription as a JSON dict for each chunk on the `lk.transcription`
+    datastream topic, including `start_time`/`end_time` timestamps if the chunk is a
+    TimedString. Each JSON object is suffixed with a newline so clients can parse the
+    stream line-by-line.
+  */
+  jsonFormat: boolean;
 }
 
 const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
@@ -120,6 +131,7 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   audioEnabled: true,
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+  jsonFormat: false,
 };
 
 export class RoomIO {
@@ -164,7 +176,6 @@ export class RoomIO {
     this.room = room;
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
-
     this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
 
     this.participantIdentity = participant
@@ -271,6 +282,16 @@ export class RoomIO {
     });
   };
 
+  private onConversationItemAdded = (ev: ConversationItemAddedEvent) => {
+    if (ev.item.type !== 'agent_handoff' || !this.transcriptionSynchronizer) {
+      return;
+    }
+    const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
+    const nativeTranscriptSync =
+      sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
+    this.transcriptionSynchronizer.enabled = !nativeTranscriptSync;
+  };
+
   private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
     if (this.room.isConnected && this.room.localParticipant) {
       await this.room.localParticipant.setAttributes({
@@ -339,7 +360,9 @@ export class RoomIO {
         options.isDeltaStream,
         options.participant,
       ),
-      new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant),
+      new ParticipantTranscriptionOutput(this.room, options.isDeltaStream, options.participant, {
+        jsonFormat: this.outputOptions.jsonFormat,
+      }),
     ]);
   }
 
@@ -489,9 +512,13 @@ export class RoomIO {
       // TODO(AJS-176): check for agent output
       const audioOutput = this.participantAudioOutput;
       if (this.outputOptions.syncTranscription && audioOutput) {
+        const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
+        const nativeTranscriptSync =
+          sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
+          { ...defaultTextSyncOptions, enabled: !nativeTranscriptSync },
         );
       }
     }
@@ -519,6 +546,10 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.on(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.onConversationItemAdded,
+    );
   }
 
   async close() {
@@ -527,6 +558,10 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    this.agentSession.off(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.onConversationItemAdded,
+    );
 
     if (this.textStreamHandlerRegistered) {
       this.room.unregisterTextStreamHandler(TOPIC_CHAT);
