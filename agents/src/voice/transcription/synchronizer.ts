@@ -272,13 +272,6 @@ class SegmentSynchronizerImpl {
     }
 
     const textStr = isTimedString(text) ? text.text : text;
-    if (!this.enabled) {
-      this.textData.pushedText += textStr;
-      this.textData.forwardedText += textStr;
-      this.outputStreamWriter.write(textStr);
-      return;
-    }
-
     let startTime: number | undefined;
     let endTime: number | undefined;
 
@@ -784,6 +777,7 @@ class SyncedTextOutput extends TextOutput {
     await this.synchronizer.barrier();
 
     if (!this.synchronizer.enabled || !this.synchronizer.outputsAttached) {
+      this.capturing = false;
       this.nextInChain.flush();
       return;
     }
