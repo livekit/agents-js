@@ -283,7 +283,7 @@ export class RoomIO {
     const sessionLlm = this.agentSession.currentAgent?.llm ?? this.agentSession.llm;
     const nativeTranscriptSync =
       sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
-    this.transcriptionSynchronizer.enabled = nativeTranscriptSync;
+    this.transcriptionSynchronizer.enabled = !nativeTranscriptSync;
   };
 
   private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
@@ -510,7 +510,7 @@ export class RoomIO {
         this.transcriptionSynchronizer = new TranscriptionSynchronizer(
           audioOutput,
           this.agentTranscriptOutput,
-          nativeTranscriptSync ? { ...defaultTextSyncOptions, enabled: true } : undefined,
+          { ...defaultTextSyncOptions, enabled: !nativeTranscriptSync },
         );
       }
     }

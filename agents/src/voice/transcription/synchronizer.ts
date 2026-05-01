@@ -23,7 +23,7 @@ interface TextSyncOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  enabled?: boolean;
+  enabled: boolean;
 }
 
 interface TextData {
@@ -171,7 +171,7 @@ class SegmentSynchronizerImpl {
      */
     private readonly seedFromPushAudio: boolean = false,
   ) {
-    this.enabled = !options.enabled;
+    this.enabled = options.enabled;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
       wordStream: options.wordTokenizer.stream(),
@@ -481,7 +481,7 @@ export interface TranscriptionSynchronizerOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  enabled?: boolean;
+  enabled: boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -489,6 +489,7 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   wordTokenizer: new basic.WordTokenizer(false),
+  enabled: true,
 };
 
 export class TranscriptionSynchronizer {
@@ -541,11 +542,11 @@ export class TranscriptionSynchronizer {
   }
 
   get enabled(): boolean {
-    return !!this.options.enabled;
+    return this.options.enabled;
   }
 
   set enabled(value: boolean) {
-    if (!!this.options.enabled === value) {
+    if (this.options.enabled === value) {
       return;
     }
     this.options.enabled = value;
@@ -740,7 +741,7 @@ class SyncedTextOutput extends TextOutput {
 
     const textStr = isTimedString(text) ? text.text : text;
 
-    if (this.synchronizer.enabled) {
+    if (!this.synchronizer.enabled) {
       await this.nextInChain.captureText(textStr);
       return;
     }
@@ -779,8 +780,8 @@ class SyncedTextOutput extends TextOutput {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 
-    if (!this.synchronizer.outputsAttached) {
-      this.nextInChain.flush(); // passthrough text if the synchronizer is disabled
+    if (!this.synchronizer.enabled || !this.synchronizer.outputsAttached) {
+      this.nextInChain.flush();
       return;
     }
 
