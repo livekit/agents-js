@@ -15,11 +15,9 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
-  // Ref: python examples/other/elevenlab_scribe_v2.py - 17-21 lines
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
-  // Ref: python examples/other/elevenlab_scribe_v2.py - 24-49 lines
   entry: async (ctx: JobContext) => {
     const stt = new elevenlabs.STT({
       useRealtime: true,

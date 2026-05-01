@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/_utils.py - 8-37 lines
 export class PeriodicCollector<T> {
   private duration: number;
   private callback: (value: T) => void;

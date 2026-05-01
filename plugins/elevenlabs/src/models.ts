@@ -24,5 +24,4 @@ export type TTSEncoding =
   | 'pcm_22050'
   | 'pcm_44100';
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/models.py - 38-45 lines
 export type STTRealtimeSampleRates = 8000 | 16000 | 22050 | 24000 | 44100 | 48000;

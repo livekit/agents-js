@@ -4,7 +4,6 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/__init__.py - 20-21 lines
 export * from './stt.js';
 export * from './tts.js';
 

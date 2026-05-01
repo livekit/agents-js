@@ -116,7 +116,6 @@ function makeIntegrationSpeech(): AudioFrame {
 
 const hasElevenLabsApiKey = Boolean(process.env.ELEVEN_API_KEY);
 
-// Ref: python tests/test_stt.py - 121-170 lines
 describe('ElevenLabs STT integration', () => {
   it.skipIf(!hasElevenLabsApiKey)(
     'recognizes speech with the real ElevenLabs API',
@@ -136,7 +135,6 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 117-141 lines
   it('defaults to Scribe v1 batch recognition', () => {
     const stt = new STT({ apiKey: 'test-key' });
 
@@ -147,7 +145,6 @@ describe('ElevenLabs STT', () => {
     expect(stt.capabilities.alignedTranscript).toBe(false);
   });
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 117-141 lines
   it('maps deprecated useRealtime to realtime model capabilities', () => {
     const stt = new STT({ apiKey: 'test-key', useRealtime: true, includeTimestamps: true });
 
@@ -156,7 +153,6 @@ describe('ElevenLabs STT', () => {
     expect(stt.capabilities.alignedTranscript).toBe('word');
   });
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 178-243 lines
   it('sends batch recognition form fields and maps word metadata', async () => {
     let request:
       | {
@@ -234,7 +230,6 @@ describe('ElevenLabs STT', () => {
     }
   });
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 531-639 lines
   it('streams audio and maps realtime speech events', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const receivedMessages: Record<string, unknown>[] = [];
@@ -323,7 +318,6 @@ describe('ElevenLabs STT', () => {
     }
   });
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 482-516 lines
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let requestUrl = '';
@@ -385,7 +379,6 @@ describe('ElevenLabs STT', () => {
     }
   });
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 277-295 lines
   it('updates server VAD on active streams and reconnects in place', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const urls: string[] = [];

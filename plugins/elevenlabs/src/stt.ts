@@ -30,7 +30,6 @@ import type { STTRealtimeSampleRates } from './models.js';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 51-59 lines
 export interface VADOptions {
   vadSilenceThresholdSecs?: number | null;
   vadThreshold?: number | null;
@@ -38,7 +37,6 @@ export interface VADOptions {
   minSilenceDurationMs?: number | null;
 }
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 62-63 lines
 export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
 
 export interface STTHTTPSession {
@@ -63,7 +61,6 @@ export interface STTOptions {
   keyterms?: string[];
 }
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 66-77 lines
 interface ResolvedSTTOptions {
   modelId: ElevenLabsSTTModels | string;
   apiKey: string;
@@ -112,7 +109,6 @@ function isAbortSignal(value: unknown): value is AbortSignal {
   );
 }
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 188-190 lines
 function createWav(frame: AudioFrame): Buffer {
   const bitsPerSample = 16;
   const byteRate = (frame.sampleRate * frame.channels * bitsPerSample) / 8;
@@ -185,7 +181,6 @@ function parseStreamEvent(value: unknown): ElevenLabsStreamEvent {
   };
 }
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 79-310 lines
 export class STT extends stt.STT {
   #opts: ResolvedSTTOptions;
   #session: STTHTTPSession;
@@ -330,7 +325,6 @@ export class STT extends stt.STT {
     });
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 178-243 lines
   async #recognizeImpl(
     buffer: AudioBuffer,
     language?: string,
@@ -400,7 +394,6 @@ export class STT extends stt.STT {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 245-275 lines
   #transcriptionToSpeechEvent(
     languageCode: string,
     text: string,
@@ -431,7 +424,6 @@ export class STT extends stt.STT {
     };
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 277-295 lines
   updateOptions(opts: {
     tagAudioEvents?: boolean;
     serverVad?: VADOptions | null;
@@ -459,7 +451,6 @@ export class STT extends stt.STT {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 296-310 lines
   stream(options?: { language?: string; connOptions?: APIConnectOptions }): SpeechStream {
     const stream = new SpeechStream(
       this,
@@ -475,7 +466,6 @@ export class STT extends stt.STT {
   }
 }
 
-// Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 313-639 lines
 export class SpeechStream extends stt.SpeechStream {
   #opts: ResolvedSTTOptions;
   #language?: string;
@@ -504,7 +494,6 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 336-344 lines
   updateOptions(opts: { serverVad?: VADOptions | null }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
@@ -514,7 +503,6 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 345-351 lines
   #onAudioDurationReport(duration: number): void {
     this.queue.put({
       type: stt.SpeechEventType.RECOGNITION_USAGE,
@@ -522,7 +510,6 @@ export class SpeechStream extends stt.SpeechStream {
     });
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 353-480 lines
   protected async run(): Promise<void> {
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
@@ -662,7 +649,6 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 482-529 lines
   async #connectWs(): Promise<WebSocket> {
     const commitStrategy = this.#opts.serverVad === null ? 'manual' : 'vad';
     const params = [
@@ -764,7 +750,6 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-elevenlabs/livekit/plugins/elevenlabs/stt.py - 531-639 lines
   #processStreamEvent(data: ElevenLabsStreamEvent): void {
     const messageType = data.message_type;
     const text = data.text ?? '';
