@@ -531,12 +531,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
-    const url = `${wsUrl}/tts/websocket?api_key=${this.#opts.apiKey}&cartesia_version=${this.#opts.apiVersion}`;
+    const url = `${wsUrl}/tts/websocket`;
 
     let ws: WebSocket | undefined;
     try {
       ws = await connectCartesiaWebSocket({
         url,
+        headers: {
+          [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
+          [VERSION_HEADER]: this.#opts.apiVersion,
+        },
         timeoutMs: this.connOptions.timeoutMs,
         abortSignal: this.abortSignal,
       });
@@ -673,15 +677,17 @@ const safeTerminateWebSocket = (ws: WebSocket) => {
 
 const connectCartesiaWebSocket = async ({
   url,
+  headers,
   timeoutMs,
   abortSignal,
 }: {
   url: string;
+  headers: Record<string, string>;
   timeoutMs: number;
   abortSignal: AbortSignal;
 }): Promise<WebSocket> => {
   const connectOnce = async (family?: number): Promise<WebSocket> => {
-    const ws = new WebSocket(url, { handshakeTimeout: timeoutMs, family });
+    const ws = new WebSocket(url, { handshakeTimeout: timeoutMs, family, headers });
     try {
       await waitForWsOpen({ ws, timeoutMs, abortSignal });
       return ws;
