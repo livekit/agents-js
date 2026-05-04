@@ -24,7 +24,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
-import { enableOtelLogging } from '../log.js';
+import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import type { SessionReport } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -570,9 +570,7 @@ export async function uploadSessionReport(options: {
   token.addObservabilityGrant({ write: true });
   const jwt = await token.toJwt();
 
-  const formData = new FormData();
-
-  // Add header (protobuf MetricsRecordingHeader)
+  // Build header bytes once and reuse across retries.
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
@@ -582,42 +580,42 @@ export async function uploadSessionReport(options: {
       nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
   });
-
   const headerBytes = Buffer.from(headerMsg.toBinary());
-  formData.append('header', headerBytes, {
-    filename: 'header.binpb',
-    contentType: 'application/protobuf',
-    knownLength: headerBytes.length,
-    header: {
-      'Content-Type': 'application/protobuf',
-      'Content-Length': headerBytes.length.toString(),
-    },
-  });
 
-  // Add chat_history JSON
   const chatHistoryJson = JSON.stringify(report.chatHistory.toJSON({ excludeTimestamp: false }));
   const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
-  formData.append('chat_history', chatHistoryBuffer, {
-    filename: 'chat_history.json',
-    contentType: 'application/json',
-    knownLength: chatHistoryBuffer.length,
-    header: {
-      'Content-Type': 'application/json',
-      'Content-Length': chatHistoryBuffer.length.toString(),
-    },
-  });
 
-  // Add audio recording file if available
+  let audioBytes = Buffer.alloc(0);
   if (report.audioRecordingPath && report.audioRecordingStartedAt) {
-    let audioBytes: Buffer;
     try {
       audioBytes = await fs.readFile(report.audioRecordingPath);
     } catch {
       audioBytes = Buffer.alloc(0);
     }
+  }
 
+  const buildFormData = (): FormData => {
+    const fd = new FormData();
+    fd.append('header', headerBytes, {
+      filename: 'header.binpb',
+      contentType: 'application/protobuf',
+      knownLength: headerBytes.length,
+      header: {
+        'Content-Type': 'application/protobuf',
+        'Content-Length': headerBytes.length.toString(),
+      },
+    });
+    fd.append('chat_history', chatHistoryBuffer, {
+      filename: 'chat_history.json',
+      contentType: 'application/json',
+      knownLength: chatHistoryBuffer.length,
+      header: {
+        'Content-Type': 'application/json',
+        'Content-Length': chatHistoryBuffer.length.toString(),
+      },
+    });
     if (audioBytes.length > 0) {
-      formData.append('audio', audioBytes, {
+      fd.append('audio', audioBytes, {
         filename: 'recording.ogg',
         contentType: 'audio/ogg',
         knownLength: audioBytes.length,
@@ -627,54 +625,205 @@ export async function uploadSessionReport(options: {
         },
       });
     }
-  }
+    return fd;
+  };
 
-  // Upload to LiveKit Cloud using form-data's submit method
-  // This properly streams the multipart form with all headers including Content-Length
-  return new ThrowsPromise<void, Error>((resolve, reject) => {
-    formData.submit(
-      {
-        protocol: 'https:',
-        host: cloudHostname,
-        path: '/observability/recordings/v0',
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-        },
-      },
-      (err, res) => {
-        if (err) {
-          reject(new Error(`Failed to upload session report: ${err.message}`));
-          return;
-        }
+  const submitOnce = (): Promise<{ statusCode: number; statusMessage: string; body: Buffer }> =>
+    new ThrowsPromise<{ statusCode: number; statusMessage: string; body: Buffer }, Error>(
+      (resolve, reject) => {
+        buildFormData().submit(
+          {
+            protocol: 'https:',
+            host: cloudHostname,
+            path: '/observability/recordings/v0',
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${jwt}`,
+            },
+          },
+          (err, res) => {
+            if (err) {
+              reject(new Error(`Failed to upload session report: ${err.message}`));
+              return;
+            }
 
-        if (res.statusCode && res.statusCode >= 400) {
-          // Read response body for error details
-          let body = '';
-          res.on('data', (chunk) => {
-            body += chunk.toString();
-          });
-          res.on('error', (readErr) => {
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} (body read error: ${readErr.message})`,
-              ),
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('error', (readErr) =>
+              reject(new Error(`Response read error: ${readErr.message}`)),
             );
-          });
-          res.on('end', () => {
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} - ${body}`,
-              ),
+            res.on('end', () =>
+              resolve({
+                statusCode: res.statusCode ?? 0,
+                statusMessage: res.statusMessage ?? '',
+                body: Buffer.concat(chunks),
+              }),
             );
-          });
-          return;
-        }
-
-        res.resume(); // Drain the response
-        res.on('error', (readErr) => reject(new Error(`Response read error: ${readErr.message}`)));
-        res.on('end', () => resolve());
+          },
+        );
       },
     );
-  });
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    log().debug('uploading session report to LiveKit Cloud');
+    const { statusCode, statusMessage, body } = await submitOnce();
+    if (statusCode > 0 && statusCode < 400) {
+      log().debug('finished uploading');
+      return;
+    }
+
+    const retryDelayMs = parseRetryDelayMs(body);
+    if (retryDelayMs === null || attempt === maxRetries) {
+      throw new Error(
+        `Failed to upload session report: ${statusCode} ${statusMessage} - ${body.toString('utf-8')}`,
+      );
+    }
+
+    log().warn(
+      `recording upload failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${(
+        retryDelayMs / 1000
+      ).toFixed(1)}s`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+}
+
+const RETRY_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.RetryInfo';
+
+interface VarintRead {
+  value: bigint;
+  size: number;
+}
+
+function readVarint(buf: Buffer, offset: number): VarintRead {
+  let value = 0n;
+  let shift = 0n;
+  let i = offset;
+  while (i < buf.length) {
+    const b = buf[i]!;
+    value |= BigInt(b & 0x7f) << shift;
+    i += 1;
+    if ((b & 0x80) === 0) {
+      return { value, size: i - offset };
+    }
+    shift += 7n;
+    if (shift > 63n) throw new Error('varint too long');
+  }
+  throw new Error('truncated varint');
+}
+
+function skipField(buf: Buffer, offset: number, wireType: number): number {
+  switch (wireType) {
+    case 0:
+      return readVarint(buf, offset).size;
+    case 1:
+      return 8;
+    case 2: {
+      const len = readVarint(buf, offset);
+      return len.size + Number(len.value);
+    }
+    case 5:
+      return 4;
+    default:
+      throw new Error(`unsupported wire type ${wireType}`);
+  }
+}
+
+/**
+ * Parse a google.rpc.Status protobuf body and return the retry delay in
+ * milliseconds extracted from a RetryInfo detail. Returns null if the error
+ * carries no RetryInfo (i.e. the server has not asked for a retry).
+ */
+function parseRetryDelayMs(body: Buffer): number | null {
+  try {
+    let offset = 0;
+    while (offset < body.length) {
+      const tag = readVarint(body, offset);
+      offset += tag.size;
+      const fieldNo = Number(tag.value >> 3n);
+      const wireType = Number(tag.value & 0x7n);
+      if (fieldNo === 3 && wireType === 2) {
+        const len = readVarint(body, offset);
+        offset += len.size;
+        const detailEnd = offset + Number(len.value);
+        const delay = parseAnyForRetryInfo(body.subarray(offset, detailEnd));
+        offset = detailEnd;
+        if (delay !== null) return delay;
+      } else {
+        offset += skipField(body, offset, wireType);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function parseAnyForRetryInfo(any: Buffer): number | null {
+  let offset = 0;
+  let typeUrl: string | null = null;
+  let value: Buffer | null = null;
+  while (offset < any.length) {
+    const tag = readVarint(any, offset);
+    offset += tag.size;
+    const fieldNo = Number(tag.value >> 3n);
+    const wireType = Number(tag.value & 0x7n);
+    if (fieldNo === 1 && wireType === 2) {
+      const len = readVarint(any, offset);
+      offset += len.size;
+      typeUrl = any.subarray(offset, offset + Number(len.value)).toString('utf-8');
+      offset += Number(len.value);
+    } else if (fieldNo === 2 && wireType === 2) {
+      const len = readVarint(any, offset);
+      offset += len.size;
+      value = any.subarray(offset, offset + Number(len.value));
+      offset += Number(len.value);
+    } else {
+      offset += skipField(any, offset, wireType);
+    }
+  }
+  if (typeUrl !== RETRY_INFO_TYPE_URL || value === null) return null;
+  return parseRetryInfoMs(value);
+}
+
+function parseRetryInfoMs(retryInfo: Buffer): number | null {
+  let offset = 0;
+  while (offset < retryInfo.length) {
+    const tag = readVarint(retryInfo, offset);
+    offset += tag.size;
+    const fieldNo = Number(tag.value >> 3n);
+    const wireType = Number(tag.value & 0x7n);
+    if (fieldNo === 1 && wireType === 2) {
+      const len = readVarint(retryInfo, offset);
+      offset += len.size;
+      return parseDurationMs(retryInfo.subarray(offset, offset + Number(len.value)));
+    }
+    offset += skipField(retryInfo, offset, wireType);
+  }
+  return null;
+}
+
+function parseDurationMs(duration: Buffer): number {
+  let seconds = 0n;
+  let nanos = 0;
+  let offset = 0;
+  while (offset < duration.length) {
+    const tag = readVarint(duration, offset);
+    offset += tag.size;
+    const fieldNo = Number(tag.value >> 3n);
+    const wireType = Number(tag.value & 0x7n);
+    if (fieldNo === 1 && wireType === 0) {
+      const v = readVarint(duration, offset);
+      seconds = v.value;
+      offset += v.size;
+    } else if (fieldNo === 2 && wireType === 0) {
+      const v = readVarint(duration, offset);
+      nanos = Number(v.value);
+      offset += v.size;
+    } else {
+      offset += skipField(duration, offset, wireType);
+    }
+  }
+  return Number(seconds) * 1000 + nanos / 1e6;
 }
