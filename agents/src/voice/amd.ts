@@ -249,6 +249,11 @@ export class AMD {
   }
 
   async aclose(): Promise<void> {
+    // Mark settled before rejecting so any in-flight `detect()` call sees
+    // `isStale()` return true and its tool callbacks no-op. Without this,
+    // a postpone_termination resolved after aclose could install a fresh
+    // silenceTimer that survives cleanup and triggers session.interrupt.
+    this.settled = true;
     if (this.active && this.rejectRun) {
       this.rejectRun(new Error('AMD closed'));
     }
