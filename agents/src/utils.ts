@@ -759,6 +759,24 @@ export function isStreamClosedError(error: unknown): boolean {
   );
 }
 
+/**
+ * Check if an error indicates writes to a closed WritableStream.
+ *
+ * @param error - The error to check.
+ * @returns True if the error is a writable stream closed error.
+ */
+export function isWritableStreamClosedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if ('code' in error && (error as { code?: string }).code === 'ERR_INVALID_STATE') {
+    return true;
+  }
+
+  return error.message.includes('WritableStream is closed');
+}
+
 /** FFmpeg error messages expected during normal teardown/shutdown. */
 const FFMPEG_TEARDOWN_ERRORS = ['Output stream closed', 'received signal 2', 'SIGKILL', 'SIGINT'];
 
