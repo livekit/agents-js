@@ -146,6 +146,7 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **Snapshots**: Used in LLM chat/tool context tests (`agents/src/llm/__snapshots__/`).
 - **Inference LLM tests**: Always use full model names from `agents/src/inference/models.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
 - **Test plugin**: `@livekit/agents-plugins-test` provides mock LLM, STT, TTS for unit tests without external APIs.
+- **STT testing utilities**: `stt.testing.FakeSTT` (from `@livekit/agents`) provides a configurable test harness for unit testing STT infrastructure (e.g. `FallbackAdapter`) with scripted transcripts, exceptions, timeouts, and observability channels.
 - **PR validation for major changes**: Verify `restaurant_agent.ts` and `realtime_agent.ts` work properly in [Agent Playground](https://agents-playground.livekit.io).
 
 ## Porting from Python (`livekit-agents`)
