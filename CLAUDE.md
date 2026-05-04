@@ -82,7 +82,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 - **`ChatContext`** — Chronologically ordered conversation state. Supports action-aware history summarization via `_summarize(llm, { keepLastTurns })` to compress old messages while preserving tool execution results.
 - **Tool system** — `llm.tool()` with Zod schemas for parameters. `handoff()` for multi-agent transfers.
 - **`FallbackAdapter`** — Multi-provider LLM failover with availability tracking.
-- **Provider format adapters** — `provider_format/openai.ts` and `provider_format/google.ts` for model-agnostic code.
+- **Provider format adapters** — `provider_format/openai.ts`, `provider_format/google.ts`, and `provider_format/mistralai.ts` for model-agnostic code.
 
 ### Other Core Modules
 
@@ -107,9 +107,9 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 
 Plugin capabilities by type:
 
-- **LLM**: openai, google, baseten
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3)
-- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3)
+- **LLM**: openai, google, baseten, mistralai
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai
+- **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
 - **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
