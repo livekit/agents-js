@@ -689,7 +689,15 @@ export async function uploadSessionReport(options: {
   }
 }
 
-const RETRY_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.RetryInfo';
+const RETRY_INFO_TYPE_NAME = 'google.rpc.RetryInfo';
+
+// google.protobuf.Any.type_url only requires the segment after the last "/" to
+// equal the fully-qualified message name, so we match by suffix to mirror the
+// Python `Any.Unpack` semantics rather than hard-coding `type.googleapis.com`.
+function anyTypeNameMatches(typeUrl: string, name: string): boolean {
+  const slash = typeUrl.lastIndexOf('/');
+  return (slash === -1 ? typeUrl : typeUrl.slice(slash + 1)) === name;
+}
 
 interface VarintRead {
   value: bigint;
@@ -783,7 +791,9 @@ function parseAnyForRetryInfo(any: Buffer): number | null {
       offset += skipField(any, offset, wireType);
     }
   }
-  if (typeUrl !== RETRY_INFO_TYPE_URL || value === null) return null;
+  if (typeUrl === null || value === null || !anyTypeNameMatches(typeUrl, RETRY_INFO_TYPE_NAME)) {
+    return null;
+  }
   return parseRetryInfoMs(value);
 }
 
