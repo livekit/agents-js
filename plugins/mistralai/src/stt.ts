@@ -301,6 +301,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
+    vadStream.close();
     await connection.endAudio();
   }
 
