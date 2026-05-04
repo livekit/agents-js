@@ -9,6 +9,9 @@ catalogs:
     '@livekit/rtc-node':
       specifier: ^0.13.27
       version: 0.13.27
+    '@types/ws':
+      specifier: ^8.5.10
+      version: 8.18.1
     ws:
       specifier: ^8.18.0
       version: 8.20.0
@@ -257,6 +260,9 @@ importers:
       '@livekit/agents-plugin-elevenlabs':
         specifier: workspace:*
         version: link:../plugins/elevenlabs
+      '@livekit/agents-plugin-fishaudio':
+        specifier: workspace:*
+        version: link:../plugins/fishaudio
       '@livekit/agents-plugin-google':
         specifier: workspace:*
         version: link:../plugins/google
@@ -598,6 +604,40 @@ importers:
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
+      ws:
+        specifier: 'catalog:'
+        version: 8.20.0
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/fishaudio:
+    dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.0.0
+        version: 3.1.3
       ws:
         specifier: 'catalog:'
         version: 8.20.0
