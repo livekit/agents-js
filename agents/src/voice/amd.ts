@@ -555,7 +555,13 @@ export class AMD {
       }),
       execute: async ({ seconds }) => {
         if (isStale()) return 'stale';
-        const clampedMs = Math.min(seconds * 1000, MAX_EXTENSION_MS);
+        // Defend against malformed args (negative, NaN) — the manual
+        // tool-call path here bypasses Zod schema validation, so a misbehaving
+        // LLM could otherwise pass values that fire the timer on the next tick.
+        const rawMs = Number(seconds) * 1000;
+        const clampedMs = Number.isFinite(rawMs)
+          ? Math.max(0, Math.min(rawMs, MAX_EXTENSION_MS))
+          : 0;
         this.extensionCount += 1;
         this.clearTimer('silence');
         this.silenceTimer = setTimeout(() => {
