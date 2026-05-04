@@ -489,7 +489,6 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      // Ref: python livekit-agents/livekit/agents/voice/audio_recognition.py - 187-198 lines
       backchannelBoundary:
         this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
       minEndpointingDelay:
@@ -1948,7 +1947,6 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2220 lines
         this.disableVadInterruptionSoon();
       }
     };
@@ -2233,7 +2231,6 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 2577 lines
         this.disableVadInterruptionSoon();
       }
     };
@@ -3398,7 +3395,6 @@ export class AgentActivity implements RecognitionHooks {
           this.audioRecognition.onStartOfAgentSpeech();
         }
         if (this.isInterruptionDetectionEnabled) {
-          // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3475 lines
           this.disableVadInterruptionSoon();
         }
         audioOutput.resume();
@@ -3462,8 +3458,6 @@ export class AgentActivity implements RecognitionHooks {
    * Disable VAD-based interruption either immediately or after the backchannel boundary
    * cooldown expires. While the cooldown is active the VAD path stays enabled, allowing the
    * user to correct themselves at the very start of agent speech.
-   *
-   * Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3529-3544 lines
    */
   private disableVadInterruptionSoon(): void {
     const audioRecognition = this.audioRecognition;
@@ -3484,7 +3478,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private restoreInterruptionByAudioActivity(): void {
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 3546-3548 lines
     this.audioRecognition?.cancelBackchannelBoundary();
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }

@@ -55,7 +55,6 @@ export interface InterruptionOptions {
    *
    * @defaultValue [1000, 3500]
    */
-  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 103-108 lines
   backchannelBoundary: number | [number, number] | null;
 }
 
@@ -67,6 +66,5 @@ export const defaultInterruptionOptions = {
   minWords: 0,
   falseInterruptionTimeout: 2000,
   resumeFalseInterruption: true,
-  // Ref: python livekit-agents/livekit/agents/voice/turn.py - 118-121 lines
   backchannelBoundary: [1000, 3500],
 } as const satisfies InterruptionOptions;
