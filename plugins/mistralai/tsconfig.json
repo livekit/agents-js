@@ -8,7 +8,7 @@
     "outDir": "./dist"
   },
   "typedocOptions": {
-    "name": "plugins/agents-plugin-mistral",
+    "name": "plugins/agents-plugin-mistralai",
     "entryPointStrategy": "resolve",
     "readme": "none",
     "entryPoints": ["src/index.ts"]
