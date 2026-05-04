@@ -674,6 +674,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
       }
 
+      // The gateway carries provider-specific data on the `extra` field
+      // of the transcript message. We surface it on SpeechData.metadata.
+      const extra = data.extra;
+      const metadata =
+        extra &&
+        typeof extra === 'object' &&
+        !Array.isArray(extra) &&
+        Object.keys(extra as Record<string, unknown>).length > 0
+          ? (extra as Record<string, unknown>)
+          : undefined;
+
       const speechData: SpeechData = {
         language,
         startTime: this.startTimeOffset + data.start,
@@ -692,6 +703,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               speakerId: word.speaker_id ?? undefined,
             }),
         ),
+        metadata,
       };
 
       if (eventType === SpeechEventType.FINAL_TRANSCRIPT) {
