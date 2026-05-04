@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-minimax",
-  "version": "0.1.0",
+  "version": "1.3.2",
   "description": "MiniMax plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

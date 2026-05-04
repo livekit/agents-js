@@ -165,7 +165,7 @@ export function parseTTSModelString(model: string): [string, string | undefined]
  *
  * Mirrors the Python implementation: support is opt-in through the provider's
  * `extra_kwargs` / `modelOptions` payload — the gateway only emits
- * `output_timestamps` events when the provider-specific flag is set.
+ * `output_alignment` events when the provider-specific flag is set.
  */
 export function hasAlignedTranscript(
   model: string | undefined,
@@ -398,7 +398,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     // `extra` (modelOptions) when the WebSocket is first opened via
     // `session.create`. Pooled sockets keep the old session settings and, for
     // example, would keep reporting `alignedTranscript=true` while the server
-    // never emits `output_timestamps`. Invalidate so the next `stream()` opens
+    // never emits `output_alignment`. Invalidate so the next `stream()` opens
     // a fresh connection with the up-to-date payload.
     if (sessionAffectingChange) {
       this.pool.invalidate();
@@ -706,7 +706,6 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
           const parsedServerEvent = ttsKnownServerEventSchema.safeParse(result.value);
           if (!parsedServerEvent.success) {
-            this.#logger.warn({ serverEvent: result.value }, 'Unexpected message from LiveKit TTS');
             continue;
           }
 
@@ -727,7 +726,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 lastFrame = frame;
               }
               break;
-            case 'output_timestamps':
+            case 'output_alignment':
               if (serverEvent.words && serverEvent.words.length > 0) {
                 for (const w of serverEvent.words) {
                   pendingTimedTranscripts.push(

@@ -13,7 +13,14 @@ import { TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { Future, Task, cancelAndWait, delay, isFfmpegTeardownError } from '../../utils.js';
+import {
+  Future,
+  Task,
+  cancelAndWait,
+  delay,
+  isFfmpegTeardownError,
+  isWritableStreamClosedError,
+} from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 
@@ -50,6 +57,7 @@ export class RecorderIO {
   private closeFuture: Future<void> = new Future();
   private lock: Mutex = new Mutex();
   private started: boolean = false;
+  private closing: boolean = false;
 
   // FFmpeg streaming state
   private pcmStream?: PassThrough;
@@ -80,6 +88,7 @@ export class RecorderIO {
 
       this._outputPath = outputPath;
       this.started = true;
+      this.closing = false;
       this.closeFuture = new Future();
 
       // Ensure output directory exists
@@ -101,13 +110,24 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
+      // Establish shutdown fence before any async operations, so no writer can proceed.
+      this.closing = true;
+      this.started = false;
+
+      if (this.forwardTask) {
+        await cancelAndWait([this.forwardTask]);
+      }
+
       await this.inChan.close();
       await this.outChan.close();
       await this.closeFuture.await;
-      await cancelAndWait([this.forwardTask!, this.encodeTask!]);
-      await this.inRecord?.close();
 
-      this.started = false;
+      if (this.encodeTask) {
+        await cancelAndWait([this.encodeTask]);
+      }
+
+      await this.inRecord?.close();
+      this.closing = false;
     } finally {
       unlock();
     }
@@ -124,9 +144,21 @@ export class RecorderIO {
   }
 
   private writeCb(buf: AudioFrame[]): void {
+    if (!this.started || this.closing || this.inChan.closed || this.outChan.closed) {
+      return;
+    }
+
     const inputBuf = this.inRecord!.takeBuf(this.outRecord?._lastSpeechEndTime);
-    this.inChan.write(inputBuf);
-    this.outChan.write(buf);
+    this.inChan.write(inputBuf).catch((err) => {
+      if (!isWritableStreamClosedError(err)) {
+        this.logger.error({ err }, 'Error writing RecorderIO input buffer');
+      }
+    });
+    this.outChan.write(buf).catch((err) => {
+      if (!isWritableStreamClosedError(err)) {
+        this.logger.error({ err }, 'Error writing RecorderIO output buffer');
+      }
+    });
   }
 
   get recording(): boolean {
@@ -156,7 +188,7 @@ export class RecorderIO {
    * Forward task: periodically flush input buffer to encoder
    */
   private async forward(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
+    while (!signal.aborted && this.started && !this.closing) {
       try {
         await delay(WRITE_INTERVAL_MS, { signal });
       } catch {
@@ -171,12 +203,17 @@ export class RecorderIO {
 
       // Flush input buffer
       const inputBuf = this.inRecord!.takeBuf(this.outRecord!._lastSpeechEndTime);
-      this.inChan
-        .write(inputBuf)
-        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO input buffer'));
-      this.outChan
-        .write([])
-        .catch((err) => this.logger.error({ err }, 'Error writing RecorderIO output buffer'));
+      try {
+        await this.inChan.write(inputBuf);
+        await this.outChan.write([]);
+      } catch (err) {
+        if (this.inChan.closed || this.outChan.closed || isWritableStreamClosedError(err)) {
+          // Channel closure is expected during teardown; stop forwarding to avoid noisy logs.
+          break;
+        }
+
+        this.logger.error({ err }, 'Error writing RecorderIO output buffer');
+      }
     }
   }
 

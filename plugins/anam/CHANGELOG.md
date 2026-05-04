@@ -1,5 +1,21 @@
 # @livekit/agents-plugin-anam
 
+## 1.3.2
+
+### Patch Changes
+
+- Add `voice.AvatarSession` base class and port the asymmetric-detach warning from the Python `TranscriptSynchronizer`. The new base class registers `aclose` as a job shutdown callback and warns when an avatar session is started after `AgentSession.start()` has already wired an audio output. The transcript synchronizer now tracks `_audioAttached` / `_textAttached` via `onAttached` / `onDetached` and logs a one-shot warning when audio or text is detached asymmetrically (covering external avatars and manual `session.output.audio` / `.transcription` replacement). Existing avatar plugins (anam, bey, lemonslice, trugen) now inherit from `voice.AvatarSession` and call `super.start(agentSession, room)` first. - [#1280](https://github.com/livekit/agents-js/pull/1280) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`08b643035d4d829c04e928e93d30d27047dace5e`](https://github.com/livekit/agents-js/commit/08b643035d4d829c04e928e93d30d27047dace5e), [`cd6dbe58537d9e44a0545cafaf57ea3e896035bf`](https://github.com/livekit/agents-js/commit/cd6dbe58537d9e44a0545cafaf57ea3e896035bf), [`a9d4422cf8742688b862bad9546e4a0cc4ae1e49`](https://github.com/livekit/agents-js/commit/a9d4422cf8742688b862bad9546e4a0cc4ae1e49), [`70835c8fc3a3be29f3f38e79633b46d790be8b70`](https://github.com/livekit/agents-js/commit/70835c8fc3a3be29f3f38e79633b46d790be8b70), [`f93cace31358849b460abbc22b02b8d45e07be70`](https://github.com/livekit/agents-js/commit/f93cace31358849b460abbc22b02b8d45e07be70), [`023eb42b863674a8d26e6a32e029807b33652eb7`](https://github.com/livekit/agents-js/commit/023eb42b863674a8d26e6a32e029807b33652eb7), [`c92c0efd1201233a457c0e3d71b2174a1e54a99e`](https://github.com/livekit/agents-js/commit/c92c0efd1201233a457c0e3d71b2174a1e54a99e), [`27fa75d68e0b92e0f37c1112c8885cb9a07d7301`](https://github.com/livekit/agents-js/commit/27fa75d68e0b92e0f37c1112c8885cb9a07d7301), [`fb8c49e5c00ab0a6d1307b1c2264194c4e8de964`](https://github.com/livekit/agents-js/commit/fb8c49e5c00ab0a6d1307b1c2264194c4e8de964), [`befef96115e5a67564af6c0e3a582f46a4b5a1fd`](https://github.com/livekit/agents-js/commit/befef96115e5a67564af6c0e3a582f46a4b5a1fd), [`881f4216ae17a83e3bf7c9ce5e56c4cd6d6105f9`](https://github.com/livekit/agents-js/commit/881f4216ae17a83e3bf7c9ce5e56c4cd6d6105f9), [`9e9148c8d259f0e6c543508f1edd25649895c014`](https://github.com/livekit/agents-js/commit/9e9148c8d259f0e6c543508f1edd25649895c014), [`ffff8ca4779112c3ba528d3d8e2087f06147b994`](https://github.com/livekit/agents-js/commit/ffff8ca4779112c3ba528d3d8e2087f06147b994)]:
+  - @livekit/agents@1.3.2
+
+## 1.3.1
+
+### Patch Changes
+
+- Updated dependencies [[`98635185eb5a9c11f49d4216622cf0ae6195dcd1`](https://github.com/livekit/agents-js/commit/98635185eb5a9c11f49d4216622cf0ae6195dcd1), [`12874304cbfc8d16a1ee225b1b408175457dc747`](https://github.com/livekit/agents-js/commit/12874304cbfc8d16a1ee225b1b408175457dc747), [`54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff`](https://github.com/livekit/agents-js/commit/54f108e0d9a521ee4c2486f3cc68f6ff4a4793ff), [`cd60f8f5217acbf1ed7192d2983685f870b24b4b`](https://github.com/livekit/agents-js/commit/cd60f8f5217acbf1ed7192d2983685f870b24b4b), [`4abc309236dff93202dd24dd3772821faaa295df`](https://github.com/livekit/agents-js/commit/4abc309236dff93202dd24dd3772821faaa295df)]:
+  - @livekit/agents@1.3.1
+
 ## 1.3.0
 
 ### Patch Changes

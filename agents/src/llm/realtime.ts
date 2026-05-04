@@ -54,6 +54,7 @@ export interface RealtimeCapabilities {
   midSessionInstructionsUpdate?: boolean;
   midSessionToolsUpdate?: boolean;
   perResponseToolChoice?: boolean;
+  nativeTranscriptSync?: boolean;
 }
 
 export interface InputTranscriptionCompleted {

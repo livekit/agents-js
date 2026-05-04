@@ -63,6 +63,7 @@ pnpm build && node ./examples/src/test_my_plugin.ts
 The core of the framework. Pipeline flow: **Audio In → VAD → STT → LLM → TTS → Audio Out**.
 
 Key classes and their roles:
+
 - **`Agent`** — Base class holding instructions, tools, and model config. Subclass to override pipeline hooks (`ttsNode`, `realtimeAudioOutputNode`, `sttNode`, `llmNode`). Use `voice.Agent.default.<hook>(this, ...)` to call the base implementation from overrides.
 - **`AgentTask`** — Extends Agent for composable task workflows with isolated chat context and tool scoping.
 - **`AgentSession`** — Orchestrates the full session lifecycle: connects to LiveKit room, manages turn detection, handles interruptions, collects metrics. Entry point: `session.start({ agent, room })`.
@@ -105,6 +106,7 @@ Wire protocol for distributed agents via LiveKit room message channels. `Session
 Each extends `Plugin` base class, auto-registers on import via `Plugin.registerPlugin()`. Pattern: `@livekit/agents-plugin-<provider>`.
 
 Plugin capabilities by type:
+
 - **LLM**: openai, google, baseten
 - **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3)
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3)
@@ -117,6 +119,7 @@ Plugin capabilities by type:
 ### AsyncLocalStorage Patterns
 
 The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
+
 - `agentActivityStorage` — Access current `AgentActivity` in callbacks
 - `functionCallStorage` — Access current `FunctionCall` in tool handlers
 - `speechHandleStorage` — Access current `SpeechHandle`
@@ -149,27 +152,7 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 
 When porting features or fixes from the Python `livekit-agents` repo to this JS/TS repo, follow these rules:
 
-### 1. Python reference comments (`// Ref`)
-
-Every JS change that corresponds to a Python change must carry an inline reference comment directly above the relevant line(s):
-
-```ts
-// Ref: python <relative-file-path> - <line-range> lines
-```
-
-Examples:
-
-```ts
-// Ref: python livekit-agents/livekit/agents/voice/agent_session.py - 362-369 lines
-private _aecWarmupRemaining = 0;
-
-// Ref: python livekit-agents/livekit/agents/voice/agent_activity.py - 1236-1240 lines
-if (this.agentSession._aecWarmupRemaining > 0) { ... }
-```
-
-Use the Python file path relative to the repo root. Include the line range from the Python diff so reviewers can cross-reference directly.
-
-### 2. Time unit unification
+### Time unit unification
 
 Python uses **seconds** (`float`) for all time values. JS/TS uses **milliseconds** (`number`) by default.
 
