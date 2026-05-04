@@ -11,7 +11,7 @@ export * from './tts.js';
 class MistralPlugin extends Plugin {
   constructor() {
     super({
-      title: 'mistral',
+      title: 'mistralai',
       version: __PACKAGE_VERSION__,
       package: __PACKAGE_NAME__,
     });

@@ -6,7 +6,6 @@
  * @deprecated Use `@livekit/agents-plugin-mistralai` instead. This package is a compatibility
  * wrapper and will be removed in a future release.
  */
-
 import { Plugin } from '@livekit/agents';
 
 console.warn(
