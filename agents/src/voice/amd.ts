@@ -130,7 +130,7 @@ function warnIfNotEvaluated(
   const lower = modelName.toLowerCase();
   for (const candidate of evaluated) {
     const c = candidate.toLowerCase();
-    if (lower === c || c.includes(lower)) return;
+    if (lower === c || c.includes(lower) || lower.includes(c)) return;
   }
   log().warn(
     `${modelKind} model ${modelName} hasn't been evaluated with our benchmark, ` +
@@ -461,7 +461,7 @@ export class AMD {
       return;
     }
 
-    const result = await this.detect(this.joinTranscript());
+    const result = await this.detect(this.joinTranscript(), generation);
 
     if (this.settled || generation !== this.detectGeneration) {
       return;
@@ -503,8 +503,14 @@ export class AMD {
    * LLMs in tests, or providers that don't support `toolChoice='required'`),
    * we fall back to the pre-port JSON-content parsing path.
    */
-  private async detect(transcript: string): Promise<AMDResult> {
+  private async detect(transcript: string, generation: number): Promise<AMDResult> {
     let savedResult: AMDResult | undefined;
+
+    // Stale-classification guard: if a newer transcript has bumped the
+    // generation counter while this LLM call was in flight, tool side effects
+    // (verdict capture, timer/budget mutation) must no-op so the in-flight
+    // newer classification owns the state.
+    const isStale = (): boolean => generation !== this.detectGeneration || this.settled;
 
     const savePrediction = tool({
       description: 'Save the AMD prediction to the verdict.',
@@ -518,13 +524,17 @@ export class AMD {
         ]),
       }),
       execute: async ({ label }) => {
-        if (label !== AMDCategory.UNCERTAIN) {
+        if (isStale()) return 'stale';
+        // Normalize via parseCategory: defends against a non-tool execution
+        // path (or a misbehaving LLM) handing us an off-enum string.
+        const normalized = parseCategory(label);
+        if (normalized !== AMDCategory.UNCERTAIN) {
           savedResult = {
-            category: label,
+            category: normalized,
             reason: 'llm',
             transcript,
             rawResponse: '',
-            isMachine: isMachineCategory(label),
+            isMachine: isMachineCategory(normalized),
           };
         }
         return 'saved';
@@ -539,6 +549,7 @@ export class AMD {
         seconds: z.number().describe('Additional seconds to wait (max 10).'),
       }),
       execute: async ({ seconds }) => {
+        if (isStale()) return 'stale';
         const clampedMs = Math.min(seconds * 1000, MAX_EXTENSION_MS);
         this.extensionCount += 1;
         this.clearTimer('silence');
