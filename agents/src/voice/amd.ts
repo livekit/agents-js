@@ -159,12 +159,14 @@ export class AMD {
   private verdictResult: AMDResult | undefined;
   private machineSilenceReached = false;
   private speechStartedAt: number | undefined;
+  private speechEndedAt: number | undefined;
   private detectGeneration = 0;
   private extensionCount = 0;
 
   private noSpeechTimer: ReturnType<typeof setTimeout> | undefined;
   private detectionTimer: ReturnType<typeof setTimeout> | undefined;
   private silenceTimer: ReturnType<typeof setTimeout> | undefined;
+  private silenceTimerTrigger: 'short_speech' | 'long_speech' | undefined;
 
   private resolveRun: ((value: AMDResult) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
@@ -261,6 +263,8 @@ export class AMD {
     this.verdictResult = undefined;
     this.machineSilenceReached = false;
     this.speechStartedAt = undefined;
+    this.speechEndedAt = undefined;
+    this.silenceTimerTrigger = undefined;
     this.detectGeneration = 0;
     this.extensionCount = 0;
     this.resolveRun = undefined;
@@ -292,6 +296,9 @@ export class AMD {
     if (this[key]) {
       clearTimeout(this[key]);
       this[key] = undefined;
+    }
+    if (name === 'silence') {
+      this.silenceTimerTrigger = undefined;
     }
   }
 
@@ -339,6 +346,7 @@ export class AMD {
    * short-greeting paths) and always opens the silence gate.
    */
   private onSilenceTimerFired(category?: AMDCategory, reason?: string): void {
+    this.clearTimer('silence');
     if (category && reason && !this.verdictResult) {
       this.setVerdict({
         category,
@@ -386,6 +394,7 @@ export class AMD {
     }
 
     const speechDurationMs = ev.createdAt - (this.speechStartedAt ?? ev.createdAt);
+    this.speechEndedAt = ev.createdAt;
 
     this.clearTimer('silence');
 
@@ -398,11 +407,13 @@ export class AMD {
           () => this.onSilenceTimerFired(AMDCategory.HUMAN, 'short_greeting'),
           this.humanSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'short_speech';
       } else {
         this.silenceTimer = setTimeout(
           () => this.onSilenceTimerFired(),
           this.machineSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'long_speech';
       }
       return;
     }
@@ -412,6 +423,7 @@ export class AMD {
       () => this.onSilenceTimerFired(),
       this.machineSilenceThresholdMs,
     );
+    this.silenceTimerTrigger = 'long_speech';
   };
 
   /**
@@ -425,6 +437,18 @@ export class AMD {
     const transcript = ev.transcript.trim();
     if (!transcript) {
       return;
+    }
+
+    if (this.silenceTimer && this.silenceTimerTrigger === 'short_speech') {
+      this.clearTimer('silence');
+      if (this.speechEndedAt !== undefined) {
+        const remaining = Math.max(
+          0,
+          this.speechEndedAt + this.machineSilenceThresholdMs - Date.now(),
+        );
+        this.silenceTimer = setTimeout(() => this.onSilenceTimerFired(), remaining);
+        this.silenceTimerTrigger = 'long_speech';
+      }
     }
 
     this.clearTimer('noSpeech');
