@@ -23,3 +23,5 @@ export type TTSEncoding =
   | 'pcm_16000'
   | 'pcm_22050'
   | 'pcm_44100';
+
+export type STTRealtimeSampleRates = 8000 | 16000 | 22050 | 24000 | 44100 | 48000;
