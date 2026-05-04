@@ -63,7 +63,6 @@ export interface AMDOptions {
   suppressCompatibilityWarning?: boolean;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/amd/classifier.py - 16-23 lines
 const HUMAN_SPEECH_THRESHOLD_MS = 2_500;
 const HUMAN_SILENCE_THRESHOLD_MS = 500;
 const MACHINE_SILENCE_THRESHOLD_MS = 1_500;
@@ -71,11 +70,9 @@ const DEFAULT_NO_SPEECH_TIMEOUT_MS = 10_000;
 const DEFAULT_DETECTION_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_TRANSCRIPT_TURNS = 2;
 
-// Ref: python livekit-agents/livekit/agents/voice/amd/classifier.py - 24-25 lines
 const MAX_EXTENSIONS = 3;
 const MAX_EXTENSION_MS = 10_000;
 
-// Ref: python livekit-agents/livekit/agents/voice/amd/detector.py - 41-55 lines
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3-flash-preview',
@@ -109,7 +106,6 @@ function parseCategory(raw: string | undefined): AMDCategory {
     : AMDCategory.UNCERTAIN;
 }
 
-// Ref: python livekit-agents/livekit/agents/voice/amd/classifier.py - 28-95 lines
 const AMD_PROMPT = `You classify the start of a phone call.
 Return strict JSON with keys "category" and "reason".
 Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "uncertain".
@@ -120,7 +116,6 @@ Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "
 - "uncertain": not enough evidence yet.
 Do not include markdown fences or extra text.`;
 
-// Ref: python livekit-agents/livekit/agents/voice/amd/detector.py - 444-462 lines
 function warnIfNotEvaluated(
   modelName: string | undefined,
   evaluated: ReadonlySet<string>,
@@ -165,7 +160,6 @@ export class AMD {
   private machineSilenceReached = false;
   private speechStartedAt: number | undefined;
   private detectGeneration = 0;
-  // Ref: python livekit-agents/livekit/agents/voice/amd/classifier.py - 144-145 lines
   private extensionCount = 0;
 
   private noSpeechTimer: ReturnType<typeof setTimeout> | undefined;
@@ -395,7 +389,6 @@ export class AMD {
 
     this.clearTimer('silence');
 
-    // Ref: python classifier.py - 195-213 lines
     // Short greeting: speech ≤ humanSpeechThreshold AND no transcript yet → HUMAN (skip LLM)
     // When transcript is available, defer to LLM and use the longer machine_silence_threshold
     // so the classifier can review the words before settling.
@@ -498,8 +491,6 @@ export class AMD {
   }
 
   /**
-   * Ref: python classifier.py `_classify_user_speech` - 296-356 lines
-   *
    * Builds two LLM tools — `save_prediction` (always) and `postpone_termination`
    * (until extensions exhausted) — and lets the LLM choose between committing
    * a verdict or extending the silence window.
@@ -565,7 +556,6 @@ export class AMD {
         this.extensionCount += 1;
         this.clearTimer('silence');
         this.silenceTimer = setTimeout(() => {
-          // Ref: python classifier.py `_on_postpone_elapsed` - 320-330 lines
           // Extension window expired without another postpone: open the silence
           // gate and re-run classification with the latest transcript. With
           // extensions now exhausted, postpone is no longer offered to the LLM,
