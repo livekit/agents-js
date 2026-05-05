@@ -938,6 +938,12 @@ export class AgentSession<
     return this.agent;
   }
 
+  async waitForInactive(): Promise<void> {
+    if (this.activity) {
+      await this.activity._waitForInactive();
+    }
+  }
+
   async close(): Promise<void> {
     await this.closeImpl(CloseReason.USER_INITIATED);
   }

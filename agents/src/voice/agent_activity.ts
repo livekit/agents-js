@@ -1551,6 +1551,16 @@ export class AgentActivity implements RecognitionHooks {
     return toWait;
   }
 
+  /** @internal */
+  async _waitForInactive(): Promise<void> {
+    while (this._currentSpeech || this.speechQueue.size() > 0) {
+      if (this._currentSpeech?._hasGenerations) {
+        await this._currentSpeech._waitForGeneration();
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+
   private wakeupMainTask(): void {
     this.q_updated.resolve();
   }

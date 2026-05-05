@@ -41,6 +41,18 @@ describe('SpeechHandle.waitForPlayout - tool-context owner check', () => {
     });
   });
 
+  it('allows the owning handle once the tool is marked pending', async () => {
+    const owningHandle = SpeechHandle.create();
+    const functionCall = makeFunctionCall();
+    functionCall.extra.__livekit_agents_tool_pending = true;
+    setTimeout(() => owningHandle._markDone(), 10);
+
+    await functionCallStorage.run({ functionCall, speechHandle: owningHandle }, async () => {
+      const outcome = await raceTimeout(owningHandle.waitForPlayout(), 1000);
+      expect(outcome).toBe('resolved');
+    });
+  });
+
   it('does NOT throw when awaiting a different handle from inside a tool', async () => {
     const owningHandle = SpeechHandle.create();
     const otherHandle = SpeechHandle.create();
