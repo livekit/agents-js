@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-silero
 
+## 1.3.3
+
+### Patch Changes
+
+- Bump `onnxruntime-node` (and `onnxruntime-common`) to `1.24.3` to fix a libc++abi mutex abort during process shutdown on macOS arm64. The crash fired in `~unique_ptr<OrtEnv>` inside `libonnxruntime.1.21.0.dylib` when `silero.VAD.load()` had been called and the process exited while LiveKit's tokio runtime threads were still alive — a static-destructor race present in `onnxruntime-node@1.21.0..1.23.2` and fixed upstream in `onnxruntime-node@1.24.1`. Verified the bump resolves the crash for the minimal repro in #1375. - [#1377](https://github.com/livekit/agents-js/pull/1377) ([@sgzrov](https://github.com/sgzrov))
+
+- Updated dependencies [[`943d4eb6c3faebea915ffe3344b674c704376602`](https://github.com/livekit/agents-js/commit/943d4eb6c3faebea915ffe3344b674c704376602), [`87e7f34ac35a0a5dfc3f904b3632468249876844`](https://github.com/livekit/agents-js/commit/87e7f34ac35a0a5dfc3f904b3632468249876844), [`5898229d387c72691d791d34901aad2a12877d94`](https://github.com/livekit/agents-js/commit/5898229d387c72691d791d34901aad2a12877d94)]:
+  - @livekit/agents@1.3.3
+
 ## 1.3.2
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
     "name": "@livekit/agents-plugin-mistral",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "description": "Mistral AI plugin for LiveKit Node Agents (deprecated, use @livekit/agents-plugin-mistralai)",
     "main": "dist/index.js",
     "require": "dist/index.cjs",
