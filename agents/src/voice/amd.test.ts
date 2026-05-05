@@ -9,7 +9,7 @@ import { LLM, type LLMStream } from '../llm/llm.js';
 import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import type { APIConnectOptions } from '../types.js';
 import type { AgentSession } from './agent_session.js';
-import { AMD, AMDCategory } from './amd.js';
+import { AMD, AMDCategory, type AMDPredictionEvent } from './amd.js';
 import { AgentSessionEventTypes } from './events.js';
 
 class StaticLLM extends LLM {
@@ -70,6 +70,9 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
+    const events: AMDPredictionEvent[] = [];
+    amd.on('amd_prediction', (ev) => events.push(ev));
+
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
       type: 'user_input_transcribed',
@@ -81,12 +84,18 @@ describe('AMD', () => {
     });
 
     await expect(promise).resolves.toMatchObject({
+      type: 'amd_prediction',
       category: AMDCategory.MACHINE_VM,
       isMachine: true,
     });
     expect(session.pauseReplyAuthorization).toHaveBeenCalledTimes(1);
     expect(session.resumeReplyAuthorization).toHaveBeenCalled();
     expect(session.interrupt).toHaveBeenCalledWith({ force: true });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'amd_prediction',
+      category: AMDCategory.MACHINE_VM,
+    });
   });
 
   it('should classify unavailable mailbox as machine', async () => {

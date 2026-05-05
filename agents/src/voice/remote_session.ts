@@ -655,6 +655,12 @@ export class SessionHost {
     this.emitEvent({ case: 'overlappingSpeech', value });
   };
 
+  // TODO(amd_prediction): mirror Python `_on_amd_prediction` once
+  // `@livekit/protocol` ships `AgentSessionEvent.AmdPrediction` / `AmdCategory`.
+  // The AMD detector now emits an `amd_prediction` event (see voice/amd.ts);
+  // wire this handler up via `amd.on('amd_prediction', ...)` and forward the
+  // payload through `emitEvent({ case: 'amdPrediction', value: ... })`.
+
   private onMetricsCollected = (event: MetricsCollectedEvent): void => {
     if (!this.session) return;
     this.emitEvent(
