@@ -49,6 +49,7 @@ export type ElevenlabsModels =
   | 'elevenlabs/eleven_multilingual_v2';
 
 export type InworldModels =
+  | 'inworld/inworld-tts-2'
   | 'inworld/inworld-tts-1.5-max'
   | 'inworld/inworld-tts-1.5-mini'
   | 'inworld/inworld-tts-1-max'
