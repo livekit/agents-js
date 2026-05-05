@@ -939,10 +939,17 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
+  waitForSubscription = false,
 }: {
   room: Room;
   identity: string;
   kind: TrackKind;
+  /**
+   * If true, only resolve once the matching track is subscribed (i.e.
+   * `publication.subscribed` is true and `publication.track` is set).
+   * Mirrors python `wait_for_track_publication(wait_for_subscription=True)`.
+   */
+  waitForSubscription?: boolean;
 }): Promise<RemoteTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
@@ -957,32 +964,61 @@ export async function waitForTrackPublication({
     return k === kind;
   };
 
+  const matches = (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (identity !== undefined && participant.identity !== identity) return false;
+    if (!kindMatch(publication.kind)) return false;
+    if (waitForSubscription && !(publication.subscribed && publication.track !== undefined)) {
+      return false;
+    }
+    return true;
+  };
+
   const onTrackPublished = (
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ) => {
     if (fut.done) return;
-    if (
-      (identity === undefined || participant.identity === identity) &&
-      kindMatch(publication.kind)
-    ) {
+    if (matches(publication, participant)) {
       fut.resolve(publication);
     }
   };
 
-  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  // RoomEvent.TrackSubscribed signature: (track, publication, participant).
+  const onTrackSubscribed = (
+    _track: unknown,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (fut.done) return;
+    if (matches(publication, participant)) {
+      fut.resolve(publication);
+    }
+  };
+
+  if (waitForSubscription) {
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+  } else {
+    room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
 
   try {
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
-        onTrackPublished(publication, p);
-        if (fut.done) break;
+        if (matches(publication, p)) {
+          fut.resolve(publication);
+          break;
+        }
       }
+      if (fut.done) break;
     }
 
     return await fut.await;
   } finally {
-    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    if (waitForSubscription) {
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    } else {
+      room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
   }
 }
 

@@ -696,6 +696,14 @@ export class AgentActivity implements RecognitionHooks {
     return this.audioRecognition?.inputStartedAt;
   }
 
+  /**
+   * @internal — used by AMD to obtain a private branch of the participant
+   * audio stream that does not interfere with the pipeline VAD/STT.
+   */
+  subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
+    return this.audioRecognition?.subscribeAudioStream();
+  }
+
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
     chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
 

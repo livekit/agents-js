@@ -46,6 +46,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
+import type { AMD } from './amd.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
@@ -250,6 +251,13 @@ export class AgentSession<
 
   /** @internal */
   _roomIO?: RoomIO;
+
+  /**
+   * Currently active AMD instance, if one was constructed against this session.
+   * Mirrors python `AgentSession._amd`. Useful for tests, telemetry, and
+   * higher-level helpers that need to introspect classification state.
+   */
+  private _amd: AMD | null = null;
 
   /** @internal */
   _aecWarmupRemaining = 0;
@@ -662,6 +670,28 @@ export class AgentSession<
     }
 
     return this.activity.interrupt(options);
+  }
+
+  /**
+   * The currently bound `AMD` instance, or `null` if AMD is not in use.
+   * Mirrors python `AgentSession.amd`.
+   */
+  get amd(): AMD | null {
+    return this._amd;
+  }
+
+  /** @internal — used by AMD to register/unregister itself with the session. */
+  _setAmd(amd: AMD | null): void {
+    this._amd = amd;
+  }
+
+  /**
+   * @internal — returns a tee'd branch of the active participant audio stream
+   * for AMD's dedicated STT. Returns `undefined` when no `AgentActivity` is
+   * running yet (the AMD STT pump retries until an activity is available).
+   */
+  _subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
+    return this.activity?.subscribeAudioStream();
   }
 
   pauseReplyAuthorization(): void {

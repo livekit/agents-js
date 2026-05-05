@@ -199,6 +199,13 @@ export class AudioRecognition {
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
+  /**
+   * Reserved branch of the input audio used by external subscribers (e.g. AMD's
+   * dedicated STT). Each call to `subscribeAudioStream()` tees this branch and
+   * stores the other half back here so subsequent subscribers receive their own
+   * independent copy of every frame.
+   */
+  private subscribersInputStream: ReadableStream<AudioFrame>;
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
@@ -242,8 +249,14 @@ export class AudioRecognition {
     this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
 
+    // Reserve a `subscribers` branch for external consumers (e.g. AMD's dedicated
+    // STT). Tee'ing the input here costs an extra in-memory queue per branch but
+    // keeps subscribers fully decoupled from the VAD/STT/interruption pipelines.
+    const [primaryInputStream, subscribersInputStream] = this.deferredInputStream.stream.tee();
+    this.subscribersInputStream = subscribersInputStream;
+
     if (opts.interruptionDetection) {
-      const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
+      const [vadInputStream, teedInput] = primaryInputStream.tee();
       const [inputStream, sttInputStream] = teedInput.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
@@ -253,7 +266,7 @@ export class AudioRecognition {
       this.interruptionStreamChannel = createStreamChannel();
       this.interruptionStreamChannel.addStreamInput(inputStream);
     } else {
-      const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+      const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
         sttInputStream,
@@ -1228,6 +1241,22 @@ export class AudioRecognition {
 
   detachInputAudioStream() {
     this.deferredInputStream.detachSource();
+  }
+
+  /**
+   * Returns an independent ReadableStream of input audio frames, tee'd from the
+   * shared input. Each call returns a fresh branch — frames written after the
+   * subscription point will be delivered, but frames already consumed by other
+   * teed branches are not replayed.
+   *
+   * Used by AMD when its private STT needs the same participant audio that the
+   * pipeline is processing without consuming it (see python AMD detector pushing
+   * audio into `_AMDClassifier.push_audio`).
+   */
+  subscribeAudioStream(): ReadableStream<AudioFrame> {
+    const [returned, retained] = this.subscribersInputStream.tee();
+    this.subscribersInputStream = retained;
+    return returned;
   }
 
   clearUserTurn() {
