@@ -153,6 +153,139 @@ describe('AsyncToolset runtime integration', () => {
     await toolset.aclose();
   });
 
+  it('parses wrapped tool arguments through the original Zod schema', async () => {
+    const { session } = createFakeSession();
+    const normalized = tool({
+      description: 'uses zod defaults and transforms',
+      parameters: z.object({
+        count: z.number().default(5),
+        name: z.string().transform((value) => value.toUpperCase()),
+      }),
+      execute: async ({ count, name }) => `${count}:${name}`,
+    });
+
+    const toolset = new AsyncToolset({ id: 'zod', tools: { normalized } });
+    const [execTask, toolOutput] = performToolExecutions({
+      session,
+      speechHandle: SpeechHandle.create(),
+      toolCtx: toolset.toolCtx,
+      toolCallStream: createFunctionCallStream(
+        FunctionCall.create({
+          callId: 'call_zod',
+          name: 'normalized',
+          args: JSON.stringify({ name: 'alice' }),
+        }),
+      ),
+      controller: new AbortController(),
+    });
+
+    await execTask.result;
+
+    expect(toolOutput.output).toHaveLength(1);
+    expect(toolOutput.output[0]?.toolCallOutput?.isError).toBe(false);
+    expect(toolOutput.output[0]?.toolCallOutput?.output).toBe('"5:ALICE"');
+
+    await toolset.aclose();
+  });
+
+  it('checks original Zod refinements for wrapped tool arguments', async () => {
+    const { session } = createFakeSession();
+    const refined = tool({
+      description: 'uses zod refinements',
+      parameters: z.object({
+        count: z.number().refine((value) => value > 0, 'count must be positive'),
+      }),
+      execute: async () => 'should not run',
+    });
+
+    const toolset = new AsyncToolset({ id: 'refined', tools: { refined } });
+    const [execTask, toolOutput] = performToolExecutions({
+      session,
+      speechHandle: SpeechHandle.create(),
+      toolCtx: toolset.toolCtx,
+      toolCallStream: createFunctionCallStream(
+        FunctionCall.create({
+          callId: 'call_refined',
+          name: 'refined',
+          args: JSON.stringify({ count: -1 }),
+        }),
+      ),
+      controller: new AbortController(),
+    });
+
+    await execTask.result;
+
+    expect(toolOutput.output).toHaveLength(1);
+    expect(toolOutput.output[0]?.toolCallOutput?.isError).toBe(true);
+    expect(toolOutput.output[0]?.toolCallOutput?.output).not.toContain('should not run');
+
+    await toolset.aclose();
+  });
+
+  it('cancels a pending reply delivery without waiting for inactivity forever', async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let waitForInactiveSignal: AbortSignal | undefined;
+    const generateReply = vi.fn();
+    const agent = {
+      chatCtx: ChatContext.empty(),
+      updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
+        agent.chatCtx = chatCtx;
+      }),
+    };
+    const session = {
+      get currentAgent() {
+        return agent;
+      },
+      get userData() {
+        return {};
+      },
+      waitForInactive: vi.fn(async ({ abortSignal }: { abortSignal?: AbortSignal } = {}) => {
+        waitForInactiveSignal = abortSignal;
+        await new Promise<void>((resolve) => {
+          abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }),
+      generateReply,
+    } as unknown as AgentSession;
+
+    const background = tool({
+      description: 'background work',
+      parameters: z.object({}),
+      execute: async (_, { ctx }) => {
+        await (ctx as AsyncRunContext).update('Started background work.');
+        await finished;
+        return 'Finished background work.';
+      },
+    });
+
+    const toolset = new AsyncToolset({ id: 'blocking-delivery', tools: { background } });
+    const [execTask] = performToolExecutions({
+      session,
+      speechHandle: SpeechHandle.create(),
+      toolCtx: toolset.toolCtx,
+      toolCallStream: createFunctionCallStream(
+        FunctionCall.create({ callId: 'call_delivery', name: 'background', args: '{}' }),
+      ),
+      controller: new AbortController(),
+    });
+
+    await execTask.result;
+    finish();
+    await waitFor(() => waitForInactiveSignal !== undefined);
+
+    const outcome = await Promise.race([
+      toolset.aclose().then(() => 'closed' as const),
+      delay(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(outcome).toBe('closed');
+    expect(waitForInactiveSignal?.aborted).toBe(true);
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
   it('lists and cancels a running background tool', async () => {
     const { session } = createFakeSession();
     let aborted = false;

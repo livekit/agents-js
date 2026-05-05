@@ -47,7 +47,15 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import {
+  Future,
+  Task,
+  cancelAndWait,
+  isDevMode,
+  isHosted,
+  waitFor,
+  waitForAbort,
+} from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -1552,12 +1560,24 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /** @internal */
-  async _waitForInactive(): Promise<void> {
-    while (this._currentSpeech || this.speechQueue.size() > 0) {
-      if (this._currentSpeech?._hasGenerations) {
-        await this._currentSpeech._waitForGeneration();
+  async _waitForInactive(abortSignal?: AbortSignal): Promise<void> {
+    const waitIfNotAborted = async (promise: Promise<unknown>): Promise<void> => {
+      if (!abortSignal) {
+        await promise;
+        return;
       }
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await Promise.race([promise, waitForAbort(abortSignal)]);
+    };
+
+    while (this._currentSpeech || this.speechQueue.size() > 0) {
+      if (abortSignal?.aborted) return;
+
+      if (this._currentSpeech?._hasGenerations) {
+        await waitIfNotAborted(this._currentSpeech._waitForGeneration());
+      }
+
+      if (abortSignal?.aborted) return;
+      await waitIfNotAborted(new Promise<void>((resolve) => setImmediate(resolve)));
     }
   }
 

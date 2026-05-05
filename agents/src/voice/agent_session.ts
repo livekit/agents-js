@@ -938,9 +938,9 @@ export class AgentSession<
     return this.agent;
   }
 
-  async waitForInactive(): Promise<void> {
+  async waitForInactive(options: { abortSignal?: AbortSignal } = {}): Promise<void> {
     if (this.activity) {
-      await this.activity._waitForInactive();
+      await this.activity._waitForInactive(options.abortSignal);
     }
   }
 

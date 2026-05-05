@@ -19,6 +19,7 @@ import {
   tool,
 } from './tool_context.js';
 import { toJsonSchema } from './utils.js';
+import { isZodSchema, parseZodSchema } from './zod-utils.js';
 
 const UPDATE_TEMPLATE = `The tool \`{function_name}\` has updated, message: {message}
 The task is still running, so DON'T make up or give information not included in the message above.`;
@@ -431,7 +432,18 @@ export class AsyncToolset<UserData = UnknownUserData> {
           async (controller) => {
             let output: unknown;
             try {
-              output = await fnTool.execute(args, {
+              let parsedArgs = args;
+              if (isZodSchema(fnTool.parameters)) {
+                const result = await parseZodSchema<JSONObject>(fnTool.parameters, args);
+                if (!result.success) {
+                  throw result.error instanceof Error
+                    ? result.error
+                    : new Error(String(result.error));
+                }
+                parsedArgs = result.data;
+              }
+
+              output = await fnTool.execute(parsedArgs, {
                 ...options,
                 ctx: asyncCtx,
                 abortSignal: controller.signal,
@@ -498,15 +510,19 @@ export class AsyncToolset<UserData = UnknownUserData> {
 
     if (!this._replyTask || this._replyTask.done) {
       this._replyTask = Task.from(
-        async () => this._deliverReply(ctx.session),
+        async (controller) => this._deliverReply(ctx.session, controller.signal),
         undefined,
         'AsyncToolset.deliverReply',
       );
     }
   }
 
-  private async _deliverReply(session: AgentSession<UserData>): Promise<void> {
-    await session.waitForInactive();
+  private async _deliverReply(
+    session: AgentSession<UserData>,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
+    await session.waitForInactive({ abortSignal });
+    if (abortSignal.aborted) return;
 
     const updates = this._pendingUpdates.splice(0, this._pendingUpdates.length);
     const pendingItems = updates.flatMap((update) => update.items);
