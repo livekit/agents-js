@@ -18,8 +18,8 @@ export type BlazeLanguage =
   | 'ko' // Korean
   | string; // Allow any IETF language tag
 
-/** Audio format for TTS output. */
-export type BlazeAudioFormat = 'pcm' | 'mp3' | 'wav';
+/** Audio format supported by the Blaze TTS plugin output pipeline. */
+export type BlazeAudioFormat = 'pcm';
 
 /** Gender values for demographics. */
 export type BlazeGender = 'male' | 'female' | 'unknown';
