@@ -22,7 +22,7 @@
  *   Input: FormData (query, language, audio_format, speaker_id, normalization, model)
  *   Output: Streaming raw PCM audio
  */
-import { AudioByteStream, tts, APIStatusError, APIConnectionError } from '@livekit/agents';
+import { AudioByteStream, tts, APIStatusError, APIConnectionError, APITimeoutError } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import WebSocket from 'ws';
@@ -298,33 +298,107 @@ function snapshotTTSOptions(opts: ResolvedTTSOptions): ResolvedTTSOptions {
 // WebSocket helpers
 // ────────────────────────────────────────────────
 
-function openWebSocket(url: string): Promise<WebSocket> {
+function closeWebSocketSilently(ws: WebSocket): void {
+  try {
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.terminate?.();
+      if (ws.readyState !== WebSocket.CLOSED) {
+        ws.close();
+      }
+    }
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+function openWebSocket(
+  url: string,
+  opts: { abortSignal: AbortSignal; timeoutMs: number },
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
+    if (opts.abortSignal.aborted) {
+      reject(new APIConnectionError({ message: 'Blaze TTS WebSocket connection aborted' }));
+      return;
+    }
+
     const ws = new WebSocket(url);
     ws.binaryType = 'nodebuffer';
-    const onOpen = () => {
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      ws.off('open', onOpen);
       ws.off('error', onError);
+      ws.off('close', onClose);
+      opts.abortSignal.removeEventListener('abort', onAbort);
+    };
+
+    const onOpen = () => {
+      cleanup();
       resolve(ws);
     };
     const onError = (err: Error) => {
-      ws.off('open', onOpen);
+      cleanup();
       reject(
         new APIConnectionError({
           message: `Blaze TTS failed to connect to WebSocket: ${err.message}`,
         }),
       );
     };
+    const onClose = () => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: 'Blaze TTS WebSocket closed before connection was established',
+        }),
+      );
+    };
+    const onAbort = () => {
+      cleanup();
+      closeWebSocketSilently(ws);
+      reject(new APIConnectionError({ message: 'Blaze TTS WebSocket connection aborted' }));
+    };
+
     ws.once('open', onOpen);
     ws.once('error', onError);
+    ws.once('close', onClose);
+    opts.abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    if (opts.timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        cleanup();
+        closeWebSocketSilently(ws);
+        reject(
+          new APITimeoutError({
+            message: `Blaze TTS WebSocket connection timed out after ${opts.timeoutMs}ms`,
+          }),
+        );
+      }, opts.timeoutMs);
+    }
   });
 }
 
-function waitForWsTextMessage(ws: WebSocket): Promise<string> {
+function waitForWsTextMessage(
+  ws: WebSocket,
+  opts: { abortSignal: AbortSignal; timeoutMs: number; phase: string },
+): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (opts.abortSignal.aborted) {
+      reject(new APIConnectionError({ message: `Blaze TTS WebSocket ${opts.phase} aborted` }));
+      return;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
       ws.off('message', onMessage);
       ws.off('error', onError);
       ws.off('close', onClose);
+      opts.abortSignal.removeEventListener('abort', onAbort);
     };
     const onMessage = (data: Buffer | string) => {
       cleanup();
@@ -340,11 +414,33 @@ function waitForWsTextMessage(ws: WebSocket): Promise<string> {
     };
     const onClose = () => {
       cleanup();
-      reject(new APIConnectionError({ message: 'Blaze TTS WebSocket closed unexpectedly' }));
+      reject(
+        new APIConnectionError({
+          message: `Blaze TTS WebSocket closed unexpectedly during ${opts.phase}`,
+        }),
+      );
+    };
+    const onAbort = () => {
+      cleanup();
+      closeWebSocketSilently(ws);
+      reject(new APIConnectionError({ message: `Blaze TTS WebSocket ${opts.phase} aborted` }));
     };
     ws.on('message', onMessage);
     ws.on('error', onError);
     ws.on('close', onClose);
+    opts.abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    if (opts.timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        cleanup();
+        closeWebSocketSilently(ws);
+        reject(
+          new APITimeoutError({
+            message: `Blaze TTS WebSocket ${opts.phase} timed out after ${opts.timeoutMs}ms`,
+          }),
+        );
+      }, opts.timeoutMs);
+    }
   });
 }
 
@@ -505,24 +601,32 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // --- Open WebSocket and perform handshake ---
     let ws: WebSocket;
     try {
-      ws = await openWebSocket(opts.wsUrl);
+      ws = await openWebSocket(opts.wsUrl, {
+        abortSignal: this.abortSignal,
+        timeoutMs: opts.timeout,
+      });
     } catch (err) {
+      if (err instanceof APIConnectionError) {
+        throw err;
+      }
       throw new APIConnectionError({
         message: `Blaze TTS: failed to connect to ${opts.wsUrl}: ${err}`,
       });
     }
 
     const closeWsIfOpen = () => {
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
+      closeWebSocketSilently(ws);
     };
 
     let onAbort: (() => void) | undefined;
 
     try {
       // Wait for connection acknowledgment
-      const connMsg = await waitForWsTextMessage(ws);
+      const connMsg = await waitForWsTextMessage(ws, {
+        abortSignal: this.abortSignal,
+        timeoutMs: opts.timeout,
+        phase: 'connection acknowledgment',
+      });
       const connData = JSON.parse(connMsg) as Record<string, string>;
       if (connData.type !== 'successful-connection') {
         throw new APIConnectionError({
@@ -532,7 +636,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       // Authenticate
       ws.send(JSON.stringify({ token: opts.authToken, strategy: 'livekit' }));
-      const authMsg = await waitForWsTextMessage(ws);
+      const authMsg = await waitForWsTextMessage(ws, {
+        abortSignal: this.abortSignal,
+        timeoutMs: opts.timeout,
+        phase: 'authentication',
+      });
       const authData = JSON.parse(authMsg) as Record<string, string>;
       if (authData.type !== 'successful-authentication') {
         throw new APIConnectionError({
