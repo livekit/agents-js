@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initializeLogger } from '../../agents/src/log.js';
+import { initializeLogger } from '../../../agents/src/log.js';
 import { LLM } from './llm.js';
 
 // LLMStream base class initializes a logger on construction.
