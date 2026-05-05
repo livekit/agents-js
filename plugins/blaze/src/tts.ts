@@ -32,6 +32,7 @@ import {
   buildAuthHeaders,
   resolveConfig,
 } from './config.js';
+import type { BlazeAudioFormat } from './models.js';
 
 // ────────────────────────────────────────────────
 // Sentence boundary regex
@@ -208,8 +209,8 @@ export interface TTSOptions {
   authToken?: string;
   /** TTS model identifier. Default: "v1_5_pro" */
   model?: string;
-  /** Audio output format: 'pcm' | 'mp3' | 'wav'. Default: 'pcm' */
-  audioFormat?: string;
+  /** Audio output format. Blaze plugin currently supports only raw PCM. Default: 'pcm' */
+  audioFormat?: BlazeAudioFormat | string;
   /** Audio playback speed multiplier. Default: '1' */
   audioSpeed?: string;
   /** Audio quality (bitrate for mp3). Default: 32 */
@@ -244,7 +245,7 @@ interface ResolvedTTSOptions {
   speakerId: string;
   authToken: string;
   model: string;
-  audioFormat: string;
+  audioFormat: BlazeAudioFormat;
   audioSpeed: string;
   audioQuality: number;
   sampleRate: number;
@@ -258,13 +259,14 @@ interface ResolvedTTSOptions {
   wsUrl: string;
 }
 
+function normalizeAudioFormat(_audioFormat?: string): BlazeAudioFormat {
+  return 'pcm';
+}
+
 function resolveTTSOptions(opts: TTSOptions): ResolvedTTSOptions {
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
   const apiUrl = opts.apiUrl ?? cfg.apiUrl;
   const wsBase = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://');
-
-  let audioFormat = (opts.audioFormat ?? 'pcm').trim().toLowerCase();
-  if (!['pcm', 'mp3', 'wav'].includes(audioFormat)) audioFormat = 'pcm';
 
   return {
     apiUrl,
@@ -272,7 +274,7 @@ function resolveTTSOptions(opts: TTSOptions): ResolvedTTSOptions {
     speakerId: opts.speakerId ?? 'default',
     authToken: opts.authToken ?? cfg.authToken,
     model: opts.model ?? 'v1_5_pro',
-    audioFormat,
+    audioFormat: normalizeAudioFormat(opts.audioFormat),
     audioSpeed: opts.audioSpeed ?? '1',
     audioQuality: opts.audioQuality ?? 32,
     sampleRate: opts.sampleRate ?? 24000,
@@ -302,9 +304,7 @@ function closeWebSocketSilently(ws: WebSocket): void {
   try {
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.terminate?.();
-      if (ws.readyState !== WebSocket.CLOSED) {
-        ws.close();
-      }
+      ws.close();
     }
   } catch {
     // best-effort cleanup
@@ -943,7 +943,7 @@ export class TTS extends tts.TTS {
     if (opts.speakerId !== undefined) this.#opts.speakerId = opts.speakerId;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
     if (opts.model !== undefined) this.#opts.model = opts.model;
-    if (opts.audioFormat !== undefined) this.#opts.audioFormat = opts.audioFormat;
+    if (opts.audioFormat !== undefined) this.#opts.audioFormat = normalizeAudioFormat(opts.audioFormat);
     if (opts.audioSpeed !== undefined) this.#opts.audioSpeed = opts.audioSpeed;
     if (opts.audioQuality !== undefined) this.#opts.audioQuality = opts.audioQuality;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;

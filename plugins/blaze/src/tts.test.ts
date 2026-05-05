@@ -236,5 +236,30 @@ describe('TTS', () => {
       expect(body.get('language')).toBe('vi');
       expect(body.get('speaker_id')).toBe('speaker-old');
     });
+
+    it('forces non-pcm audioFormat back to pcm in constructor and updateOptions', async () => {
+      const readable = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+      fetchMock.mockResolvedValue({ ok: true, body: readable });
+
+      const ttsInstance = new TTS({
+        authToken: 'tok',
+        apiUrl: 'http://tts:8080',
+        audioFormat: 'wav',
+      });
+      ttsInstance.updateOptions({ audioFormat: 'mp3' });
+
+      const stream = ttsInstance.synthesize('test text');
+      for await (const _ of stream) {
+        // consume stream
+      }
+
+      const [_url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = init.body as FormData;
+      expect(body.get('audio_format')).toBe('pcm');
+    });
   });
 });
