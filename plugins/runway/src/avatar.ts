@@ -201,6 +201,11 @@ export class AvatarSession extends voice.AvatarSession {
         const payload = (await response.json()) as { id?: unknown };
         if (typeof payload.id === 'string') {
           this.realtimeSessionId = payload.id;
+        } else {
+          this.#logger.warn(
+            { payload: JSON.stringify(payload) },
+            'Runway API response missing session id; API cancellation fallback will be unavailable',
+          );
         }
         return;
       } catch (e) {
