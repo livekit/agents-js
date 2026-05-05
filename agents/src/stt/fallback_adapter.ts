@@ -63,8 +63,8 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 };
 
 /**
- * `FallbackAdapter` is an STT wrapper that provides automatic failover between
- * multiple STT providers.
+ * Agent Fallback Adapter for STT. Manages multiple STT instances with automatic
+ * fallback when the primary provider fails.
  *
  * When the primary STT fails, the adapter switches to the next available
  * provider in the list for the active session. Failed providers are monitored

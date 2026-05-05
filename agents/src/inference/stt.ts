@@ -146,7 +146,7 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
         ? XaiOptions
         : Record<string, unknown>;
 
-/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+/** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
   /** Model name (e.g. "deepgram/nova-3", "assemblyai/universal-streaming", "cartesia/ink-whisper"). */
   model: string;

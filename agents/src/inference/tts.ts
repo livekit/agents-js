@@ -187,7 +187,7 @@ export function hasAlignedTranscript(
   return false;
 }
 
-/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+/** Inference Fallback Adapter: configuration for a fallback TTS model that runs server-side in LiveKit Inference, providing automatic fallback between providers. */
 export interface TTSFallbackModel {
   /** Model name (e.g. "cartesia/sonic", "elevenlabs/eleven_flash_v2", "rime/arcana"). */
   model: string;

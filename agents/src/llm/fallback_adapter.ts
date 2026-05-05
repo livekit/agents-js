@@ -53,7 +53,7 @@ export interface FallbackAdapterOptions {
 }
 
 /**
- * FallbackAdapter is an LLM that can fallback to a different LLM if the current LLM fails.
+ * Agent Fallback Adapter for LLM. Manages multiple LLM instances with automatic fallback when the current LLM fails.
  *
  * @example
  * ```typescript
