@@ -57,7 +57,7 @@ export default defineAgent({
     });
 
     const detector = new voice.AMD(session, {
-      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: new inference.LLM({ model: 'google/gemini-3.1-flash-lite-preview' }),
       // Optional: tune detection windows. Defaults shown.
       // humanSpeechThresholdMs: 2_500,
       // humanSilenceThresholdMs: 500,
