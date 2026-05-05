@@ -222,6 +222,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
 
   private sttStream: SpeechStream | undefined;
   private sttPumpTask: Task<void> | undefined;
+  /**
+   * Aborts pending {@link waitForTrackPublication} calls in
+   * {@link gateNoSpeechTimer}. Without this the room-event listener can
+   * outlive the AMD instance if the participant track never publishes
+   * before the run settles.
+   */
+  private trackGateAbort: AbortController | undefined;
 
   /**
    * Tracks the in-flight LLM classification stream so {@link aclose} (and any
@@ -502,11 +509,22 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return;
     }
 
+    // Resolve which participant's audio track we're gating on. Mirrors the
+    // docstring on `participantIdentity`: explicit option wins; otherwise
+    // bind to the session's linked participant; otherwise pass `undefined`
+    // so `waitForTrackPublication` matches the first remote participant
+    // that publishes a matching audio track. Passing `''` here would make
+    // `matches()` reject every real participant (identity !== '' is always
+    // true) and the promise would hang forever.
+    const targetIdentity = this.participantIdentity ?? roomIO?.linkedParticipant?.identity;
+
+    this.trackGateAbort = new AbortController();
     waitForTrackPublication({
       room,
-      identity: this.participantIdentity ?? '',
+      identity: targetIdentity,
       kind: TrackKind.KIND_AUDIO,
       waitForSubscription: true,
+      signal: this.trackGateAbort.signal,
     })
       .then(() => {
         if (!this.settled) {
@@ -515,8 +533,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       })
       .catch((err) => {
         // Track gating is best-effort: if waiting for publication fails (e.g.
-        // room disconnected, function rejects), fall back to starting the
-        // timer so the run still settles within `noSpeechTimeoutMs`.
+        // room disconnected, aborted by `cleanup`, or the function rejects),
+        // fall back to starting the timer so the run still settles within
+        // `noSpeechTimeoutMs`.
         log().debug({ err }, 'AMD track gating failed; starting no-speech timer immediately');
         if (!this.settled) {
           this.startNoSpeechTimer();
@@ -531,6 +550,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.handleTranscript);
     this.session.off(AgentSessionEventTypes.UserStateChanged, this.handleUserStateChanged);
     this.session.off(AgentSessionEventTypes.Close, this.handleClose);
+
+    // Detach the track-publication listener — without this, a run that
+    // settled via `detectionTimer` before the participant track was ever
+    // published would leak its `RoomEvent.TrackSubscribed` listener until
+    // the room disconnects.
+    if (this.trackGateAbort) {
+      this.trackGateAbort.abort();
+      this.trackGateAbort = undefined;
+    }
 
     // Tear down the dedicated STT pump (if any). We close the stream first so
     // pushFrame/iter awaits return promptly, then cancel the pump task.

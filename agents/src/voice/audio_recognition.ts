@@ -12,6 +12,7 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import { TransformStream } from 'node:stream/web';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
@@ -200,12 +201,17 @@ export class AudioRecognition {
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
   /**
-   * Reserved branch of the input audio used by external subscribers (e.g. AMD's
-   * dedicated STT). Each call to `subscribeAudioStream()` tees this branch and
-   * stores the other half back here so subsequent subscribers receive their own
-   * independent copy of every frame.
+   * Active subscriber writers fed from {@link subscribersBroadcast}. Each
+   * {@link subscribeAudioStream} call appends one entry; entries are dropped
+   * (and their stream closed) on {@link close}.
+   *
+   * The broadcast pattern replaces an earlier `tee()`-based approach where
+   * the second branch grew without bound for sessions that never called
+   * `subscribeAudioStream()` (every voice session that doesn't use AMD).
+   * With this design no extra buffering happens until at least one
+   * subscriber is registered.
    */
-  private subscribersInputStream: ReadableStream<AudioFrame>;
+  private subscriberWriters: WritableStreamDefaultWriter<AudioFrame>[] = [];
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
@@ -249,11 +255,28 @@ export class AudioRecognition {
     this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
 
-    // Reserve a `subscribers` branch for external consumers (e.g. AMD's dedicated
-    // STT). Tee'ing the input here costs an extra in-memory queue per branch but
-    // keeps subscribers fully decoupled from the VAD/STT/interruption pipelines.
-    const [primaryInputStream, subscribersInputStream] = this.deferredInputStream.stream.tee();
-    this.subscribersInputStream = subscribersInputStream;
+    // Pipe the deferred input stream through a broadcast transform. The
+    // transform is a no-op identity until something calls `subscribeAudioStream()`
+    // — at which point each frame is forwarded to the registered subscriber
+    // writers in addition to flowing downstream to VAD/STT. This avoids the
+    // unbounded queue growth of a pre-emptive `tee()` for sessions that
+    // never subscribe (i.e. anything not using AMD).
+    const broadcast = new TransformStream<AudioFrame, AudioFrame>(
+      {
+        transform: (chunk, controller) => {
+          controller.enqueue(chunk);
+          if (this.subscriberWriters.length === 0) return;
+          for (const writer of this.subscriberWriters) {
+            writer.write(chunk).catch(() => {
+              // Subscriber stream closed or backpressure exceeded; drop.
+            });
+          }
+        },
+      },
+      { highWaterMark: Number.MAX_SAFE_INTEGER },
+      { highWaterMark: Number.MAX_SAFE_INTEGER },
+    );
+    const primaryInputStream = this.deferredInputStream.stream.pipeThrough(broadcast);
 
     if (opts.interruptionDetection) {
       const [vadInputStream, teedInput] = primaryInputStream.tee();
@@ -1244,19 +1267,19 @@ export class AudioRecognition {
   }
 
   /**
-   * Returns an independent ReadableStream of input audio frames, tee'd from the
-   * shared input. Each call returns a fresh branch — frames written after the
-   * subscription point will be delivered, but frames already consumed by other
-   * teed branches are not replayed.
+   * Returns an independent ReadableStream of input audio frames. Each call
+   * returns a fresh branch fed by the broadcast transform inserted into the
+   * deferred input pipeline — frames written after the subscription point
+   * will be delivered, but earlier frames are not replayed.
    *
-   * Used by AMD when its private STT needs the same participant audio that the
-   * pipeline is processing without consuming it (see python AMD detector pushing
-   * audio into `_AMDClassifier.push_audio`).
+   * Used by AMD when its private STT needs the same participant audio that
+   * the pipeline is processing without consuming it (see python AMD
+   * detector pushing audio into `_AMDClassifier.push_audio`).
    */
   subscribeAudioStream(): ReadableStream<AudioFrame> {
-    const [returned, retained] = this.subscribersInputStream.tee();
-    this.subscribersInputStream = retained;
-    return returned;
+    const transform = new IdentityTransform<AudioFrame>();
+    this.subscriberWriters.push(transform.writable.getWriter());
+    return transform.readable;
   }
 
   clearUserTurn() {
@@ -1366,6 +1389,17 @@ export class AudioRecognition {
       await this.sttPipeline.close();
       this.sttPipeline = undefined;
     }
+
+    // Close any outstanding broadcast subscribers so their consumers see EOF
+    // and don't keep the IdentityTransform queues pinned in memory.
+    for (const writer of this.subscriberWriters) {
+      try {
+        await writer.close();
+      } catch {
+        // already closed / aborted
+      }
+    }
+    this.subscriberWriters = [];
 
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
