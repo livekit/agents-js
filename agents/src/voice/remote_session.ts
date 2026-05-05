@@ -25,6 +25,7 @@ import type {
 import { Future, Task, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
+import type { AMDPredictionEvent } from './amd.js';
 import {
   AgentSessionEventTypes,
   type AgentState,
@@ -679,6 +680,20 @@ export class SessionHost {
       event.createdAt,
     );
   };
+
+  /**
+   * @internal — forwards an AMD prediction to the connected
+   * {@link RemoteSession} peer. Mirrors python
+   * `SessionHost._on_amd_prediction`.
+   *
+   * TODO(chenghao-mou): emit an `amd_prediction` proto event once the
+   * generated `@livekit/protocol` bindings include `AgentSessionEvent.AmdPrediction`
+   * and `AmdCategory`. Until then this is a no-op so AMD-side wiring is in
+   * place without breaking the wire format for older `RemoteSession` peers.
+   */
+  _onAmdPrediction(_event: AMDPredictionEvent): void {
+    // no-op: see TODO above
+  }
 
   private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
     try {

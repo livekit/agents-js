@@ -46,7 +46,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
-import type { AMD } from './amd.js';
+import type { AMD, AMDPredictionEvent } from './amd.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
@@ -683,6 +683,15 @@ export class AgentSession<
   /** @internal — used by AMD to register/unregister itself with the session. */
   _setAmd(amd: AMD | null): void {
     this._amd = amd;
+  }
+
+  /**
+   * @internal — forwarded to {@link SessionHost} so a connected
+   * {@link RemoteSession} peer receives an `amd_prediction` event when AMD
+   * settles. Mirrors python `AgentSession._session_host._on_amd_prediction`.
+   */
+  _onAmdPrediction(event: AMDPredictionEvent): void {
+    this.sessionHost?._onAmdPrediction(event);
   }
 
   /**

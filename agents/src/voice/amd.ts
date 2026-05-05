@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
+import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { z } from 'zod';
 import * as inference from '../inference/index.js';
@@ -33,7 +35,8 @@ export enum AMDCategory {
   UNCERTAIN = 'uncertain',
 }
 
-export interface AMDResult {
+export interface AMDPredictionEvent {
+  type: 'amd_prediction';
   category: AMDCategory;
   transcript: string;
   reason: string;
@@ -44,6 +47,10 @@ export interface AMDResult {
   /** Time between the end of user speech and the verdict emission (ms). */
   delayMs: number;
 }
+
+export type AMDCallbacks = {
+  amd_prediction: (event: AMDPredictionEvent) => void;
+};
 
 export interface AMDOptions {
   /**
@@ -176,8 +183,11 @@ function warnIfNotEvaluated(
  * Mirrors Python's `_AMDClassifier` two-gate architecture:
  * a result is only emitted when both a **verdict** (from LLM or heuristic) and
  * a **silence gate** (from VAD or timeout) are satisfied.
+ *
+ * Emits `'amd_prediction'` once with the final {@link AMDPredictionEvent} when
+ * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
  */
-export class AMD {
+export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) {
   private readonly llm: LLM;
   /** Dedicated STT for AMD-only transcription, or `undefined` if listening to session events. */
   private readonly stt: STT | undefined;
@@ -198,7 +208,7 @@ export class AMD {
   private active = false;
   private settled = false;
   private transcriptParts: string[] = [];
-  private verdictResult: AMDResult | undefined;
+  private verdictResult: AMDPredictionEvent | undefined;
   private machineSilenceReached = false;
   private speechStartedAt: number | undefined;
   private speechEndedAt: number | undefined;
@@ -221,7 +231,7 @@ export class AMD {
    */
   private currentLLMStream: LLMStream | undefined;
 
-  private resolveRun: ((value: AMDResult) => void) | undefined;
+  private resolveRun: ((value: AMDPredictionEvent) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
   private span: Span | undefined;
 
@@ -229,6 +239,7 @@ export class AMD {
     private readonly session: AgentSession,
     options: AMDOptions = {},
   ) {
+    super();
     const { llm, owned: llmOwned } = this.resolveLLM(options.llm);
     this.llm = llm;
     this.llmOwned = llmOwned;
@@ -264,7 +275,7 @@ export class AMD {
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
-  async execute(): Promise<AMDResult> {
+  async execute(): Promise<AMDPredictionEvent> {
     return tracer.startActiveSpan(
       async (span) => {
         if (this.active) {
@@ -285,7 +296,7 @@ export class AMD {
         }
 
         try {
-          const result = await new Promise<AMDResult>((resolve, reject) => {
+          const result = await new Promise<AMDPredictionEvent>((resolve, reject) => {
             this.resolveRun = resolve;
             this.rejectRun = reject;
             this.subscribe();
@@ -559,7 +570,7 @@ export class AMD {
    * Ref: python classifier.py `_set_verdict` — stores the LLM/heuristic verdict.
    * Emission is deferred until the silence gate also opens.
    */
-  private setVerdict(result: AMDResult): void {
+  private setVerdict(result: AMDPredictionEvent): void {
     this.verdictResult = result;
     this.tryEmitResult();
   }
@@ -576,7 +587,7 @@ export class AMD {
     this.finish(this.verdictResult);
   }
 
-  private finish(result: AMDResult): void {
+  private finish(result: AMDPredictionEvent): void {
     if (this.settled) {
       return;
     }
@@ -587,6 +598,22 @@ export class AMD {
       this.session.interrupt({ force: true }).await.catch(() => {});
     }
     this.resolveRun?.(result);
+
+    // Mirrors python detector.py: forward the prediction to the SessionHost
+    // (so a connected `RemoteSession` peer receives an `amd_prediction`
+    // event) and then emit on this `AMD` instance for direct listeners.
+    // Duck-typed access keeps the test mocks (which substitute a plain
+    // EventEmitter for AgentSession) working without wiring up a host.
+    try {
+      (
+        this.session as unknown as {
+          _onAmdPrediction?: (event: AMDPredictionEvent) => void;
+        }
+      )._onAmdPrediction?.(result);
+    } catch (err) {
+      log().debug({ err }, 'AMD: session host failed to handle amd_prediction');
+    }
+    this.emit('amd_prediction', result);
   }
 
   // ─── timer callbacks ─────────────────────────────────────────────────────────
@@ -600,6 +627,7 @@ export class AMD {
     this.clearTimer('silence');
     if (category && reason && !this.verdictResult) {
       this.setVerdict({
+        type: 'amd_prediction',
         category,
         reason,
         transcript: this.joinTranscript(),
@@ -823,7 +851,7 @@ export class AMD {
     return this.transcriptParts.join('\n');
   }
 
-  private setSpanAttributes(result: AMDResult): void {
+  private setSpanAttributes(result: AMDPredictionEvent): void {
     this.span?.setAttribute(traceTypes.ATTR_AMD_CATEGORY, result.category);
     this.span?.setAttribute(traceTypes.ATTR_AMD_REASON, result.reason);
     this.span?.setAttribute(traceTypes.ATTR_AMD_IS_MACHINE, result.isMachine);
@@ -841,8 +869,8 @@ export class AMD {
    * LLMs in tests, or providers that don't support `toolChoice='required'`),
    * we fall back to the pre-port JSON-content parsing path.
    */
-  private async detect(transcript: string, generation: number): Promise<AMDResult> {
-    let savedResult: AMDResult | undefined;
+  private async detect(transcript: string, generation: number): Promise<AMDPredictionEvent> {
+    let savedResult: AMDPredictionEvent | undefined;
 
     // Stale-classification guard: if a newer transcript has bumped the
     // generation counter while this LLM call was in flight, tool side effects
@@ -868,6 +896,7 @@ export class AMD {
         const normalized = parseCategory(label);
         if (normalized !== AMDCategory.UNCERTAIN) {
           savedResult = {
+            type: 'amd_prediction',
             category: normalized,
             reason: 'llm',
             transcript,
@@ -978,6 +1007,7 @@ export class AMD {
     // Fallback: plain-JSON content (legacy / non-tool LLM responses).
     const parsed = this.parseDetection(rawResponse);
     return {
+      type: 'amd_prediction',
       ...parsed,
       transcript,
       rawResponse,
@@ -1002,7 +1032,7 @@ export class AMD {
     return Math.max(0, Date.now() - this.speechEndedAt);
   }
 
-  private parseDetection(rawResponse: string): Pick<AMDResult, 'category' | 'reason'> {
+  private parseDetection(rawResponse: string): Pick<AMDPredictionEvent, 'category' | 'reason'> {
     const normalized = rawResponse.trim();
     const jsonStart = normalized.indexOf('{');
     const jsonEnd = normalized.lastIndexOf('}');

@@ -72,6 +72,8 @@ describe('AMD', () => {
     );
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+    const onPrediction = vi.fn();
+    amd.on('amd_prediction', onPrediction);
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -84,12 +86,45 @@ describe('AMD', () => {
     });
 
     await expect(promise).resolves.toMatchObject({
+      type: 'amd_prediction',
       category: AMDCategory.MACHINE_VM,
       isMachine: true,
     });
     expect(session.pauseReplyAuthorization).toHaveBeenCalledTimes(1);
     expect(session.resumeReplyAuthorization).toHaveBeenCalled();
     expect(session.interrupt).toHaveBeenCalledWith({ force: true });
+    expect(onPrediction).toHaveBeenCalledTimes(1);
+    expect(onPrediction.mock.calls[0]![0]).toMatchObject({
+      type: 'amd_prediction',
+      category: AMDCategory.MACHINE_VM,
+    });
+  });
+
+  it('should forward predictions to session._onAmdPrediction', async () => {
+    const onAmdPrediction = vi.fn();
+    const session = Object.assign(new MockSession(), { _onAmdPrediction: onAmdPrediction });
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+
+    const promise = amd.execute();
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+      type: 'user_input_transcribed',
+      transcript: 'hello there',
+      isFinal: true,
+      speakerId: null,
+      createdAt: Date.now(),
+      language: null,
+    });
+
+    await promise;
+    expect(onAmdPrediction).toHaveBeenCalledTimes(1);
+    expect(onAmdPrediction.mock.calls[0]![0]).toMatchObject({
+      type: 'amd_prediction',
+      category: AMDCategory.HUMAN,
+    });
   });
 
   it('should classify unavailable mailbox as machine', async () => {
