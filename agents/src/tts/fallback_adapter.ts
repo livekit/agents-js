@@ -51,7 +51,8 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 const FORWARD_POLL_MS = 10;
 
 /**
- * FallbackAdapter is a TTS wrapper that provides automatic failover between multiple TTS providers.
+ * Agent Fallback Adapter for TTS. Manages multiple TTS instances with automatic fallback
+ * when the primary provider fails.
  *
  * When the primary TTS fails, it automatically switches to the next available provider in the list.
  * Failed providers are monitored in the background and restored when they recover.
