@@ -498,7 +498,7 @@ export function performLLMInference(
               if (tool.type !== 'function_call') continue;
 
               const toolCall = FunctionCall.create({
-                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                callId: `${data.id}_fnc_${data.generatedToolCalls.length}`,
                 name: tool.name,
                 args: tool.args,
                 // Preserve thought signature for Gemini 3+ thinking mode

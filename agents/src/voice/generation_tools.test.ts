@@ -4,11 +4,16 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, tool } from '../llm/index.js';
+import { type ChatChunk, ChatContext, FunctionCall, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
-import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
+import {
+  type _TextOut,
+  performLLMInference,
+  performTextForwarding,
+  performToolExecutions,
+} from './generation.js';
 
 function createStringStream(chunks: string[], delayMs: number = 0): NodeReadableStream<string> {
   return new NodeReadableStream<string>({
@@ -46,6 +51,52 @@ function createFunctionCallStreamFromArray(fcs: FunctionCall[]): NodeReadableStr
 
 describe('Generation + Tool Execution', () => {
   initializeLogger({ pretty: false, level: 'silent' });
+
+  it('should use underscores in synthetic LLM tool call ids', async () => {
+    const llmChunk: ChatChunk = {
+      id: 'response_1',
+      delta: {
+        role: 'assistant',
+        toolCalls: [
+          FunctionCall.create({
+            callId: 'provider_call_1',
+            name: 'echo',
+            args: '{}',
+          }),
+        ],
+      },
+    };
+
+    const llmNode = async () =>
+      new NodeReadableStream<string | ChatChunk>({
+        start(controller) {
+          controller.enqueue(llmChunk);
+          controller.close();
+        },
+      });
+
+    const [llmTask, llmData] = performLLMInference(
+      llmNode,
+      ChatContext.empty(),
+      {},
+      {},
+      new AbortController(),
+    );
+
+    await llmTask.result;
+    const reader = llmData.toolCallStream.getReader();
+    try {
+      const first = await reader.read();
+      const second = await reader.read();
+
+      expect(first.done).toBe(false);
+      expect(first.value?.callId).toContain('_fnc_0');
+      expect(first.value?.callId).not.toContain('/');
+      expect(second.done).toBe(true);
+    } finally {
+      reader.releaseLock();
+    }
+  });
 
   it('should not abort tool when preamble forwarders are cleaned up', async () => {
     const replyAbortController = new AbortController();
