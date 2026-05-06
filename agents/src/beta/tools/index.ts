@@ -2,15 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
-  TaskGroup,
-  type TaskCompletedEvent,
-  type TaskGroupOptions,
-  type TaskGroupResult,
-} from './workflows/index.js';
-export {
   END_CALL_DESCRIPTION,
   EndCallTool,
   type EndCallToolCalledEvent,
   type EndCallToolCompletedEvent,
   type EndCallToolOptions,
-} from './tools/index.js';
+} from './end_call.js';

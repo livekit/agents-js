@@ -11,6 +11,7 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -84,6 +85,8 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  apiKey?: string;
+  apiSecret?: string;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -188,6 +191,27 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
   addShutdownCallback(callback: () => Promise<void>) {
     this.shutdownCallbacks.push(callback);
+  }
+
+  /**
+   * Deletes the current room.
+   *
+   * Deleting the room disconnects all remote users, including SIP callers.
+   */
+  async deleteRoom() {
+    const roomName = this.#room.name;
+    if (!roomName) {
+      return;
+    }
+
+    const apiKey = this.#info.apiKey || process.env.LIVEKIT_API_KEY;
+    const apiSecret = this.#info.apiSecret || process.env.LIVEKIT_API_SECRET;
+    if (!apiKey || !apiSecret) {
+      throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required to delete the room');
+    }
+
+    const roomService = new RoomServiceClient(this.#info.url, apiKey, apiSecret);
+    await roomService.deleteRoom(roomName);
   }
 
   async waitForParticipant(identity?: string): Promise<RemoteParticipant> {
