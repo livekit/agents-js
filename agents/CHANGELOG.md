@@ -1,5 +1,34 @@
 # @livekit/agents
 
+## 1.3.4
+
+### Patch Changes
+
+- Add support for the new `inworld-tts-2` Inworld TTS model. - [#1396](https://github.com/livekit/agents-js/pull/1396) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Adds `inworld/inworld-tts-2` to the `InworldModels` union exported from
+    `@livekit/agents/inference` so the model is selectable when using the
+    LiveKit Inference Gateway TTS client.
+  - Exports a new `TTSModels` type from `@livekit/agents-plugin-inworld`
+    (`'inworld-tts-2' | 'inworld-tts-1.5-max'`) and updates `TTSOptions.model`
+    to `TTSModels | string`, mirroring the Python plugin so callers get
+    autocomplete for the curated model names while still being able to pass
+    any custom model id.
+
+  Ports https://github.com/livekit/agents/pull/5646 from `livekit/agents`.
+
+## 1.3.3
+
+### Patch Changes
+
+- Port the barge-in cooldown / `backchannelBoundary` interruption window from Python (livekit/agents#5269). When the agent starts speaking, VAD-based interruption now stays active for a configurable cooldown (default `1000` ms) before being disabled, allowing the user to quickly correct themselves at the start of the agent's turn. When the agent finishes speaking, transcripts whose end time falls within the trailing cooldown (default `3500` ms) are released as normal user input instead of being held, surfacing premature answers to the agent's last sentence. The cooldown is configured via `turnHandling.interruption.backchannelBoundary` (a single number applies to both sides; pass `[start, end]` to configure them separately, or `null` to disable). - [#1366](https://github.com/livekit/agents-js/pull/1366) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(stt): add FakeSTT test harness for FallbackAdapter - [#1288](https://github.com/livekit/agents-js/pull/1288) ([@drain-zine](https://github.com/drain-zine))
+
+- Harden RecorderIO teardown by fencing writes before channel closure and stopping - [#1378](https://github.com/livekit/agents-js/pull/1378) ([@toubatbrian](https://github.com/toubatbrian))
+  the forward task first, preventing repeated closed WritableStream write errors on disconnect.
+  Also centralize writable-stream closed error detection in utils and add regression tests.
+
 ## 1.3.2
 
 ### Patch Changes

@@ -11,10 +11,10 @@ import type {
 import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
-import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
 /**
@@ -620,7 +620,7 @@ export function withResolvers<T = unknown>() {
  * @returns A short UUID with the prefix.
  */
 export function shortuuid(prefix: string = ''): string {
-  return `${prefix}${uuidv4().slice(0, 12)}`;
+  return `${prefix}${randomUUID().slice(0, 12)}`;
 }
 
 const READONLY_SYMBOL = Symbol('Readonly');
