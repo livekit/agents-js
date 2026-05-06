@@ -84,6 +84,7 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  fakeJob?: boolean;
 };
 
 /** Attempted to add a function callback, but the function already exists. */

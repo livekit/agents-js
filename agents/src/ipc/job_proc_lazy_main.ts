@@ -13,6 +13,7 @@ import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
+import { createMockRoom } from './mock_room.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 
@@ -101,7 +102,7 @@ const startJob = (
   let connect = false;
   let shutdown = false;
 
-  const room = new Room();
+  const room = info.fakeJob ? createMockRoom() : new Room();
   room.on(RoomEvent.Disconnected, () => {
     if (!shutdown) {
       closeEvent.emit('close', false);
@@ -119,14 +120,16 @@ const startJob = (
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
 
   const task = (async () => {
-    const unconnectedTimeout = setTimeout(() => {
-      if (!(connect || shutdown)) {
-        logger.warn(
-          'room not connect after job_entry was called after 10 seconds, ',
-          'did you forget to call ctx.connect()?',
-        );
-      }
-    }, 10000);
+    const unconnectedTimeout = info.fakeJob
+      ? undefined
+      : setTimeout(() => {
+          if (!(connect || shutdown)) {
+            logger.warn(
+              'room not connect after job_entry was called after 10 seconds, ',
+              'did you forget to call ctx.connect()?',
+            );
+          }
+        }, 10000);
 
     try {
       const closePromise = once(closeEvent, 'close').then((close) => {
@@ -154,7 +157,9 @@ const startJob = (
           }
         })
         .finally(async () => {
-          clearTimeout(unconnectedTimeout);
+          if (unconnectedTimeout) {
+            clearTimeout(unconnectedTimeout);
+          }
         });
     } catch (error) {
       logger.error({ error }, 'error in entry function');
