@@ -6,7 +6,6 @@ import {
   type JobProcess,
   createAgentServer,
   dedent,
-  defineAgent,
   llm,
   voice,
 } from '@livekit/agents';
@@ -27,14 +26,7 @@ import {
   getUniqueHash,
 } from './calendar_api.js';
 
-type FrontDeskProps = {
-  cal: Calendar;
-  timezone: string;
-};
-
-const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
-  const { cal, timezone } = props;
-
+export const FrontDeskAgent = ({ cal, timezone }: { cal: Calendar; timezone: string }) => {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -43,25 +35,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
     timeZone: timezone,
   });
 
-  ctx.configure({
-    instructions: dedent`
-      You are Front-Desk, a helpful and efficient voice assistant.
-      Today is ${today}. Your main goal is to schedule an appointment for the user.
-      This is a voice conversation — speak naturally, clearly, and concisely.
-      When the user says hello or greets you, don't just respond with a greeting — use it as an opportunity to move things forward.
-      For example, follow up with a helpful question like: 'Would you like to book a time?'
-      When asked for availability, call list_available_slots and offer a few clear, simple options.
-      Say things like 'Monday at 2 PM' — avoid timezones, timestamps, and avoid saying 'AM' or 'PM'.
-      Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one.
-      Offer a few options at a time, pause for a response, then guide the user to confirm.
-      If the time is no longer available, let them know gently and offer the next options.
-      Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.
-    `,
-  });
-
-  const slots = ctx.state<Map<string, AvailableSlot>>(() => new Map());
-
-  ctx.tool('scheduleAppointment', {
+  const scheduleAppointment = llm.tool({
     description: 'Schedule an appointment at the given slot.',
     parameters: z.object({
       slotId: z
@@ -70,8 +44,8 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
           'The identifier for the selected time slot (as shown in the list of available slots).',
         ),
     }),
-    execute: async ({ slotId }) => {
-      const slot = slots.value.get(slotId);
+    execute: async (ctx, { slotId }) => {
+      const slot = ctx.state.slots.get(slotId);
       if (!slot) {
         throw new llm.ToolError(`error: slot ${slotId} was not found`);
       }
@@ -82,14 +56,10 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
       const placeholderEmail = 'user@example.com';
 
       try {
-        await ctx.step(
-          () =>
-            cal.scheduleAppointment({
-              startTime: slot.startTime,
-              attendeeEmail: placeholderEmail,
-            }),
-          'scheduleAppointment',
-        );
+        await cal.scheduleAppointment({
+          startTime: slot.startTime,
+          attendeeEmail: placeholderEmail,
+        });
       } catch (error) {
         if (error instanceof SlotUnavailableError) {
           throw new llm.ToolError("This slot isn't available anymore");
@@ -113,7 +83,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
     },
   });
 
-  ctx.tool('listAvailableSlots', {
+  const listAvailableSlots = llm.tool({
     description: dedent`
       Return a plain-text list of available slots, one per line.
 
@@ -126,7 +96,7 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
         .enum(['+2week', '+1month', '+3month', 'default'])
         .describe('Determines how far ahead to search for free time slots.'),
     }),
-    execute: async ({ range }) => {
+    execute: async (ctx, { range }) => {
       const now = new Date();
 
       let rangeDays: number;
@@ -141,14 +111,10 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
       }
 
       const endTime = new Date(now.getTime() + rangeDays * 24 * 60 * 60 * 1000);
-
-      const available = await ctx.step(
-        () => cal.listAvailableSlots({ startTime: now, endTime }),
-        'listAvailableSlots',
-      );
+      const available = await cal.listAvailableSlots({ startTime: now, endTime });
 
       const lines: string[] = [];
-      const next = new Map(slots.value);
+      const next = new Map(ctx.state.slots);
 
       for (const slot of available) {
         const local = new Date(slot.startTime.toLocaleString('en-US', { timeZone: timezone }));
@@ -191,15 +157,40 @@ const FrontDeskAgent = defineAgent<FrontDeskProps>((ctx, props) => {
         next.set(uniqueHash, slot);
       }
 
-      slots.value = next;
+      ctx.state.slots = next;
       return lines.join('\n') || 'No slots available at the moment.';
     },
   });
 
-  ctx.onEnter(async () => {
-    await ctx.generateReply({ userInput: 'Greet to the user' });
+  const agent = Agent.create({
+    state: (): { slots: Map<string, AvailableSlot> } => ({ slots: new Map() }),
+
+    instructions: dedent`
+      You are Front-Desk, a helpful and efficient voice assistant.
+      Today is ${today}. Your main goal is to schedule an appointment for the user.
+      This is a voice conversation — speak naturally, clearly, and concisely.
+      When the user says hello or greets you, don't just respond with a greeting — use it as an opportunity to move things forward.
+      For example, follow up with a helpful question like: 'Would you like to book a time?'
+      When asked for availability, call listAvailableSlots and offer a few clear, simple options.
+      Say things like 'Monday at 2 PM' — avoid timezones, timestamps, and avoid saying 'AM' or 'PM'.
+      Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one.
+      Offer a few options at a time, pause for a response, then guide the user to confirm.
+      If the time is no longer available, let them know gently and offer the next options.
+      Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.
+    `,
+
+    tools: {
+      scheduleAppointment,
+      listAvailableSlots,
+    },
+
+    onEnter: async (ctx) => {
+      await ctx.generateReply({ userInput: 'Greet to the user' });
+    },
   });
-});
+
+  return agent;
+};
 
 async function loadCalendar(timezone: string): Promise<Calendar> {
   const calApiKey = process.env.CAL_API_KEY;
