@@ -10,50 +10,6 @@ import { Plugin } from './plugin.js';
 import { version } from './version.js';
 import { AgentServer, ServerOptions } from './worker.js';
 
-// Parse a dotenv-style file. Only handles the common subset: KEY=value, optional
-// quoting (single/double), `#` comments outside quotes. Keeps real env vars
-// taking precedence over the file (shell exports always win).
-const loadDotenvLocal = () => {
-  const path = resolve(process.cwd(), '.env.local');
-  let raw: string;
-  try {
-    raw = readFileSync(path, 'utf8');
-  } catch {
-    return;
-  }
-
-  let loadedCount = 0;
-  for (const rawLine of raw.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    } else {
-      // strip trailing inline comment when value is unquoted
-      const hash = value.indexOf(' #');
-      if (hash !== -1) value = value.slice(0, hash).trimEnd();
-    }
-    if (process.env[key] === undefined) {
-      process.env[key] = value;
-      loadedCount++;
-    }
-  }
-
-  // The logger isn't initialized yet (that happens in runServer once options
-  // are parsed), so we write directly to stderr.
-  if (loadedCount > 0) {
-    process.stderr.write(`[agents] loaded ${loadedCount} variable(s) from ${path}\n`);
-  }
-};
-
 type CliArgs = {
   opts: ServerOptions;
   production: boolean;
@@ -131,15 +87,6 @@ const runServer = async (args: CliArgs) => {
  * ```
  */
 export const runApp = (opts: ServerOptions) => {
-  // Auto-load `.env.local` from the cwd in dev/connect mode so users don't have
-  // to wire up `--env-file` or a separate dotenv loader. Real env vars still
-  // take precedence over the file. Done before option parsing so commander's
-  // `.env(...)` defaults can pick the values up.
-  const subcommand = process.argv[2];
-  if (subcommand === 'dev' || subcommand === 'connect') {
-    loadDotenvLocal();
-  }
-
   const logLevelOption = (defaultLevel: string) =>
     new Option('--log-level <level>', 'Set the logging level')
       .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])

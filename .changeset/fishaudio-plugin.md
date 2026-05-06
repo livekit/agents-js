@@ -1,5 +1,5 @@
 ---
-"@livekit/agents-plugin-fishaudio": minor
+"@livekit/agents-plugin-fishaudio": patch
 ---
 
 Add Fish Audio TTS plugin (`@livekit/agents-plugin-fishaudio`). Streams via the
