@@ -1278,7 +1278,22 @@ export class AudioRecognition {
    */
   subscribeAudioStream(): ReadableStream<AudioFrame> {
     const transform = new IdentityTransform<AudioFrame>();
-    this.subscriberWriters.push(transform.writable.getWriter());
+    const writer = transform.writable.getWriter();
+    this.subscriberWriters.push(writer);
+    // Auto-prune the entry once the subscriber's readable side is cancelled
+    // or its writer otherwise errors. Without this, a subscriber that hands
+    // back its stream (e.g. AMD's STT pump after `aclose()`) leaves a writer
+    // in `subscriberWriters` that the broadcast transform keeps writing into
+    // — frames pile up in the IdentityTransform queue until
+    // `AudioRecognition.close()` runs, leaking ~16-32 KB/s.
+    writer.closed
+      .catch(() => {
+        // closed/errored — fall through to the prune below
+      })
+      .finally(() => {
+        const idx = this.subscriberWriters.indexOf(writer);
+        if (idx >= 0) this.subscriberWriters.splice(idx, 1);
+      });
     return transform.readable;
   }
 

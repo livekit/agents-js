@@ -468,10 +468,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           }
         }
       } finally {
+        // Cancel (rather than just release) so the upstream IdentityTransform
+        // closes and `AudioRecognition.subscribeAudioStream`'s registered
+        // writer's `.closed` promise resolves — which prunes the entry from
+        // `subscriberWriters` and stops the broadcast transform from buffering
+        // audio into a stream nobody reads.
         try {
-          reader.releaseLock();
+          await reader.cancel();
         } catch {
-          // ignore
+          // already cancelled / errored
         }
         try {
           sttStream.endInput();
