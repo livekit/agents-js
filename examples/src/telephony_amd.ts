@@ -137,13 +137,15 @@ export default defineAgent({
 
       const result = await detector.execute();
 
-      if (result.category === voice.AMDCategory.HUMAN) {
+      if (
+        result.category === voice.AMDCategory.HUMAN ||
+        result.category === voice.AMDCategory.UNCERTAIN ||
+        result.category === voice.AMDCategory.MACHINE_IVR
+      ) {
         logger.info(
           { amd: result },
-          'human answered the call, proceeding with normal conversation',
+          'human or ivr menu detected, proceeding with normal conversation',
         );
-      } else if (result.category === voice.AMDCategory.MACHINE_IVR) {
-        logger.info({ amd: result }, 'ivr menu detected, starting navigation');
       } else if (result.category === voice.AMDCategory.MACHINE_VM) {
         logger.info({ amd: result }, 'voicemail detected, leaving a message');
         const speechHandle = session.generateReply({
