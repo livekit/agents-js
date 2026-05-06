@@ -74,6 +74,8 @@ export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
 export const ATTR_AMD_CATEGORY = 'lk.amd.category';
 export const ATTR_AMD_REASON = 'lk.amd.reason';
 export const ATTR_AMD_IS_MACHINE = 'lk.amd.is_machine';
+export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
+export const ATTR_AMD_DELAY = 'lk.amd.delay';
 export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
 
 // Adaptive Interruption attributes

@@ -32,6 +32,10 @@ export interface AMDResult {
   reason: string;
   rawResponse: string;
   isMachine: boolean;
+  /** Duration of detected user speech in milliseconds. */
+  speechDurationMs: number;
+  /** Time from user speech end to AMD verdict in milliseconds. */
+  delayMs: number;
 }
 
 export interface AMDOptions {
@@ -72,6 +76,8 @@ const DEFAULT_MAX_TRANSCRIPT_TURNS = 2;
 
 const MAX_EXTENSIONS = 3;
 const MAX_EXTENSION_MS = 10_000;
+
+type SilenceTimerTrigger = 'short_speech' | 'long_speech';
 
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'google/gemini-3.1-flash-lite-preview',
@@ -159,12 +165,14 @@ export class AMD {
   private verdictResult: AMDResult | undefined;
   private machineSilenceReached = false;
   private speechStartedAt: number | undefined;
+  private speechEndedAt: number | undefined;
   private detectGeneration = 0;
   private extensionCount = 0;
 
   private noSpeechTimer: ReturnType<typeof setTimeout> | undefined;
   private detectionTimer: ReturnType<typeof setTimeout> | undefined;
   private silenceTimer: ReturnType<typeof setTimeout> | undefined;
+  private silenceTimerTrigger: SilenceTimerTrigger | undefined;
 
   private resolveRun: ((value: AMDResult) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
@@ -261,10 +269,12 @@ export class AMD {
     this.verdictResult = undefined;
     this.machineSilenceReached = false;
     this.speechStartedAt = undefined;
+    this.speechEndedAt = undefined;
     this.detectGeneration = 0;
     this.extensionCount = 0;
     this.resolveRun = undefined;
     this.rejectRun = undefined;
+    this.silenceTimerTrigger = undefined;
   }
 
   private subscribe(): void {
@@ -292,6 +302,9 @@ export class AMD {
     if (this[key]) {
       clearTimeout(this[key]);
       this[key] = undefined;
+    }
+    if (name === 'silence') {
+      this.silenceTimerTrigger = undefined;
     }
   }
 
@@ -338,7 +351,12 @@ export class AMD {
    * threshold expires. Optionally provides a verdict (for no-speech / timeout /
    * short-greeting paths) and always opens the silence gate.
    */
-  private onSilenceTimerFired(category?: AMDCategory, reason?: string): void {
+  private onSilenceTimerFired(
+    category?: AMDCategory,
+    reason?: string,
+    speechDurationMs?: number,
+  ): void {
+    this.clearTimer('silence');
     if (category && reason && !this.verdictResult) {
       this.setVerdict({
         category,
@@ -346,6 +364,8 @@ export class AMD {
         transcript: this.joinTranscript(),
         rawResponse: '',
         isMachine: isMachineCategory(category),
+        speechDurationMs: speechDurationMs ?? this.speechDurationMs(),
+        delayMs: this.delayMs(),
       });
     }
     this.machineSilenceReached = true;
@@ -385,7 +405,8 @@ export class AMD {
       return;
     }
 
-    const speechDurationMs = ev.createdAt - (this.speechStartedAt ?? ev.createdAt);
+    this.speechEndedAt = ev.createdAt;
+    const speechDurationMs = this.speechEndedAt - (this.speechStartedAt ?? this.speechEndedAt);
 
     this.clearTimer('silence');
 
@@ -395,23 +416,26 @@ export class AMD {
     if (speechDurationMs <= this.humanSpeechThresholdMs) {
       if (this.transcriptParts.length === 0) {
         this.silenceTimer = setTimeout(
-          () => this.onSilenceTimerFired(AMDCategory.HUMAN, 'short_greeting'),
+          () => this.onSilenceTimerFired(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
           this.humanSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'short_speech';
       } else {
         this.silenceTimer = setTimeout(
-          () => this.onSilenceTimerFired(),
+          () => this.onSilenceTimerFired(undefined, undefined, speechDurationMs),
           this.machineSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'long_speech';
       }
       return;
     }
 
     // Longer speech: open silence gate after machine_silence_threshold of quiet
     this.silenceTimer = setTimeout(
-      () => this.onSilenceTimerFired(),
+      () => this.onSilenceTimerFired(undefined, undefined, speechDurationMs),
       this.machineSilenceThresholdMs,
     );
+    this.silenceTimerTrigger = 'long_speech';
   };
 
   /**
@@ -425,6 +449,20 @@ export class AMD {
     const transcript = ev.transcript.trim();
     if (!transcript) {
       return;
+    }
+
+    if (this.silenceTimer && this.silenceTimerTrigger === 'short_speech') {
+      const speechEndedAt = this.speechEndedAt;
+      if (speechEndedAt !== undefined) {
+        this.clearTimer('silence');
+        const remaining = speechEndedAt + this.machineSilenceThresholdMs - Date.now();
+        const speechDurationMs = this.speechDurationMs();
+        this.silenceTimer = setTimeout(
+          () => this.onSilenceTimerFired(undefined, undefined, speechDurationMs),
+          Math.max(0, remaining),
+        );
+        this.silenceTimerTrigger = 'long_speech';
+      }
     }
 
     this.clearTimer('noSpeech');
@@ -483,10 +521,23 @@ export class AMD {
     return this.transcriptParts.join('\n');
   }
 
+  private speechDurationMs(): number {
+    if (this.speechStartedAt === undefined) {
+      return 0;
+    }
+    return (this.speechEndedAt ?? Date.now()) - this.speechStartedAt;
+  }
+
+  private delayMs(): number {
+    return this.speechEndedAt !== undefined ? Date.now() - this.speechEndedAt : 0;
+  }
+
   private setSpanAttributes(result: AMDResult): void {
     this.span?.setAttribute(traceTypes.ATTR_AMD_CATEGORY, result.category);
     this.span?.setAttribute(traceTypes.ATTR_AMD_REASON, result.reason);
     this.span?.setAttribute(traceTypes.ATTR_AMD_IS_MACHINE, result.isMachine);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs);
     this.span?.setAttribute(traceTypes.ATTR_USER_TRANSCRIPT, result.transcript);
   }
 
@@ -531,6 +582,8 @@ export class AMD {
             transcript,
             rawResponse: '',
             isMachine: isMachineCategory(normalized),
+            speechDurationMs: this.speechDurationMs(),
+            delayMs: this.delayMs(),
           };
         }
         return 'saved';
@@ -564,6 +617,7 @@ export class AMD {
           this.scheduleLLMClassification();
           this.tryEmitResult();
         }, clampedMs);
+        this.silenceTimerTrigger = 'long_speech';
         return `waiting ${(clampedMs / 1000).toFixed(1)}s for more audio`;
       },
     });
@@ -629,6 +683,8 @@ export class AMD {
       transcript,
       rawResponse,
       isMachine: isMachineCategory(parsed.category),
+      speechDurationMs: this.speechDurationMs(),
+      delayMs: this.delayMs(),
     };
   }
 
