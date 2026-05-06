@@ -42,8 +42,13 @@ export default defineAgent({
         }),
         turnDetection: new livekit.turnDetector.MultilingualModel(),
         vad: ctx.proc.userData.vad! as silero.VAD,
-        voiceOptions: {
-          preemptiveGeneration: true,
+        turnHandling: {
+          interruption: {
+            resumeFalseInterruption: false,
+          },
+          preemptiveGeneration: {
+            enabled: true,
+          },
         },
       });
 

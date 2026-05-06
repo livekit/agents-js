@@ -2,8 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, voice } from '@livekit/agents';
+import { type Room, TrackKind } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AvatarSession } from './avatar.js';
+
+type DataStreamAudioOutputInternals = {
+  waitPlaybackStart: boolean;
+};
 
 describe('LemonSlice AvatarSession', () => {
   beforeEach(() => {
@@ -13,6 +18,10 @@ describe('LemonSlice AvatarSession', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    voice.DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackFinishedHandlers = {};
+    voice.DataStreamAudioOutput._playbackStartedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackStartedHandlers = {};
   });
 
   it('merges extraPayload into the session creation request body', async () => {
@@ -98,8 +107,57 @@ describe('LemonSlice AvatarSession', () => {
     });
 
     await expect(
-      avatar.start({ _started: false, output: { audio: null } } as any, {} as any),
+      avatar.start(
+        { _started: false, output: { audio: null } } as unknown as voice.AgentSession,
+        {} as unknown as Room,
+      ),
     ).rejects.toThrow('super-start-called');
     expect(superStartSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('configures DataStreamAudioOutput to wait for remote playback started', async () => {
+    vi.spyOn(voice.AvatarSession.prototype, 'start').mockResolvedValue(undefined);
+
+    const avatar = new AvatarSession({
+      apiKey: 'test-api-key',
+      agentImageUrl: 'https://example.com/avatar.png',
+    });
+    vi.spyOn(
+      avatar as unknown as {
+        startAgent(livekitUrl: string, livekitToken: string): Promise<string>;
+      },
+      'startAgent',
+    ).mockResolvedValue('test-session-id');
+
+    const remoteParticipant = {
+      identity: 'lemonslice-avatar-agent',
+      trackPublications: new Map([['video', { kind: TrackKind.KIND_VIDEO }]]),
+    };
+    const room = {
+      name: 'test-room',
+      isConnected: true,
+      localParticipant: {
+        identity: 'local-agent',
+        registerRpcMethod: vi.fn(),
+      },
+      remoteParticipants: new Map([[remoteParticipant.identity, remoteParticipant]]),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const agentSession = {
+      _started: false,
+      output: { audio: null },
+    } as unknown as voice.AgentSession;
+
+    const sessionId = await avatar.start(agentSession, room as unknown as Room, {
+      livekitUrl: 'wss://livekit.example.com',
+      livekitApiKey: 'livekit-api-key',
+      livekitApiSecret: 'livekit-api-secret',
+    });
+
+    expect(sessionId).toBe('test-session-id');
+    const audioOutput = agentSession.output.audio;
+    expect(audioOutput).toBeInstanceOf(voice.DataStreamAudioOutput);
+    expect((audioOutput as unknown as DataStreamAudioOutputInternals).waitPlaybackStart).toBe(true);
   });
 });
