@@ -18,6 +18,14 @@ export {
 } from './tool_context.js';
 
 export {
+  AsyncRunContext,
+  AsyncToolset,
+  type AsyncToolDuplicateMode,
+  type AsyncToolOptions,
+  type AsyncToolsetOptions,
+} from './async_toolset.js';
+
+export {
   AgentHandoffItem,
   ChatContext,
   ChatMessage,
