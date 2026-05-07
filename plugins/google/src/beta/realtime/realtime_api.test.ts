@@ -27,6 +27,7 @@ type RealtimeSessionInternals = {
   };
   pendingToolCallIds: Set<string>;
   toolCallStatuses: Map<string, ToolCallStatus>;
+  toolResponseCallIds: WeakMap<Record<string, unknown>, string>;
   sendClientEvent: ReturnType<typeof vi.fn>;
   markCurrentGenerationDone: ReturnType<typeof vi.fn>;
   getToolResultsForRealtime(
@@ -40,6 +41,7 @@ type RealtimeSessionInternals = {
       args?: Record<string, unknown>;
     }>;
   }): void;
+  clearPendingToolCallIdsForResponses(functionResponses: Array<Record<string, unknown>>): void;
 };
 
 const schedulingModes = [
@@ -59,6 +61,7 @@ function createSessionForTest(
   };
   session.pendingToolCallIds = new Set();
   session.toolCallStatuses = new Map();
+  session.toolResponseCallIds = new WeakMap();
   session.sendClientEvent = vi.fn();
   session.markCurrentGenerationDone = vi.fn();
   session.currentGeneration = {
@@ -147,4 +150,33 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       });
     },
   );
+
+  it('clears pending tool calls for VertexAI responses without ids', () => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.pendingToolCallIds.add('call_123');
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_123',
+        name: 'getWeather',
+        output: 'The weather in Seattle is sunny today.',
+        isError: false,
+      }),
+    );
+
+    const result = session.getToolResultsForRealtime(ctx, true);
+
+    expect(result?.functionResponses).toEqual([
+      {
+        name: 'getWeather',
+        response: { output: 'The weather in Seattle is sunny today.' },
+        scheduling: FunctionResponseScheduling.WHEN_IDLE,
+      },
+    ]);
+
+    session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
+
+    expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
 });

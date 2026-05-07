@@ -467,6 +467,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
+  private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
   #client: GoogleGenAI;
@@ -576,6 +577,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           // vertexai does not support id in FunctionResponse
           response.id = item.callId;
         }
+        this.toolResponseCallIds.set(response, item.callId);
 
         const status = this.toolCallStatuses.get(item.callId);
         if (status?.willContinueSent) {
@@ -1118,11 +1120,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                   functionResponses,
                 });
               } finally {
-                for (const fr of functionResponses) {
-                  if (fr?.id && fr.willContinue !== true) {
-                    this.pendingToolCallIds.delete(fr.id);
-                  }
-                }
+                this.clearPendingToolCallIdsForResponses(functionResponses);
               }
             }
             break;
@@ -1732,6 +1730,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (status) {
         status.status = 'cancelled';
         this.toolCallStatuses.set(id, status);
+      }
+    }
+  }
+
+  private clearPendingToolCallIdsForResponses(functionResponses: types.FunctionResponse[]): void {
+    for (const fr of functionResponses) {
+      if (fr.willContinue === true) {
+        continue;
+      }
+      const callId = fr.id ?? this.toolResponseCallIds.get(fr);
+      if (callId) {
+        this.pendingToolCallIds.delete(callId);
       }
     }
   }
