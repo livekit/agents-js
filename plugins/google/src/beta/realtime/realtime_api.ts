@@ -109,6 +109,9 @@ interface RealtimeOptions {
   apiVersion?: string;
   geminiTools?: LLMTools;
   thinkingConfig?: types.ThinkingConfig;
+  // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py - 148-149 lines
+  toolBehavior?: types.Behavior;
+  toolResponseScheduling?: types.FunctionResponseScheduling;
 }
 
 /**
@@ -293,6 +296,19 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
+
+      /**
+       * The behavior for tool calls. Default behavior is `BLOCKING` in Gemini Realtime API.
+       * Note: Not supported in Vertex AI.
+       */
+      toolBehavior?: types.Behavior;
+
+      /**
+       * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
+       * Note: Vertex AI currently does not support the scheduling parameter; the user is
+       * responsible for avoiding this parameter when using Vertex AI.
+       */
+      toolResponseScheduling?: types.FunctionResponseScheduling;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -366,6 +382,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
       thinkingConfig: options.thinkingConfig,
+      toolBehavior: options.toolBehavior,
+      toolResponseScheduling: options.toolResponseScheduling,
     };
   }
 
@@ -379,12 +397,23 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Update model options
    */
-  updateOptions(options: { voice?: Voice | string; temperature?: number }): void {
+  updateOptions(options: {
+    voice?: Voice | string;
+    temperature?: number;
+    toolBehavior?: types.Behavior;
+    toolResponseScheduling?: types.FunctionResponseScheduling;
+  }): void {
     if (options.voice !== undefined) {
       this._options.voice = options.voice;
     }
     if (options.temperature !== undefined) {
       this._options.temperature = options.temperature;
+    }
+    if (options.toolBehavior !== undefined) {
+      this._options.toolBehavior = options.toolBehavior;
+    }
+    if (options.toolResponseScheduling !== undefined) {
+      this._options.toolResponseScheduling = options.toolResponseScheduling;
     }
 
     // TODO: Notify active sessions of option changes
@@ -508,6 +537,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/utils.py - 48-74 lines
   private getToolResultsForRealtime(
     ctx: llm.ChatContext,
     vertexai: boolean,
@@ -517,18 +547,53 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
-          id: item.callId,
           name: item.name,
           response: { output: item.output },
         };
 
+        if (this.options.toolResponseScheduling !== undefined) {
+          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
+          // it's the user's responsibility to avoid this parameter when using vertexai
+          response.scheduling = this.options.toolResponseScheduling;
+        }
+
         if (!vertexai) {
+          // vertexai does not support id in FunctionResponse
           response.id = item.callId;
         }
 
         toolResponses.push(response);
       }
     }
+
+    // #region debug log
+    if (toolResponses.length > 0) {
+      fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': '564e0a',
+        },
+        body: JSON.stringify({
+          sessionId: '564e0a',
+          hypothesisId: 'H3/H4',
+          location: 'realtime_api.ts:getToolResultsForRealtime',
+          message: 'tool function responses being sent to Gemini',
+          data: {
+            optsToolResponseScheduling: this.options.toolResponseScheduling ?? null,
+            vertexai,
+            toolResponses: toolResponses.map((r) => ({
+              name: r.name,
+              hasId: r.id !== undefined,
+              scheduling: r.scheduling ?? null,
+              schedulingPresent: r.scheduling !== undefined,
+            })),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
 
     return toolResponses.length > 0 ? { functionResponses: toolResponses } : undefined;
   }
@@ -537,6 +602,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     voice?: Voice | string;
     temperature?: number;
     toolChoice?: llm.ToolChoice;
+    toolBehavior?: types.Behavior;
+    toolResponseScheduling?: types.FunctionResponseScheduling;
   }) {
     let shouldRestart = false;
 
@@ -548,6 +615,24 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (options.temperature !== undefined && this.options.temperature !== options.temperature) {
       this.options.temperature = options.temperature;
       shouldRestart = true;
+    }
+
+    // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py - 541-549 lines
+    if (options.toolBehavior !== undefined && this.options.toolBehavior !== options.toolBehavior) {
+      this.options.toolBehavior = options.toolBehavior;
+      shouldRestart = true;
+    }
+
+    if (
+      options.toolResponseScheduling !== undefined &&
+      this.options.toolResponseScheduling !== options.toolResponseScheduling
+    ) {
+      this.options.toolResponseScheduling = options.toolResponseScheduling;
+      // no need to restart
+    }
+
+    if (options.toolChoice !== undefined) {
+      this.#logger.warn('toolChoice is not supported by the Google Realtime API.');
     }
 
     if (shouldRestart) {
@@ -1330,9 +1415,21 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
+      // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/utils.py - 20-45 lines
       tools:
         this.geminiDeclarations.length > 0 || this.options.geminiTools
-          ? [{ functionDeclarations: this.geminiDeclarations, ...this.options.geminiTools }]
+          ? [
+              {
+                functionDeclarations:
+                  this.options.toolBehavior !== undefined
+                    ? this.geminiDeclarations.map((d) => ({
+                        ...d,
+                        behavior: this.options.toolBehavior,
+                      }))
+                    : this.geminiDeclarations,
+                ...this.options.geminiTools,
+              },
+            ]
           : undefined,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
@@ -1370,6 +1467,37 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (opts.contextWindowCompression !== undefined) {
       config.contextWindowCompression = opts.contextWindowCompression;
     }
+
+    // #region debug log
+    fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': '564e0a',
+      },
+      body: JSON.stringify({
+        sessionId: '564e0a',
+        hypothesisId: 'H1/H2',
+        location: 'realtime_api.ts:buildConnectConfig',
+        message: 'connect config tools sent to Gemini Live',
+        data: {
+          optsToolBehavior: this.options.toolBehavior ?? null,
+          optsToolResponseScheduling: this.options.toolResponseScheduling ?? null,
+          tools: ((config.tools ?? []) as Array<Record<string, unknown>>).map((t) => ({
+            functionDeclarations: (
+              (t.functionDeclarations ?? []) as Array<{ name?: string; behavior?: string }>
+            ).map((d) => ({
+              name: d.name,
+              behavior: d.behavior ?? null,
+              behaviorPresent: d.behavior !== undefined,
+            })),
+            hasGeminiTool: Object.keys(t).some((k) => k !== 'functionDeclarations'),
+          })),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
 
     return config;
   }

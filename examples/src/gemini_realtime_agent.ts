@@ -16,8 +16,71 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-// Shared data that's used by the storyteller agent.
-// This structure is passed as a parameter to function calls.
+// ---------------------------------------------------------------------------
+// Test scenarios for the new `toolBehavior` / `toolResponseScheduling` feature.
+// Switch by setting env vars before launching, e.g.:
+//   TOOL_BEHAVIOR=NON_BLOCKING TOOL_SCHEDULING=WHEN_IDLE \
+//     pnpm dlx tsx ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
+//
+// Supported values:
+//   TOOL_BEHAVIOR        : DEFAULT (omit) | BLOCKING | NON_BLOCKING
+//   TOOL_SCHEDULING      : DEFAULT (omit) | SILENT | WHEN_IDLE | INTERRUPT
+//   GET_WEATHER_DELAY_MS : delay before getWeather returns (default 4000)
+// ---------------------------------------------------------------------------
+const TOOL_BEHAVIOR_ENV = process.env.TOOL_BEHAVIOR ?? 'DEFAULT';
+const TOOL_SCHEDULING_ENV = process.env.TOOL_SCHEDULING ?? 'DEFAULT';
+const GET_WEATHER_DELAY_MS = Number(process.env.GET_WEATHER_DELAY_MS ?? 4000);
+
+const TOOL_BEHAVIOR_MAP: Record<string, google.beta.realtime.Behavior | undefined> = {
+  DEFAULT: undefined,
+  BLOCKING: google.beta.realtime.Behavior.BLOCKING,
+  NON_BLOCKING: google.beta.realtime.Behavior.NON_BLOCKING,
+};
+
+const TOOL_SCHEDULING_MAP: Record<
+  string,
+  google.beta.realtime.FunctionResponseScheduling | undefined
+> = {
+  DEFAULT: undefined,
+  SILENT: google.beta.realtime.FunctionResponseScheduling.SILENT,
+  WHEN_IDLE: google.beta.realtime.FunctionResponseScheduling.WHEN_IDLE,
+  INTERRUPT: google.beta.realtime.FunctionResponseScheduling.INTERRUPT,
+};
+
+const toolBehavior = TOOL_BEHAVIOR_MAP[TOOL_BEHAVIOR_ENV];
+const toolResponseScheduling = TOOL_SCHEDULING_MAP[TOOL_SCHEDULING_ENV];
+
+console.log(
+  `[gemini_realtime_agent] toolBehavior=${TOOL_BEHAVIOR_ENV} (${toolBehavior ?? 'unset'}) ` +
+    `toolResponseScheduling=${TOOL_SCHEDULING_ENV} (${toolResponseScheduling ?? 'unset'}) ` +
+    `getWeatherDelayMs=${GET_WEATHER_DELAY_MS}`,
+);
+
+// #region debug log
+const debugLog = (
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+) => {
+  fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Debug-Session-Id': '564e0a',
+    },
+    body: JSON.stringify({
+      sessionId: '564e0a',
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+};
+// #endregion
+
 type StoryData = {
   name?: string;
   location?: string;
@@ -26,12 +89,25 @@ type StoryData = {
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
 
 const getWeather = llm.tool({
-  description: ' Called when the user asks about the weather.',
+  description: 'Called when the user asks about the weather.',
   parameters: z.object({
     location: z.string().describe('The location to get the weather for'),
   }),
+  // Deliberately slow so BLOCKING vs NON_BLOCKING is visible.
   execute: async ({ location }) => {
-    return `The weather in ${location} is sunny today.`;
+    const startedAt = Date.now();
+    debugLog('H5', 'gemini_realtime_agent.ts:getWeather:start', 'tool execution started', {
+      location,
+      delayMs: GET_WEATHER_DELAY_MS,
+    });
+    await new Promise((resolve) => setTimeout(resolve, GET_WEATHER_DELAY_MS));
+    const result = `The weather in ${location} is sunny today.`;
+    debugLog('H5', 'gemini_realtime_agent.ts:getWeather:end', 'tool execution finished', {
+      location,
+      elapsedMs: Date.now() - startedAt,
+      result,
+    });
+    return result;
   },
 });
 
@@ -42,11 +118,11 @@ const toggleLight = llm.tool({
     switchTo: z.enum(['on', 'off']).describe('The state to turn the light to'),
   }),
   execute: async ({ room, switchTo }) => {
+    debugLog('H5', 'gemini_realtime_agent.ts:toggleLight', 'tool executed', { room, switchTo });
     return `The light in the ${room} is now ${switchTo}.`;
   },
 });
 
-// Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
   async onEnter() {
     this.session.generateReply({
@@ -110,6 +186,8 @@ export default defineAgent({
           // If you want to keep the thoughts, set includeThoughts to true or leave it undefined
           includeThoughts: false,
         },
+        toolBehavior,
+        toolResponseScheduling,
       }),
       userData: userdata,
     });
