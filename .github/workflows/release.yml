@@ -33,39 +33,27 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Verify non-plugin packages exist on npm
+      # npm trusted publishing cannot publish a package for the first time. New packages must be
+      # created on npm before release CI can publish subsequent versions with OIDC.
+      - name: Verify all packages exist on npm
         run: |
-          UNPUBLISHED_PLUGINS=()
           MISSING=()
-          while IFS='|' read -r pkg pkg_dir; do
-            if [ -z "$pkg" ]; then
-              continue
-            fi
-            if ! npm view "$pkg" > /dev/null 2>&1; then
-              if [[ "$pkg" == @livekit/agents-plugin-* && "$pkg_dir" == */plugins/* ]]; then
-                UNPUBLISHED_PLUGINS+=("$pkg")
-              else
-                MISSING+=("$pkg")
-              fi
-            fi
-          done < <(pnpm -r --silent exec -- node -e "
+          for pkg in $(pnpm -r --silent exec -- node -e "
             const p = require('./package.json');
-            if (!p.private) process.stdout.write(p.name + '|' + process.cwd() + '\n');
-          ")
-          if [ ${#UNPUBLISHED_PLUGINS[@]} -gt 0 ]; then
-            echo "::warning::The following plugins are not yet published on npm and will be published for the first time:"
-            for pkg in "${UNPUBLISHED_PLUGINS[@]}"; do
-              echo "::warning::  - $pkg"
-            done
-          fi
+            if (!p.private) process.stdout.write(p.name + '\n');
+          "); do
+            if ! npm view "$pkg" > /dev/null 2>&1; then
+              MISSING+=("$pkg")
+            fi
+          done
           if [ ${#MISSING[@]} -gt 0 ]; then
-            echo "::error::The following non-plugin packages are not yet published on npm:"
+            echo "::error::The following packages are not yet published on npm:"
             for pkg in "${MISSING[@]}"; do
               echo "::error::  - $pkg"
             done
             exit 1
           fi
-          echo "All required packages exist on npm."
+          echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
