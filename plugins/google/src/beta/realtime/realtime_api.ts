@@ -77,6 +77,73 @@ function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
   return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
+// Restricted Gemini Live models reject mid-session sendClientContent.
+// Gemini 3.1+ rejects mid-session sendClientContent.
+// generateReply must use sendRealtimeInput, and the current JS SDK path cannot
+// keep chat context synchronized server-side for these models.
+const RESTRICTED_CLIENT_CONTENT_MODELS = new Set(['gemini-3.1-flash-live-preview']);
+
+export function isRestrictedClientContentModel(model: string): boolean {
+  return RESTRICTED_CLIENT_CONTENT_MODELS.has(model);
+}
+
+export function supportsServerSideChatContext(model: string): boolean {
+  return !isRestrictedClientContentModel(model);
+}
+
+export function buildGenerateReplyClientEvents(options: {
+  model: string;
+  instructions?: string;
+  inUserActivity?: boolean;
+}): api_proto.ClientEvents[] {
+  const events: api_proto.ClientEvents[] = [];
+
+  if (options.inUserActivity) {
+    events.push({
+      type: 'realtime_input',
+      value: {
+        activityEnd: {},
+      },
+    });
+  }
+
+  if (isRestrictedClientContentModel(options.model)) {
+    // Gemini 3.1+ rejects sendClientContent mid-session.
+    // Use sendRealtimeInput({ text }) instead — it triggers generation on all Live models.
+    events.push({
+      type: 'realtime_input',
+      value: {
+        text: options.instructions ?? '.',
+      },
+    });
+
+    return events;
+  }
+
+  // Gemini 2.5 generateReply relies on ending with a synthetic user turn.
+  const turns: types.Content[] = [];
+  if (options.instructions !== undefined) {
+    turns.push({
+      parts: [{ text: options.instructions }],
+      role: 'model',
+    });
+  }
+  turns.push({
+    parts: [{ text: '.' }],
+    role: 'user',
+  });
+
+  events.push({
+    type: 'content',
+    value: {
+      turns,
+      turnComplete: true,
+    },
+  });
+
+  return events;
+}
+
 /**
  * Internal realtime options for Google Realtime API
  */
@@ -288,9 +355,8 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * Thinking configuration for native audio models.
-       * If not set, the model's default thinking behavior is used.
-       * Gemini 3.1 live models use `thinkingLevel`.
-       * Gemini 2.5 live models use `thinkingBudget`.
+       * Use `{ thinkingBudget: 0 }` to disable thinking.
+       * Use `{ thinkingBudget: -1 }` for automatic/dynamic thinking.
        */
       thinkingConfig?: types.ThinkingConfig;
     } = {},
@@ -573,6 +639,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (!this.realtimeModel.capabilities.midSessionInstructionsUpdate) {
+      this.markRestartNeeded();
       return;
     }
 
@@ -626,6 +693,24 @@ export class RealtimeSession extends llm.RealtimeSession {
         .toProviderFormat('google', false);
 
       const toolResults = this.getToolResultsForRealtime(appendCtx, this.options.vertexai);
+
+      if (!supportsServerSideChatContext(this.options.model)) {
+        if (turns.length > 0) {
+          this.#logger.warn(
+            'updateChatCtx is not currently applied on restricted model ' +
+              this.options.model +
+              '. Storing chat context locally only until the JS SDK exposes a supported history path.',
+          );
+        }
+        if (toolResults) {
+          this.sendClientEvent({
+            type: 'tool_response',
+            value: toolResults,
+          });
+        }
+        this._chatCtx = chatCtx.copy();
+        return;
+      }
 
       if (turns.length > 0) {
         const shouldSendRealtimeText = this.pendingInterruptText;
@@ -728,13 +813,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
-    if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
-      this.#logger.warn(
-        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
-      );
-      throw new Error(`generateReply is not compatible with '${this.options.model}'`);
-    }
-
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
       this.#logger.warn(
         'generateReply called while another generation is pending, cancelling previous.',
@@ -745,37 +823,19 @@ export class RealtimeSession extends llm.RealtimeSession {
     const fut = new Future<llm.GenerationCreatedEvent>();
     this.pendingGenerationFut = fut;
 
+    const events = buildGenerateReplyClientEvents({
+      model: this.options.model,
+      instructions,
+      inUserActivity: this.inUserActivity,
+    });
+
     if (this.inUserActivity) {
-      this.sendClientEvent({
-        type: 'realtime_input',
-        value: {
-          activityEnd: {},
-        },
-      });
       this.inUserActivity = false;
     }
 
-    // Gemini requires the last message to end with user's turn
-    // so we need to add a placeholder user turn in order to trigger a new generation
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
+    for (const event of events) {
+      this.sendClientEvent(event);
     }
-    turns.push({
-      parts: [{ text: '.' }],
-      role: 'user',
-    });
-
-    this.sendClientEvent({
-      type: 'content',
-      value: {
-        turns,
-        turnComplete: true,
-      },
-    });
 
     const timeoutHandle = setTimeout(() => {
       if (!fut.done) {
@@ -929,18 +989,26 @@ export class RealtimeSession extends llm.RealtimeSession {
         try {
           this.activeSession = session;
 
-          // Send existing chat context
-          const [turns] = await this._chatCtx
-            .copy({
-              excludeFunctionCall: true,
-            })
-            .toProviderFormat('google', false);
+          // Send existing chat context when the current SDK path can sync history.
+          if (supportsServerSideChatContext(this.options.model)) {
+            const [turns] = await this._chatCtx
+              .copy({
+                excludeFunctionCall: true,
+              })
+              .toProviderFormat('google', false);
 
-          if (turns.length > 0) {
-            await session.sendClientContent({
-              turns,
-              turnComplete: false,
-            });
+            if (turns.length > 0) {
+              await session.sendClientContent({
+                turns,
+                turnComplete: false,
+              });
+            }
+          } else if (this._chatCtx.items.length > 0) {
+            this.#logger.warn(
+              'Initial chat context is not currently applied for restricted model ' +
+                this.options.model +
+                '. The current JS SDK path cannot seed prior chat history for this model.',
+            );
           }
         } finally {
           unlock();
@@ -1017,6 +1085,15 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         switch (msg.type) {
           case 'content':
+            // Gemini 3.1+ rejects sendClientContent mid-session — drop the event
+            // instead of crashing the session with a 1007 error.
+            if (isRestrictedClientContentModel(this.options.model)) {
+              this.#logger.warn(
+                'Dropping sendClientContent event for restricted model. ' +
+                  'Use reconnect-based updates or sendRealtimeInput instead.',
+              );
+              break;
+            }
             const { turns, turnComplete } = msg.value;
             if (LK_GOOGLE_DEBUG) {
               this.#logger.debug(`(client) -> ${JSON.stringify(this.loggableClientEvent(msg))}`);
