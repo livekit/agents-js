@@ -79,6 +79,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-mistralai](https://www.npmjs.com/package/@livekit/agents-plugin-mistralai)   | LLM, STT, TTS |
 | [@livekit/agents-plugin-xai](https://www.npmjs.com/package/@livekit/agents-plugin-xai)               | LLM, TTS      |
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
+| [@livekit/agents-plugin-fishaudio](https://www.npmjs.com/package/@livekit/agents-plugin-fishaudio)   | TTS           |
 
 ## Docs and guides
 
