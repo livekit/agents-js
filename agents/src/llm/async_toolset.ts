@@ -324,7 +324,7 @@ export class AsyncToolset<UserData = UnknownUserData> {
 
     if (!this.replyTask || this.replyTask.done) {
       this.replyTask = Task.from(
-        () => this.deliverReply(ctx.session),
+        (controller) => this.deliverReply(ctx.session, controller.signal),
         undefined,
         'asyncToolsetReply',
       );
@@ -449,8 +449,11 @@ export class AsyncToolset<UserData = UnknownUserData> {
     });
   }
 
-  private async deliverReply(session: AsyncToolSession<UserData>): Promise<void> {
-    await waitForInactive(session);
+  private async deliverReply(
+    session: AsyncToolSession<UserData>,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
+    await waitForInactive(session, abortSignal);
 
     const updates = this.pendingUpdates;
     this.pendingUpdates = [];
@@ -533,8 +536,8 @@ export class AsyncToolset<UserData = UnknownUserData> {
   }
 }
 
-async function waitForInactive(session: AsyncToolSession): Promise<void> {
+async function waitForInactive(session: AsyncToolSession, abortSignal: AbortSignal): Promise<void> {
   while (session.agentState === 'speaking' || session.agentState === 'thinking') {
-    await delay(50);
+    await delay(50, { signal: abortSignal });
   }
 }

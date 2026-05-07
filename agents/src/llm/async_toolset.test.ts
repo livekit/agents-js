@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { delay } from '../utils.js';
 import type { AgentSession } from '../voice/agent_session.js';
 import type { RunContext } from '../voice/run_context.js';
-import { type AsyncToolOptions, AsyncToolset } from './async_toolset.js';
-import { ChatContext, FunctionCall, type FunctionCallOutput } from './chat_context.js';
+import { AsyncRunContext, type AsyncToolOptions, AsyncToolset } from './async_toolset.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from './chat_context.js';
 import { tool } from './tool_context.js';
 
 type TestAgent = {
@@ -16,7 +16,7 @@ type TestAgent = {
 };
 
 type TestSession = {
-  agentState: 'listening';
+  agentState: 'listening' | 'thinking';
   currentAgent: TestAgent;
   generateReply: ReturnType<typeof vi.fn>;
   _toolItemsAdded: (items: (FunctionCall | FunctionCallOutput)[]) => void;
@@ -34,7 +34,7 @@ function createRunContext(callId: string, name: string, session: TestSession): R
   } as unknown as RunContext;
 }
 
-function createSession(): TestSession {
+function createSession(agentState: TestSession['agentState'] = 'listening'): TestSession {
   let chatCtx = ChatContext.empty();
   const generateReply = vi.fn();
   const agent = {
@@ -47,7 +47,7 @@ function createSession(): TestSession {
   };
 
   return {
-    agentState: 'listening',
+    agentState,
     currentAgent: agent,
     generateReply,
     _toolItemsAdded: () => {},
@@ -159,5 +159,32 @@ describe('AsyncToolset', () => {
     );
 
     expect(result).toBe('Task call_cancel cancelled successfully.');
+  });
+
+  it('closes while waiting to deliver a reply', async () => {
+    const session = createSession('thinking');
+    const asyncToolset = new AsyncToolset({});
+    const ctx = new AsyncRunContext({
+      runCtx: createRunContext('call_waiting', 'long_task', session),
+      toolset: asyncToolset,
+    });
+
+    await asyncToolset.enqueueReply(ctx, [
+      FunctionCall.create({
+        callId: 'call_waiting_finished',
+        name: 'long_task',
+        args: '{}',
+      }),
+      FunctionCallOutput.create({
+        callId: 'call_waiting_finished',
+        name: 'long_task',
+        output: '"done"',
+        isError: false,
+      }),
+    ]);
+
+    await expect(
+      Promise.race([asyncToolset.close().then(() => 'closed'), delay(200).then(() => 'timeout')]),
+    ).resolves.toBe('closed');
   });
 });
