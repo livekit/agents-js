@@ -98,20 +98,18 @@ export class Queue<T> {
     this.#limit = limit;
   }
 
-  async get(): Promise<T> {
-    const _get = async (): Promise<T> => {
-      if (this.items.length === 0) {
-        await once(this.#events, 'put');
-      }
-      let item = this.items.shift();
-      if (typeof item === 'undefined') {
-        item = await _get();
-      }
-      return item;
-    };
+  async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    while (this.items.length === 0) {
+      await once(this.#events, 'put', { signal: options.signal });
+    }
 
-    const item = _get();
+    const item = this.items.shift();
     this.#events.emit('get');
+
+    if (typeof item === 'undefined') {
+      return this.get(options);
+    }
+
     return item;
   }
 
