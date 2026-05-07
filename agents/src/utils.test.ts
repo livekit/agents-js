@@ -5,11 +5,32 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../src/log.js';
-import { Event, Task, TaskResult, dedent, delay, isPending, resampleStream } from '../src/utils.js';
+import {
+  Event,
+  Queue,
+  Task,
+  TaskResult,
+  dedent,
+  delay,
+  isPending,
+  resampleStream,
+} from '../src/utils.js';
 
 describe('utils', () => {
   // initialize logger
   initializeLogger({ pretty: true, level: 'debug' });
+
+  describe('Queue', () => {
+    it('aborts a pending get', async () => {
+      const queue = new Queue<string>();
+      const controller = new AbortController();
+      const pending = queue.get({ signal: controller.signal });
+
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+  });
 
   describe('Task', () => {
     it('should execute task successfully and return result', async () => {

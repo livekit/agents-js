@@ -1003,7 +1003,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
     try {
       while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
-        const msg = await this.messageChannel.get();
+        const msg = await this.messageChannel.get({ signal: controller.signal });
         if (controller.signal.aborted) break;
 
         const unlock = await this.sessionLock.lock();
