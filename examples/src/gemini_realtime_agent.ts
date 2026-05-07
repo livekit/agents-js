@@ -18,41 +18,24 @@ import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
 // Test scenarios for the new `toolBehavior` / `toolResponseScheduling` feature.
-// Switch by setting env vars before launching, e.g.:
-//   export TOOL_BEHAVIOR=NON_BLOCKING TOOL_SCHEDULING=WHEN_IDLE GET_WEATHER_DELAY_MS=4000
+// Switch `toolBehavior` and `toolResponseScheduling` below before launching, e.g.:
 //   pnpm build && node ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
 //
 // Supported values:
-//   TOOL_BEHAVIOR        : DEFAULT (omit) | BLOCKING | NON_BLOCKING
-//   TOOL_SCHEDULING      : DEFAULT (omit) | SILENT | WHEN_IDLE | INTERRUPT
+//   toolBehavior           : undefined | BLOCKING | NON_BLOCKING
+//   toolResponseScheduling : undefined | SILENT | WHEN_IDLE | INTERRUPT
 //   GET_WEATHER_DELAY_MS : delay before getWeather returns (default 4000)
 // ---------------------------------------------------------------------------
-const TOOL_BEHAVIOR_ENV = process.env.TOOL_BEHAVIOR ?? 'DEFAULT';
-const TOOL_SCHEDULING_ENV = process.env.TOOL_SCHEDULING ?? 'DEFAULT';
 const GET_WEATHER_DELAY_MS = Number(process.env.GET_WEATHER_DELAY_MS ?? 4000);
 
-const TOOL_BEHAVIOR_MAP: Record<string, google.beta.realtime.Behavior | undefined> = {
-  DEFAULT: undefined,
-  BLOCKING: google.beta.realtime.Behavior.BLOCKING,
-  NON_BLOCKING: google.beta.realtime.Behavior.NON_BLOCKING,
-};
-
-const TOOL_SCHEDULING_MAP: Record<
-  string,
-  google.beta.realtime.FunctionResponseScheduling | undefined
-> = {
-  DEFAULT: undefined,
-  SILENT: google.beta.realtime.FunctionResponseScheduling.SILENT,
-  WHEN_IDLE: google.beta.realtime.FunctionResponseScheduling.WHEN_IDLE,
-  INTERRUPT: google.beta.realtime.FunctionResponseScheduling.INTERRUPT,
-};
-
-const toolBehavior = TOOL_BEHAVIOR_MAP[TOOL_BEHAVIOR_ENV];
-const toolResponseScheduling = TOOL_SCHEDULING_MAP[TOOL_SCHEDULING_ENV];
+const toolBehavior: google.beta.realtime.Behavior | undefined =
+  google.beta.realtime.Behavior.NON_BLOCKING;
+const toolResponseScheduling: google.beta.realtime.FunctionResponseScheduling | undefined =
+  google.beta.realtime.FunctionResponseScheduling.WHEN_IDLE;
 
 console.log(
-  `[gemini_realtime_agent] toolBehavior=${TOOL_BEHAVIOR_ENV} (${toolBehavior ?? 'unset'}) ` +
-    `toolResponseScheduling=${TOOL_SCHEDULING_ENV} (${toolResponseScheduling ?? 'unset'}) ` +
+  `[gemini_realtime_agent] toolBehavior=${toolBehavior ?? 'unset'} ` +
+    `toolResponseScheduling=${toolResponseScheduling ?? 'unset'} ` +
     `getWeatherDelayMs=${GET_WEATHER_DELAY_MS}`,
 );
 
