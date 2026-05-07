@@ -48,3 +48,22 @@ export class PeriodicCollector<T> {
     this.lastFlushTime = performance.now() / 1000;
   }
 }
+
+type QueryParamScalar = string | number | boolean;
+type QueryParamValue = QueryParamScalar | QueryParamScalar[];
+
+export function appendQueryParams(
+  url: URL,
+  params: Record<string, QueryParamValue | undefined>,
+): void {
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined) return;
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => url.searchParams.append(key, String(item)));
+      return;
+    }
+
+    url.searchParams.append(key, String(value));
+  });
+}
