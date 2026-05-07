@@ -145,9 +145,95 @@ export async function parseZodSchema<T = unknown>(
 ): Promise<ZodParseResult<T>> {
   if (isZod4Schema(schema)) {
     const result = await z4.safeParseAsync(schema, value);
-    return result as ZodParseResult<T>;
+    return normalizeZodParseResult(schema, result as ZodParseResult<T>);
   } else {
     const result = await schema.safeParseAsync(value);
-    return result as ZodParseResult<T>;
+    return normalizeZodParseResult(schema, result as ZodParseResult<T>);
   }
+}
+
+function normalizeZodParseResult<T>(
+  schema: ZodSchema,
+  result: ZodParseResult<T>,
+): ZodParseResult<T> {
+  if (result.success) {
+    return result;
+  }
+
+  const paramName = missingRequiredParameterName(schema, result.error);
+  if (!paramName) {
+    return result;
+  }
+
+  return {
+    success: false,
+    error: new Error(
+      `Received no value for required parameter '${paramName}': this argument cannot be null.`,
+    ),
+  };
+}
+
+function missingRequiredParameterName(schema: ZodSchema, error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('issues' in error)) {
+    return undefined;
+  }
+
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) {
+    return undefined;
+  }
+
+  for (const issue of issues) {
+    if (typeof issue !== 'object' || issue === null) {
+      continue;
+    }
+
+    const { code, message, path, received } = issue as {
+      code?: unknown;
+      message?: unknown;
+      path?: unknown;
+      received?: unknown;
+    };
+    if (code !== 'invalid_type' || !Array.isArray(path) || path.length !== 1) {
+      continue;
+    }
+
+    const receivedNull = received === 'null' || String(message).includes('received null');
+    if (!receivedNull) {
+      continue;
+    }
+
+    const paramName = String(path[0]);
+    if (isRequiredParameter(schema, paramName)) {
+      return paramName;
+    }
+  }
+
+  return undefined;
+}
+
+function isRequiredParameter(schema: ZodSchema, paramName: string): boolean {
+  if (typeof schema !== 'object' || schema === null || !('shape' in schema)) {
+    return false;
+  }
+
+  const shape = (schema as { shape?: unknown }).shape;
+  if (typeof shape !== 'object' || shape === null) {
+    return false;
+  }
+
+  const field = (shape as Record<string, unknown>)[paramName];
+  if (typeof field !== 'object' || field === null) {
+    return false;
+  }
+
+  const isOptional = (field as { isOptional?: unknown }).isOptional;
+  const isNullable = (field as { isNullable?: unknown }).isNullable;
+
+  return (
+    typeof isOptional === 'function' &&
+    typeof isNullable === 'function' &&
+    !isOptional.call(field) &&
+    !isNullable.call(field)
+  );
 }

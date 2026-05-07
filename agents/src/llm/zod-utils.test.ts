@@ -393,6 +393,32 @@ describe('Zod Utils', () => {
         }
       });
 
+      it('should report null required v4 fields as missing values', async () => {
+        const schema = z4.object({
+          name: z4.string(),
+        });
+
+        const result = await parseZodSchema(schema, { name: null });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(String(result.error)).toContain("Received no value for required parameter 'name'");
+        }
+      });
+
+      it('should not report null optional v4 fields as required', async () => {
+        const schema = z4.object({
+          name: z4.string().optional(),
+        });
+
+        const result = await parseZodSchema(schema, { name: null });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(String(result.error)).not.toContain('Received no value for required parameter');
+        }
+      });
+
       it('should handle v4 optional fields', async () => {
         const schema = z4.object({
           name: z4.string(),
@@ -447,6 +473,32 @@ describe('Zod Utils', () => {
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error).toBeDefined();
+        }
+      });
+
+      it('should report null required v3 fields as missing values', async () => {
+        const schema = z3.object({
+          name: z3.string(),
+        });
+
+        const result = await parseZodSchema(schema, { name: null });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(String(result.error)).toContain("Received no value for required parameter 'name'");
+        }
+      });
+
+      it('should not report null optional v3 fields as required', async () => {
+        const schema = z3.object({
+          name: z3.string().optional(),
+        });
+
+        const result = await parseZodSchema(schema, { name: null });
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(String(result.error)).not.toContain('Received no value for required parameter');
         }
       });
 
