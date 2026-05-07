@@ -1,5 +1,25 @@
 # @livekit/agents
 
+## 1.4.0
+
+### Minor Changes
+
+- `voice.AMD` reaches feature parity with python. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix(agents): support constructing `AgentSession` with no arguments - [#1410](https://github.com/livekit/agents-js/pull/1410) ([@u9g](https://github.com/u9g))
+
+- `AMD`: cancel the pre-baked HUMAN/`short_greeting` silence timer when a final STT transcript arrives inside the short-speech window, replacing it with a `long_speech` timer anchored at `speechEndedAt + MACHINE_SILENCE_THRESHOLD_MS` so the LLM verdict gets the final word. Mirrors the python fix in [`livekit/agents#5637`](https://github.com/livekit/agents/pull/5637). - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Port AMD improvements from python `livekit/agents#5584`. `voice.AMD` now exposes the previously hard-coded timing thresholds (`humanSpeechThresholdMs`, `humanSilenceThresholdMs`, `machineSilenceThresholdMs`) and the classification `prompt` as constructor options, defers to the LLM (instead of forcing a HUMAN verdict) when a transcript is already available after a short greeting, and accepts a `participantIdentity` hint plus a `suppressCompatibilityWarning` flag. The classifier now offers two LLM tools — `save_prediction` and `postpone_termination` (capped at 3 extensions × 10s) — letting the model request more audio when the transcript is ambiguous; if the model returns plain JSON instead of tool calls, AMD falls back to the previous content-parsing path. AMD also logs a one-shot warning when the resolved LLM is not in the bundled `EVALUATED_LLM_MODELS` list. - [#1368](https://github.com/livekit/agents-js/pull/1368) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(inference): make `inference.LLM` compatible with openai >= 6.36.0 - [#1411](https://github.com/livekit/agents-js/pull/1411) ([@u9g](https://github.com/u9g))
+
+- Add comments to agent side and inference side fallback adapters - [#1398](https://github.com/livekit/agents-js/pull/1398) ([@tmshapland](https://github.com/tmshapland))
+
+- refactor(agents): replace uuid with crypto.randomUUID - [#1392](https://github.com/livekit/agents-js/pull/1392) ([@benasher44](https://github.com/benasher44))
+
 ## 1.3.4
 
 ### Patch Changes
