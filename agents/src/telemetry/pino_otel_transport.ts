@@ -96,6 +96,7 @@ export class PinoCloudExporter {
   private readonly batchSize: number;
   private readonly flushIntervalMs: number;
   private jwt: string | null = null;
+  private jwtExpiresAt = 0;
   private pendingLogs: any[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
@@ -172,6 +173,9 @@ export class PinoCloudExporter {
       await this.sendLogs(logs);
     } catch (error) {
       this.pendingLogs = [...logs, ...this.pendingLogs];
+      if (this.pendingLogs.length > 10000) {
+        this.pendingLogs = this.pendingLogs.slice(-10000);
+      }
       console.error('[PinoCloudExporter] Failed to flush logs:', error);
     }
   }
@@ -223,7 +227,7 @@ export class PinoCloudExporter {
   }
 
   private async ensureJwt(): Promise<void> {
-    if (this.jwt) return;
+    if (this.jwt && Date.now() < this.jwtExpiresAt) return;
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -235,6 +239,7 @@ export class PinoCloudExporter {
     const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
     token.addObservabilityGrant({ write: true });
     this.jwt = await token.toJwt();
+    this.jwtExpiresAt = Date.now() + 5 * 60 * 60 * 1000;
   }
 
   async shutdown(): Promise<void> {
