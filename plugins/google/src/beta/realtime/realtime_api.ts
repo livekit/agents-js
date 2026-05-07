@@ -109,7 +109,6 @@ interface RealtimeOptions {
   apiVersion?: string;
   geminiTools?: LLMTools;
   thinkingConfig?: types.ThinkingConfig;
-  // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py - 148-149 lines
   toolBehavior?: types.Behavior;
   toolResponseScheduling?: types.FunctionResponseScheduling;
 }
@@ -554,7 +553,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     return this.pendingToolCallIds.size > 0 && !this.isNonBlockingToolBehavior();
   }
 
-  // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/utils.py - 48-74 lines
   private getToolResultsForRealtime(
     ctx: llm.ChatContext,
     vertexai: boolean,
@@ -612,7 +610,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       shouldRestart = true;
     }
 
-    // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py - 541-549 lines
     if (options.toolBehavior !== undefined && this.options.toolBehavior !== options.toolBehavior) {
       this.options.toolBehavior = options.toolBehavior;
       shouldRestart = true;
@@ -1418,7 +1415,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/utils.py - 20-45 lines
       tools:
         this.geminiDeclarations.length > 0 || this.options.geminiTools
           ? [
