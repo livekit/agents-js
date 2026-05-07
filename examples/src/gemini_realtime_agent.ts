@@ -24,9 +24,9 @@ import { z } from 'zod';
 // Supported values:
 //   toolBehavior           : undefined | BLOCKING | NON_BLOCKING
 //   toolResponseScheduling : undefined | SILENT | WHEN_IDLE | INTERRUPT
-//   GET_WEATHER_DELAY_MS : delay before getWeather returns (default 4000)
+//   getWeatherDelayMs      : delay before getWeather returns
 // ---------------------------------------------------------------------------
-const GET_WEATHER_DELAY_MS = Number(process.env.GET_WEATHER_DELAY_MS ?? 4000);
+const getWeatherDelayMs = 4000;
 
 const toolBehavior: google.beta.realtime.Behavior | undefined =
   google.beta.realtime.Behavior.NON_BLOCKING;
@@ -36,7 +36,7 @@ const toolResponseScheduling: google.beta.realtime.FunctionResponseScheduling | 
 console.log(
   `[gemini_realtime_agent] toolBehavior=${toolBehavior ?? 'unset'} ` +
     `toolResponseScheduling=${toolResponseScheduling ?? 'unset'} ` +
-    `getWeatherDelayMs=${GET_WEATHER_DELAY_MS}`,
+    `getWeatherDelayMs=${getWeatherDelayMs}`,
 );
 
 type StoryData = {
@@ -53,7 +53,7 @@ const getWeather = llm.tool({
   }),
   // Deliberately slow so BLOCKING vs NON_BLOCKING is visible.
   execute: async ({ location }) => {
-    await new Promise((resolve) => setTimeout(resolve, GET_WEATHER_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, getWeatherDelayMs));
     return `The weather in ${location} is sunny today.`;
   },
 });
