@@ -4,6 +4,7 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIStatusError,
   AudioByteStream,
   shortuuid,
   tts,
@@ -132,7 +133,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     };
     if (this.opts.voice !== undefined) {
       utterance.voice = this.opts.voice;
-    };
+    }
     if (this.opts.description !== undefined) {
       utterance.description = this.opts.description;
     }
