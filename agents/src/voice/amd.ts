@@ -1,15 +1,24 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import { TrackKind } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
+import { EventEmitter } from 'node:events';
+import type { ReadableStream } from 'node:stream/web';
 import { z } from 'zod';
+import * as inference from '../inference/index.js';
+import type { LLMModels, STTModels } from '../inference/index.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { FunctionCall } from '../llm/chat_context.js';
-import { LLM } from '../llm/llm.js';
+import { LLM, type LLMStream } from '../llm/llm.js';
 import { isFunctionTool, tool } from '../llm/tool_context.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
+import { STT, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { Task, delay, waitForTrackPublication } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -26,22 +35,48 @@ export enum AMDCategory {
   UNCERTAIN = 'uncertain',
 }
 
-export interface AMDResult {
+export interface AMDPredictionEvent {
+  type: 'amd_prediction';
   category: AMDCategory;
   transcript: string;
   reason: string;
   rawResponse: string;
   isMachine: boolean;
+  /** Total speech duration captured before the verdict was settled (ms). */
+  speechDurationMs: number;
+  /** Time between the end of user speech and the verdict emission (ms). */
+  delayMs: number;
 }
 
+export type AMDCallbacks = {
+  amd_prediction: (event: AMDPredictionEvent) => void;
+};
+
 export interface AMDOptions {
-  llm?: LLM;
+  /**
+   * LLM used to classify call greetings. Resolution order:
+   * - `LLM` instance: used as-is (caller-owned; AMD will not close it).
+   * - `string`: treated as a Cloud Inference model id (e.g. `'openai/gpt-4o-mini'`)
+   *   and an inference LLM is constructed (AMD-owned).
+   * - `null`: explicitly opt out of the AMD default and reuse `session.llm`
+   *   (mirrors python `NOT_GIVEN`). Throws if the session has no compatible LLM.
+   * - `undefined` (default): use the bundled default model string.
+   */
+  llm?: LLM | string | null;
+  /**
+   * Dedicated STT used to transcribe call audio for AMD. Resolution order
+   * mirrors `llm` above. When set (or default), AMD subscribes to a private
+   * audio branch from {@link AudioRecognition} and never depends on the
+   * pipeline STT — useful when the session is using a realtime model that
+   * does not surface user transcripts. Pass `null` to disable the dedicated
+   * STT and listen to session-level `UserInputTranscribed` events instead.
+   */
+  stt?: STT | string | null;
   interruptOnMachine?: boolean;
   /** If no final transcript arrives within this window, settle as MACHINE_UNAVAILABLE. */
   noSpeechTimeoutMs?: number;
   /** Hard ceiling for the entire detection. After this, settle with whatever evidence exists. */
   detectionTimeoutMs?: number;
-  maxTranscriptTurns?: number;
   /** Speech longer than this is treated as machine-like (skips the short-greeting heuristic). */
   humanSpeechThresholdMs?: number;
   /** Silence after a short greeting before settling as HUMAN. */
@@ -51,9 +86,10 @@ export interface AMDOptions {
   /** Override the AMD classification system prompt. */
   prompt?: string;
   /**
-   * Restricts span attribution to a specific participant identity. Currently
-   * informational only — the JS AMD listens to session-level events, not a
-   * specific participant track.
+   * Restrict AMD to a specific participant. Used to filter the
+   * `waitForTrackPublication` gate (see python detector.py) and span
+   * attribution. When unset, AMD binds to whichever participant the session
+   * is linked to.
    */
   participantIdentity?: string;
   /**
@@ -68,10 +104,12 @@ const HUMAN_SILENCE_THRESHOLD_MS = 500;
 const MACHINE_SILENCE_THRESHOLD_MS = 1_500;
 const DEFAULT_NO_SPEECH_TIMEOUT_MS = 10_000;
 const DEFAULT_DETECTION_TIMEOUT_MS = 20_000;
-const DEFAULT_MAX_TRANSCRIPT_TURNS = 2;
 
 const MAX_EXTENSIONS = 3;
 const MAX_EXTENSION_MS = 10_000;
+
+const DEFAULT_AMD_LLM_MODEL = 'google/gemini-3.1-flash-lite-preview';
+const DEFAULT_AMD_STT_MODEL = 'cartesia/ink-whisper';
 
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'google/gemini-3.1-flash-lite-preview',
@@ -86,6 +124,12 @@ const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
   'openai/gpt-4.1-nano',
   'openai/gpt-5.2-chat-latest',
   'google/gemini-2.5-flash-lite',
+]);
+
+const EVALUATED_STT_MODELS: ReadonlySet<string> = new Set([
+  'deepgram/nova-3',
+  'assemblyai/universal-streaming-multilingual',
+  'cartesia/ink-whisper',
 ]);
 
 const MACHINE_CATEGORIES: ReadonlySet<AMDCategory> = new Set([
@@ -139,13 +183,21 @@ function warnIfNotEvaluated(
  * Mirrors Python's `_AMDClassifier` two-gate architecture:
  * a result is only emitted when both a **verdict** (from LLM or heuristic) and
  * a **silence gate** (from VAD or timeout) are satisfied.
+ *
+ * Emits `'amd_prediction'` once with the final {@link AMDPredictionEvent} when
+ * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
  */
-export class AMD {
+export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) {
   private readonly llm: LLM;
+  /** Dedicated STT for AMD-only transcription, or `undefined` if listening to session events. */
+  private readonly stt: STT | undefined;
+  /** Whether AMD owns (and must close) the resolved LLM. False when the caller passed an instance. */
+  private readonly llmOwned: boolean;
+  /** Whether AMD owns (and must close) the resolved STT. */
+  private readonly sttOwned: boolean;
   private readonly interruptOnMachine: boolean;
   private readonly noSpeechTimeoutMs: number;
   private readonly detectionTimeoutMs: number;
-  private readonly maxTranscriptTurns: number;
   private readonly humanSpeechThresholdMs: number;
   private readonly humanSilenceThresholdMs: number;
   private readonly machineSilenceThresholdMs: number;
@@ -156,17 +208,37 @@ export class AMD {
   private active = false;
   private settled = false;
   private transcriptParts: string[] = [];
-  private verdictResult: AMDResult | undefined;
+  private verdictResult: AMDPredictionEvent | undefined;
   private machineSilenceReached = false;
   private speechStartedAt: number | undefined;
+  private speechEndedAt: number | undefined;
   private detectGeneration = 0;
   private extensionCount = 0;
 
   private noSpeechTimer: ReturnType<typeof setTimeout> | undefined;
   private detectionTimer: ReturnType<typeof setTimeout> | undefined;
   private silenceTimer: ReturnType<typeof setTimeout> | undefined;
+  private silenceTimerTrigger: 'short_speech' | 'long_speech' | undefined;
 
-  private resolveRun: ((value: AMDResult) => void) | undefined;
+  private sttStream: SpeechStream | undefined;
+  private sttPumpTask: Task<void> | undefined;
+  /**
+   * Aborts pending {@link waitForTrackPublication} calls in
+   * {@link gateNoSpeechTimer}. Without this the room-event listener can
+   * outlive the AMD instance if the participant track never publishes
+   * before the run settles.
+   */
+  private trackGateAbort: AbortController | undefined;
+
+  /**
+   * Tracks the in-flight LLM classification stream so {@link aclose} (and any
+   * settled-after-aclose path) can abort it instead of leaving the network
+   * call running. Mirrors python's `task.cancel()` on the outstanding
+   * classification coroutine.
+   */
+  private currentLLMStream: LLMStream | undefined;
+
+  private resolveRun: ((value: AMDPredictionEvent) => void) | undefined;
   private rejectRun: ((reason?: unknown) => void) | undefined;
   private span: Span | undefined;
 
@@ -174,18 +246,18 @@ export class AMD {
     private readonly session: AgentSession,
     options: AMDOptions = {},
   ) {
-    const llm = options.llm ?? this.resolveSessionLLM();
-    if (!llm) {
-      throw new Error(
-        'AMD requires an LLM. Pass `options.llm` when the session is not using a pipeline LLM.',
-      );
-    }
-
+    super();
+    const { llm, owned: llmOwned } = this.resolveLLM(options.llm);
     this.llm = llm;
+    this.llmOwned = llmOwned;
+
+    const sttResolution = this.resolveSTT(options.stt);
+    this.stt = sttResolution.stt;
+    this.sttOwned = sttResolution.owned;
+
     this.interruptOnMachine = options.interruptOnMachine ?? true;
     this.noSpeechTimeoutMs = options.noSpeechTimeoutMs ?? DEFAULT_NO_SPEECH_TIMEOUT_MS;
     this.detectionTimeoutMs = options.detectionTimeoutMs ?? DEFAULT_DETECTION_TIMEOUT_MS;
-    this.maxTranscriptTurns = options.maxTranscriptTurns ?? DEFAULT_MAX_TRANSCRIPT_TURNS;
     this.humanSpeechThresholdMs = options.humanSpeechThresholdMs ?? HUMAN_SPEECH_THRESHOLD_MS;
     this.humanSilenceThresholdMs = options.humanSilenceThresholdMs ?? HUMAN_SILENCE_THRESHOLD_MS;
     this.machineSilenceThresholdMs =
@@ -195,12 +267,22 @@ export class AMD {
 
     if (!options.suppressCompatibilityWarning) {
       warnIfNotEvaluated(this.llm.model, EVALUATED_LLM_MODELS, 'llm');
+      if (this.stt) {
+        warnIfNotEvaluated(this.stt.model, EVALUATED_STT_MODELS, 'stt');
+      }
     }
+
+    // Mirrors python detector.py: AMD registers itself with the session so
+    // higher-level callers (and tests) can read `session.amd` to introspect
+    // the active classifier. We use a duck-typed access so the test mocks in
+    // amd.test.ts (which substitute a plain EventEmitter for AgentSession)
+    // continue to work without implementing the full session surface.
+    (this.session as unknown as { _setAmd?: (amd: AMD | null) => void })._setAmd?.(this);
   }
 
   // ─── public API ──────────────────────────────────────────────────────────────
 
-  async execute(): Promise<AMDResult> {
+  async execute(): Promise<AMDPredictionEvent> {
     return tracer.startActiveSpan(
       async (span) => {
         if (this.active) {
@@ -221,11 +303,13 @@ export class AMD {
         }
 
         try {
-          const result = await new Promise<AMDResult>((resolve, reject) => {
+          const result = await new Promise<AMDPredictionEvent>((resolve, reject) => {
             this.resolveRun = resolve;
             this.rejectRun = reject;
             this.subscribe();
-            this.startTimers();
+            this.startDetectionTimer();
+            this.gateNoSpeechTimer();
+            this.startSTTPump();
           });
           return result;
         } finally {
@@ -248,8 +332,39 @@ export class AMD {
     // a postpone_termination resolved after aclose could install a fresh
     // silenceTimer that survives cleanup and triggers session.interrupt.
     this.settled = true;
+
+    // Abort any in-flight LLM classification so the network call doesn't
+    // outlive the AMD instance. The async iterator inside `detect()` will
+    // throw and the surrounding try/finally clears `currentLLMStream`.
+    if (this.currentLLMStream) {
+      try {
+        this.currentLLMStream.close();
+      } catch {
+        // already closed
+      }
+      this.currentLLMStream = undefined;
+    }
+
     if (this.active && this.rejectRun) {
       this.rejectRun(new Error('AMD closed'));
+    }
+    (this.session as unknown as { _setAmd?: (amd: AMD | null) => void })._setAmd?.(null);
+
+    // Close AMD-owned resources. Caller-supplied LLM/STT instances are NOT
+    // closed here — the caller retains ownership for reuse across runs.
+    if (this.sttOwned && this.stt) {
+      try {
+        await this.stt.close();
+      } catch (e) {
+        log().warn({ err: e }, 'AMD failed to close owned STT');
+      }
+    }
+    if (this.llmOwned) {
+      try {
+        await this.llm.aclose();
+      } catch (e) {
+        log().warn({ err: e }, 'AMD failed to close owned LLM');
+      }
     }
   }
 
@@ -261,6 +376,8 @@ export class AMD {
     this.verdictResult = undefined;
     this.machineSilenceReached = false;
     this.speechStartedAt = undefined;
+    this.speechEndedAt = undefined;
+    this.silenceTimerTrigger = undefined;
     this.detectGeneration = 0;
     this.extensionCount = 0;
     this.resolveRun = undefined;
@@ -273,9 +390,162 @@ export class AMD {
     this.session.on(AgentSessionEventTypes.Close, this.handleClose);
   }
 
-  private startTimers(): void {
-    this.noSpeechTimer = setTimeout(() => this.settleNoSpeech(), this.noSpeechTimeoutMs);
+  /**
+   * The detection timer is the hard ceiling on the entire run and starts as
+   * soon as `execute()` is called — even before the participant audio track is
+   * published — so a stuck/never-published track cannot make AMD hang forever.
+   */
+  private startDetectionTimer(): void {
     this.detectionTimer = setTimeout(() => this.settleDetectionTimeout(), this.detectionTimeoutMs);
+  }
+
+  /**
+   * The no-speech timer measures how long we've been listening with nothing
+   * coming back. It only makes sense after the participant track is actually
+   * subscribed (otherwise we'd start counting silence against an audio source
+   * that hasn't been wired up yet). Mirrors python detector.py's
+   * `_setup` → `wait_for_track_publication` → `start_timers` flow.
+   */
+  private startNoSpeechTimer(): void {
+    if (this.settled || this.noSpeechTimer !== undefined) return;
+    this.noSpeechTimer = setTimeout(() => this.settleNoSpeech(), this.noSpeechTimeoutMs);
+  }
+
+  /**
+   * If the session has a `_roomIO`, defer the no-speech timer until the
+   * participant's audio track is both published and subscribed. Without
+   * `_roomIO` (e.g. unit tests, remote-session callers without participants),
+   * fall back to starting the timer immediately.
+   */
+  /**
+   * Mirrors python detector.py `_run_stt`. When AMD owns its STT, it runs a
+   * private pump that:
+   *  1. Tees a fresh branch off the participant audio in `AudioRecognition`.
+   *  2. Pushes frames into the STT stream.
+   *  3. Forwards FINAL_TRANSCRIPTs into the classifier with `source = 'amd_stt'`.
+   *
+   * The session may not yet have an `AgentActivity` (and therefore no audio
+   * stream) by the time AMD constructs its tasks, so we poll briefly until a
+   * stream is available, bounded by the abort signal / settled state.
+   */
+  private startSTTPump(): void {
+    if (!this.stt) return;
+    this.sttPumpTask = Task.from(({ signal }) => this.runSTTPump(signal));
+    this.sttPumpTask.result.catch((err) => {
+      if (this.settled) return;
+      log().warn({ err }, 'AMD dedicated STT pump exited with error');
+    });
+  }
+
+  private async runSTTPump(signal: AbortSignal): Promise<void> {
+    if (!this.stt) return;
+
+    let audioStream: ReadableStream<AudioFrame> | undefined;
+    while (!signal.aborted && !this.settled) {
+      audioStream = this.session._subscribeAudioStream?.();
+      if (audioStream) break;
+      try {
+        await delay(100, { signal });
+      } catch {
+        return;
+      }
+    }
+    if (!audioStream || this.settled || signal.aborted) return;
+
+    const sttStream = this.stt.stream();
+    this.sttStream = sttStream;
+
+    const sendPump = (async () => {
+      const reader = audioStream!.getReader();
+      try {
+        while (!signal.aborted && !this.settled) {
+          const { done, value } = await reader.read();
+          if (done || !value) break;
+          try {
+            sttStream.pushFrame(value);
+          } catch {
+            break;
+          }
+        }
+      } finally {
+        // Cancel (rather than just release) so the upstream IdentityTransform
+        // closes and `AudioRecognition.subscribeAudioStream`'s registered
+        // writer's `.closed` promise resolves — which prunes the entry from
+        // `subscriberWriters` and stops the broadcast transform from buffering
+        // audio into a stream nobody reads.
+        try {
+          await reader.cancel();
+        } catch {
+          // already cancelled / errored
+        }
+        try {
+          sttStream.endInput();
+        } catch {
+          // already ended/closed
+        }
+      }
+    })();
+
+    const recvPump = (async () => {
+      try {
+        for await (const event of sttStream) {
+          if (signal.aborted || this.settled) break;
+          if (event.type !== SpeechEventType.FINAL_TRANSCRIPT) continue;
+          const text = event.alternatives?.[0]?.text?.trim();
+          if (!text) continue;
+          this.consumeTranscript(text);
+        }
+      } catch (err) {
+        if (this.settled) return;
+        log().debug({ err }, 'AMD dedicated STT receive pump error');
+      }
+    })();
+
+    await Promise.allSettled([sendPump, recvPump]);
+  }
+
+  private gateNoSpeechTimer(): void {
+    const roomIO = this.session._roomIO;
+    const room = roomIO?.rtcRoom;
+    if (!room || !room.isConnected) {
+      // Mirrors python: "session room_io unavailable, starting amd timers
+      // immediately as fallback".
+      this.startNoSpeechTimer();
+      return;
+    }
+
+    // Resolve which participant's audio track we're gating on. Mirrors the
+    // docstring on `participantIdentity`: explicit option wins; otherwise
+    // bind to the session's linked participant; otherwise pass `undefined`
+    // so `waitForTrackPublication` matches the first remote participant
+    // that publishes a matching audio track. Passing `''` here would make
+    // `matches()` reject every real participant (identity !== '' is always
+    // true) and the promise would hang forever.
+    const targetIdentity = this.participantIdentity ?? roomIO?.linkedParticipant?.identity;
+
+    this.trackGateAbort = new AbortController();
+    waitForTrackPublication({
+      room,
+      identity: targetIdentity,
+      kind: TrackKind.KIND_AUDIO,
+      waitForSubscription: true,
+      signal: this.trackGateAbort.signal,
+    })
+      .then(() => {
+        if (!this.settled) {
+          this.startNoSpeechTimer();
+        }
+      })
+      .catch((err) => {
+        // Track gating is best-effort: if waiting for publication fails (e.g.
+        // room disconnected, aborted by `cleanup`, or the function rejects),
+        // fall back to starting the timer so the run still settles within
+        // `noSpeechTimeoutMs`.
+        log().debug({ err }, 'AMD track gating failed; starting no-speech timer immediately');
+        if (!this.settled) {
+          this.startNoSpeechTimer();
+        }
+      });
   }
 
   private cleanup(): void {
@@ -285,6 +555,30 @@ export class AMD {
     this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.handleTranscript);
     this.session.off(AgentSessionEventTypes.UserStateChanged, this.handleUserStateChanged);
     this.session.off(AgentSessionEventTypes.Close, this.handleClose);
+
+    // Detach the track-publication listener — without this, a run that
+    // settled via `detectionTimer` before the participant track was ever
+    // published would leak its `RoomEvent.TrackSubscribed` listener until
+    // the room disconnects.
+    if (this.trackGateAbort) {
+      this.trackGateAbort.abort();
+      this.trackGateAbort = undefined;
+    }
+
+    // Tear down the dedicated STT pump (if any). We close the stream first so
+    // pushFrame/iter awaits return promptly, then cancel the pump task.
+    if (this.sttStream) {
+      try {
+        this.sttStream.close();
+      } catch {
+        // already closed
+      }
+      this.sttStream = undefined;
+    }
+    if (this.sttPumpTask) {
+      this.sttPumpTask.cancel();
+      this.sttPumpTask = undefined;
+    }
   }
 
   private clearTimer(name: 'noSpeech' | 'detection' | 'silence'): void {
@@ -292,6 +586,14 @@ export class AMD {
     if (this[key]) {
       clearTimeout(this[key]);
       this[key] = undefined;
+      // Mirrors python `_AMDClassifier`: only clear the trigger flag when a
+      // live timer was actually pending. This keeps timer/trigger state in
+      // lockstep, so a stale `clearTimer('silence')` call (e.g. in `cleanup`
+      // after the timer naturally fired) cannot stomp on a trigger that was
+      // freshly set by another path.
+      if (name === 'silence') {
+        this.silenceTimerTrigger = undefined;
+      }
     }
   }
 
@@ -301,7 +603,7 @@ export class AMD {
    * Ref: python classifier.py `_set_verdict` — stores the LLM/heuristic verdict.
    * Emission is deferred until the silence gate also opens.
    */
-  private setVerdict(result: AMDResult): void {
+  private setVerdict(result: AMDPredictionEvent): void {
     this.verdictResult = result;
     this.tryEmitResult();
   }
@@ -318,7 +620,7 @@ export class AMD {
     this.finish(this.verdictResult);
   }
 
-  private finish(result: AMDResult): void {
+  private finish(result: AMDPredictionEvent): void {
     if (this.settled) {
       return;
     }
@@ -329,6 +631,22 @@ export class AMD {
       this.session.interrupt({ force: true }).await.catch(() => {});
     }
     this.resolveRun?.(result);
+
+    // Mirrors python detector.py: forward the prediction to the SessionHost
+    // (so a connected `RemoteSession` peer receives an `amd_prediction`
+    // event) and then emit on this `AMD` instance for direct listeners.
+    // Duck-typed access keeps the test mocks (which substitute a plain
+    // EventEmitter for AgentSession) working without wiring up a host.
+    try {
+      (
+        this.session as unknown as {
+          _onAmdPrediction?: (event: AMDPredictionEvent) => void;
+        }
+      )._onAmdPrediction?.(result);
+    } catch (err) {
+      log().debug({ err }, 'AMD: session host failed to handle amd_prediction');
+    }
+    this.emit('amd_prediction', result);
   }
 
   // ─── timer callbacks ─────────────────────────────────────────────────────────
@@ -339,13 +657,17 @@ export class AMD {
    * short-greeting paths) and always opens the silence gate.
    */
   private onSilenceTimerFired(category?: AMDCategory, reason?: string): void {
+    this.clearTimer('silence');
     if (category && reason && !this.verdictResult) {
       this.setVerdict({
+        type: 'amd_prediction',
         category,
         reason,
         transcript: this.joinTranscript(),
         rawResponse: '',
         isMachine: isMachineCategory(category),
+        speechDurationMs: this.computeSpeechDurationMs(),
+        delayMs: this.computeDelayMs(),
       });
     }
     this.machineSilenceReached = true;
@@ -386,6 +708,7 @@ export class AMD {
     }
 
     const speechDurationMs = ev.createdAt - (this.speechStartedAt ?? ev.createdAt);
+    this.speechEndedAt = ev.createdAt;
 
     this.clearTimer('silence');
 
@@ -398,11 +721,13 @@ export class AMD {
           () => this.onSilenceTimerFired(AMDCategory.HUMAN, 'short_greeting'),
           this.humanSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'short_speech';
       } else {
         this.silenceTimer = setTimeout(
           () => this.onSilenceTimerFired(),
           this.machineSilenceThresholdMs,
         );
+        this.silenceTimerTrigger = 'long_speech';
       }
       return;
     }
@@ -412,25 +737,47 @@ export class AMD {
       () => this.onSilenceTimerFired(),
       this.machineSilenceThresholdMs,
     );
+    this.silenceTimerTrigger = 'long_speech';
   };
 
   /**
-   * Ref: python classifier.py `push_text` — cancels the no-speech timer and
-   * feeds transcript text to the LLM classifier.
+   * Session-level transcript handler. Mirrors python `_AMDClassifier.push_text`'s
+   * source filtering: when AMD has its own dedicated STT we ignore session-level
+   * events entirely (the dedicated pump in {@link runSTTPump} drives transcripts
+   * via {@link consumeTranscript}); when no dedicated STT is configured we
+   * consume session events as the only transcript source.
    */
   private readonly handleTranscript = (ev: UserInputTranscribedEvent): void => {
-    if (!ev.isFinal) {
-      return;
-    }
+    if (this.stt) return;
+    if (!ev.isFinal) return;
     const transcript = ev.transcript.trim();
-    if (!transcript) {
-      return;
+    if (!transcript) return;
+    this.consumeTranscript(transcript);
+  };
+
+  /**
+   * Shared transcript ingestion: cancels the no-speech timer, refreshes the
+   * silence-gate target if we were on the short-greeting path, and fires off
+   * an LLM classification on the accumulated transcript.
+   */
+  private consumeTranscript(transcript: string): void {
+    if (this.settled) return;
+    if (this.silenceTimer && this.silenceTimerTrigger === 'short_speech') {
+      this.clearTimer('silence');
+      if (this.speechEndedAt !== undefined) {
+        const remaining = Math.max(
+          0,
+          this.speechEndedAt + this.machineSilenceThresholdMs - Date.now(),
+        );
+        this.silenceTimer = setTimeout(() => this.onSilenceTimerFired(), remaining);
+        this.silenceTimerTrigger = 'long_speech';
+      }
     }
 
     this.clearTimer('noSpeech');
     this.transcriptParts.push(transcript);
     this.scheduleLLMClassification();
-  };
+  }
 
   private readonly handleClose = (): void => {
     this.onSilenceTimerFired(AMDCategory.UNCERTAIN, 'session_closed');
@@ -465,29 +812,85 @@ export class AMD {
       return;
     }
 
-    if (
-      result.category !== AMDCategory.UNCERTAIN ||
-      this.transcriptParts.length >= this.maxTranscriptTurns
-    ) {
+    // Mirrors python classifier.py: a confident verdict is committed immediately,
+    // while UNCERTAIN is treated as "wait for more evidence" — the LLM signals
+    // it via the `postpone_termination` tool, and the silence/detection timers
+    // bound how long we'll keep waiting.
+    if (result.category !== AMDCategory.UNCERTAIN) {
       this.setVerdict(result);
     }
   }
 
   // ─── helpers ─────────────────────────────────────────────────────────────────
 
-  private resolveSessionLLM(): LLM | undefined {
-    return this.session.llm instanceof LLM ? this.session.llm : undefined;
+  /**
+   * Mirrors python `_resolve_classifier`.
+   * - `LLM` instance: caller-owned, used as-is.
+   * - string: construct a Cloud Inference LLM (AMD-owned).
+   * - `null`: explicit opt-out — fall back to `session.llm` (must be an LLM).
+   * - `undefined`: bundled default model.
+   */
+  private resolveLLM(option: LLM | string | null | undefined): { llm: LLM; owned: boolean } {
+    if (option instanceof LLM) {
+      return { llm: option, owned: false };
+    }
+    if (typeof option === 'string') {
+      return { llm: this.constructInferenceLLM(option), owned: true };
+    }
+    if (option === null) {
+      const sessionLLM = this.session.llm;
+      if (sessionLLM instanceof LLM) {
+        return { llm: sessionLLM, owned: false };
+      }
+      throw new Error(
+        'AMD was configured with `llm: null` but the session has no LLM to fall back on.',
+      );
+    }
+    return { llm: this.constructInferenceLLM(DEFAULT_AMD_LLM_MODEL), owned: true };
+  }
+
+  /**
+   * Mirrors python `_InferenceSTT(stt) if isinstance(stt, str) else stt`.
+   * - `STT` instance: caller-owned.
+   * - string: AMD-owned Cloud Inference STT.
+   * - `null`: explicitly opt out of a dedicated STT (listen to session events).
+   * - `undefined`: bundled default model.
+   */
+  private resolveSTT(option: STT | string | null | undefined): {
+    stt: STT | undefined;
+    owned: boolean;
+  } {
+    if (option instanceof STT) {
+      return { stt: option, owned: false };
+    }
+    if (typeof option === 'string') {
+      return { stt: this.constructInferenceSTT(option), owned: true };
+    }
+    if (option === null) {
+      return { stt: undefined, owned: false };
+    }
+    return { stt: this.constructInferenceSTT(DEFAULT_AMD_STT_MODEL), owned: true };
+  }
+
+  private constructInferenceLLM(model: string): LLM {
+    return new inference.LLM({ model: model as LLMModels });
+  }
+
+  private constructInferenceSTT(model: string): STT {
+    return new inference.STT({ model: model as STTModels });
   }
 
   private joinTranscript(): string {
     return this.transcriptParts.join('\n');
   }
 
-  private setSpanAttributes(result: AMDResult): void {
+  private setSpanAttributes(result: AMDPredictionEvent): void {
     this.span?.setAttribute(traceTypes.ATTR_AMD_CATEGORY, result.category);
     this.span?.setAttribute(traceTypes.ATTR_AMD_REASON, result.reason);
     this.span?.setAttribute(traceTypes.ATTR_AMD_IS_MACHINE, result.isMachine);
-    this.span?.setAttribute(traceTypes.ATTR_USER_TRANSCRIPT, result.transcript);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_SPEECH_DURATION, result.speechDurationMs);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_DELAY, result.delayMs);
+    this.span?.setAttribute(traceTypes.ATTR_AMD_TRANSCRIPT, result.transcript);
   }
 
   /**
@@ -499,8 +902,8 @@ export class AMD {
    * LLMs in tests, or providers that don't support `toolChoice='required'`),
    * we fall back to the pre-port JSON-content parsing path.
    */
-  private async detect(transcript: string, generation: number): Promise<AMDResult> {
-    let savedResult: AMDResult | undefined;
+  private async detect(transcript: string, generation: number): Promise<AMDPredictionEvent> {
+    let savedResult: AMDPredictionEvent | undefined;
 
     // Stale-classification guard: if a newer transcript has bumped the
     // generation counter while this LLM call was in flight, tool side effects
@@ -526,11 +929,14 @@ export class AMD {
         const normalized = parseCategory(label);
         if (normalized !== AMDCategory.UNCERTAIN) {
           savedResult = {
+            type: 'amd_prediction',
             category: normalized,
             reason: 'llm',
             transcript,
             rawResponse: '',
             isMachine: isMachineCategory(normalized),
+            speechDurationMs: this.computeSpeechDurationMs(),
+            delayMs: this.computeDelayMs(),
           };
         }
         return 'saved';
@@ -581,16 +987,25 @@ export class AMD {
     });
 
     const stream = this.llm.chat({ chatCtx, toolCtx, toolChoice: 'required' });
+    this.currentLLMStream = stream;
     const chunks: string[] = [];
     const toolCalls: FunctionCall[] = [];
-    for await (const chunk of stream) {
-      const delta = chunk.delta;
-      if (!delta) continue;
-      if (delta.content) {
-        chunks.push(delta.content);
+    try {
+      for await (const chunk of stream) {
+        const delta = chunk.delta;
+        if (!delta) continue;
+        if (delta.content) {
+          chunks.push(delta.content);
+        }
+        if (delta.toolCalls && delta.toolCalls.length > 0) {
+          toolCalls.push(...delta.toolCalls);
+        }
       }
-      if (delta.toolCalls && delta.toolCalls.length > 0) {
-        toolCalls.push(...delta.toolCalls);
+    } finally {
+      // Only clear if we still own it: a second classification could have
+      // started and overwritten the field while we were iterating.
+      if (this.currentLLMStream === stream) {
+        this.currentLLMStream = undefined;
       }
     }
     const rawResponse = chunks.join('');
@@ -625,14 +1040,32 @@ export class AMD {
     // Fallback: plain-JSON content (legacy / non-tool LLM responses).
     const parsed = this.parseDetection(rawResponse);
     return {
+      type: 'amd_prediction',
       ...parsed,
       transcript,
       rawResponse,
       isMachine: isMachineCategory(parsed.category),
+      speechDurationMs: this.computeSpeechDurationMs(),
+      delayMs: this.computeDelayMs(),
     };
   }
 
-  private parseDetection(rawResponse: string): Pick<AMDResult, 'category' | 'reason'> {
+  private computeSpeechDurationMs(): number {
+    if (this.speechStartedAt === undefined) {
+      return 0;
+    }
+    const end = this.speechEndedAt ?? Date.now();
+    return Math.max(0, end - this.speechStartedAt);
+  }
+
+  private computeDelayMs(): number {
+    if (this.speechEndedAt === undefined) {
+      return 0;
+    }
+    return Math.max(0, Date.now() - this.speechEndedAt);
+  }
+
+  private parseDetection(rawResponse: string): Pick<AMDPredictionEvent, 'category' | 'reason'> {
     const normalized = rawResponse.trim();
     const jsonStart = normalized.indexOf('{');
     const jsonEnd = normalized.lastIndexOf('}');

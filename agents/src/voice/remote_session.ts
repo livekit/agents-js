@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Timestamp } from '@bufbuild/protobuf';
+import { Duration, Timestamp } from '@bufbuild/protobuf';
 import { AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -25,6 +25,7 @@ import type {
 import { Future, Task, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
+import { AMDCategory, type AMDPredictionEvent } from './amd.js';
 import {
   AgentSessionEventTypes,
   type AgentState,
@@ -59,6 +60,7 @@ export type RemoteSessionEventTypes =
   | 'user_input_transcribed'
   | 'function_tools_executed'
   | 'overlapping_speech'
+  | 'amd_prediction'
   | 'session_usage'
   | 'error';
 
@@ -70,6 +72,7 @@ export type RemoteSessionCallbacks = {
   user_input_transcribed: (ev: pb.AgentSessionEvent_UserInputTranscribed) => void;
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
+  amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
@@ -242,6 +245,14 @@ const USER_STATE_MAP: Record<UserState, pb.UserState> = {
   away: pb.UserState.US_AWAY,
 };
 
+const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
+  [AMDCategory.HUMAN]: pb.AmdCategory.AMD_HUMAN,
+  [AMDCategory.MACHINE_IVR]: pb.AmdCategory.AMD_MACHINE_IVR,
+  [AMDCategory.MACHINE_VM]: pb.AmdCategory.AMD_MACHINE_VM,
+  [AMDCategory.MACHINE_UNAVAILABLE]: pb.AmdCategory.AMD_MACHINE_UNAVAILABLE,
+  [AMDCategory.UNCERTAIN]: pb.AmdCategory.AMD_UNCERTAIN,
+};
+
 // ===========================================================================
 // Chat item / timestamp conversion helpers
 // ===========================================================================
@@ -251,6 +262,15 @@ function msToTimestamp(ms: number): Timestamp {
 
 function nowTimestamp(): Timestamp {
   return Timestamp.fromDate(new Date());
+}
+
+function msToDuration(ms: number): Duration {
+  const wholeSeconds = Math.trunc(ms / 1000);
+  const remainderMs = ms - wholeSeconds * 1000;
+  return new Duration({
+    seconds: BigInt(wholeSeconds),
+    nanos: Math.round(remainderMs * 1_000_000),
+  });
 }
 
 function chatItemToProto(item: ChatItem): pb.ChatContext_ChatItem {
@@ -680,6 +700,24 @@ export class SessionHost {
     );
   };
 
+  /**
+   * @internal — forwards an AMD prediction to the connected
+   * {@link RemoteSession} peer. Mirrors python
+   * `SessionHost._on_amd_prediction`.
+   */
+  _onAmdPrediction(event: AMDPredictionEvent): void {
+    this.emitEvent({
+      case: 'amdPrediction',
+      value: new pb.AgentSessionEvent_AmdPrediction({
+        speechDuration: msToDuration(event.speechDurationMs),
+        delay: msToDuration(event.delayMs),
+        category: AMD_CATEGORY_MAP[event.category],
+        reason: event.reason,
+        transcript: event.transcript,
+      }),
+    });
+  }
+
   private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
     try {
       await this.handleRequest(req);
@@ -946,6 +984,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'overlappingSpeech':
         this.emit('overlapping_speech', ev.value);
+        break;
+      case 'amdPrediction':
+        this.emit('amd_prediction', ev.value);
         break;
       case 'sessionUsageUpdated':
         this.emit('session_usage', ev.value);
