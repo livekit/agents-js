@@ -6,16 +6,15 @@ import { z } from 'zod';
 import { type JobContext, getJobContext } from '../job.js';
 import { log } from '../log.js';
 import { Task, delay } from '../utils.js';
-import { type AgentSession } from '../voice/agent_session.js';
-import { createToolOutput } from '../voice/generation.js';
 import { RunContext, type UnknownUserData } from '../voice/run_context.js';
-import { FunctionCall, type FunctionCallOutput } from './chat_context.js';
+import { FunctionCall, FunctionCallOutput } from './chat_context.js';
 import {
   type FunctionTool,
   type JSONObject,
   type ToolContext,
   ToolError,
   type ToolOptions,
+  isToolError,
   tool,
 } from './tool_context.js';
 import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
@@ -53,6 +52,11 @@ type PendingUpdate<UserData = UnknownUserData> = {
 
 type ToolItem = FunctionCall | FunctionCallOutput;
 
+type AsyncToolSession<UserData = UnknownUserData> = RunContext<UserData>['session'] & {
+  agentState: 'initializing' | 'idle' | 'listening' | 'thinking' | 'speaking';
+  _toolItemsAdded: (items: ToolItem[]) => void;
+};
+
 const runningTasks = new Map<
   string,
   { jobCtx: JobContext | undefined; task: RunningTask<UnknownUserData> }
@@ -83,14 +87,32 @@ function makeToolItems(
   output: unknown,
   callId: string,
 ): ToolItem[] | undefined {
-  const toolOutput = createToolOutput({
-    toolCall: cloneFunctionCall(functionCall, callId),
-    output,
-    exception: output instanceof Error ? output : undefined,
-  });
+  const toolCall = cloneFunctionCall(functionCall, callId);
 
-  if (!toolOutput.toolCallOutput) return undefined;
-  return [toolOutput.toolCall, toolOutput.toolCallOutput];
+  if (output instanceof Error) {
+    return [
+      toolCall,
+      FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: isToolError(output) ? output.message : 'An internal error occurred',
+        isError: true,
+      }),
+    ];
+  }
+
+  const serializedOutput = JSON.stringify(output);
+  if (serializedOutput === undefined) return undefined;
+
+  return [
+    toolCall,
+    FunctionCallOutput.create({
+      name: toolCall.name,
+      callId: toolCall.callId,
+      output: serializedOutput,
+      isError: false,
+    }),
+  ];
 }
 
 function addConfirmDuplicateParameter<Parameters extends JSONObject>(
@@ -427,7 +449,7 @@ export class AsyncToolset<UserData = UnknownUserData> {
     });
   }
 
-  private async deliverReply(session: AgentSession<UserData>): Promise<void> {
+  private async deliverReply(session: AsyncToolSession<UserData>): Promise<void> {
     await waitForInactive(session);
 
     const updates = this.pendingUpdates;
@@ -511,7 +533,7 @@ export class AsyncToolset<UserData = UnknownUserData> {
   }
 }
 
-async function waitForInactive(session: AgentSession): Promise<void> {
+async function waitForInactive(session: AsyncToolSession): Promise<void> {
   while (session.agentState === 'speaking' || session.agentState === 'thinking') {
     await delay(50);
   }
