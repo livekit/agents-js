@@ -282,7 +282,7 @@ export class AgentSession<
 
   private logger = log();
 
-  constructor(options: AgentSessionOptions<UserData>) {
+  constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
     const { agentSessionOptions: opts, legacyVoiceOptions } =
