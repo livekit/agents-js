@@ -19,8 +19,8 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 // Test scenarios for the new `toolBehavior` / `toolResponseScheduling` feature.
 // Switch by setting env vars before launching, e.g.:
-//   TOOL_BEHAVIOR=NON_BLOCKING TOOL_SCHEDULING=WHEN_IDLE \
-//     pnpm dlx tsx ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
+//   export TOOL_BEHAVIOR=NON_BLOCKING TOOL_SCHEDULING=WHEN_IDLE GET_WEATHER_DELAY_MS=4000
+//   pnpm build && node ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
 //
 // Supported values:
 //   TOOL_BEHAVIOR        : DEFAULT (omit) | BLOCKING | NON_BLOCKING
@@ -56,31 +56,6 @@ console.log(
     `getWeatherDelayMs=${GET_WEATHER_DELAY_MS}`,
 );
 
-// #region debug log
-const debugLog = (
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-) => {
-  fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Debug-Session-Id': '564e0a',
-    },
-    body: JSON.stringify({
-      sessionId: '564e0a',
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-};
-// #endregion
-
 type StoryData = {
   name?: string;
   location?: string;
@@ -95,19 +70,8 @@ const getWeather = llm.tool({
   }),
   // Deliberately slow so BLOCKING vs NON_BLOCKING is visible.
   execute: async ({ location }) => {
-    const startedAt = Date.now();
-    debugLog('H5', 'gemini_realtime_agent.ts:getWeather:start', 'tool execution started', {
-      location,
-      delayMs: GET_WEATHER_DELAY_MS,
-    });
     await new Promise((resolve) => setTimeout(resolve, GET_WEATHER_DELAY_MS));
-    const result = `The weather in ${location} is sunny today.`;
-    debugLog('H5', 'gemini_realtime_agent.ts:getWeather:end', 'tool execution finished', {
-      location,
-      elapsedMs: Date.now() - startedAt,
-      result,
-    });
-    return result;
+    return `The weather in ${location} is sunny today.`;
   },
 });
 
@@ -118,7 +82,6 @@ const toggleLight = llm.tool({
     switchTo: z.enum(['on', 'off']).describe('The state to turn the light to'),
   }),
   execute: async ({ room, switchTo }) => {
-    debugLog('H5', 'gemini_realtime_agent.ts:toggleLight', 'tool executed', { room, switchTo });
     return `The light in the ${room} is now ${switchTo}.`;
   },
 });

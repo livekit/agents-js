@@ -139,6 +139,13 @@ interface ResponseGeneration {
   _done: boolean;
 }
 
+interface ToolCallStatus {
+  name: string;
+  status: 'pending' | 'continuing' | 'completed' | 'cancelled';
+  willContinueSent: boolean;
+  createdAt: number;
+}
+
 /**
  * Google Realtime Model for real-time voice conversations with Gemini models
  */
@@ -460,6 +467,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  private toolCallStatuses = new Map<string, ToolCallStatus>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
   #client: GoogleGenAI;
@@ -523,6 +531,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
       this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
       this.generationPendingTurnComplete = undefined;
@@ -535,6 +544,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.sessionShouldClose.set();
       this.messageChannel = new Queue();
     }
+  }
+
+  private isNonBlockingToolBehavior(): boolean {
+    return this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+  }
+
+  private shouldBlockRealtimeInputForPendingTools(): boolean {
+    return this.pendingToolCallIds.size > 0 && !this.isNonBlockingToolBehavior();
   }
 
   // Ref: python livekit-plugins/livekit-plugins-google/livekit/plugins/google/utils.py - 48-74 lines
@@ -562,38 +579,16 @@ export class RealtimeSession extends llm.RealtimeSession {
           response.id = item.callId;
         }
 
+        const status = this.toolCallStatuses.get(item.callId);
+        if (status?.willContinueSent) {
+          response.willContinue = false;
+          status.status = 'completed';
+          this.toolCallStatuses.set(item.callId, status);
+        }
+
         toolResponses.push(response);
       }
     }
-
-    // #region debug log
-    if (toolResponses.length > 0) {
-      fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Debug-Session-Id': '564e0a',
-        },
-        body: JSON.stringify({
-          sessionId: '564e0a',
-          hypothesisId: 'H3/H4',
-          location: 'realtime_api.ts:getToolResultsForRealtime',
-          message: 'tool function responses being sent to Gemini',
-          data: {
-            optsToolResponseScheduling: this.options.toolResponseScheduling ?? null,
-            vertexai,
-            toolResponses: toolResponses.map((r) => ({
-              name: r.name,
-              hasId: r.id !== undefined,
-              scheduling: r.scheduling ?? null,
-              schedulingPresent: r.scheduling !== undefined,
-            })),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
 
     return toolResponses.length > 0 ? { functionResponses: toolResponses } : undefined;
   }
@@ -783,7 +778,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.pendingToolCallIds.size > 0) return;
+    if (this.shouldBlockRealtimeInputForPendingTools()) {
+      return;
+    }
 
     // Track that we've received audio input
     this.hasReceivedAudioInput = true;
@@ -881,7 +878,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    if (this.pendingToolCallIds.size > 0) return;
+    if (this.shouldBlockRealtimeInputForPendingTools()) {
+      return;
+    }
 
     if (!this.inUserActivity) {
       this.inUserActivity = true;
@@ -1123,14 +1122,18 @@ export class RealtimeSession extends llm.RealtimeSession {
                 });
               } finally {
                 for (const fr of functionResponses) {
-                  if (fr?.id) this.pendingToolCallIds.delete(fr.id);
+                  if (fr?.id && fr.willContinue !== true) {
+                    this.pendingToolCallIds.delete(fr.id);
+                  }
                 }
               }
             }
             break;
           case 'realtime_input':
             const { mediaChunks, audio, activityStart, activityEnd, text } = msg.value;
-            if (this.pendingToolCallIds.size > 0) break;
+            if (this.shouldBlockRealtimeInputForPendingTools()) {
+              break;
+            }
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
@@ -1468,37 +1471,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       config.contextWindowCompression = opts.contextWindowCompression;
     }
 
-    // #region debug log
-    fetch('http://127.0.0.1:7820/ingest/0231b50a-cade-4054-b241-c1ca377dfa21', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': '564e0a',
-      },
-      body: JSON.stringify({
-        sessionId: '564e0a',
-        hypothesisId: 'H1/H2',
-        location: 'realtime_api.ts:buildConnectConfig',
-        message: 'connect config tools sent to Gemini Live',
-        data: {
-          optsToolBehavior: this.options.toolBehavior ?? null,
-          optsToolResponseScheduling: this.options.toolResponseScheduling ?? null,
-          tools: ((config.tools ?? []) as Array<Record<string, unknown>>).map((t) => ({
-            functionDeclarations: (
-              (t.functionDeclarations ?? []) as Array<{ name?: string; behavior?: string }>
-            ).map((d) => ({
-              name: d.name,
-              behavior: d.behavior ?? null,
-              behaviorPresent: d.behavior !== undefined,
-            })),
-            hasGeminiTool: Object.keys(t).some((k) => k !== 'functionDeclarations'),
-          })),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     return config;
   }
 
@@ -1710,6 +1682,35 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       const callId = fc.id || shortuuid('fnc-call-');
       this.pendingToolCallIds.add(callId);
+      this.toolCallStatuses.set(callId, {
+        name: fc.name,
+        status: 'pending',
+        willContinueSent: false,
+        createdAt: Date.now(),
+      });
+      if (this.isNonBlockingToolBehavior()) {
+        const continuingResponse: types.FunctionResponse = {
+          id: this.options.vertexai ? undefined : callId,
+          name: fc.name,
+          response: {},
+          willContinue: true,
+        };
+        if (this.options.toolResponseScheduling !== undefined) {
+          continuingResponse.scheduling = this.options.toolResponseScheduling;
+        }
+        this.sendClientEvent({
+          type: 'tool_response',
+          value: {
+            functionResponses: [continuingResponse],
+          },
+        });
+        const status = this.toolCallStatuses.get(callId);
+        if (status) {
+          status.status = 'continuing';
+          status.willContinueSent = true;
+          this.toolCallStatuses.set(callId, status);
+        }
+      }
       gen.functionChannel.write(
         llm.FunctionCall.create({
           callId,
@@ -1731,6 +1732,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
     for (const id of cancellation.ids || []) {
       this.pendingToolCallIds.delete(id);
+      const status = this.toolCallStatuses.get(id);
+      if (status) {
+        status.status = 'cancelled';
+        this.toolCallStatuses.set(id, status);
+      }
     }
   }
 
