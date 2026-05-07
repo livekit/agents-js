@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-hume': minor
+'@livekit/agents-plugin-hume': patch
 ---
 
 Add Hume AI TTS plugin
