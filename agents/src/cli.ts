@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';

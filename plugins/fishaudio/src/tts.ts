@@ -228,6 +228,18 @@ export class ChunkedStream extends tts.ChunkedStream {
               );
             }
           });
+          res.on('error', (err) => {
+            if (err.message === 'aborted') return;
+            this.#logger.error({ err }, 'Fish Audio TTS error response stream error');
+            if (!doneFut.done) {
+              doneFut.reject(
+                new APIStatusError({
+                  message: `Fish Audio TTS request failed (status ${status})`,
+                  options: { statusCode: status },
+                }),
+              );
+            }
+          });
           return;
         }
 
