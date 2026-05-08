@@ -77,6 +77,9 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
+    const signal = abortSignal
+      ? AbortSignal.any([abortSignal, this.abortController.signal])
+      : this.abortController.signal;
     return new ChunkedStream(
       this,
       text,
@@ -89,10 +92,10 @@ export class TTS extends tts.TTS {
           response_format: 'pcm',
           speed: this.#opts.speed,
         },
-        { signal: abortSignal },
+        { signal },
       ),
       connOptions,
-      abortSignal,
+      signal,
     );
   }
 
