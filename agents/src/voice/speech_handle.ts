@@ -328,9 +328,15 @@ export class SpeechHandle {
   _markDone(): void {
     if (!this.doneFut.done) {
       this.doneFut.resolve();
-      if (this.generations.length > 0) {
-        this._markGenerationDone(); // preemptive generation could be cancelled before being scheduled
-      }
+    }
+
+    // Ref: python livekit-agents/livekit/agents/voice/speech_handle.py - _mark_done
+    // Must be outside the doneFut.done guard: if doneFut is already resolved
+    // (e.g. interrupted before _markDone is called), the guarded block is
+    // skipped and the generation future would be left unresolved, leaving
+    // _waitForGeneration stuck and starving subsequent speech handles.
+    if (this.generations.length > 0) {
+      this._markGenerationDone();
     }
   }
 

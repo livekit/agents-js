@@ -168,3 +168,28 @@ describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
     expect(outcome).toBe('resolved');
   });
 });
+
+describe('SpeechHandle._markDone - generation resolution after early done', () => {
+  // Regression for the scheduling-deadlock fix ported from livekit/agents#5678.
+  // If _markDone runs after doneFut has already been resolved (force-interrupt
+  // shutdown path), a generation that gets authorized in the interim — or any
+  // re-entry from the pipeline reply task — must still resolve. Otherwise
+  // _waitForGeneration hangs in mainTask and starves subsequent speech handles.
+  it('resolves a pending generation when called after doneFut is already done', async () => {
+    const handle = SpeechHandle.create();
+
+    // First _markDone resolves doneFut (no generations yet).
+    handle._markDone();
+    expect(handle.done()).toBe(true);
+
+    // A generation is authorized after the handle was marked done. With the
+    // pre-fix guard, the next _markDone short-circuits inside `if
+    // (!doneFut.done)` and never resolves this generation.
+    handle._authorizeGeneration();
+
+    handle._markDone();
+
+    const outcome = await raceTimeout(handle._waitForGeneration(), 500);
+    expect(outcome).toBe('resolved');
+  });
+});
