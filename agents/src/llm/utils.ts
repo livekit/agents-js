@@ -458,8 +458,10 @@ function formatChatHistoryItem(
     if (item.isError) {
       headerParts.push('error=true');
     }
-  } else {
+  } else if (item.type === 'agent_handoff') {
     headerParts.push('agent_handoff');
+  } else {
+    headerParts.push('agent_config_update');
   }
 
   if (options.includeIds) {
@@ -492,7 +494,21 @@ function formatChatHistoryItemBody(item: ChatItem): string {
     return prettyJsonText(item.output);
   }
 
-  return `${item.oldAgentId ?? '(none)'} -> ${item.newAgentId}`;
+  if (item.type === 'agent_handoff') {
+    return `${item.oldAgentId ?? '(none)'} -> ${item.newAgentId}`;
+  }
+
+  const parts: string[] = [];
+  if (item.instructions !== undefined) {
+    parts.push(`instructions=${JSON.stringify(item.instructions)}`);
+  }
+  if (item.toolsAdded && item.toolsAdded.length > 0) {
+    parts.push(`tools_added=${item.toolsAdded.join(',')}`);
+  }
+  if (item.toolsRemoved && item.toolsRemoved.length > 0) {
+    parts.push(`tools_removed=${item.toolsRemoved.join(',')}`);
+  }
+  return parts.length > 0 ? parts.join(' ') : '(empty)';
 }
 
 function formatMessageContentPart(part: ChatContent): string {

@@ -361,6 +361,11 @@ function chatItemToProto(item: ChatItem): pb.ChatContext_ChatItem {
         },
       });
     }
+    case 'agent_config_update': {
+      // The remote session protocol does not yet support agent_config_update items;
+      // emit an empty wrapper so the wire format stays valid for older peers.
+      return new pb.ChatContext_ChatItem({});
+    }
   }
 }
 

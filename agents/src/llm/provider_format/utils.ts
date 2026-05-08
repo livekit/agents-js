@@ -53,6 +53,8 @@ class ChatItemGroup {
       this.toolOutputs.push(item);
     } else if (item.type === 'agent_handoff') {
       // provider formatters don't serialize handoff records into model input.
+    } else if (item.type === 'agent_config_update') {
+      // provider formatters don't serialize config updates into model input.
     }
     return this;
   }

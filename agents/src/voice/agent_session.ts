@@ -220,7 +220,8 @@ export class AgentSession<
   private started = false;
   private sessionHost?: SessionHost;
 
-  private _chatCtx: ChatContext;
+  /** @internal */
+  _chatCtx: ChatContext;
   private _userData: UserData | undefined;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';

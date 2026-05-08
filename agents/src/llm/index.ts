@@ -18,6 +18,7 @@ export {
 } from './tool_context.js';
 
 export {
+  AgentConfigUpdate,
   AgentHandoffItem,
   ChatContext,
   ChatMessage,
