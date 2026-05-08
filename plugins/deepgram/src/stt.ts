@@ -36,6 +36,11 @@ export interface STTOptions {
   keywords: [string, number][];
   keyterm: string[];
   profanityFilter: boolean;
+  /**
+   * Redact sensitive information from the transcription. Accepts a single value or list of
+   * values. Supported values: "pci", "numbers", "ssn", "true" (redact all).
+   * See https://developers.deepgram.com/docs/redaction for details.
+   */
   redact: string | string[];
   dictation: boolean;
   diarize: boolean;
