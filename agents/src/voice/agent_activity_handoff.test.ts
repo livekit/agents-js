@@ -6,6 +6,7 @@ import type { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
+import { initializeLogger, log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
 import { Agent, type ModelSettings } from './agent.js';
 import {
@@ -13,6 +14,8 @@ import {
   type ReusableResources,
   cleanupReusableResources,
 } from './agent_activity.js';
+
+initializeLogger({ pretty: false, level: 'silent' });
 
 type FakeActivity = {
   agent: Agent;
@@ -291,7 +294,7 @@ describe('cleanupReusableResources', () => {
       rtSession: { close: rtClose } as unknown as ReusableResources['rtSession'],
     };
 
-    await cleanupReusableResources(resources);
+    await cleanupReusableResources(resources, log());
 
     expect(sttClose).toHaveBeenCalledTimes(1);
     expect(rtClose).toHaveBeenCalledTimes(1);
@@ -305,7 +308,7 @@ describe('cleanupReusableResources', () => {
       sttPipeline: { close: sttClose } as unknown as ReusableResources['sttPipeline'],
     };
 
-    await cleanupReusableResources(resources);
+    await cleanupReusableResources(resources, log());
 
     expect(sttClose).toHaveBeenCalledTimes(1);
     expect(resources.sttPipeline).toBeUndefined();
@@ -313,7 +316,7 @@ describe('cleanupReusableResources', () => {
 
   it('handles empty resources', async () => {
     const resources: ReusableResources = {};
-    await cleanupReusableResources(resources);
+    await cleanupReusableResources(resources, log());
     // should not throw
   });
 });
