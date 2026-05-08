@@ -275,12 +275,10 @@ function msToDuration(ms: number): Duration {
 
 type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
 
-function isRemoteChatItem(item: ChatItem): item is RemoteChatItem {
-  return item.type !== 'agent_config_update';
-}
-
 function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
-  return items.filter(isRemoteChatItem).map(chatItemToProto);
+  return items
+    .filter((item): item is RemoteChatItem => item.type !== 'agent_config_update')
+    .map(chatItemToProto);
 }
 
 function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {

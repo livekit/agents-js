@@ -465,7 +465,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const initialTools = Object.keys(this.tools);
-    if (this.agent.instructions || initialTools.length > 0) {
+    if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
         instructions: this.agent.instructions,
         toolsAdded: initialTools.length > 0 ? initialTools : undefined,
