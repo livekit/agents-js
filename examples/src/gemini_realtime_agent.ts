@@ -16,8 +16,29 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-// Shared data that's used by the storyteller agent.
-// This structure is passed as a parameter to function calls.
+// ---------------------------------------------------------------------------
+// Test scenarios for the new `toolBehavior` / `toolResponseScheduling` feature.
+// Switch `toolBehavior` and `toolResponseScheduling` below before launching, e.g.:
+//   pnpm build && node ./examples/src/gemini_realtime_agent.ts dev --log-level=debug
+//
+// Supported values:
+//   toolBehavior           : undefined | BLOCKING | NON_BLOCKING
+//   toolResponseScheduling : undefined | SILENT | WHEN_IDLE | INTERRUPT
+//   getWeatherDelayMs      : delay before getWeather returns
+// ---------------------------------------------------------------------------
+const getWeatherDelayMs = 4000;
+
+const toolBehavior: google.beta.realtime.Behavior | undefined =
+  google.beta.realtime.Behavior.NON_BLOCKING;
+const toolResponseScheduling: google.beta.realtime.FunctionResponseScheduling | undefined =
+  google.beta.realtime.FunctionResponseScheduling.WHEN_IDLE;
+
+console.log(
+  `[gemini_realtime_agent] toolBehavior=${toolBehavior ?? 'unset'} ` +
+    `toolResponseScheduling=${toolResponseScheduling ?? 'unset'} ` +
+    `getWeatherDelayMs=${getWeatherDelayMs}`,
+);
+
 type StoryData = {
   name?: string;
   location?: string;
@@ -26,11 +47,13 @@ type StoryData = {
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
 
 const getWeather = llm.tool({
-  description: ' Called when the user asks about the weather.',
+  description: 'Called when the user asks about the weather.',
   parameters: z.object({
     location: z.string().describe('The location to get the weather for'),
   }),
+  // Deliberately slow so BLOCKING vs NON_BLOCKING is visible.
   execute: async ({ location }) => {
+    await new Promise((resolve) => setTimeout(resolve, getWeatherDelayMs));
     return `The weather in ${location} is sunny today.`;
   },
 });
@@ -46,7 +69,6 @@ const toggleLight = llm.tool({
   },
 });
 
-// Use inheritance to create agent with custom hooks
 class IntroAgent extends voice.Agent<StoryData> {
   async onEnter() {
     this.session.generateReply({
@@ -110,6 +132,8 @@ export default defineAgent({
           // If you want to keep the thoughts, set includeThoughts to true or leave it undefined
           includeThoughts: false,
         },
+        toolBehavior,
+        toolResponseScheduling,
       }),
       userData: userdata,
     });

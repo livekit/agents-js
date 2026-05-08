@@ -16,7 +16,7 @@ LiveKit Agents for Node.js — a TypeScript framework for building realtime, mul
 
 - **`agents/`** — Core framework (`@livekit/agents`). Agent orchestration, LLM/STT/TTS abstractions, voice pipeline, metrics, telemetry, IPC/process pooling, and the CLI.
 - **`plugins/`** — Provider plugins (`@livekit/agents-plugin-*`). Each implements one or more of: LLM, STT, TTS, VAD, EOU (end-of-utterance), Realtime, or Avatar.
-- **`examples/`** — Example agents (private, not published). Run with `pnpm dlx tsx ./examples/src/<file>.ts dev`.
+- **`examples/`** — Example agents (private, not published). Run with `pnpm build && node ./examples/src/<file>.ts dev`.
 - **`tests/e2e/`** — End-to-end tests via Docker (separate from unit tests co-located in each package).
 
 **Tooling:** pnpm 9.7.0 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
@@ -43,7 +43,7 @@ pnpm api:update             # Update API declarations
 ### Running an example agent
 
 ```bash
-pnpm build && pnpm dlx tsx ./examples/src/basic_agent.ts dev --log-level=debug
+pnpm build && node ./examples/src/basic_agent.ts dev --log-level=debug
 ```
 
 Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus provider keys (e.g. `OPENAI_API_KEY`).
