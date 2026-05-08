@@ -4,7 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export * as beta from './beta/index.js';
-export { LLM, LLMStream, type LLMOptions, type ServiceTier } from './llm.js';
+export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
 
 class GooglePlugin extends Plugin {

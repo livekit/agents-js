@@ -19,11 +19,6 @@ interface GoogleFormatData {
   systemMessages: string[] | null;
 }
 
-export type ServiceTier = 'unspecified' | 'flex' | 'standard' | 'priority';
-type GenerateContentConfigWithServiceTier = Omit<GenerateContentConfig, 'serviceTier'> & {
-  serviceTier?: ServiceTier;
-};
-
 export interface LLMOptions {
   model: string | ChatModels;
   apiKey?: string;
@@ -42,7 +37,7 @@ export interface LLMOptions {
   geminiTools?: LLMTools;
   httpOptions?: types.HttpOptions;
   seed?: number;
-  serviceTier?: ServiceTier;
+  serviceTier?: types.ServiceTier;
 }
 
 export class LLM extends llm.LLM {
@@ -267,7 +262,7 @@ export class LLM extends llm.LLM {
       extras.seed = this.#opts.seed;
     }
     if (this.#opts.serviceTier !== undefined) {
-      (extras as GenerateContentConfigWithServiceTier).serviceTier = this.#opts.serviceTier;
+      extras.serviceTier = this.#opts.serviceTier;
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
