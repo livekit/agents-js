@@ -451,8 +451,81 @@ export class AgentHandoffItem {
   }
 }
 
-// TODO(parity): Add AgentConfigUpdate type to ChatItem union
-export type ChatItem = ChatMessage | FunctionCall | FunctionCallOutput | AgentHandoffItem;
+export class AgentConfigUpdate {
+  readonly id: string;
+
+  readonly type = 'agent_config_update' as const;
+
+  instructions?: string;
+
+  toolsAdded?: string[];
+
+  toolsRemoved?: string[];
+
+  createdAt: number;
+
+  constructor(
+    params: {
+      id?: string;
+      instructions?: string;
+      toolsAdded?: string[];
+      toolsRemoved?: string[];
+      createdAt?: number;
+    } = {},
+  ) {
+    const {
+      id = shortuuid('item_'),
+      instructions,
+      toolsAdded,
+      toolsRemoved,
+      createdAt = Date.now(),
+    } = params;
+    this.id = id;
+    this.instructions = instructions;
+    this.toolsAdded = toolsAdded;
+    this.toolsRemoved = toolsRemoved;
+    this.createdAt = createdAt;
+  }
+
+  static create(params: {
+    id?: string;
+    instructions?: string;
+    toolsAdded?: string[];
+    toolsRemoved?: string[];
+    createdAt?: number;
+  }) {
+    return new AgentConfigUpdate(params);
+  }
+
+  toJSON(excludeTimestamp: boolean = false): JSONValue {
+    const result: JSONValue = {
+      id: this.id,
+      type: this.type,
+    };
+
+    if (this.instructions !== undefined) {
+      result.instructions = this.instructions;
+    }
+    if (this.toolsAdded !== undefined) {
+      result.toolsAdded = this.toolsAdded;
+    }
+    if (this.toolsRemoved !== undefined) {
+      result.toolsRemoved = this.toolsRemoved;
+    }
+    if (!excludeTimestamp) {
+      result.createdAt = this.createdAt;
+    }
+
+    return result;
+  }
+}
+
+export type ChatItem =
+  | ChatMessage
+  | FunctionCall
+  | FunctionCallOutput
+  | AgentHandoffItem
+  | AgentConfigUpdate;
 
 export class ChatContext {
   protected _items: ChatItem[];
@@ -517,13 +590,13 @@ export class ChatContext {
     return idx !== -1 ? idx : undefined;
   }
 
-  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   copy(
     options: {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
       excludeEmptyMessage?: boolean;
       excludeHandoff?: boolean;
+      excludeConfigUpdate?: boolean;
       toolCtx?: ToolContext<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     } = {},
   ): ChatContext {
@@ -532,6 +605,7 @@ export class ChatContext {
       excludeInstructions = false,
       excludeEmptyMessage = false,
       excludeHandoff = false,
+      excludeConfigUpdate = false,
       toolCtx,
     } = options;
     const items: ChatItem[] = [];
@@ -561,6 +635,10 @@ export class ChatContext {
         continue;
       }
 
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
+        continue;
+      }
+
       if (toolCtx !== undefined && isToolCallOrOutput(item) && toolCtx[item.name] === undefined) {
         continue;
       }
@@ -571,15 +649,19 @@ export class ChatContext {
     return new ChatContext(items);
   }
 
-  // TODO(parity): Add excludeConfigUpdate option when AgentConfigUpdate is ported
   merge(
     other: ChatContext,
     options: {
       excludeFunctionCall?: boolean;
       excludeInstructions?: boolean;
+      excludeConfigUpdate?: boolean;
     } = {},
   ): ChatContext {
-    const { excludeFunctionCall = false, excludeInstructions = false } = options;
+    const {
+      excludeFunctionCall = false,
+      excludeInstructions = false,
+      excludeConfigUpdate = false,
+    } = options;
     const existingIds = new Set(this._items.map((item) => item.id));
 
     for (const item of other.items) {
@@ -592,6 +674,10 @@ export class ChatContext {
         item.type === 'message' &&
         (item.role === 'system' || item.role === 'developer')
       ) {
+        continue;
+      }
+
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
         continue;
       }
 
@@ -642,6 +728,7 @@ export class ChatContext {
       excludeAudio?: boolean;
       excludeTimestamp?: boolean;
       excludeFunctionCall?: boolean;
+      excludeConfigUpdate?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): JSONObject {
@@ -650,6 +737,7 @@ export class ChatContext {
       excludeAudio = true,
       excludeTimestamp = true,
       excludeFunctionCall = false,
+      excludeConfigUpdate = false,
     } = options;
 
     const items: ChatItem[] = [];
@@ -658,6 +746,10 @@ export class ChatContext {
       let processedItem = item;
 
       if (excludeFunctionCall && ['function_call', 'function_call_output'].includes(item.type)) {
+        continue;
+      }
+
+      if (excludeConfigUpdate && item.type === 'agent_config_update') {
         continue;
       }
 

@@ -273,7 +273,17 @@ function msToDuration(ms: number): Duration {
   });
 }
 
-function chatItemToProto(item: ChatItem): pb.ChatContext_ChatItem {
+type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
+
+function isRemoteChatItem(item: ChatItem): item is RemoteChatItem {
+  return item.type !== 'agent_config_update';
+}
+
+function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
+  return items.filter(isRemoteChatItem).map(chatItemToProto);
+}
+
+function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
   switch (item.type) {
     case 'message': {
       const msg = item;
@@ -779,7 +789,7 @@ export class SessionHost {
   }
 
   private async handleGetChatHistory(requestId: string): Promise<void> {
-    const items = this.session!.history.items.map(chatItemToProto);
+    const items = chatItemsToProto(this.session!.history.items);
     return this.sendResponse(requestId, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
@@ -794,7 +804,7 @@ export class SessionHost {
         id: agent.id,
         instructions: agent.instructions,
         tools: toolNames(agent.toolCtx),
-        chatCtx: agent.chatCtx.items.map(chatItemToProto),
+        chatCtx: chatItemsToProto(agent.chatCtx.items),
       }),
     });
   }
@@ -826,7 +836,7 @@ export class SessionHost {
         } catch (e) {
           error = e instanceof Error ? e.message : String(e);
         }
-        items = result.events.map((ev) => chatItemToProto(ev.item));
+        items = chatItemsToProto(result.events.map((ev) => ev.item));
       }
     }
 
