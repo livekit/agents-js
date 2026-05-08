@@ -510,6 +510,10 @@ export class AgentActivity implements RecognitionHooks {
       maxEndpointingDelay:
         this.agent.turnHandling?.endpointing?.maxDelay ??
         this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      endpointing: {
+        ...this.agentSession.sessionOptions.turnHandling.endpointing,
+        ...this.agent.turnHandling?.endpointing,
+      },
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -1983,8 +1987,10 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.disableVadInterruptionSoon();
       }
     };
@@ -2076,10 +2082,12 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
-      this.restoreInterruptionByAudioActivity();
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     }
   }
 
@@ -2267,8 +2275,10 @@ export class AgentActivity implements RecognitionHooks {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.disableVadInterruptionSoon();
       }
     };
@@ -2430,8 +2440,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2475,11 +2487,11 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
 
