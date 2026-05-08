@@ -328,9 +328,12 @@ export class SpeechHandle {
   _markDone(): void {
     if (!this.doneFut.done) {
       this.doneFut.resolve();
-      if (this.generations.length > 0) {
-        this._markGenerationDone(); // preemptive generation could be cancelled before being scheduled
-      }
+    }
+
+    // Keep this outside the doneFut guard: if the handle is already done but a
+    // generation future is still active, _waitForGeneration() must be released.
+    if (this.generations.length > 0) {
+      this._markGenerationDone();
     }
   }
 
