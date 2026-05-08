@@ -36,6 +36,7 @@ export interface STTOptions {
   keywords: [string, number][];
   keyterm: string[];
   profanityFilter: boolean;
+  redact: string | string[];
   dictation: boolean;
   diarize: boolean;
   numerals: boolean;
@@ -59,6 +60,7 @@ const defaultSTTOptions: STTOptions = {
   keywords: [],
   keyterm: [],
   profanityFilter: false,
+  redact: [],
   dictation: false,
   diarize: false,
   numerals: false,
@@ -194,6 +196,10 @@ export class SpeechStream extends stt.SpeechStream {
         profanity_filter: this.#opts.profanityFilter,
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
+        ...(this.#opts.redact &&
+        (Array.isArray(this.#opts.redact) ? this.#opts.redact.length : true)
+          ? { redact: this.#opts.redact }
+          : {}),
       };
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
