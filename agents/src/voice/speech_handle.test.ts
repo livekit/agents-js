@@ -168,3 +168,19 @@ describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
     expect(outcome).toBe('resolved');
   });
 });
+
+describe('SpeechHandle._markDone - generation completion', () => {
+  it('resolves an active generation even when the handle is already done', async () => {
+    const handle = SpeechHandle.create();
+    const internalHandle = handle as unknown as { doneFut: { resolve(value: void): void } };
+
+    internalHandle.doneFut.resolve(undefined);
+    handle._authorizeGeneration();
+
+    const generationWait = handle._waitForGeneration();
+    handle._markDone();
+
+    const outcome = await raceTimeout(generationWait, 1000);
+    expect(outcome).toBe('resolved');
+  });
+});
