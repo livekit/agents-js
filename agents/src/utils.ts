@@ -11,10 +11,10 @@ import type {
 import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
-import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
 /**
@@ -98,20 +98,18 @@ export class Queue<T> {
     this.#limit = limit;
   }
 
-  async get(): Promise<T> {
-    const _get = async (): Promise<T> => {
-      if (this.items.length === 0) {
-        await once(this.#events, 'put');
-      }
-      let item = this.items.shift();
-      if (typeof item === 'undefined') {
-        item = await _get();
-      }
-      return item;
-    };
+  async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    while (this.items.length === 0) {
+      await once(this.#events, 'put', { signal: options.signal });
+    }
 
-    const item = _get();
+    const item = this.items.shift();
     this.#events.emit('get');
+
+    if (typeof item === 'undefined') {
+      return this.get(options);
+    }
+
     return item;
   }
 
@@ -620,7 +618,7 @@ export function withResolvers<T = unknown>() {
  * @returns A short UUID with the prefix.
  */
 export function shortuuid(prefix: string = ''): string {
-  return `${prefix}${uuidv4().slice(0, 12)}`;
+  return `${prefix}${randomUUID().slice(0, 12)}`;
 }
 
 const READONLY_SYMBOL = Symbol('Readonly');
@@ -939,13 +937,35 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
+  waitForSubscription = false,
+  signal,
 }: {
   room: Room;
-  identity: string;
+  /**
+   * Restrict matching to a specific participant identity. When omitted (or
+   * `undefined`), matches whichever remote participant publishes a matching
+   * track first. Pass `''` to match no one (rare, use `undefined` instead).
+   */
+  identity?: string;
   kind: TrackKind;
+  /**
+   * If true, only resolve once the matching track is subscribed (i.e.
+   * `publication.subscribed` is true and `publication.track` is set).
+   * Mirrors python `wait_for_track_publication(wait_for_subscription=True)`.
+   */
+  waitForSubscription?: boolean;
+  /**
+   * Optional AbortSignal that rejects the promise and detaches all room
+   * listeners when fired. Without this, callers that lose interest in the
+   * publication leak listeners until the room disconnects.
+   */
+  signal?: AbortSignal;
 }): Promise<RemoteTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
+  }
+  if (signal?.aborted) {
+    throw new Error('waitForTrackPublication aborted');
   }
 
   const fut = new Future<RemoteTrackPublication>();
@@ -957,32 +977,69 @@ export async function waitForTrackPublication({
     return k === kind;
   };
 
+  const matches = (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (identity !== undefined && participant.identity !== identity) return false;
+    if (!kindMatch(publication.kind)) return false;
+    if (waitForSubscription && !(publication.subscribed && publication.track !== undefined)) {
+      return false;
+    }
+    return true;
+  };
+
   const onTrackPublished = (
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ) => {
     if (fut.done) return;
-    if (
-      (identity === undefined || participant.identity === identity) &&
-      kindMatch(publication.kind)
-    ) {
+    if (matches(publication, participant)) {
       fut.resolve(publication);
     }
   };
 
-  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  // RoomEvent.TrackSubscribed signature: (track, publication, participant).
+  const onTrackSubscribed = (
+    _track: unknown,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (fut.done) return;
+    if (matches(publication, participant)) {
+      fut.resolve(publication);
+    }
+  };
+
+  if (waitForSubscription) {
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+  } else {
+    room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForTrackPublication aborted'));
+    }
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
-        onTrackPublished(publication, p);
-        if (fut.done) break;
+        if (matches(publication, p)) {
+          fut.resolve(publication);
+          break;
+        }
       }
+      if (fut.done) break;
     }
 
     return await fut.await;
   } finally {
-    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    if (waitForSubscription) {
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    } else {
+      room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 

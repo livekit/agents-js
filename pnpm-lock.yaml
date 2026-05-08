@@ -116,8 +116,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: ^1.45.6
-        version: 1.45.6
+        specifier: ^1.45.7
+        version: 1.45.7
       '@livekit/throws-transformer':
         specifier: 0.1.8
         version: 0.1.8(typescript@5.9.3)
@@ -199,9 +199,6 @@ importers:
       sharp:
         specifier: 0.34.5
         version: 0.34.5
-      uuid:
-        specifier: ^14.0.0
-        version: 14.0.0
       ws:
         specifier: 'catalog:'
         version: 8.20.0
@@ -260,9 +257,15 @@ importers:
       '@livekit/agents-plugin-elevenlabs':
         specifier: workspace:*
         version: link:../plugins/elevenlabs
+      '@livekit/agents-plugin-fishaudio':
+        specifier: workspace:*
+        version: link:../plugins/fishaudio
       '@livekit/agents-plugin-google':
         specifier: workspace:*
         version: link:../plugins/google
+      '@livekit/agents-plugin-hume':
+        specifier: workspace:*
+        version: link:../plugins/hume
       '@livekit/agents-plugin-inworld':
         specifier: workspace:*
         version: link:../plugins/inworld
@@ -630,6 +633,40 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/fishaudio:
+    dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.0.0
+        version: 3.1.3
+      ws:
+        specifier: 'catalog:'
+        version: 8.20.0
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/google:
     dependencies:
       '@google/genai':
@@ -688,6 +725,30 @@ importers:
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/hume:
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@22.19.1)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -849,10 +910,10 @@ importers:
         version: 0.13.27
       '@microsoft/api-extractor':
         specifier: ^7.35.0
-        version: 7.43.7(@types/node@22.19.1)
+        version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -2119,8 +2180,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@livekit/protocol@1.45.6':
-    resolution: {integrity: sha512-YPDmrUiVe1EY/q/2bD+Fp+69DWq6LZgeH+G/KEbz07OIVf8hgAYzfb1FgiOdWLRpSj06+SuTmrOY604fWNuD3w==}
+  '@livekit/protocol@1.45.7':
+    resolution: {integrity: sha512-UVYtWQohAwowygFFglMKfgjVZMQncCEmHmsQX2yJDhgBf1nZQdfANgUJg+ifxZDTfVpNnQWQjikWMHViq5fh2Q==}
 
   '@livekit/rtc-ffi-bindings-darwin-arm64@0.12.52-patch.0':
     resolution: {integrity: sha512-IKUir6goV8yVRR7E2qrAP0JtH7gUyMkO0TG8G+dopO/fkXAsPpSealgI9fLcBJl0zhKK+eGCr741r6xR+xxsVw==}
@@ -5163,10 +5224,6 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  uuid@14.0.0:
-    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
-    hasBin: true
-
   validator@13.12.0:
     resolution: {integrity: sha512-c1Q0mCiPlgdTVVVIJIrBuxNicYE+t/7oKeI9MWLj3fh/uq2Pxh/3eeWbVZ4OcGW1TUf53At0njHw5SMdA3tmMg==}
     engines: {node: '>= 0.10'}
@@ -6196,7 +6253,7 @@ snapshots:
   '@livekit/noise-cancellation-win32-x64@0.1.9':
     optional: true
 
-  '@livekit/protocol@1.45.6':
+  '@livekit/protocol@1.45.7':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
@@ -8526,7 +8583,7 @@ snapshots:
   livekit-server-sdk@2.14.1:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
-      '@livekit/protocol': 1.45.6
+      '@livekit/protocol': 1.45.7
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
@@ -9691,8 +9748,6 @@ snapshots:
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
-
-  uuid@14.0.0: {}
 
   validator@13.12.0: {}
 

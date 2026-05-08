@@ -1,5 +1,54 @@
 # @livekit/agents
 
+## 1.4.0
+
+### Minor Changes
+
+- `voice.AMD` reaches feature parity with python. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix(agents): support constructing `AgentSession` with no arguments - [#1410](https://github.com/livekit/agents-js/pull/1410) ([@u9g](https://github.com/u9g))
+
+- `AMD`: cancel the pre-baked HUMAN/`short_greeting` silence timer when a final STT transcript arrives inside the short-speech window, replacing it with a `long_speech` timer anchored at `speechEndedAt + MACHINE_SILENCE_THRESHOLD_MS` so the LLM verdict gets the final word. Mirrors the python fix in [`livekit/agents#5637`](https://github.com/livekit/agents/pull/5637). - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Port AMD improvements from python `livekit/agents#5584`. `voice.AMD` now exposes the previously hard-coded timing thresholds (`humanSpeechThresholdMs`, `humanSilenceThresholdMs`, `machineSilenceThresholdMs`) and the classification `prompt` as constructor options, defers to the LLM (instead of forcing a HUMAN verdict) when a transcript is already available after a short greeting, and accepts a `participantIdentity` hint plus a `suppressCompatibilityWarning` flag. The classifier now offers two LLM tools — `save_prediction` and `postpone_termination` (capped at 3 extensions × 10s) — letting the model request more audio when the transcript is ambiguous; if the model returns plain JSON instead of tool calls, AMD falls back to the previous content-parsing path. AMD also logs a one-shot warning when the resolved LLM is not in the bundled `EVALUATED_LLM_MODELS` list. - [#1368](https://github.com/livekit/agents-js/pull/1368) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(inference): make `inference.LLM` compatible with openai >= 6.36.0 - [#1411](https://github.com/livekit/agents-js/pull/1411) ([@u9g](https://github.com/u9g))
+
+- Add comments to agent side and inference side fallback adapters - [#1398](https://github.com/livekit/agents-js/pull/1398) ([@tmshapland](https://github.com/tmshapland))
+
+- refactor(agents): replace uuid with crypto.randomUUID - [#1392](https://github.com/livekit/agents-js/pull/1392) ([@benasher44](https://github.com/benasher44))
+
+## 1.3.4
+
+### Patch Changes
+
+- Add support for the new `inworld-tts-2` Inworld TTS model. - [#1396](https://github.com/livekit/agents-js/pull/1396) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Adds `inworld/inworld-tts-2` to the `InworldModels` union exported from
+    `@livekit/agents/inference` so the model is selectable when using the
+    LiveKit Inference Gateway TTS client.
+  - Exports a new `TTSModels` type from `@livekit/agents-plugin-inworld`
+    (`'inworld-tts-2' | 'inworld-tts-1.5-max'`) and updates `TTSOptions.model`
+    to `TTSModels | string`, mirroring the Python plugin so callers get
+    autocomplete for the curated model names while still being able to pass
+    any custom model id.
+
+  Ports https://github.com/livekit/agents/pull/5646 from `livekit/agents`.
+
+## 1.3.3
+
+### Patch Changes
+
+- Port the barge-in cooldown / `backchannelBoundary` interruption window from Python (livekit/agents#5269). When the agent starts speaking, VAD-based interruption now stays active for a configurable cooldown (default `1000` ms) before being disabled, allowing the user to quickly correct themselves at the start of the agent's turn. When the agent finishes speaking, transcripts whose end time falls within the trailing cooldown (default `3500` ms) are released as normal user input instead of being held, surfacing premature answers to the agent's last sentence. The cooldown is configured via `turnHandling.interruption.backchannelBoundary` (a single number applies to both sides; pass `[start, end]` to configure them separately, or `null` to disable). - [#1366](https://github.com/livekit/agents-js/pull/1366) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(stt): add FakeSTT test harness for FallbackAdapter - [#1288](https://github.com/livekit/agents-js/pull/1288) ([@drain-zine](https://github.com/drain-zine))
+
+- Harden RecorderIO teardown by fencing writes before channel closure and stopping - [#1378](https://github.com/livekit/agents-js/pull/1378) ([@toubatbrian](https://github.com/toubatbrian))
+  the forward task first, preventing repeated closed WritableStream write errors on disconnect.
+  Also centralize writable-stream closed error detection in utils and add regression tests.
+
 ## 1.3.2
 
 ### Patch Changes

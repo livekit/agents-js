@@ -489,6 +489,8 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
+      backchannelBoundary:
+        this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
       minEndpointingDelay:
         this.agent.turnHandling?.endpointing?.minDelay ??
         this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
@@ -694,6 +696,14 @@ export class AgentActivity implements RecognitionHooks {
   /** @internal */
   get inputStartedAt() {
     return this.audioRecognition?.inputStartedAt;
+  }
+
+  /**
+   * @internal — used by AMD to obtain a private branch of the participant
+   * audio stream that does not interfere with the pipeline VAD/STT.
+   */
+  subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
+    return this.audioRecognition?.subscribeAudioStream();
   }
 
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
@@ -1945,7 +1955,7 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -2229,7 +2239,7 @@ export class AgentActivity implements RecognitionHooks {
       });
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -2400,7 +2410,9 @@ export class AgentActivity implements RecognitionHooks {
         { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
-      speechHandle._markGenerationDone();
+      if (speechHandle._hasGenerations) {
+        speechHandle._markGenerationDone();
+      }
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -2442,7 +2454,9 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // mark the playout done before waiting for the tool execution
-    speechHandle._markGenerationDone();
+    if (speechHandle._hasGenerations) {
+      speechHandle._markGenerationDone();
+    }
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;
@@ -3393,7 +3407,7 @@ export class AgentActivity implements RecognitionHooks {
           this.audioRecognition.onStartOfAgentSpeech();
         }
         if (this.isInterruptionDetectionEnabled) {
-          this.isInterruptionByAudioActivityEnabled = false;
+          this.disableVadInterruptionSoon();
         }
         audioOutput.resume();
         resumed = true;
@@ -3452,7 +3466,31 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  /**
+   * Disable VAD-based interruption either immediately or after the backchannel boundary
+   * cooldown expires. While the cooldown is active the VAD path stays enabled, allowing the
+   * user to correct themselves at the very start of agent speech.
+   */
+  private disableVadInterruptionSoon(): void {
+    const audioRecognition = this.audioRecognition;
+    if (audioRecognition && audioRecognition.backchannelBoundaryActive) {
+      audioRecognition.backchannelBoundaryCallback = () => {
+        // Only disable VAD interruption if the agent is still speaking when the timer expires.
+        if (
+          this.agentSession.agentState === 'speaking' &&
+          this.isInterruptionByAudioActivityEnabled
+        ) {
+          this.logger.trace('backchannel boundary expired');
+          this.isInterruptionByAudioActivityEnabled = false;
+        }
+      };
+    } else {
+      this.isInterruptionByAudioActivityEnabled = false;
+    }
+  }
+
   private restoreInterruptionByAudioActivity(): void {
+    this.audioRecognition?.cancelBackchannelBoundary();
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }
 

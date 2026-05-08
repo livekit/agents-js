@@ -225,7 +225,9 @@ export class LLM extends llm.LLM {
 
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
-      apiKey: '', // leave a temporary empty string to avoid OpenAI complain about missing key
+      // Non-empty placeholder; replaced with a fresh access token before each
+      // request (see LLMStream.run). openai >= 6.36.0 rejects an empty apiKey.
+      apiKey: 'placeholder',
     });
   }
 

@@ -109,6 +109,8 @@ interface RealtimeOptions {
   apiVersion?: string;
   geminiTools?: LLMTools;
   thinkingConfig?: types.ThinkingConfig;
+  toolBehavior?: types.Behavior;
+  toolResponseScheduling?: types.FunctionResponseScheduling;
 }
 
 /**
@@ -134,6 +136,13 @@ interface ResponseGeneration {
   _completedTimestamp?: number;
   /** @internal */
   _done: boolean;
+}
+
+interface ToolCallStatus {
+  name: string;
+  status: 'pending' | 'continuing' | 'completed' | 'cancelled';
+  willContinueSent: boolean;
+  createdAt: number;
 }
 
 /**
@@ -293,6 +302,19 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Gemini 2.5 live models use `thinkingBudget`.
        */
       thinkingConfig?: types.ThinkingConfig;
+
+      /**
+       * The behavior for tool calls. Default behavior is `BLOCKING` in Gemini Realtime API.
+       * Note: Not supported in Vertex AI.
+       */
+      toolBehavior?: types.Behavior;
+
+      /**
+       * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
+       * Note: Vertex AI currently does not support the scheduling parameter; the user is
+       * responsible for avoiding this parameter when using Vertex AI.
+       */
+      toolResponseScheduling?: types.FunctionResponseScheduling;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -366,6 +388,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
       thinkingConfig: options.thinkingConfig,
+      toolBehavior: options.toolBehavior,
+      toolResponseScheduling: options.toolResponseScheduling,
     };
   }
 
@@ -379,12 +403,23 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Update model options
    */
-  updateOptions(options: { voice?: Voice | string; temperature?: number }): void {
+  updateOptions(options: {
+    voice?: Voice | string;
+    temperature?: number;
+    toolBehavior?: types.Behavior;
+    toolResponseScheduling?: types.FunctionResponseScheduling;
+  }): void {
     if (options.voice !== undefined) {
       this._options.voice = options.voice;
     }
     if (options.temperature !== undefined) {
       this._options.temperature = options.temperature;
+    }
+    if (options.toolBehavior !== undefined) {
+      this._options.toolBehavior = options.toolBehavior;
+    }
+    if (options.toolResponseScheduling !== undefined) {
+      this._options.toolResponseScheduling = options.toolResponseScheduling;
     }
 
     // TODO: Notify active sessions of option changes
@@ -431,6 +466,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  private toolCallStatuses = new Map<string, ToolCallStatus>();
+  private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
   #client: GoogleGenAI;
@@ -494,6 +531,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
       this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
       this.generationPendingTurnComplete = undefined;
@@ -508,6 +546,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  private isNonBlockingToolBehavior(): boolean {
+    return this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+  }
+
+  private shouldBlockRealtimeInputForPendingTools(): boolean {
+    return this.pendingToolCallIds.size > 0 && !this.isNonBlockingToolBehavior();
+  }
+
   private getToolResultsForRealtime(
     ctx: llm.ChatContext,
     vertexai: boolean,
@@ -517,13 +563,27 @@ export class RealtimeSession extends llm.RealtimeSession {
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
         const response: types.FunctionResponse = {
-          id: item.callId,
           name: item.name,
           response: { output: item.output },
         };
 
+        if (this.options.toolResponseScheduling !== undefined) {
+          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
+          // it's the user's responsibility to avoid this parameter when using vertexai
+          response.scheduling = this.options.toolResponseScheduling;
+        }
+
         if (!vertexai) {
+          // vertexai does not support id in FunctionResponse
           response.id = item.callId;
+        }
+        this.toolResponseCallIds.set(response, item.callId);
+
+        const status = this.toolCallStatuses.get(item.callId);
+        if (status?.willContinueSent) {
+          response.willContinue = false;
+          status.status = 'completed';
+          this.toolCallStatuses.set(item.callId, status);
         }
 
         toolResponses.push(response);
@@ -537,6 +597,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     voice?: Voice | string;
     temperature?: number;
     toolChoice?: llm.ToolChoice;
+    toolBehavior?: types.Behavior;
+    toolResponseScheduling?: types.FunctionResponseScheduling;
   }) {
     let shouldRestart = false;
 
@@ -548,6 +610,23 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (options.temperature !== undefined && this.options.temperature !== options.temperature) {
       this.options.temperature = options.temperature;
       shouldRestart = true;
+    }
+
+    if (options.toolBehavior !== undefined && this.options.toolBehavior !== options.toolBehavior) {
+      this.options.toolBehavior = options.toolBehavior;
+      shouldRestart = true;
+    }
+
+    if (
+      options.toolResponseScheduling !== undefined &&
+      this.options.toolResponseScheduling !== options.toolResponseScheduling
+    ) {
+      this.options.toolResponseScheduling = options.toolResponseScheduling;
+      // no need to restart
+    }
+
+    if (options.toolChoice !== undefined) {
+      this.#logger.warn('toolChoice is not supported by the Google Realtime API.');
     }
 
     if (shouldRestart) {
@@ -698,7 +777,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.pendingToolCallIds.size > 0) return;
+    if (this.shouldBlockRealtimeInputForPendingTools()) {
+      return;
+    }
 
     // Track that we've received audio input
     this.hasReceivedAudioInput = true;
@@ -796,7 +877,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    if (this.pendingToolCallIds.size > 0) return;
+    if (this.shouldBlockRealtimeInputForPendingTools()) {
+      return;
+    }
 
     if (!this.inUserActivity) {
       this.inUserActivity = true;
@@ -1003,7 +1086,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private async sendTask(session: types.Session, controller: AbortController): Promise<void> {
     try {
       while (!this.#closed && !this.sessionShouldClose.isSet && !controller.signal.aborted) {
-        const msg = await this.messageChannel.get();
+        const msg = await this.messageChannel.get({ signal: controller.signal });
         if (controller.signal.aborted) break;
 
         const unlock = await this.sessionLock.lock();
@@ -1037,15 +1120,15 @@ export class RealtimeSession extends llm.RealtimeSession {
                   functionResponses,
                 });
               } finally {
-                for (const fr of functionResponses) {
-                  if (fr?.id) this.pendingToolCallIds.delete(fr.id);
-                }
+                this.clearPendingToolCallIdsForResponses(functionResponses);
               }
             }
             break;
           case 'realtime_input':
             const { mediaChunks, audio, activityStart, activityEnd, text } = msg.value;
-            if (this.pendingToolCallIds.size > 0) break;
+            if (this.shouldBlockRealtimeInputForPendingTools()) {
+              break;
+            }
             if (mediaChunks) {
               for (const mediaChunk of mediaChunks) {
                 await session.sendRealtimeInput({ media: mediaChunk });
@@ -1332,7 +1415,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       },
       tools:
         this.geminiDeclarations.length > 0 || this.options.geminiTools
-          ? [{ functionDeclarations: this.geminiDeclarations, ...this.options.geminiTools }]
+          ? [
+              {
+                functionDeclarations:
+                  this.options.toolBehavior !== undefined
+                    ? this.geminiDeclarations.map((d) => ({
+                        ...d,
+                        behavior: this.options.toolBehavior,
+                      }))
+                    : this.geminiDeclarations,
+                ...this.options.geminiTools,
+              },
+            ]
           : undefined,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
@@ -1582,6 +1676,35 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       const callId = fc.id || shortuuid('fnc-call-');
       this.pendingToolCallIds.add(callId);
+      this.toolCallStatuses.set(callId, {
+        name: fc.name,
+        status: 'pending',
+        willContinueSent: false,
+        createdAt: Date.now(),
+      });
+      if (this.isNonBlockingToolBehavior()) {
+        const continuingResponse: types.FunctionResponse = {
+          id: this.options.vertexai ? undefined : callId,
+          name: fc.name,
+          response: {},
+          willContinue: true,
+        };
+        if (this.options.toolResponseScheduling !== undefined) {
+          continuingResponse.scheduling = this.options.toolResponseScheduling;
+        }
+        this.sendClientEvent({
+          type: 'tool_response',
+          value: {
+            functionResponses: [continuingResponse],
+          },
+        });
+        const status = this.toolCallStatuses.get(callId);
+        if (status) {
+          status.status = 'continuing';
+          status.willContinueSent = true;
+          this.toolCallStatuses.set(callId, status);
+        }
+      }
       gen.functionChannel.write(
         llm.FunctionCall.create({
           callId,
@@ -1603,6 +1726,23 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
     for (const id of cancellation.ids || []) {
       this.pendingToolCallIds.delete(id);
+      const status = this.toolCallStatuses.get(id);
+      if (status) {
+        status.status = 'cancelled';
+        this.toolCallStatuses.set(id, status);
+      }
+    }
+  }
+
+  private clearPendingToolCallIdsForResponses(functionResponses: types.FunctionResponse[]): void {
+    for (const fr of functionResponses) {
+      if (fr.willContinue === true) {
+        continue;
+      }
+      const callId = fr.id ?? this.toolResponseCallIds.get(fr);
+      if (callId) {
+        this.pendingToolCallIds.delete(callId);
+      }
     }
   }
 

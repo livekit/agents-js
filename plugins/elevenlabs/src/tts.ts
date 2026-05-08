@@ -372,6 +372,12 @@ class Connection {
               context_id: content.contextId,
             };
 
+            if (this.#opts.chunkLengthSchedule) {
+              initPkt.generation_config = {
+                chunk_length_schedule: this.#opts.chunkLengthSchedule,
+              };
+            }
+
             if (this.#opts.pronunciationDictionaryLocators) {
               initPkt.pronunciation_dictionary_locators =
                 this.#opts.pronunciationDictionaryLocators.map((locator) => ({
@@ -644,7 +650,7 @@ export class TTS extends tts.TTS {
   label = 'elevenlabs.TTS';
 
   constructor(opts: TTSOptions = {}) {
-    const autoMode = opts.autoMode ?? true;
+    const autoMode = opts.autoMode ?? opts.chunkLengthSchedule === undefined;
     const encoding = opts.encoding ?? DEFAULT_ENCODING;
     const sampleRate = sampleRateFromFormat(encoding);
     const syncAlignment = opts.syncAlignment ?? true;

@@ -1740,6 +1740,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+
+    const eventId = event.error.event_id;
+    if (eventId) {
+      const handle = this.responseCreatedFutures[eventId];
+      if (handle) {
+        delete this.responseCreatedFutures[eventId];
+        if (!handle.doneFut.done) {
+          handle.doneFut.reject(new Error(event.error.message));
+        }
+      }
+    }
+
     this.emitError({
       error: new APIError(event.error.message, {
         body: event.error,
@@ -1747,8 +1759,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       }),
       recoverable: true,
     });
-
-    // TODO(brian): set error for response future if it exists
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {

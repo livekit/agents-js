@@ -12,6 +12,7 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import { TransformStream } from 'node:stream/web';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
@@ -138,6 +139,13 @@ export interface AudioRecognitionOptions {
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
+  /**
+   * Backchannel boundary for adaptive interruption suppression, expressed in milliseconds.
+   *
+   * A single number applies to both the start and end of agent speech; a `[start, end]` tuple
+   * configures them separately. `null` (or `undefined`) disables.
+   */
+  backchannelBoundary?: number | [number, number] | null;
   /** Minimum endpointing delay in milliseconds. */
   minEndpointingDelay: number;
   /** Maximum endpointing delay in milliseconds. */
@@ -199,6 +207,18 @@ export class AudioRecognition {
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
+  /**
+   * Active subscriber writers fed from {@link subscribersBroadcast}. Each
+   * {@link subscribeAudioStream} call appends one entry; entries are dropped
+   * (and their stream closed) on {@link close}.
+   *
+   * The broadcast pattern replaces an earlier `tee()`-based approach where
+   * the second branch grew without bound for sessions that never called
+   * `subscribeAudioStream()` (every voice session that doesn't use AMD).
+   * With this design no extra buffering happens until at least one
+   * subscriber is registered.
+   */
+  private subscriberWriters: WritableStreamDefaultWriter<AudioFrame>[] = [];
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
@@ -222,6 +242,12 @@ export class AudioRecognition {
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
+  // backchannel boundary for adaptive interruption suppression
+  private backchannelBoundary?: [number, number];
+  private backchannelBoundaryTimer?: ReturnType<typeof setTimeout>;
+  /** Callback invoked when the backchannel boundary timer expires naturally. */
+  backchannelBoundaryCallback?: () => void;
+
   constructor(opts: AudioRecognitionOptions) {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
@@ -242,8 +268,47 @@ export class AudioRecognition {
     this.isInterruptionEnabled = !!(opts.interruptionDetection && opts.vad);
     this.isAgentSpeaking = false;
 
+    const rawBoundary = opts.backchannelBoundary;
+    if (rawBoundary === undefined || rawBoundary === null) {
+      this.backchannelBoundary = undefined;
+    } else if (typeof rawBoundary === 'number') {
+      if (rawBoundary < 0) {
+        throw new Error('backchannelBoundary must be a non-negative number');
+      }
+      this.backchannelBoundary = [rawBoundary, rawBoundary];
+    } else {
+      const [start, end] = rawBoundary;
+      if (rawBoundary.length !== 2 || start < 0 || end < 0) {
+        throw new Error('backchannelBoundary must be a tuple of two non-negative numbers');
+      }
+      this.backchannelBoundary = [start, end];
+    }
+
+    // Pipe the deferred input stream through a broadcast transform. The
+    // transform is a no-op identity until something calls `subscribeAudioStream()`
+    // — at which point each frame is forwarded to the registered subscriber
+    // writers in addition to flowing downstream to VAD/STT. This avoids the
+    // unbounded queue growth of a pre-emptive `tee()` for sessions that
+    // never subscribe (i.e. anything not using AMD).
+    const broadcast = new TransformStream<AudioFrame, AudioFrame>(
+      {
+        transform: (chunk, controller) => {
+          controller.enqueue(chunk);
+          if (this.subscriberWriters.length === 0) return;
+          for (const writer of this.subscriberWriters) {
+            writer.write(chunk).catch(() => {
+              // Subscriber stream closed or backpressure exceeded; drop.
+            });
+          }
+        },
+      },
+      { highWaterMark: Number.MAX_SAFE_INTEGER },
+      { highWaterMark: Number.MAX_SAFE_INTEGER },
+    );
+    const primaryInputStream = this.deferredInputStream.stream.pipeThrough(broadcast);
+
     if (opts.interruptionDetection) {
-      const [vadInputStream, teedInput] = this.deferredInputStream.stream.tee();
+      const [vadInputStream, teedInput] = primaryInputStream.tee();
       const [inputStream, sttInputStream] = teedInput.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
@@ -253,7 +318,7 @@ export class AudioRecognition {
       this.interruptionStreamChannel = createStreamChannel();
       this.interruptionStreamChannel.addStreamInput(inputStream);
     } else {
-      const [vadInputStream, sttInputStream] = this.deferredInputStream.stream.tee();
+      const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
         sttInputStream,
@@ -313,14 +378,56 @@ export class AudioRecognition {
     this.interruptionTask = undefined;
     await this.interruptionStreamChannel?.close();
     this.interruptionStreamChannel = undefined;
+    this.cancelBackchannelBoundary();
+  }
+
+  /**
+   * Whether the backchannel boundary timer is currently running.
+   */
+  get backchannelBoundaryActive(): boolean {
+    return this.backchannelBoundaryTimer !== undefined;
+  }
+
+  /**
+   * Fires when the backchannel boundary timer expires naturally. Drops the timer handle and
+   * invokes the registered callback exactly once.
+   */
+  private onBackchannelBoundaryDone(): void {
+    this.backchannelBoundaryTimer = undefined;
+    const cb = this.backchannelBoundaryCallback;
+    this.backchannelBoundaryCallback = undefined;
+    cb?.();
+  }
+
+  /**
+   * Cancel any pending backchannel boundary timer and clear the registered callback.
+   */
+  cancelBackchannelBoundary(): void {
+    if (this.backchannelBoundaryTimer !== undefined) {
+      clearTimeout(this.backchannelBoundaryTimer);
+      this.backchannelBoundaryTimer = undefined;
+    }
+    this.backchannelBoundaryCallback = undefined;
   }
 
   async onStartOfAgentSpeech() {
     this.isAgentSpeaking = true;
+
+    if (this.backchannelBoundary && this.backchannelBoundary[0] > 0) {
+      this.cancelBackchannelBoundary();
+      const startCooldown = this.backchannelBoundary[0];
+      this.backchannelBoundaryTimer = setTimeout(
+        () => this.onBackchannelBoundaryDone(),
+        startCooldown,
+      );
+    }
+
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+    this.cancelBackchannelBoundary();
+
     if (!this.isInterruptionEnabled) {
       this.isAgentSpeaking = false;
       return;
@@ -338,12 +445,18 @@ export class AudioRecognition {
       if (this.ignoreUserTranscriptUntil === undefined) {
         this.onEndOfOverlapSpeech(Date.now());
       }
-      this.ignoreUserTranscriptUntil = this.ignoreUserTranscriptUntil
+
+      const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+      const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
         : ignoreUserTranscriptUntil;
+      this.logger.trace({ ignoreUntil, endCooldown }, 'flushing held transcripts');
+      // Subtracting `endCooldown` widens the release window so transcripts that ended just
+      // before the agent finished speaking (premature corrections) are surfaced.
+      this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
 
       // flush held transcripts if possible
-      await this.flushHeldTranscripts();
+      await this.flushHeldTranscripts(endCooldown);
     }
     this.isAgentSpeaking = false;
   }
@@ -374,10 +487,11 @@ export class AudioRecognition {
   }
 
   /**
-   * Flush held transcripts whose *end time* is after the ignoreUserTranscriptUntil timestamp.
-   * If the event has no timestamps, we assume it is the same as the next valid event.
+   * Flush held transcripts whose *end time* is after the
+   * `ignoreUserTranscriptUntil - cooldown` timestamp. If the event has no timestamps, we
+   * assume it is the same as the next valid event.
    */
-  private async flushHeldTranscripts() {
+  private async flushHeldTranscripts(cooldown: number = 0) {
     if (
       !this.isInterruptionEnabled ||
       this.ignoreUserTranscriptUntil === undefined ||
@@ -423,14 +537,32 @@ export class AudioRecognition {
     const eventsToEmit =
       emitFromIndex !== null && shouldFlush ? this.transcriptBuffer.slice(emitFromIndex) : [];
 
+    // Snapshot the ignore-until before resetting so the added-delay diagnostic below mirrors
+    // the value the holding decision was made against.
+    const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
+    const prevInputStartedAt = this._inputStartedAt;
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
 
     for (const event of eventsToEmit) {
+      let addedDelay = 0;
+      const firstAlternative = event.alternatives?.[0];
+      if (
+        firstAlternative &&
+        firstAlternative.endTime > 0 &&
+        prevIgnoreUserTranscriptUntil !== undefined &&
+        prevInputStartedAt !== undefined
+      ) {
+        addedDelay = Math.max(
+          0,
+          firstAlternative.endTime * 1000 +
+            prevInputStartedAt -
+            prevIgnoreUserTranscriptUntil +
+            cooldown,
+        );
+      }
       this.logger.trace(
-        {
-          event: event.type,
-        },
+        { event: event.type, cooldown, addedDelay },
         're-emitting held user transcript',
       );
       this.onSTTEvent(event);
@@ -580,8 +712,9 @@ export class AudioRecognition {
         );
         this.transcriptBuffer.push(ev);
         return;
-      } else {
-        await this.flushHeldTranscripts();
+      } else if (this.transcriptBuffer.length > 0) {
+        const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+        await this.flushHeldTranscripts(endCooldown);
         // no return here to allow the new event to be processed normally
       }
     }
@@ -790,6 +923,11 @@ export class AudioRecognition {
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    if (this.backchannelBoundaryActive) {
+      this.logger.trace('ignoring overlap speech event during backchannel boundary cooldown');
+      return;
+    }
+
     if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
     }
@@ -1230,6 +1368,37 @@ export class AudioRecognition {
     this.deferredInputStream.detachSource();
   }
 
+  /**
+   * Returns an independent ReadableStream of input audio frames. Each call
+   * returns a fresh branch fed by the broadcast transform inserted into the
+   * deferred input pipeline — frames written after the subscription point
+   * will be delivered, but earlier frames are not replayed.
+   *
+   * Used by AMD when its private STT needs the same participant audio that
+   * the pipeline is processing without consuming it (see python AMD
+   * detector pushing audio into `_AMDClassifier.push_audio`).
+   */
+  subscribeAudioStream(): ReadableStream<AudioFrame> {
+    const transform = new IdentityTransform<AudioFrame>();
+    const writer = transform.writable.getWriter();
+    this.subscriberWriters.push(writer);
+    // Auto-prune the entry once the subscriber's readable side is cancelled
+    // or its writer otherwise errors. Without this, a subscriber that hands
+    // back its stream (e.g. AMD's STT pump after `aclose()`) leaves a writer
+    // in `subscriberWriters` that the broadcast transform keeps writing into
+    // — frames pile up in the IdentityTransform queue until
+    // `AudioRecognition.close()` runs, leaking ~16-32 KB/s.
+    writer.closed
+      .catch(() => {
+        // closed/errored — fall through to the prune below
+      })
+      .finally(() => {
+        const idx = this.subscriberWriters.indexOf(writer);
+        if (idx >= 0) this.subscriberWriters.splice(idx, 1);
+      });
+    return transform.readable;
+  }
+
   clearUserTurn() {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
@@ -1338,10 +1507,22 @@ export class AudioRecognition {
       this.sttPipeline = undefined;
     }
 
+    // Close any outstanding broadcast subscribers so their consumers see EOF
+    // and don't keep the IdentityTransform queues pinned in memory.
+    for (const writer of this.subscriberWriters) {
+      try {
+        await writer.close();
+      } catch {
+        // already closed / aborted
+      }
+    }
+    this.subscriberWriters = [];
+
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
     await this.interruptionStreamChannel?.close();
+    this.cancelBackchannelBoundary();
   }
 
   private _endUserTurnSpan({
