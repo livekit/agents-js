@@ -4,8 +4,8 @@
 import { VAD as BaseVAD, type VADStream } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
-import { describe, expect, it } from 'vitest';
-import { STT } from './stt.js';
+import { describe, expect, it, vi } from 'vitest';
+import { STT, SpeechStream } from './stt.js';
 
 const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
 
@@ -33,6 +33,42 @@ describe('OpenAI STT options', () => {
     expect(openai.model).toBe('whisper-1');
     expect(openai.capabilities.streaming).toBe(false);
     expect(() => openai.stream()).toThrow(/useRealtime/i);
+  });
+
+  it('keeps Groq and OVHcloud helper instances in batch mode', () => {
+    const groq = STT.withGroq({ apiKey: 'test-key' });
+    const ovhcloud = STT.withOVHcloud({ apiKey: 'test-key' });
+
+    expect(groq.capabilities.streaming).toBe(false);
+    expect(() => groq.stream()).toThrow(/useRealtime/i);
+    expect(ovhcloud.capabilities.streaming).toBe(false);
+    expect(() => ovhcloud.stream()).toThrow(/useRealtime/i);
+  });
+
+  it('preserves the current model when updateOptions enables realtime without a model', () => {
+    const vad = new FakeVAD({ updateInterval: 1 });
+    const openai = new STT({
+      apiKey: 'test-key',
+      model: 'gpt-4o-realtime-preview',
+      useRealtime: false,
+      vad,
+    });
+
+    openai.updateOptions({ useRealtime: true, vad });
+
+    expect(openai.model).toBe('gpt-4o-realtime-preview');
+  });
+
+  it('removes closed speech streams before propagating option updates', () => {
+    const vad = new FakeVAD({ updateInterval: 1 });
+    const openai = new STT({ apiKey: 'test-key', vad });
+    const stream = openai.stream() as SpeechStream;
+    const updateOptions = vi.spyOn(stream, 'updateOptions');
+
+    stream.close();
+    openai.updateOptions({ vad });
+
+    expect(updateOptions).not.toHaveBeenCalled();
   });
 });
 

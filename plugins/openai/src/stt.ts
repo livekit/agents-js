@@ -287,6 +287,7 @@ export class STT extends stt.STT {
       model: 'whisper-large-v3-turbo',
       baseURL: 'https://api.groq.com/openai/v1',
       ...opts,
+      useRealtime: false,
     });
   }
 
@@ -318,6 +319,7 @@ export class STT extends stt.STT {
       model: 'whisper-large-v3-turbo',
       baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
       ...opts,
+      useRealtime: false,
     });
   }
 
@@ -386,7 +388,7 @@ export class STT extends stt.STT {
 
   updateOptions(opts: Partial<STTOptions>): void {
     const useRealtime = opts.useRealtime ?? this.#opts.useRealtime;
-    const model = opts.model ?? (useRealtime ? DEFAULT_REALTIME_MODEL : this.#opts.model);
+    const model = opts.model ?? this.#opts.model;
     const turnDetection = _normalizeRealtimeTurnDetection(
       model,
       opts.turnDetection !== undefined
@@ -412,6 +414,10 @@ export class STT extends stt.STT {
       interimResults: useRealtime,
     });
     for (const stream of this.#streams) {
+      if (stream.isClosed) {
+        this.#streams.delete(stream);
+        continue;
+      }
       stream.updateOptions(this.#opts);
     }
   }
@@ -425,6 +431,7 @@ export class STT extends stt.STT {
       this,
       { ...this.#opts },
       options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
+      () => this.#streams.delete(stream),
     );
     this.#streams.add(stream);
     return stream;
@@ -441,18 +448,34 @@ export class STT extends stt.STT {
 export class SpeechStream extends stt.SpeechStream {
   label = 'openai.SpeechStream';
   #options: ResolvedSTTOptions;
+  #onClose: () => void;
   #targetTranscript = '';
   #currentItemId = '';
   #itemAudioTiming = new Map<string, { startMs?: number; endMs?: number }>();
   #speaking = false;
 
-  constructor(stt: STT, options: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
+  constructor(
+    stt: STT,
+    options: ResolvedSTTOptions,
+    connOptions?: APIConnectOptions,
+    onClose: () => void = () => {},
+  ) {
     super(stt, REALTIME_SAMPLE_RATE, connOptions);
     this.#options = options;
+    this.#onClose = onClose;
   }
 
   updateOptions(options: ResolvedSTTOptions): void {
     this.#options = { ...options };
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  override close(): void {
+    super.close();
+    this.#onClose();
   }
 
   protected async run(): Promise<void> {
@@ -487,6 +510,7 @@ export class SpeechStream extends stt.SpeechStream {
       if (ws.readyState < WebSocket.CLOSING) {
         ws.close();
       }
+      this.#onClose();
     }
   }
 
