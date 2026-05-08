@@ -1404,7 +1404,17 @@ export class AudioRecognition {
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';
     this.finalTranscriptConfidence = [];
+    this.lastFinalTranscriptTime = 0;
+    this.speechStartTime = undefined;
+    this.lastSpeakingTime = undefined;
+    this.speaking = false;
     this.userTurnCommitted = false;
+
+    if (this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.end();
+    }
+    this.userTurnSpan = undefined;
+    this.sttRequestIds = [];
 
     const restartStt = async () => {
       const unlock = await this.sttLifecycleLock.lock();
