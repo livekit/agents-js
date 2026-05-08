@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ExpFilter } from '../../utils.js';
+
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
@@ -40,66 +42,6 @@ export const defaultEndpointingOptions = {
 } as const satisfies EndpointingOptions;
 
 const AGENT_SPEECH_LEADING_SILENCE_GRACE_PERIOD = 250;
-
-class ExpFilter {
-  #alpha: number;
-  #initial: number;
-  #minVal: number;
-  #maxVal: number;
-  #value: number;
-
-  constructor({
-    alpha,
-    initial,
-    minVal,
-    maxVal,
-  }: {
-    alpha: number;
-    initial: number;
-    minVal: number;
-    maxVal: number;
-  }) {
-    if (alpha <= 0 || alpha > 1) {
-      throw new Error('alpha must be in (0, 1]');
-    }
-    this.#alpha = alpha;
-    this.#initial = initial;
-    this.#minVal = minVal;
-    this.#maxVal = maxVal;
-    this.#value = this.#clamp(initial);
-  }
-
-  get value(): number {
-    return this.#value;
-  }
-
-  apply(exp: number, sample: number): number {
-    const a = this.#alpha ** exp;
-    this.#value = this.#clamp(a * this.#value + (1 - a) * sample);
-    return this.#value;
-  }
-
-  reset(options: { alpha?: number; initial?: number; minVal?: number; maxVal?: number }): void {
-    if (options.alpha !== undefined) {
-      if (options.alpha <= 0 || options.alpha > 1) {
-        throw new Error('alpha must be in (0, 1]');
-      }
-      this.#alpha = options.alpha;
-    }
-    if (options.minVal !== undefined) this.#minVal = options.minVal;
-    if (options.maxVal !== undefined) this.#maxVal = options.maxVal;
-    if (options.initial !== undefined) {
-      this.#initial = options.initial;
-      this.#value = this.#clamp(options.initial);
-      return;
-    }
-    this.#value = this.#clamp(this.#value ?? this.#initial);
-  }
-
-  #clamp(value: number): number {
-    return Math.min(Math.max(value, this.#minVal), this.#maxVal);
-  }
-}
 
 export class BaseEndpointing {
   protected _minDelay: number;
@@ -151,26 +93,16 @@ export class DynamicEndpointing extends BaseEndpointing {
 
   constructor(minDelay: number, maxDelay: number, alpha: number = defaultEndpointingOptions.alpha) {
     super(minDelay, maxDelay);
-    this.#utterancePause = new ExpFilter({
-      alpha,
-      initial: minDelay,
-      minVal: minDelay,
-      maxVal: maxDelay,
-    });
-    this.#turnPause = new ExpFilter({
-      alpha,
-      initial: maxDelay,
-      minVal: minDelay,
-      maxVal: maxDelay,
-    });
+    this.#utterancePause = new ExpFilter(alpha, maxDelay, minDelay, minDelay);
+    this.#turnPause = new ExpFilter(alpha, maxDelay, minDelay, maxDelay);
   }
 
   override get minDelay(): number {
-    return this.#utterancePause.value;
+    return this.#utterancePause.value ?? this._minDelay;
   }
 
   override get maxDelay(): number {
-    return Math.max(this.#turnPause.value, this.minDelay);
+    return Math.max(this.#turnPause.value ?? this._maxDelay, this.minDelay);
   }
 
   get betweenUtteranceDelay(): number {
@@ -276,17 +208,17 @@ export class DynamicEndpointing extends BaseEndpointing {
   override updateOptions(options: { minDelay?: number; maxDelay?: number; alpha?: number }): void {
     if (options.minDelay !== undefined) {
       this._minDelay = options.minDelay;
-      this.#utterancePause.reset({ initial: this._minDelay, minVal: this._minDelay });
-      this.#turnPause.reset({ minVal: this._minDelay });
+      this.#utterancePause.reset(undefined, this._minDelay, this._minDelay);
+      this.#turnPause.reset(undefined, undefined, this._minDelay);
     }
     if (options.maxDelay !== undefined) {
       this._maxDelay = options.maxDelay;
-      this.#turnPause.reset({ initial: this._maxDelay, maxVal: this._maxDelay });
-      this.#utterancePause.reset({ maxVal: this._maxDelay });
+      this.#turnPause.reset(undefined, this._maxDelay, undefined, this._maxDelay);
+      this.#utterancePause.reset(undefined, undefined, undefined, this._maxDelay);
     }
     if (options.alpha !== undefined) {
-      this.#utterancePause.reset({ alpha: options.alpha });
-      this.#turnPause.reset({ alpha: options.alpha });
+      this.#utterancePause.reset(options.alpha);
+      this.#turnPause.reset(options.alpha);
     }
   }
 }

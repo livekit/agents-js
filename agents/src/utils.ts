@@ -352,30 +352,51 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 export class ExpFilter {
   #alpha: number;
   #max?: number;
+  #min?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
+  constructor(alpha: number, max?: number, min?: number, initial?: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
     this.#alpha = alpha;
     this.#max = max;
+    this.#min = min;
+    this.#filtered = initial;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
+  reset(alpha?: number, initial?: number, min?: number, max?: number) {
+    if (alpha !== undefined) {
+      if (alpha <= 0 || alpha > 1) {
+        throw new Error('alpha must be in (0, 1].');
+      }
       this.#alpha = alpha;
     }
-    this.#filtered = undefined;
+    if (initial !== undefined) this.#filtered = initial;
+    if (min !== undefined) this.#min = min;
+    if (max !== undefined) this.#max = max;
   }
 
-  apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+  apply(exp: number, sample?: number): number {
+    sample ??= this.#filtered;
+
+    if (sample !== undefined && this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
-    } else {
+    } else if (sample !== undefined) {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#filtered === undefined) {
+      throw new Error('sample or initial value must be given.');
+    }
+
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -385,7 +406,14 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
   set alpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
     this.#alpha = alpha;
   }
 }
