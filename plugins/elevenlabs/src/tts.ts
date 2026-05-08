@@ -73,7 +73,7 @@ export interface TTSOptions {
   inactivityTimeout?: number;
   syncAlignment?: boolean;
   applyTextNormalization?: 'auto' | 'on' | 'off';
-  applyLanguageTextNormalization?: boolean;
+  applyLanguageTextNormalization?: 'auto' | 'on' | 'off';
   preferredAlignment?: 'normalized' | 'original';
   autoMode?: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
@@ -97,7 +97,7 @@ interface ResolvedTTSOptions {
   inactivityTimeout: number;
   syncAlignment: boolean;
   applyTextNormalization: 'auto' | 'on' | 'off';
-  applyLanguageTextNormalization?: boolean;
+  applyLanguageTextNormalization?: 'auto' | 'on' | 'off';
   preferredAlignment: 'normalized' | 'original';
   autoMode: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
