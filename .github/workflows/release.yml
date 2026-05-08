@@ -33,6 +33,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # npm trusted publishing cannot publish a package for the first time. New packages must be
+      # created on npm before release CI can publish subsequent versions with OIDC.
       - name: Verify all packages exist on npm
         run: |
           MISSING=()
