@@ -19,6 +19,11 @@ interface GoogleFormatData {
   systemMessages: string[] | null;
 }
 
+export type ServiceTier = 'unspecified' | 'flex' | 'standard' | 'priority';
+type GenerateContentConfigWithServiceTier = Omit<GenerateContentConfig, 'serviceTier'> & {
+  serviceTier?: ServiceTier;
+};
+
 export interface LLMOptions {
   model: string | ChatModels;
   apiKey?: string;
@@ -37,6 +42,7 @@ export interface LLMOptions {
   geminiTools?: LLMTools;
   httpOptions?: types.HttpOptions;
   seed?: number;
+  serviceTier?: ServiceTier;
 }
 
 export class LLM extends llm.LLM {
@@ -85,6 +91,7 @@ export class LLM extends llm.LLM {
    * @param geminiTools - The Gemini-specific tools to use for the session.
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
+   * @param serviceTier - The service tier for the request. Defaults to undefined.
    */
   constructor(
     {
@@ -105,6 +112,7 @@ export class LLM extends llm.LLM {
       geminiTools,
       httpOptions,
       seed,
+      serviceTier,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
     },
@@ -175,6 +183,7 @@ export class LLM extends llm.LLM {
       geminiTools,
       httpOptions,
       seed,
+      serviceTier,
       apiKey,
     };
   }
@@ -256,6 +265,9 @@ export class LLM extends llm.LLM {
     }
     if (this.#opts.seed !== undefined) {
       extras.seed = this.#opts.seed;
+    }
+    if (this.#opts.serviceTier !== undefined) {
+      (extras as GenerateContentConfigWithServiceTier).serviceTier = this.#opts.serviceTier;
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
