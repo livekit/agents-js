@@ -19,6 +19,7 @@ export {
 
 export {
   AgentHandoffItem,
+  AgentConfigUpdate,
   ChatContext,
   ChatMessage,
   createAudioContent,

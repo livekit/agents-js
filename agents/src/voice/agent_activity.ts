@@ -13,7 +13,12 @@ import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  type ChatContext,
+  ChatMessage,
+  type MetricsReport,
+} from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -459,7 +464,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // TODO(parity): Record initial AgentConfigUpdate in chat context
+    const initialTools = Object.keys(this.tools);
+    if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
+      const initialConfig = new AgentConfigUpdate({
+        instructions: this.agent.instructions,
+        toolsAdded: initialTools.length > 0 ? initialTools : undefined,
+      });
+      this.agent._chatCtx.insert(initialConfig);
+      this.agentSession.history.insert(initialConfig);
+    }
 
     // metrics and error handling
     if (this.llm instanceof LLM) {
@@ -559,9 +572,13 @@ export class AgentActivity implements RecognitionHooks {
         let reusable =
           capabilities.midSessionChatCtxUpdate ||
           this.realtimeSession.chatCtx
-            .copy({ excludeInstructions: true, excludeHandoff: true })
+            .copy({ excludeInstructions: true, excludeHandoff: true, excludeConfigUpdate: true })
             .isEquivalent(
-              newActivity.agent.chatCtx.copy({ excludeInstructions: true, excludeHandoff: true }),
+              newActivity.agent.chatCtx.copy({
+                excludeInstructions: true,
+                excludeHandoff: true,
+                excludeConfigUpdate: true,
+              }),
             );
 
         // instructions update is supported or instructions are the same
@@ -723,9 +740,22 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
   async updateTools(tools: ToolContext): Promise<void> {
+    const oldToolNames = new Set(Object.keys(this.tools));
+    const newToolNames = new Set(Object.keys(tools));
+    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
+    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+
     this.agent._tools = { ...tools };
+
+    if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
+      const configUpdate = new AgentConfigUpdate({
+        toolsAdded: toolsAdded.length > 0 ? toolsAdded : undefined,
+        toolsRemoved: toolsRemoved.length > 0 ? toolsRemoved : undefined,
+      });
+      this.agent._chatCtx.insert(configUpdate);
+      this.agentSession.history.insert(configUpdate);
+    }
 
     if (this.realtimeSession) {
       await this.realtimeSession.updateTools(tools);
