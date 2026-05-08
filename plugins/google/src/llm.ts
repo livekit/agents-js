@@ -37,6 +37,7 @@ export interface LLMOptions {
   geminiTools?: LLMTools;
   httpOptions?: types.HttpOptions;
   seed?: number;
+  serviceTier?: types.ServiceTier;
 }
 
 export class LLM extends llm.LLM {
@@ -85,6 +86,7 @@ export class LLM extends llm.LLM {
    * @param geminiTools - The Gemini-specific tools to use for the session.
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
+   * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
    */
   constructor(
     {
@@ -105,6 +107,7 @@ export class LLM extends llm.LLM {
       geminiTools,
       httpOptions,
       seed,
+      serviceTier,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
     },
@@ -175,6 +178,7 @@ export class LLM extends llm.LLM {
       geminiTools,
       httpOptions,
       seed,
+      serviceTier,
       apiKey,
     };
   }
@@ -264,6 +268,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
       extras.automaticFunctionCalling = this.#opts.automaticFunctionCallingConfig;
+    }
+
+    if (this.#opts.serviceTier !== undefined) {
+      extras.serviceTier = this.#opts.serviceTier;
     }
 
     geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
