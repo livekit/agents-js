@@ -73,6 +73,7 @@ export interface TTSOptions {
   inactivityTimeout?: number;
   syncAlignment?: boolean;
   applyTextNormalization?: 'auto' | 'on' | 'off';
+  applyLanguageTextNormalization?: boolean;
   preferredAlignment?: 'normalized' | 'original';
   autoMode?: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
@@ -96,6 +97,7 @@ interface ResolvedTTSOptions {
   inactivityTimeout: number;
   syncAlignment: boolean;
   applyTextNormalization: 'auto' | 'on' | 'off';
+  applyLanguageTextNormalization?: boolean;
   preferredAlignment: 'normalized' | 'original';
   autoMode: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
@@ -155,6 +157,9 @@ function multiStreamUrl(opts: ResolvedTTSOptions): string {
   params.push(`enable_logging=${opts.enableLogging}`);
   params.push(`inactivity_timeout=${opts.inactivityTimeout}`);
   params.push(`apply_text_normalization=${opts.applyTextNormalization}`);
+  if (opts.applyLanguageTextNormalization !== undefined) {
+    params.push(`apply_language_text_normalization=${opts.applyLanguageTextNormalization}`);
+  }
   if (opts.syncAlignment) {
     params.push('sync_alignment=true');
   }
@@ -703,6 +708,7 @@ export class TTS extends tts.TTS {
       inactivityTimeout: opts.inactivityTimeout ?? WS_INACTIVITY_TIMEOUT,
       syncAlignment: opts.syncAlignment ?? true,
       applyTextNormalization: opts.applyTextNormalization ?? 'auto',
+      applyLanguageTextNormalization: opts.applyLanguageTextNormalization,
       preferredAlignment: opts.preferredAlignment ?? 'normalized',
       autoMode,
       pronunciationDictionaryLocators: opts.pronunciationDictionaryLocators,
