@@ -80,6 +80,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-xai](https://www.npmjs.com/package/@livekit/agents-plugin-xai)               | LLM, TTS      |
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
 | [@livekit/agents-plugin-fishaudio](https://www.npmjs.com/package/@livekit/agents-plugin-fishaudio)   | TTS           |
+| [@livekit/agents-plugin-hume](https://www.npmjs.com/package/@livekit/agents-plugin-hume)             | TTS           |
 
 ## Docs and guides
 
