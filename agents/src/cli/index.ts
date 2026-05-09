@@ -6,7 +6,7 @@ import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from '../log.js';
 import { Plugin } from '../plugin.js';
 import { version } from '../version.js';
-import { AgentServer, ServerOptions } from '../worker.js';
+import { AgentServer, ServerOptions, type ServerOptionsInput } from '../worker.js';
 
 type CliArgs = {
   opts: ServerOptions;
@@ -73,16 +73,23 @@ const runServer = async (args: CliArgs) => {
   }
 };
 
+/** @internal */
+export function normalizeRunAppOptions(opts?: ServerOptions | ServerOptionsInput): ServerOptions {
+  return opts instanceof ServerOptions ? opts : new ServerOptions(opts ?? {});
+}
+
 /**
  * Exposes a CLI for creating a new worker, in development or production mode.
  *
  * @param opts - Options to launch the worker with
  * @example
  * ```
- * cli.runApp();
+ * cli.runApp({
+ *   agentName: 'my-agent',
+ * });
  * ```
  */
-export const runApp = (opts?: ServerOptions) => {
+export const runApp = (opts?: ServerOptions | ServerOptionsInput) => {
   const logLevelOption = (defaultLevel: string) =>
     new Option('--log-level <level>', 'Set the logging level')
       .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
@@ -128,16 +135,16 @@ export const runApp = (opts?: ServerOptions) => {
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
     .action((...[, command]) => {
-      opts = opts ?? new ServerOptions({});
+      const serverOptions = normalizeRunAppOptions(opts);
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
-      opts.wsURL = globalOptions.url || opts.wsURL;
-      opts.apiKey = globalOptions.apiKey || opts.apiKey;
-      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel;
-      opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      serverOptions.wsURL = globalOptions.url || serverOptions.wsURL;
+      serverOptions.apiKey = globalOptions.apiKey || serverOptions.apiKey;
+      serverOptions.apiSecret = globalOptions.apiSecret || serverOptions.apiSecret;
+      serverOptions.logLevel = commandOptions.logLevel;
+      serverOptions.workerToken = globalOptions.workerToken || serverOptions.workerToken;
       runServer({
-        opts,
+        opts: serverOptions,
         production: true,
         watch: false,
       });
@@ -148,17 +155,17 @@ export const runApp = (opts?: ServerOptions) => {
     .description('Start the worker in development mode')
     .addOption(logLevelOption('debug'))
     .action((...[, command]) => {
-      opts = opts ?? new ServerOptions({});
+      const serverOptions = normalizeRunAppOptions(opts);
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
-      opts.wsURL = globalOptions.url || opts.wsURL;
-      opts.apiKey = globalOptions.apiKey || opts.apiKey;
-      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel;
-      opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      serverOptions.wsURL = globalOptions.url || serverOptions.wsURL;
+      serverOptions.apiKey = globalOptions.apiKey || serverOptions.apiKey;
+      serverOptions.apiSecret = globalOptions.apiSecret || serverOptions.apiSecret;
+      serverOptions.logLevel = commandOptions.logLevel;
+      serverOptions.workerToken = globalOptions.workerToken || serverOptions.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';
       runServer({
-        opts,
+        opts: serverOptions,
         production: false,
         watch: false,
       });
@@ -171,17 +178,17 @@ export const runApp = (opts?: ServerOptions) => {
     .option('--participant-identity <string>', 'Identity of user to listen to')
     .addOption(logLevelOption('info'))
     .action((...[, command]) => {
-      opts = opts ?? new ServerOptions({});
+      const serverOptions = normalizeRunAppOptions(opts);
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
-      opts.wsURL = globalOptions.url || opts.wsURL;
-      opts.apiKey = globalOptions.apiKey || opts.apiKey;
-      opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
-      opts.logLevel = commandOptions.logLevel;
-      opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      serverOptions.wsURL = globalOptions.url || serverOptions.wsURL;
+      serverOptions.apiKey = globalOptions.apiKey || serverOptions.apiKey;
+      serverOptions.apiSecret = globalOptions.apiSecret || serverOptions.apiSecret;
+      serverOptions.logLevel = commandOptions.logLevel;
+      serverOptions.workerToken = globalOptions.workerToken || serverOptions.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';
       runServer({
-        opts,
+        opts: serverOptions,
         production: false,
         watch: false,
         room: commandOptions.room,

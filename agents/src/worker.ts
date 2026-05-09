@@ -114,6 +114,49 @@ export class WorkerPermissions {
   }
 }
 
+export type ServerOptionsInput = {
+  /**
+   * Path to a file that has {@link Agent} as a default export, dynamically imported later for
+   * entrypoint and prewarm functions
+   */
+  agent?: string;
+  requestFunc?: (job: JobRequest) => Promise<void>;
+  /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
+  loadFunc?: (worker: AgentServer) => Promise<number>;
+  /** When the load exceeds this threshold, the worker will be marked as unavailable. */
+  loadThreshold?: number;
+  numIdleProcesses?: number;
+  shutdownProcessTimeout?: number;
+  initializeProcessTimeout?: number;
+  permissions?: WorkerPermissions;
+  /**
+   * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
+   * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
+   * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
+   *
+   * By default it uses `LIVEKIT_AGENT_NAME` from environment.
+   */
+  agentName?: string;
+  /**
+   * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
+   * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
+   * lost.
+   */
+  agentNameIsEnv?: boolean;
+  serverType?: JobType;
+  maxRetry?: number;
+  wsURL?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  workerToken?: string;
+  host?: string;
+  port?: number;
+  logLevel?: string;
+  production?: boolean;
+  jobMemoryWarnMB?: number;
+  jobMemoryLimitMB?: number;
+};
+
 /**
  * Data class describing worker behaviour.
  *
@@ -171,48 +214,7 @@ export class ServerOptions {
     production = false,
     jobMemoryWarnMB = 500,
     jobMemoryLimitMB = 0,
-  }: {
-    /**
-     * Path to a file that has {@link Agent} as a default export, dynamically imported later for
-     * entrypoint and prewarm functions
-     */
-    agent?: string;
-    requestFunc?: (job: JobRequest) => Promise<void>;
-    /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: (worker: AgentServer) => Promise<number>;
-    /** When the load exceeds this threshold, the worker will be marked as unavailable. */
-    loadThreshold?: number;
-    numIdleProcesses?: number;
-    shutdownProcessTimeout?: number;
-    initializeProcessTimeout?: number;
-    permissions?: WorkerPermissions;
-    /**
-     * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
-     * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
-     * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
-     *
-     * By default it uses `LIVEKIT_AGENT_NAME` from environment.
-     */
-    agentName?: string;
-    /**
-     * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
-     * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
-     * lost.
-     */
-    agentNameIsEnv?: boolean;
-    serverType?: JobType;
-    maxRetry?: number;
-    wsURL?: string;
-    apiKey?: string;
-    apiSecret?: string;
-    workerToken?: string;
-    host?: string;
-    port?: number;
-    logLevel?: string;
-    production?: boolean;
-    jobMemoryWarnMB?: number;
-    jobMemoryLimitMB?: number;
-  }) {
+  }: ServerOptionsInput) {
     this.agent = agent ?? '';
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
