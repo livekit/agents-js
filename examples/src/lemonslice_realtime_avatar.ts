@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   inference,
@@ -14,7 +13,6 @@ import {
 import * as lemonslice from '@livekit/agents-plugin-lemonslice';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 
 initializeLogger({ pretty: true });
 
@@ -84,4 +82,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

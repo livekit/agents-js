@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   inference,
@@ -13,7 +12,6 @@ import {
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
 import type { ChatContext, ChatMessage } from 'agents/dist/llm/chat_context.js';
-import { fileURLToPath } from 'node:url';
 
 class MyAgent extends voice.Agent {
   async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage) {
@@ -70,4 +68,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

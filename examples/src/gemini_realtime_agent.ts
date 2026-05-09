@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   dedent,
   defineAgent,
@@ -13,7 +12,6 @@ import {
 } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -148,4 +146,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

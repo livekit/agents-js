@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   dedent,
   defineAgent,
@@ -23,7 +22,6 @@ import * as openai from '@livekit/agents-plugin-openai';
 import * as resemble from '@livekit/agents-plugin-resemble';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const sttOptions = {
@@ -280,4 +278,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

@@ -1,18 +1,9 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  ServerOptions,
-  beta,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, beta, cli, defineAgent, llm, voice } from '@livekit/agents';
 // import * as phonic from '@livekit/agents-plugin-phonic';
 import { access, appendFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 type SurveyUserData = {
@@ -372,4 +363,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

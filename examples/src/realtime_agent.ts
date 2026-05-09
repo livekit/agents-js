@@ -1,19 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, type JobProcess, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
@@ -95,4 +86,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

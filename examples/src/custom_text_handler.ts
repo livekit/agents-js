@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   inference,
@@ -13,7 +12,6 @@ import {
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { fileURLToPath } from 'node:url';
 
 const customTextInputHandler = (session: voice.AgentSession, event: voice.TextInputEvent): void => {
   const message = event.text;
@@ -74,4 +72,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

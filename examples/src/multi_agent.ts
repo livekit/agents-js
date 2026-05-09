@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   dedent,
   defineAgent,
@@ -14,7 +13,6 @@ import {
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 // Shared data that's used by the storyteller agent.
@@ -102,4 +100,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   inference,
@@ -15,7 +14,6 @@ import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { TrackKind } from '@livekit/rtc-node';
 import { RoomServiceClient, SipClient } from 'livekit-server-sdk';
-import { fileURLToPath } from 'node:url';
 
 class MyAgent extends voice.Agent {
   constructor() {
@@ -190,4 +188,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

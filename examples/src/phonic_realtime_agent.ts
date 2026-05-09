@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
+import { type JobContext, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as phonic from '@livekit/agents-plugin-phonic';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const toggleLight = llm.tool({
@@ -62,4 +61,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

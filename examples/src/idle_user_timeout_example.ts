@@ -9,7 +9,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   Task,
   cli,
   defineAgent,
@@ -20,7 +19,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 
 initializeLogger({ pretty: true });
 
@@ -91,4 +89,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

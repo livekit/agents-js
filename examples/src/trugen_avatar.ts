@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, metrics, voice } from '@livekit/agents';
+import { type JobContext, cli, defineAgent, metrics, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as trugen from '@livekit/agents-plugin-trugen';
-import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
@@ -44,4 +43,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

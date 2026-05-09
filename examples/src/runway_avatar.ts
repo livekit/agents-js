@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   log,
@@ -14,7 +13,6 @@ import {
 import * as google from '@livekit/agents-plugin-google';
 import * as runway from '@livekit/agents-plugin-runway';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
@@ -57,4 +55,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();
