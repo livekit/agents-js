@@ -52,6 +52,17 @@ be approved:
 - There's no need to mess around with `CHANGELOG.md` or package manifests — we have a bot handle
   that for us. A maintainer will add the necessary notes before merging.
 
+## Running examples while developing
+
+Use the repo-local helper to run examples against the workspace packages:
+
+```bash
+pnpm build
+pnpm run:agent ./examples/src/basic_agent.ts dev --log-level=debug
+```
+
+`pnpm run:agent` executes from the repository root, so pass paths relative to the root.
+
 ## Assist others in the community
 
 If you can't contribute code, you can still help us greatly by helping out community members who

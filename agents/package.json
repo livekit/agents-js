@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",
+  "bin": {
+    "lk-agent": "./dist/cli/bin.js"
+  },
   "exports": {
     "import": {
       "types": "./dist/index.d.ts",

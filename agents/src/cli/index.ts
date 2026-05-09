@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
-import { initializeLogger, log } from './log.js';
-import { Plugin } from './plugin.js';
-import { version } from './version.js';
-import { AgentServer, ServerOptions } from './worker.js';
+import { initializeLogger, log } from '../log.js';
+import { Plugin } from '../plugin.js';
+import { version } from '../version.js';
+import { AgentServer, ServerOptions } from '../worker.js';
 
 type CliArgs = {
   opts: ServerOptions;
@@ -79,12 +79,10 @@ const runServer = async (args: CliArgs) => {
  * @param opts - Options to launch the worker with
  * @example
  * ```
- * if (process.argv[1] === fileURLToPath(import.meta.url)) {
- *   cli.runApp(new ServerOptions({ agent: import.meta.filename }));
- * }
+ * cli.runApp();
  * ```
  */
-export const runApp = (opts: ServerOptions) => {
+export const runApp = (opts?: ServerOptions) => {
   const logLevelOption = (defaultLevel: string) =>
     new Option('--log-level <level>', 'Set the logging level')
       .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
@@ -118,7 +116,7 @@ export const runApp = (opts: ServerOptions) => {
     .action(() => {
       if (
         // do not run CLI if origin file is agents/ipc/job_main.js
-        process.argv[1] !== new URL('ipc/job_main.js', import.meta.url).pathname &&
+        process.argv[1] !== new URL('../ipc/job_main.js', import.meta.url).pathname &&
         process.argv.length < 3
       ) {
         program.help();
@@ -130,6 +128,7 @@ export const runApp = (opts: ServerOptions) => {
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
     .action((...[, command]) => {
+      opts = opts ?? new ServerOptions({});
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
       opts.wsURL = globalOptions.url || opts.wsURL;
@@ -149,6 +148,7 @@ export const runApp = (opts: ServerOptions) => {
     .description('Start the worker in development mode')
     .addOption(logLevelOption('debug'))
     .action((...[, command]) => {
+      opts = opts ?? new ServerOptions({});
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
       opts.wsURL = globalOptions.url || opts.wsURL;
@@ -171,6 +171,7 @@ export const runApp = (opts: ServerOptions) => {
     .option('--participant-identity <string>', 'Identity of user to listen to')
     .addOption(logLevelOption('info'))
     .action((...[, command]) => {
+      opts = opts ?? new ServerOptions({});
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
       opts.wsURL = globalOptions.url || opts.wsURL;

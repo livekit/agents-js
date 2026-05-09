@@ -15,6 +15,7 @@ import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
+import { getDefaultAgentPath } from './cli/context.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { InferenceRunner } from './inference_runner.js';
@@ -148,7 +149,7 @@ export class ServerOptions {
 
   /** @param options - Worker options */
   constructor({
-    agent,
+    agent = getDefaultAgentPath(),
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
     loadThreshold = undefined,
@@ -175,7 +176,7 @@ export class ServerOptions {
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
      * entrypoint and prewarm functions
      */
-    agent: string;
+    agent?: string;
     requestFunc?: (job: JobRequest) => Promise<void>;
     /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
     loadFunc?: (worker: AgentServer) => Promise<number>;
@@ -212,10 +213,7 @@ export class ServerOptions {
     jobMemoryWarnMB?: number;
     jobMemoryLimitMB?: number;
   }) {
-    this.agent = agent;
-    if (!this.agent) {
-      throw new Error('No Agent file was passed to the worker');
-    }
+    this.agent = agent ?? '';
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = loadThreshold || Default.loadThreshold(production);
@@ -288,6 +286,12 @@ export class AgentServer {
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
+    if (!opts.agent) {
+      throw new Error(
+        'No Agent file was passed to the worker. Pass `agent` in ServerOptions or run via `lk-agent <entry> <command>`.',
+      );
+    }
+
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';

@@ -12,7 +12,7 @@
 export * from './_exceptions.js';
 export * from './audio.js';
 export * as beta from './beta/index.js';
-export * as cli from './cli.js';
+export * as cli from './cli/index.js';
 export * from './connection_pool.js';
 export * from './generator.js';
 export * as inference from './inference/index.js';
