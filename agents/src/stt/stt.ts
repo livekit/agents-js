@@ -75,6 +75,12 @@ export interface SpeechData {
    * May contain multiple entries when a single utterance spans multiple source languages.
    */
   sourceLanguages?: LanguageCode[];
+  /**
+   * Optional plugin-specific metadata (e.g. voice profile, provider diagnostics).
+   *
+   * Plugins may populate this with provider-specific data that doesn't map to standard fields.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface RecognitionUsage {
