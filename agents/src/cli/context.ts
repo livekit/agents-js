@@ -2,19 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-let defaultAgentPath: string | undefined;
+const defaultAgentPathKey = Symbol.for('@livekit/agents.cli.defaultAgentPath');
+const globalAgentContext = globalThis as typeof globalThis & {
+  [key: symbol]: string | undefined;
+};
 
 /** @internal */
 export function setDefaultAgentPath(agentPath: string) {
-  defaultAgentPath = agentPath;
+  globalAgentContext[defaultAgentPathKey] = agentPath;
 }
 
 /** @internal */
 export function getDefaultAgentPath(): string | undefined {
-  return defaultAgentPath;
+  return globalAgentContext[defaultAgentPathKey];
 }
 
 /** @internal */
 export function clearDefaultAgentPath() {
-  defaultAgentPath = undefined;
+  delete globalAgentContext[defaultAgentPathKey];
 }
