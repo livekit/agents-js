@@ -25,19 +25,19 @@ import { log } from './log.js';
 export type Expand<T> = T extends Function
   ? T
   : T extends object
-    ? T extends Array<infer U>
-      ? Array<Expand<U>>
-      : T extends Map<infer K, infer V>
-        ? Map<Expand<K>, Expand<V>>
-        : T extends Set<infer M>
-          ? Set<Expand<M>>
-          : { [K in keyof T]: Expand<T[K]> }
-    : T;
+  ? T extends Array<infer U>
+  ? Array<Expand<U>>
+  : T extends Map<infer K, infer V>
+  ? Map<Expand<K>, Expand<V>>
+  : T extends Set<infer M>
+  ? Set<Expand<M>>
+  : { [K in keyof T]: Expand<T[K]> }
+  : T;
 
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
-export const noop = () => {};
+export const noop = () => { };
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
@@ -708,14 +708,17 @@ export function resampleStream({
   outputRate: number;
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
+  let currentInputRate = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
-      if (chunk.samplesPerChannel === 0) {
+      if (chunk.samplesPerChannel === 0 || chunk.sampleRate === outputRate) {
         controller.enqueue(chunk);
         return;
       }
-      if (!resampler) {
+      if (!resampler || currentInputRate !== chunk.sampleRate) {
+        resampler?.close();
         resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        currentInputRate = chunk.sampleRate;
       }
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
