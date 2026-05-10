@@ -1701,11 +1701,11 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools = shouldFilterTools
         ? Object.fromEntries(
-            Object.entries(this.agent.toolCtx).filter(
+            Object.entries(this.tools).filter(
               ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
             ),
           )
-        : this.agent.toolCtx;
+        : this.tools;
 
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>

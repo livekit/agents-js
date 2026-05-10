@@ -14,11 +14,20 @@ import {
 // `@modelcontextprotocol/sdk` is an optional peer dependency. The types below
 // describe the minimal subset of the SDK we rely on so the rest of the file
 // can typecheck without the SDK being present at build time.
+type MCPRequestOptions = { timeout?: number; signal?: AbortSignal };
+
 type MCPClient = {
   connect: (transport: MCPTransport) => Promise<void>;
   close: () => Promise<void>;
-  listTools: () => Promise<{ tools: MCPToolDescriptor[] }>;
-  callTool: (params: { name: string; arguments?: JSONObject }) => Promise<MCPToolCallResult>;
+  listTools: (
+    params?: unknown,
+    options?: MCPRequestOptions,
+  ) => Promise<{ tools: MCPToolDescriptor[] }>;
+  callTool: (
+    params: { name: string; arguments?: JSONObject },
+    resultSchema?: unknown,
+    options?: MCPRequestOptions,
+  ) => Promise<MCPToolCallResult>;
 };
 
 type MCPTransport = unknown;
@@ -207,7 +216,7 @@ export abstract class MCPServer {
       return this._cachedTools;
     }
 
-    const result = await this._client.listTools();
+    const result = await this._client.listTools(undefined, this._requestOptions());
     const tools: ToolContext = {};
     for (const t of result.tools) {
       tools[t.name] = this._makeFunctionTool(t);
@@ -221,6 +230,10 @@ export abstract class MCPServer {
 
   protected get clientSessionTimeout(): number | null {
     return this._clientSessionTimeout;
+  }
+
+  private _requestOptions(): MCPRequestOptions | undefined {
+    return this._clientSessionTimeout != null ? { timeout: this._clientSessionTimeout } : undefined;
   }
 
   private _makeFunctionTool(descriptor: MCPToolDescriptor): FunctionTool<JSONObject> {
@@ -237,7 +250,11 @@ export abstract class MCPServer {
           );
         }
 
-        const result = await client.callTool({ name, arguments: args });
+        const result = await client.callTool(
+          { name, arguments: args },
+          undefined,
+          this._requestOptions(),
+        );
 
         if (result.isError) {
           const text = result.content
@@ -276,10 +293,6 @@ export interface MCPServerHTTPOptions extends MCPServerOptions {
   allowedTools?: string[];
   /** HTTP headers to include in requests. */
   headers?: Record<string, string>;
-  /** Connection timeout in milliseconds. Defaults to `5000`. */
-  timeout?: number;
-  /** SSE read timeout in milliseconds. Defaults to `300000` (5 minutes). */
-  sseReadTimeout?: number;
 }
 
 /**
