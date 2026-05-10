@@ -286,8 +286,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const url = `wss://${API_BASE_URL}/speak/${getBaseLanguage(this.#opts.langCode)}?${getQueryParamString(this.#opts)}&api_key=${this.#opts.apiKey}`;
-    const ws = new WebSocket(url);
+    const url = `wss://${API_BASE_URL}/speak/${getBaseLanguage(this.#opts.langCode)}?${getQueryParamString(this.#opts)}`;
+    const ws = new WebSocket(url, {
+      headers: {
+        [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
+      },
+    });
 
     try {
       await new Promise((resolve, reject) => {
