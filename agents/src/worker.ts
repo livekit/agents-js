@@ -15,6 +15,7 @@ import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
+import { getDefaultAgentPath } from './cli/context.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { InferenceRunner } from './inference_runner.js';
@@ -113,6 +114,49 @@ export class WorkerPermissions {
   }
 }
 
+export type ServerOptionsInput = {
+  /**
+   * Path to a file that has {@link Agent} as a default export, dynamically imported later for
+   * entrypoint and prewarm functions
+   */
+  agent?: string;
+  requestFunc?: (job: JobRequest) => Promise<void>;
+  /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
+  loadFunc?: (worker: AgentServer) => Promise<number>;
+  /** When the load exceeds this threshold, the worker will be marked as unavailable. */
+  loadThreshold?: number;
+  numIdleProcesses?: number;
+  shutdownProcessTimeout?: number;
+  initializeProcessTimeout?: number;
+  permissions?: WorkerPermissions;
+  /**
+   * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
+   * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
+   * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
+   *
+   * By default it uses `LIVEKIT_AGENT_NAME` from environment.
+   */
+  agentName?: string;
+  /**
+   * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
+   * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
+   * lost.
+   */
+  agentNameIsEnv?: boolean;
+  serverType?: JobType;
+  maxRetry?: number;
+  wsURL?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  workerToken?: string;
+  host?: string;
+  port?: number;
+  logLevel?: string;
+  production?: boolean;
+  jobMemoryWarnMB?: number;
+  jobMemoryLimitMB?: number;
+};
+
 /**
  * Data class describing worker behaviour.
  *
@@ -148,7 +192,7 @@ export class ServerOptions {
 
   /** @param options - Worker options */
   constructor({
-    agent,
+    agent = getDefaultAgentPath(),
     requestFunc = defaultRequestFunc,
     loadFunc = defaultCpuLoad,
     loadThreshold = undefined,
@@ -170,52 +214,8 @@ export class ServerOptions {
     production = false,
     jobMemoryWarnMB = 500,
     jobMemoryLimitMB = 0,
-  }: {
-    /**
-     * Path to a file that has {@link Agent} as a default export, dynamically imported later for
-     * entrypoint and prewarm functions
-     */
-    agent: string;
-    requestFunc?: (job: JobRequest) => Promise<void>;
-    /** Called to determine the current load of the worker. Should return a value between 0 and 1. */
-    loadFunc?: (worker: AgentServer) => Promise<number>;
-    /** When the load exceeds this threshold, the worker will be marked as unavailable. */
-    loadThreshold?: number;
-    numIdleProcesses?: number;
-    shutdownProcessTimeout?: number;
-    initializeProcessTimeout?: number;
-    permissions?: WorkerPermissions;
-    /**
-     * Set agentName to enable explicit dispatch. When explicit dispatch is enabled, jobs will not
-     * be dispatched to rooms automatically. Instead, you can either specify the agent(s) to be
-     * dispatched in the end-user's token, or use the AgentDispatch.createDispatch API.
-     *
-     * By default it uses `LIVEKIT_AGENT_NAME` from environment.
-     */
-    agentName?: string;
-    /**
-     * Internal flag indicating that `agentName` was resolved from `LIVEKIT_AGENT_NAME`. Forwarded
-     * through ServerOptions re-construction (e.g. cli.ts spread) so the env-source signal isn't
-     * lost.
-     */
-    agentNameIsEnv?: boolean;
-    serverType?: JobType;
-    maxRetry?: number;
-    wsURL?: string;
-    apiKey?: string;
-    apiSecret?: string;
-    workerToken?: string;
-    host?: string;
-    port?: number;
-    logLevel?: string;
-    production?: boolean;
-    jobMemoryWarnMB?: number;
-    jobMemoryLimitMB?: number;
-  }) {
-    this.agent = agent;
-    if (!this.agent) {
-      throw new Error('No Agent file was passed to the worker');
-    }
+  }: ServerOptionsInput) {
+    this.agent = agent ?? '';
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = loadThreshold || Default.loadThreshold(production);
@@ -288,6 +288,12 @@ export class AgentServer {
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
+    if (!opts.agent) {
+      throw new Error(
+        'No Agent file was passed to the worker. Pass `agent` in ServerOptions or run via `lk-agent <entry> <command>`.',
+      );
+    }
+
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';

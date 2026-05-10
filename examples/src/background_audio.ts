@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  ServerOptions,
   cli,
   defineAgent,
   initializeLogger,
@@ -11,7 +10,6 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 /**
@@ -76,4 +74,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

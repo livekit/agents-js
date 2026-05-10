@@ -4,7 +4,6 @@
 import {
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   log,
@@ -15,7 +14,6 @@ import * as hume from '@livekit/agents-plugin-hume';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
@@ -71,4 +69,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

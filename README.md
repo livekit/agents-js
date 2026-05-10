@@ -113,7 +113,6 @@ Checkout the [quickstart guide](https://docs.livekit.io/agents/start/voice-ai/)
 import {
   type JobContext,
   type JobProcess,
-  WorkerOptions,
   cli,
   defineAgent,
   llm,
@@ -121,7 +120,6 @@ import {
   inference,
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const lookupWeather = llm.tool({
@@ -173,7 +171,7 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();
 ```
 
 No third-party API keys are required for this example. It runs out of the box via the [LiveKit Inference Gateway](https://docs.livekit.io/agents/models/#inference).
@@ -277,7 +275,7 @@ environment variables set:
 The following command will start the worker and wait for users to connect to your LiveKit server:
 
 ```bash
-pnpm run build && node ./examples/src/restaurant_agent.ts dev
+pnpm run:agent ./examples/src/restaurant_agent.ts dev
 ```
 
 ### Using playground for your agent UI
@@ -293,7 +291,7 @@ serve as a starting point for a completely custom agent application.
 ### Running for production
 
 ```shell
-pnpm run build && node ./examples/src/restaurant_agent.ts start
+pnpm run:agent ./examples/src/restaurant_agent.ts start
 ```
 
 Runs the agent with production-ready optimizations.
@@ -339,19 +337,7 @@ To contribute to this project:
 
 ### Testing changes and plugins
 
-To test any changes or plugins:
-
-1. Build the project:
-   ```bash
-   pnpm build
-   ```
-
-2. Edit `./examples/src/basic_agent.ts` as necessary for any plugin changes
-
-3. Run the basic agent with debug logging:
-   ```bash
-   node ./examples/src/basic_agent.ts dev --log-level=debug
-   ```
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor setup and local development commands.
 
 ### Testing agent connectivity
 

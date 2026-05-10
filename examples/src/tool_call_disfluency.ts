@@ -5,7 +5,6 @@ import {
   AutoSubscribe,
   type JobContext,
   type JobProcess,
-  ServerOptions,
   cli,
   defineAgent,
   llm,
@@ -15,7 +14,6 @@ import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 class VoiceAgent extends voice.Agent {
@@ -74,4 +72,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();

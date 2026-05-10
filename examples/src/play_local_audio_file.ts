@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  ServerOptions,
-  cli,
-  defineAgent,
-  log,
-  loopAudioFramesFromFile,
-} from '@livekit/agents';
+import { type JobContext, cli, defineAgent, log, loopAudioFramesFromFile } from '@livekit/agents';
 import { AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,4 +57,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp();
