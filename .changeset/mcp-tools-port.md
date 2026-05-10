@@ -1,5 +1,5 @@
 ---
-'@livekit/agents': minor
+'@livekit/agents': patch
 ---
 
 feat(mcp): add MCP (Model Context Protocol) server integration
