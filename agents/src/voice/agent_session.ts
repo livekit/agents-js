@@ -23,7 +23,13 @@ import type { OverlappingSpeechEvent } from '../inference/interruption/types.js'
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
-import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type {
+  LLM,
+  MCPServer,
+  RealtimeModel,
+  RealtimeModelError,
+  ToolChoice,
+} from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -155,6 +161,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
+  /**
+   * List of MCP servers providing tools for the agent. Tools fetched from
+   * these servers are merged with the agent's tool context whenever an
+   * {@link AgentActivity} starts. When the active agent specifies its own
+   * ``mcpServers``, the agent's value takes precedence.
+   */
+  mcpServers?: MCPServer[];
 
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
@@ -205,6 +218,8 @@ export class AgentSession<
   llm?: LLM | RealtimeModel;
   tts?: TTS;
   turnDetection?: TurnDetectionMode;
+  /** @internal */
+  _mcpServers?: MCPServer[];
 
   /** @deprecated use {@link sessionOptions } instead */
   readonly options: VoiceOptions;
@@ -296,7 +311,8 @@ export class AgentSession<
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
+    const { vad, stt, llm, tts, userData, connOptions, mcpServers, ...resolvedSessionOptions } =
+      opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -330,6 +346,7 @@ export class AgentSession<
     this.turnDetection = resolvedSessionOptions.turnHandling.turnDetection;
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
+    this._mcpServers = mcpServers;
 
     // configurable IO
     this._input = new AgentInput(this.onAudioInputChanged);
@@ -393,6 +410,11 @@ export class AgentSession<
 
   get useTtsAlignedTranscript(): boolean {
     return this.sessionOptions.useTtsAlignedTranscript;
+  }
+
+  /** MCP servers configured at the session level. */
+  get mcpServers(): MCPServer[] | undefined {
+    return this._mcpServers;
   }
 
   set userData(value: UserData) {
@@ -1303,6 +1325,11 @@ export class AgentSession<
 
     await this.activity?.close();
     this.activity = undefined;
+
+    // close session-scoped MCP servers
+    if (this._mcpServers && this._mcpServers.length > 0) {
+      await Promise.allSettled(this._mcpServers.map((server) => server.aclose()));
+    }
 
     if (this.sessionSpan) {
       this.sessionSpan.end();

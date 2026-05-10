@@ -83,6 +83,12 @@
   },
   "peerDependencies": {
     "@livekit/rtc-node": "catalog:",
+    "@modelcontextprotocol/sdk": "^1.25.0",
     "zod": "^3.25.76 || ^4.1.8"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
   }
 }
