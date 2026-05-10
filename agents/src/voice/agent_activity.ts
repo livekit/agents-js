@@ -122,6 +122,15 @@ export function isSchedulingPausedError(error: unknown): error is SchedulingPaus
   return error instanceof SchedulingPausedError;
 }
 
+function sameMcpServerRefs(a: MCPServer[], b: MCPServer[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export async function cleanupReusableResources(
   resources: ReusableResources,
   logger: Logger,
@@ -595,10 +604,16 @@ export class AgentActivity implements RecognitionHooks {
           (capabilities.midSessionInstructionsUpdate ||
             this.agent.instructions === newActivity.agent.instructions);
 
-        // tools update is supported or tools are the same
+        // tools update is supported or tools are the same. Compare agent-level
+        // tools and MCP server references separately: newActivity._mcpTools is
+        // still empty here (it's populated later in _startSession), so reading
+        // newActivity.tools would always look different when MCP servers are
+        // configured.
+        const sameMcpServers = sameMcpServerRefs(this.mcpServers, newActivity.mcpServers);
         reusable =
           reusable &&
-          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+          (capabilities.midSessionToolsUpdate ||
+            (isSameToolContext(this.agent.toolCtx, newActivity.agent.toolCtx) && sameMcpServers));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
