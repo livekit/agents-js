@@ -38,7 +38,6 @@ import {
   type UserState,
   type UserStateChangedEvent,
 } from './events.js';
-import type { RoomIO } from './room_io/room_io.js';
 
 // ===========================================================================
 // Shared types (TextInput, Client event types, wire format aliases)
@@ -81,29 +80,57 @@ export type RemoteSessionCallbacks = {
 // SessionTransport
 // ===========================================================================
 
+/**
+ * An inbound session message together with the identity of the participant that
+ * sent it. Used by transports so that `SessionHost` can route a response back
+ * to the originating peer. Mirrors the python `IncomingMessage` dataclass.
+ */
+export interface IncomingMessage {
+  message: pb.AgentSessionMessage;
+  senderIdentity?: string;
+}
+
+export interface SendMessageOptions {
+  /**
+   * When provided, deliver the message to exactly this participant. When
+   * omitted, the transport broadcasts to every authorized peer (i.e. every
+   * remote participant with the `can_manage_agent_session` grant).
+   */
+  destinationIdentity?: string;
+}
+
 export abstract class SessionTransport {
   async start(): Promise<void> {}
-  abstract sendMessage(msg: pb.AgentSessionMessage): Promise<void>;
+  abstract sendMessage(msg: pb.AgentSessionMessage, options?: SendMessageOptions): Promise<void>;
   abstract close(): Promise<void>;
-  abstract [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage>;
+  abstract [Symbol.asyncIterator](): AsyncIterator<IncomingMessage>;
 }
 
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
   private handlerRegistered = false;
   private closed = false;
-  private pendingMessages: pb.AgentSessionMessage[] = [];
-  private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
-  private roomIO: RoomIO;
+  private pendingMessages: IncomingMessage[] = [];
+  private waitingResolve: ((value: IteratorResult<IncomingMessage>) => void) | null = null;
 
-  constructor(room: Room, roomIO: RoomIO) {
+  constructor(room: Room) {
     super();
     this.room = room;
-    this.roomIO = roomIO;
   }
 
-  private getRemoteIdentity() {
-    return this.roomIO.linkedParticipant?.identity;
+  private canManage(identity: string): boolean {
+    const participant = this.room.remoteParticipants.get(identity);
+    return participant?.info.permission?.canManageAgentSession === true;
+  }
+
+  private authorizedIdentities(): string[] {
+    const identities: string[] = [];
+    for (const [identity, participant] of this.room.remoteParticipants) {
+      if (participant.info.permission?.canManageAgentSession) {
+        identities.push(identity);
+      }
+    }
+    return identities;
   }
 
   override async start(): Promise<void> {
@@ -113,15 +140,19 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   private onByteStream = (reader: ByteStreamReader, participantInfo: { identity: string }) => {
-    if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
+    if (!this.canManage(participantInfo.identity)) {
+      log().debug(
+        { participant: participantInfo.identity },
+        'ignoring session message from participant without can_manage_agent_session grant',
+      );
       return;
     }
-    this.readStream(reader).catch((e) => {
+    this.readStream(reader, participantInfo.identity).catch((e) => {
       log().warn({ error: e }, 'failed to read binary stream message');
     });
   };
 
-  private async readStream(reader: ByteStreamReader): Promise<void> {
+  private async readStream(reader: ByteStreamReader, senderIdentity: string): Promise<void> {
     try {
       const chunks = await reader.readAll();
       let totalLength = 0;
@@ -135,7 +166,7 @@ export class RoomSessionTransport extends SessionTransport {
         offset += chunk.length;
       }
       const msg = pb.AgentSessionMessage.fromBinary(data);
-      this.enqueue(msg);
+      this.enqueue({ message: msg, senderIdentity });
     } catch (e) {
       if (!this.closed) {
         log().warn({ error: e }, 'failed to parse binary stream message');
@@ -143,20 +174,28 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+  override async sendMessage(
+    msg: pb.AgentSessionMessage,
+    options?: SendMessageOptions,
+  ): Promise<void> {
     if (this.closed || !this.room.isConnected) return;
+
+    let destinationIdentities: string[];
+    if (options?.destinationIdentity !== undefined) {
+      if (!this.canManage(options.destinationIdentity)) return;
+      destinationIdentities = [options.destinationIdentity];
+    } else {
+      destinationIdentities = this.authorizedIdentities();
+      if (destinationIdentities.length === 0) return;
+    }
 
     try {
       const data = msg.toBinary();
-      const opts: Record<string, unknown> = {
+      const writer = await this.room.localParticipant!.streamBytes({
         topic: TOPIC_SESSION_MESSAGES,
         name: shortuuid('AS_'),
-      };
-      const remoteIdentity = this.getRemoteIdentity();
-      if (remoteIdentity) {
-        opts.destinationIdentities = [remoteIdentity];
-      }
-      const writer = await this.room.localParticipant!.streamBytes(opts);
+        destinationIdentities,
+      });
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
@@ -179,14 +218,14 @@ export class RoomSessionTransport extends SessionTransport {
 
     if (this.waitingResolve) {
       this.waitingResolve({
-        value: undefined as unknown as pb.AgentSessionMessage,
+        value: undefined as unknown as IncomingMessage,
         done: true,
       });
       this.waitingResolve = null;
     }
   }
 
-  private enqueue(msg: pb.AgentSessionMessage): void {
+  private enqueue(msg: IncomingMessage): void {
     if (this.closed) return;
 
     if (this.waitingResolve) {
@@ -198,12 +237,12 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  override [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+  override [Symbol.asyncIterator](): AsyncIterator<IncomingMessage> {
     return {
-      next: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
+      next: (): Promise<IteratorResult<IncomingMessage>> => {
         if (this.closed && this.pendingMessages.length === 0) {
           return ThrowsPromise.resolve({
-            value: undefined as unknown as pb.AgentSessionMessage,
+            value: undefined as unknown as IncomingMessage,
             done: true,
           });
         }
@@ -213,14 +252,14 @@ export class RoomSessionTransport extends SessionTransport {
           return ThrowsPromise.resolve({ value: pending, done: false });
         }
 
-        return new ThrowsPromise<IteratorResult<pb.AgentSessionMessage>, never>((resolve) => {
+        return new ThrowsPromise<IteratorResult<IncomingMessage>, never>((resolve) => {
           this.waitingResolve = resolve;
         });
       },
-      return: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
+      return: (): Promise<IteratorResult<IncomingMessage>> => {
         this.close();
         return ThrowsPromise.resolve({
-          value: undefined as unknown as pb.AgentSessionMessage,
+          value: undefined as unknown as IncomingMessage,
           done: true,
         });
       },
@@ -559,12 +598,10 @@ export class SessionHost {
 
   private async recvLoop(): Promise<void> {
     try {
-      for await (const msg of this.transport) {
-        if (msg.message.case === 'request') {
+      for await (const incoming of this.transport) {
+        if (incoming.message.message.case === 'request') {
           if (this.session) {
-            this.trackTask(
-              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
-            );
+            this.trackTask(Task.from(async () => this.handleRequestSafe(incoming)));
           }
         }
       }
@@ -726,47 +763,40 @@ export class SessionHost {
     });
   }
 
-  private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
+  private async handleRequestSafe(incoming: IncomingMessage): Promise<void> {
+    const req = incoming.message.message.value as pb.SessionRequest;
     try {
-      await this.handleRequest(req);
+      await this.handleRequest(incoming);
     } catch (e) {
       log().warn({ error: e, requestId: req.requestId }, 'error handling session request');
       try {
-        const resp = new pb.AgentSessionMessage({
-          message: {
-            case: 'response',
-            value: new pb.SessionResponse({
-              requestId: req.requestId,
-              error: 'internal error',
-            }),
-          },
-        });
-        await this.transport.sendMessage(resp);
+        await this.sendResponse(incoming, undefined, 'internal error');
       } catch (e) {
         log().debug({ error: e }, 'failed to send error response');
       }
     }
   }
 
-  private async handleRequest(req: pb.SessionRequest): Promise<void> {
+  private async handleRequest(incoming: IncomingMessage): Promise<void> {
     if (!this.session) return;
+    const req = incoming.message.message.value as pb.SessionRequest;
 
     switch (req.request.case) {
       case 'ping':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(incoming, {
           case: 'pong',
           value: new pb.SessionResponse_Pong(),
         });
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId);
+        return this.handleGetChatHistory(incoming);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId);
+        return this.handleGetAgentInfo(incoming);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value);
+        return this.handleRunInput(incoming, req.request.value);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId);
+        return this.handleGetSessionState(incoming);
       case 'getRtcStats':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(incoming, {
           case: 'getRtcStats',
           value: new pb.SessionResponse_GetRTCStatsResponse({
             publisherStats: [],
@@ -774,9 +804,9 @@ export class SessionHost {
           }),
         });
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId);
+        return this.handleGetSessionUsage(incoming);
       case 'getFrameworkInfo':
-        return this.sendResponse(req.requestId, {
+        return this.sendResponse(incoming, {
           case: 'getFrameworkInfo',
           value: new pb.SessionResponse_GetFrameworkInfoResponse({
             sdk: 'js',
@@ -786,17 +816,17 @@ export class SessionHost {
     }
   }
 
-  private async handleGetChatHistory(requestId: string): Promise<void> {
+  private async handleGetChatHistory(incoming: IncomingMessage): Promise<void> {
     const items = chatItemsToProto(this.session!.history.items);
-    return this.sendResponse(requestId, {
+    return this.sendResponse(incoming, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
     });
   }
 
-  private async handleGetAgentInfo(requestId: string): Promise<void> {
+  private async handleGetAgentInfo(incoming: IncomingMessage): Promise<void> {
     const agent = this.session!.currentAgent;
-    return this.sendResponse(requestId, {
+    return this.sendResponse(incoming, {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
         id: agent.id,
@@ -808,7 +838,7 @@ export class SessionHost {
   }
 
   private async handleRunInput(
-    requestId: string,
+    incoming: IncomingMessage,
     input: pb.SessionRequest_RunInput,
   ): Promise<void> {
     const text = input.text;
@@ -839,7 +869,7 @@ export class SessionHost {
     }
 
     return this.sendResponse(
-      requestId,
+      incoming,
       {
         case: 'runInput',
         value: new pb.SessionResponse_RunInputResponse({ items }),
@@ -848,10 +878,10 @@ export class SessionHost {
     );
   }
 
-  private async handleGetSessionState(requestId: string): Promise<void> {
+  private async handleGetSessionState(incoming: IncomingMessage): Promise<void> {
     const agent = this.session!.currentAgent;
     const startedAt = this.session!._startedAt ?? Date.now();
-    return this.sendResponse(requestId, {
+    return this.sendResponse(incoming, {
       case: 'getSessionState',
       value: new pb.SessionResponse_GetSessionStateResponse({
         agentState: AGENT_STATE_MAP[this.session!.agentState],
@@ -868,8 +898,8 @@ export class SessionHost {
     });
   }
 
-  private async handleGetSessionUsage(requestId: string): Promise<void> {
-    return this.sendResponse(requestId, {
+  private async handleGetSessionUsage(incoming: IncomingMessage): Promise<void> {
+    return this.sendResponse(incoming, {
       case: 'getSessionUsage',
       value: new pb.SessionResponse_GetSessionUsageResponse({
         usage: sessionUsageToProto(this.session!.usage),
@@ -879,17 +909,23 @@ export class SessionHost {
   }
 
   private async sendResponse(
-    requestId: string,
-    response: pb.SessionResponse['response'],
+    incoming: IncomingMessage,
+    response: pb.SessionResponse['response'] | undefined,
     error?: string,
   ): Promise<void> {
+    const requestId = (incoming.message.message.value as pb.SessionRequest).requestId;
     await this.transport.sendMessage(
       new pb.AgentSessionMessage({
         message: {
           case: 'response',
-          value: new pb.SessionResponse({ requestId, response, error }),
+          value: new pb.SessionResponse({
+            requestId,
+            ...(response ? { response } : {}),
+            error,
+          }),
         },
       }),
+      { destinationIdentity: incoming.senderIdentity },
     );
   }
 
@@ -920,8 +956,8 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     this.transport = transport;
   }
 
-  static fromRoom(room: Room, roomIO: RoomIO): RemoteSession {
-    const transport = new RoomSessionTransport(room, roomIO);
+  static fromRoom(room: Room): RemoteSession {
+    const transport = new RoomSessionTransport(room);
     return new RemoteSession(transport);
   }
 
@@ -955,13 +991,13 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
 
   private async recvLoop(): Promise<void> {
     try {
-      for await (const msg of this.transport) {
-        switch (msg.message.case) {
+      for await (const incoming of this.transport) {
+        switch (incoming.message.message.case) {
           case 'event':
-            this.dispatchEvent(msg.message.value);
+            this.dispatchEvent(incoming.message.message.value);
             break;
           case 'response':
-            this.dispatchResponse(msg.message.value);
+            this.dispatchResponse(incoming.message.message.value);
             break;
         }
       }
