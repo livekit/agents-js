@@ -645,7 +645,8 @@ export class AudioRecognition {
       return this.userTurnSpan;
     }
 
-    if (startTime !== undefined && this.userTurnStart === undefined) {
+    startTime ??= Date.now();
+    if (this.userTurnStart === undefined) {
       this.userTurnStart = startTime;
     }
 
