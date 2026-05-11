@@ -98,18 +98,14 @@ export interface IncomingMessage {
 
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
-  private readonly roomIO?: RoomIO;
-  private readonly requireCanManageAgentSession: boolean;
   private handlerRegistered = false;
   private closed = false;
   private pendingMessages: IncomingMessage[] = [];
   private waitingResolve: ((value: IteratorResult<IncomingMessage>) => void) | null = null;
 
-  constructor(room: Room, roomIO?: RoomIO, requireCanManageAgentSession = false) {
+  constructor(room: Room, _roomIO?: RoomIO) {
     super();
     this.room = room;
-    this.roomIO = roomIO;
-    this.requireCanManageAgentSession = requireCanManageAgentSession;
   }
 
   override async start(): Promise<void> {
@@ -119,19 +115,7 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   private onByteStream = (reader: ByteStreamReader, participantInfo: { identity: string }) => {
-    if (this.requireCanManageAgentSession && !this.canManage(participantInfo.identity)) {
-      log().debug(
-        { participant: participantInfo.identity },
-        'ignoring session message from participant without canManageAgentSession grant',
-      );
-      return;
-    }
-    const remoteIdentity = this.getRemoteIdentity();
-    if (
-      !this.requireCanManageAgentSession &&
-      remoteIdentity &&
-      participantInfo.identity !== remoteIdentity
-    ) {
+    if (!this.shouldAcceptMessage(participantInfo.identity)) {
       return;
     }
     this.readStream(reader, participantInfo.identity).catch((e) => {
@@ -139,8 +123,15 @@ export class RoomSessionTransport extends SessionTransport {
     });
   };
 
-  private getRemoteIdentity(): string | undefined {
-    return this.roomIO?.linkedParticipant?.identity;
+  protected shouldAcceptMessage(identity: string): boolean {
+    if (this.canManage(identity)) {
+      return true;
+    }
+    log().debug(
+      { participant: identity },
+      'ignoring session message from participant without canManageAgentSession grant',
+    );
+    return false;
   }
 
   private canManage(identity: string): boolean {
@@ -207,16 +198,11 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  private getDestinationIdentities(destinationIdentity?: string): string[] | undefined {
-    if (this.requireCanManageAgentSession) {
-      if (destinationIdentity) {
-        return this.canManage(destinationIdentity) ? [destinationIdentity] : [];
-      }
-      return this.authorizedIdentities();
+  protected getDestinationIdentities(destinationIdentity?: string): string[] | undefined {
+    if (destinationIdentity) {
+      return this.canManage(destinationIdentity) ? [destinationIdentity] : [];
     }
-
-    const remoteIdentity = destinationIdentity ?? this.getRemoteIdentity();
-    return remoteIdentity ? [remoteIdentity] : undefined;
+    return this.authorizedIdentities();
   }
 
   override async close(): Promise<void> {
@@ -280,6 +266,29 @@ export class RoomSessionTransport extends SessionTransport {
         });
       },
     };
+  }
+}
+
+class LinkedParticipantSessionTransport extends RoomSessionTransport {
+  private readonly roomIO: RoomIO;
+
+  constructor(room: Room, roomIO: RoomIO) {
+    super(room);
+    this.roomIO = roomIO;
+  }
+
+  protected override shouldAcceptMessage(identity: string): boolean {
+    const remoteIdentity = this.getRemoteIdentity();
+    return !remoteIdentity || identity === remoteIdentity;
+  }
+
+  protected override getDestinationIdentities(destinationIdentity?: string): string[] | undefined {
+    const remoteIdentity = destinationIdentity ?? this.getRemoteIdentity();
+    return remoteIdentity ? [remoteIdentity] : undefined;
+  }
+
+  private getRemoteIdentity(): string | undefined {
+    return this.roomIO.linkedParticipant?.identity;
   }
 }
 
@@ -1024,7 +1033,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
   }
 
   static fromRoom(room: Room, roomIO: RoomIO): RemoteSession {
-    const transport = new RoomSessionTransport(room, roomIO);
+    const transport = new LinkedParticipantSessionTransport(room, roomIO);
     return new RemoteSession(transport);
   }
 
