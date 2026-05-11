@@ -12,6 +12,7 @@ export {
 export * from './avatar/index.js';
 export * from './background_audio.js';
 export {
+  type IncomingMessage,
   type TextInputCallback,
   type TextInputEvent,
   RemoteSession,

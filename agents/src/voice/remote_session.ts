@@ -83,27 +83,29 @@ export type RemoteSessionCallbacks = {
 
 export abstract class SessionTransport {
   async start(): Promise<void> {}
-  abstract sendMessage(msg: pb.AgentSessionMessage): Promise<void>;
+  abstract sendMessage(
+    msg: pb.AgentSessionMessage,
+    opts?: { destinationIdentity?: string },
+  ): Promise<void>;
   abstract close(): Promise<void>;
-  abstract [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage>;
+  abstract [Symbol.asyncIterator](): AsyncIterator<IncomingMessage>;
+}
+
+export interface IncomingMessage {
+  message: pb.AgentSessionMessage;
+  senderIdentity?: string;
 }
 
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
   private handlerRegistered = false;
   private closed = false;
-  private pendingMessages: pb.AgentSessionMessage[] = [];
-  private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
-  private roomIO: RoomIO;
+  private pendingMessages: IncomingMessage[] = [];
+  private waitingResolve: ((value: IteratorResult<IncomingMessage>) => void) | null = null;
 
-  constructor(room: Room, roomIO: RoomIO) {
+  constructor(room: Room, _roomIO?: RoomIO) {
     super();
     this.room = room;
-    this.roomIO = roomIO;
-  }
-
-  private getRemoteIdentity() {
-    return this.roomIO.linkedParticipant?.identity;
   }
 
   override async start(): Promise<void> {
@@ -113,15 +115,35 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   private onByteStream = (reader: ByteStreamReader, participantInfo: { identity: string }) => {
-    if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
+    if (!this.canManage(participantInfo.identity)) {
+      log().debug(
+        { participant: participantInfo.identity },
+        'ignoring session message from participant without canManageAgentSession grant',
+      );
       return;
     }
-    this.readStream(reader).catch((e) => {
+    this.readStream(reader, participantInfo.identity).catch((e) => {
       log().warn({ error: e }, 'failed to read binary stream message');
     });
   };
 
-  private async readStream(reader: ByteStreamReader): Promise<void> {
+  private canManage(identity: string): boolean {
+    return (
+      this.room.remoteParticipants.get(identity)?.info.permission?.canManageAgentSession === true
+    );
+  }
+
+  private authorizedIdentities(): string[] {
+    const identities: string[] = [];
+    for (const [identity, participant] of this.room.remoteParticipants.entries()) {
+      if (participant.info.permission?.canManageAgentSession === true) {
+        identities.push(identity);
+      }
+    }
+    return identities;
+  }
+
+  private async readStream(reader: ByteStreamReader, senderIdentity: string): Promise<void> {
     try {
       const chunks = await reader.readAll();
       let totalLength = 0;
@@ -135,7 +157,7 @@ export class RoomSessionTransport extends SessionTransport {
         offset += chunk.length;
       }
       const msg = pb.AgentSessionMessage.fromBinary(data);
-      this.enqueue(msg);
+      this.enqueue({ message: msg, senderIdentity });
     } catch (e) {
       if (!this.closed) {
         log().warn({ error: e }, 'failed to parse binary stream message');
@@ -143,20 +165,27 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+  override async sendMessage(
+    msg: pb.AgentSessionMessage,
+    opts: { destinationIdentity?: string } = {},
+  ): Promise<void> {
     if (this.closed || !this.room.isConnected) return;
+
+    const destinationIdentities = opts.destinationIdentity
+      ? this.canManage(opts.destinationIdentity)
+        ? [opts.destinationIdentity]
+        : []
+      : this.authorizedIdentities();
+    if (destinationIdentities.length === 0) return;
 
     try {
       const data = msg.toBinary();
-      const opts: Record<string, unknown> = {
+      const streamOpts: Record<string, unknown> = {
         topic: TOPIC_SESSION_MESSAGES,
         name: shortuuid('AS_'),
+        destinationIdentities,
       };
-      const remoteIdentity = this.getRemoteIdentity();
-      if (remoteIdentity) {
-        opts.destinationIdentities = [remoteIdentity];
-      }
-      const writer = await this.room.localParticipant!.streamBytes(opts);
+      const writer = await this.room.localParticipant!.streamBytes(streamOpts);
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
@@ -179,14 +208,14 @@ export class RoomSessionTransport extends SessionTransport {
 
     if (this.waitingResolve) {
       this.waitingResolve({
-        value: undefined as unknown as pb.AgentSessionMessage,
+        value: undefined as unknown as IncomingMessage,
         done: true,
       });
       this.waitingResolve = null;
     }
   }
 
-  private enqueue(msg: pb.AgentSessionMessage): void {
+  private enqueue(msg: IncomingMessage): void {
     if (this.closed) return;
 
     if (this.waitingResolve) {
@@ -198,12 +227,12 @@ export class RoomSessionTransport extends SessionTransport {
     }
   }
 
-  override [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
+  override [Symbol.asyncIterator](): AsyncIterator<IncomingMessage> {
     return {
-      next: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
+      next: (): Promise<IteratorResult<IncomingMessage>> => {
         if (this.closed && this.pendingMessages.length === 0) {
           return ThrowsPromise.resolve({
-            value: undefined as unknown as pb.AgentSessionMessage,
+            value: undefined as unknown as IncomingMessage,
             done: true,
           });
         }
@@ -213,14 +242,14 @@ export class RoomSessionTransport extends SessionTransport {
           return ThrowsPromise.resolve({ value: pending, done: false });
         }
 
-        return new ThrowsPromise<IteratorResult<pb.AgentSessionMessage>, never>((resolve) => {
+        return new ThrowsPromise<IteratorResult<IncomingMessage>, never>((resolve) => {
           this.waitingResolve = resolve;
         });
       },
-      return: (): Promise<IteratorResult<pb.AgentSessionMessage>> => {
+      return: (): Promise<IteratorResult<IncomingMessage>> => {
         this.close();
         return ThrowsPromise.resolve({
-          value: undefined as unknown as pb.AgentSessionMessage,
+          value: undefined as unknown as IncomingMessage,
           done: true,
         });
       },
@@ -559,12 +588,11 @@ export class SessionHost {
 
   private async recvLoop(): Promise<void> {
     try {
-      for await (const msg of this.transport) {
+      for await (const incoming of this.transport) {
+        const msg = incoming.message;
         if (msg.message.case === 'request') {
           if (this.session) {
-            this.trackTask(
-              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
-            );
+            this.trackTask(Task.from(async () => this.handleRequestSafe(incoming)));
           }
         }
       }
@@ -726,9 +754,10 @@ export class SessionHost {
     });
   }
 
-  private async handleRequestSafe(req: pb.SessionRequest): Promise<void> {
+  private async handleRequestSafe(incoming: IncomingMessage): Promise<void> {
+    const req = incoming.message.message.value as pb.SessionRequest;
     try {
-      await this.handleRequest(req);
+      await this.handleRequest(req, incoming.senderIdentity);
     } catch (e) {
       log().warn({ error: e, requestId: req.requestId }, 'error handling session request');
       try {
@@ -741,75 +770,104 @@ export class SessionHost {
             }),
           },
         });
-        await this.transport.sendMessage(resp);
+        await this.transport.sendMessage(resp, { destinationIdentity: incoming.senderIdentity });
       } catch (e) {
         log().debug({ error: e }, 'failed to send error response');
       }
     }
   }
 
-  private async handleRequest(req: pb.SessionRequest): Promise<void> {
+  private async handleRequest(req: pb.SessionRequest, destinationIdentity?: string): Promise<void> {
     if (!this.session) return;
 
     switch (req.request.case) {
       case 'ping':
-        return this.sendResponse(req.requestId, {
-          case: 'pong',
-          value: new pb.SessionResponse_Pong(),
-        });
+        return this.sendResponse(
+          req.requestId,
+          {
+            case: 'pong',
+            value: new pb.SessionResponse_Pong(),
+          },
+          undefined,
+          destinationIdentity,
+        );
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId);
+        return this.handleGetChatHistory(req.requestId, destinationIdentity);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId);
+        return this.handleGetAgentInfo(req.requestId, destinationIdentity);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value);
+        return this.handleRunInput(req.requestId, req.request.value, destinationIdentity);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId);
+        return this.handleGetSessionState(req.requestId, destinationIdentity);
       case 'getRtcStats':
-        return this.sendResponse(req.requestId, {
-          case: 'getRtcStats',
-          value: new pb.SessionResponse_GetRTCStatsResponse({
-            publisherStats: [],
-            subscriberStats: [],
-          }),
-        });
+        return this.sendResponse(
+          req.requestId,
+          {
+            case: 'getRtcStats',
+            value: new pb.SessionResponse_GetRTCStatsResponse({
+              publisherStats: [],
+              subscriberStats: [],
+            }),
+          },
+          undefined,
+          destinationIdentity,
+        );
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId);
+        return this.handleGetSessionUsage(req.requestId, destinationIdentity);
       case 'getFrameworkInfo':
-        return this.sendResponse(req.requestId, {
-          case: 'getFrameworkInfo',
-          value: new pb.SessionResponse_GetFrameworkInfoResponse({
-            sdk: 'js',
-            sdkVersion: version,
-          }),
-        });
+        return this.sendResponse(
+          req.requestId,
+          {
+            case: 'getFrameworkInfo',
+            value: new pb.SessionResponse_GetFrameworkInfoResponse({
+              sdk: 'js',
+              sdkVersion: version,
+            }),
+          },
+          undefined,
+          destinationIdentity,
+        );
     }
   }
 
-  private async handleGetChatHistory(requestId: string): Promise<void> {
+  private async handleGetChatHistory(
+    requestId: string,
+    destinationIdentity?: string,
+  ): Promise<void> {
     const items = chatItemsToProto(this.session!.history.items);
-    return this.sendResponse(requestId, {
-      case: 'getChatHistory',
-      value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
-    });
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'getChatHistory',
+        value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
+      },
+      undefined,
+      destinationIdentity,
+    );
   }
 
-  private async handleGetAgentInfo(requestId: string): Promise<void> {
+  private async handleGetAgentInfo(requestId: string, destinationIdentity?: string): Promise<void> {
     const agent = this.session!.currentAgent;
-    return this.sendResponse(requestId, {
-      case: 'getAgentInfo',
-      value: new pb.SessionResponse_GetAgentInfoResponse({
-        id: agent.id,
-        instructions: agent.instructions,
-        tools: toolNames(agent.toolCtx),
-        chatCtx: chatItemsToProto(agent.chatCtx.items),
-      }),
-    });
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'getAgentInfo',
+        value: new pb.SessionResponse_GetAgentInfoResponse({
+          id: agent.id,
+          instructions: agent.instructions,
+          tools: toolNames(agent.toolCtx),
+          chatCtx: chatItemsToProto(agent.chatCtx.items),
+        }),
+      },
+      undefined,
+      destinationIdentity,
+    );
   }
 
   private async handleRunInput(
     requestId: string,
     input: pb.SessionRequest_RunInput,
+    destinationIdentity?: string,
   ): Promise<void> {
     const text = input.text;
     let items: pb.ChatContext_ChatItem[] = [];
@@ -845,43 +903,61 @@ export class SessionHost {
         value: new pb.SessionResponse_RunInputResponse({ items }),
       },
       error,
+      destinationIdentity,
     );
   }
 
-  private async handleGetSessionState(requestId: string): Promise<void> {
+  private async handleGetSessionState(
+    requestId: string,
+    destinationIdentity?: string,
+  ): Promise<void> {
     const agent = this.session!.currentAgent;
     const startedAt = this.session!._startedAt ?? Date.now();
-    return this.sendResponse(requestId, {
-      case: 'getSessionState',
-      value: new pb.SessionResponse_GetSessionStateResponse({
-        agentState: AGENT_STATE_MAP[this.session!.agentState],
-        userState: USER_STATE_MAP[this.session!.userState],
-        agentId: agent.id,
-        options: protoSerializeOptions({
-          turnHandling: this.session!.sessionOptions.turnHandling,
-          maxToolSteps: this.session!.sessionOptions.maxToolSteps,
-          userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
-          useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'getSessionState',
+        value: new pb.SessionResponse_GetSessionStateResponse({
+          agentState: AGENT_STATE_MAP[this.session!.agentState],
+          userState: USER_STATE_MAP[this.session!.userState],
+          agentId: agent.id,
+          options: protoSerializeOptions({
+            turnHandling: this.session!.sessionOptions.turnHandling,
+            maxToolSteps: this.session!.sessionOptions.maxToolSteps,
+            userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
+            useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
+          }),
+          createdAt: msToTimestamp(startedAt),
         }),
-        createdAt: msToTimestamp(startedAt),
-      }),
-    });
+      },
+      undefined,
+      destinationIdentity,
+    );
   }
 
-  private async handleGetSessionUsage(requestId: string): Promise<void> {
-    return this.sendResponse(requestId, {
-      case: 'getSessionUsage',
-      value: new pb.SessionResponse_GetSessionUsageResponse({
-        usage: sessionUsageToProto(this.session!.usage),
-        createdAt: nowTimestamp(),
-      }),
-    });
+  private async handleGetSessionUsage(
+    requestId: string,
+    destinationIdentity?: string,
+  ): Promise<void> {
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'getSessionUsage',
+        value: new pb.SessionResponse_GetSessionUsageResponse({
+          usage: sessionUsageToProto(this.session!.usage),
+          createdAt: nowTimestamp(),
+        }),
+      },
+      undefined,
+      destinationIdentity,
+    );
   }
 
   private async sendResponse(
     requestId: string,
     response: pb.SessionResponse['response'],
     error?: string,
+    destinationIdentity?: string,
   ): Promise<void> {
     await this.transport.sendMessage(
       new pb.AgentSessionMessage({
@@ -890,6 +966,7 @@ export class SessionHost {
           value: new pb.SessionResponse({ requestId, response, error }),
         },
       }),
+      { destinationIdentity },
     );
   }
 
@@ -955,7 +1032,8 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
 
   private async recvLoop(): Promise<void> {
     try {
-      for await (const msg of this.transport) {
+      for await (const incoming of this.transport) {
+        const msg = incoming.message;
         switch (msg.message.case) {
           case 'event':
             this.dispatchEvent(msg.message.value);
