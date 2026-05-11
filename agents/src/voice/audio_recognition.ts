@@ -195,6 +195,7 @@ export class AudioRecognition {
   private finalTranscriptConfidence: number[] = [];
   private lastSpeakingTime: number | undefined;
   private speechStartTime: number | undefined;
+  private userTurnStart: number | undefined;
   private userTurnCommitted = false;
   private speaking = false;
   private sampleRate?: number;
@@ -645,6 +646,10 @@ export class AudioRecognition {
     }
 
     startTime ??= Date.now();
+    if (this.userTurnStart === undefined) {
+      this.userTurnStart = startTime;
+    }
+
     this.userTurnSpan = tracer.startSpan({
       name: 'user_turn',
       context: this.rootSpanContext,
@@ -1081,7 +1086,7 @@ export class AudioRecognition {
     this.bounceEOUTask?.cancel();
     // copy the values before awaiting (the values can change)
     this.bounceEOUTask = Task.from(
-      bounceEOUTask(this.lastSpeakingTime, this.lastFinalTranscriptTime, this.speechStartTime),
+      bounceEOUTask(this.lastSpeakingTime, this.lastFinalTranscriptTime, this.userTurnStart),
     );
 
     this.bounceEOUTask.result
@@ -1407,6 +1412,7 @@ export class AudioRecognition {
     this.finalTranscriptConfidence = [];
     this.lastFinalTranscriptTime = 0;
     this.speechStartTime = undefined;
+    this.userTurnStart = undefined;
     this.lastSpeakingTime = undefined;
     this.speaking = false;
     this.userTurnCommitted = false;
@@ -1559,6 +1565,7 @@ export class AudioRecognition {
       }
       this.userTurnSpan.end();
       this.userTurnSpan = undefined;
+      this.userTurnStart = undefined;
     }
     this.sttRequestIds = [];
   }
