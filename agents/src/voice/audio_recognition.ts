@@ -644,6 +644,7 @@ export class AudioRecognition {
       return this.userTurnSpan;
     }
 
+    startTime ??= Date.now();
     this.userTurnSpan = tracer.startSpan({
       name: 'user_turn',
       context: this.rootSpanContext,
