@@ -6,4 +6,8 @@ export {
   type TaskCompletedEvent,
   type TaskGroupOptions,
   type TaskGroupResult,
+  WarmTransferTask,
+  type InstructionParts,
+  type WarmTransferResult,
+  type WarmTransferTaskOptions,
 } from './workflows/index.js';
