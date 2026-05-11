@@ -96,10 +96,6 @@ export interface IncomingMessage {
   senderIdentity?: string;
 }
 
-interface RoomSessionTransportOptions {
-  requireCanManageAgentSession?: boolean;
-}
-
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
   private readonly roomIO?: RoomIO;
@@ -109,11 +105,11 @@ export class RoomSessionTransport extends SessionTransport {
   private pendingMessages: IncomingMessage[] = [];
   private waitingResolve: ((value: IteratorResult<IncomingMessage>) => void) | null = null;
 
-  constructor(room: Room, roomIO?: RoomIO, opts: RoomSessionTransportOptions = {}) {
+  constructor(room: Room, roomIO?: RoomIO, requireCanManageAgentSession = false) {
     super();
     this.room = room;
     this.roomIO = roomIO;
-    this.requireCanManageAgentSession = opts.requireCanManageAgentSession ?? false;
+    this.requireCanManageAgentSession = requireCanManageAgentSession;
   }
 
   override async start(): Promise<void> {

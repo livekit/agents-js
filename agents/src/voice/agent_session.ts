@@ -448,9 +448,7 @@ export class AgentSession<
 
       this._roomIO.start();
 
-      const transport = new RoomSessionTransport(room, this._roomIO, {
-        requireCanManageAgentSession: true,
-      });
+      const transport = new RoomSessionTransport(room, this._roomIO, true);
       this.sessionHost = new SessionHost(transport);
       this.sessionHost.registerSession(this);
       if (inputOptions?.textEnabled !== false) {
