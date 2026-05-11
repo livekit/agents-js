@@ -96,16 +96,24 @@ export interface IncomingMessage {
   senderIdentity?: string;
 }
 
+interface RoomSessionTransportOptions {
+  requireCanManageAgentSession?: boolean;
+}
+
 export class RoomSessionTransport extends SessionTransport {
   private readonly room: Room;
+  private readonly roomIO?: RoomIO;
+  private readonly requireCanManageAgentSession: boolean;
   private handlerRegistered = false;
   private closed = false;
   private pendingMessages: IncomingMessage[] = [];
   private waitingResolve: ((value: IteratorResult<IncomingMessage>) => void) | null = null;
 
-  constructor(room: Room, _roomIO?: RoomIO) {
+  constructor(room: Room, roomIO?: RoomIO, opts: RoomSessionTransportOptions = {}) {
     super();
     this.room = room;
+    this.roomIO = roomIO;
+    this.requireCanManageAgentSession = opts.requireCanManageAgentSession ?? false;
   }
 
   override async start(): Promise<void> {
@@ -115,17 +123,29 @@ export class RoomSessionTransport extends SessionTransport {
   }
 
   private onByteStream = (reader: ByteStreamReader, participantInfo: { identity: string }) => {
-    if (!this.canManage(participantInfo.identity)) {
+    if (this.requireCanManageAgentSession && !this.canManage(participantInfo.identity)) {
       log().debug(
         { participant: participantInfo.identity },
         'ignoring session message from participant without canManageAgentSession grant',
       );
       return;
     }
+    const remoteIdentity = this.getRemoteIdentity();
+    if (
+      !this.requireCanManageAgentSession &&
+      remoteIdentity &&
+      participantInfo.identity !== remoteIdentity
+    ) {
+      return;
+    }
     this.readStream(reader, participantInfo.identity).catch((e) => {
       log().warn({ error: e }, 'failed to read binary stream message');
     });
   };
+
+  private getRemoteIdentity(): string | undefined {
+    return this.roomIO?.linkedParticipant?.identity;
+  }
 
   private canManage(identity: string): boolean {
     return (
@@ -171,26 +191,36 @@ export class RoomSessionTransport extends SessionTransport {
   ): Promise<void> {
     if (this.closed || !this.room.isConnected) return;
 
-    const destinationIdentities = opts.destinationIdentity
-      ? this.canManage(opts.destinationIdentity)
-        ? [opts.destinationIdentity]
-        : []
-      : this.authorizedIdentities();
-    if (destinationIdentities.length === 0) return;
+    const destinationIdentities = this.getDestinationIdentities(opts.destinationIdentity);
+    if (destinationIdentities?.length === 0) return;
 
     try {
       const data = msg.toBinary();
       const streamOpts: Record<string, unknown> = {
         topic: TOPIC_SESSION_MESSAGES,
         name: shortuuid('AS_'),
-        destinationIdentities,
       };
+      if (destinationIdentities) {
+        streamOpts.destinationIdentities = destinationIdentities;
+      }
       const writer = await this.room.localParticipant!.streamBytes(streamOpts);
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
       log().warn({ error: e }, 'failed to send binary stream message');
     }
+  }
+
+  private getDestinationIdentities(destinationIdentity?: string): string[] | undefined {
+    if (this.requireCanManageAgentSession) {
+      if (destinationIdentity) {
+        return this.canManage(destinationIdentity) ? [destinationIdentity] : [];
+      }
+      return this.authorizedIdentities();
+    }
+
+    const remoteIdentity = destinationIdentity ?? this.getRemoteIdentity();
+    return remoteIdentity ? [remoteIdentity] : undefined;
   }
 
   override async close(): Promise<void> {
