@@ -17,6 +17,8 @@ const defaultSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
+  ttsReadIdleTimeout: 10_000,
+  forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
 } as const satisfies AgentSessionOptions;

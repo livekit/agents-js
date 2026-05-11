@@ -101,12 +101,16 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
+  ttsReadIdleTimeout: number;
+  forwardAudioIdleTimeout: number;
 }
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
+  ttsReadIdleTimeout: 10_000,
+  forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
 } as const satisfies AgentSessionOptions;
@@ -181,6 +185,23 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * @defaultValue 3000
    */
   aecWarmupDuration?: number | null;
+
+  /**
+   * Maximum time in milliseconds to wait for the next frame on the TTS audio stream
+   * inside `performTTSInference`. Applies to every read, including the first.
+   * If exceeded, the TTS stream is forcibly closed and a stall warning is logged.
+   * @defaultValue 10000
+   */
+  ttsReadIdleTimeout?: number;
+
+  /**
+   * Maximum time in milliseconds to wait for the next frame while forwarding TTS
+   * audio to the audio output inside `performAudioForwarding`. Applies to every read,
+   * including the first. If exceeded, forwarding is forcibly closed and a stall
+   * warning is logged.
+   * @defaultValue 10000
+   */
+  forwardAudioIdleTimeout?: number;
 
   /**
    * Configuration for turn handling.

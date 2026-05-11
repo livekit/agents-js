@@ -55,7 +55,8 @@ import {
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 
-const TTS_READ_IDLE_TIMEOUT_MS = 10_000;
+export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
+export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
 /** @internal */
 export class _LLMGenerationData {
@@ -565,6 +566,7 @@ export function performTTSInference(
   controller: AbortController,
   model?: string,
   provider?: string,
+  readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -648,7 +650,7 @@ export function performTTSInference(
 
         const { done, value: frame } = await waitUntilTimeout(
           ttsStreamReader.read(),
-          TTS_READ_IDLE_TIMEOUT_MS,
+          readIdleTimeout,
         );
         if (done) {
           break;
@@ -800,13 +802,12 @@ async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   out: _AudioOut,
+  idleTimeout: number,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-
-  const FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     if (!out.firstFrameFut.done) {
@@ -823,10 +824,7 @@ async function forwardAudio(
         break;
       }
 
-      const { done, value: frame } = await waitUntilTimeout(
-        reader.read(),
-        FORWARD_AUDIO_IDLE_TIMEOUT_MS,
-      );
+      const { done, value: frame } = await waitUntilTimeout(reader.read(), idleTimeout);
       if (done) break;
 
       out.audio.push(frame);
@@ -880,6 +878,7 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   controller: AbortController,
+  idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
     audio: [],
@@ -888,7 +887,7 @@ export function performAudioForwarding(
 
   return [
     Task.from(
-      (controller) => forwardAudio(ttsStream, audioOutput, out, controller.signal),
+      (controller) => forwardAudio(ttsStream, audioOutput, out, idleTimeout, controller.signal),
       controller,
       'performAudioForwarding',
     ),
