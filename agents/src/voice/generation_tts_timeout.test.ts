@@ -60,6 +60,30 @@ describe('TTS stream idle timeout', () => {
     expect(audioOut.firstFrameFut.done).toBe(true);
   }, 10_000);
 
+  it('forwardAudio honours a custom idle timeout', async () => {
+    const stalledStream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(createSilentFrame());
+      },
+    });
+
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+
+    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+
+    vi.useFakeTimers();
+
+    const taskPromise = task.result;
+    await vi.advanceTimersByTimeAsync(600);
+    await taskPromise;
+
+    vi.useRealTimers();
+
+    expect(audioOutput.capturedFrames.length).toBe(1);
+    expect(audioOut.firstFrameFut.done).toBe(true);
+  });
+
   it('forwardAudio completes normally when TTS stream closes properly', async () => {
     const normalStream = new ReadableStream<AudioFrame>({
       start(controller) {
@@ -103,6 +127,43 @@ describe('TTS stream idle timeout', () => {
 
     const taskPromise = task.result;
     await vi.advanceTimersByTimeAsync(11_000);
+    await taskPromise;
+
+    vi.useRealTimers();
+
+    expect(genData.ttfb).toBeDefined();
+  }, 10_000);
+
+  it('performTTSInference honours a custom read idle timeout', async () => {
+    const stalledTtsStream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(createSilentFrame());
+      },
+    });
+
+    const ttsNode = async () => stalledTtsStream;
+    const textInput = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('Hello world');
+        controller.close();
+      },
+    });
+
+    const controller = new AbortController();
+    const [task, genData] = performTTSInference(
+      ttsNode,
+      textInput,
+      {},
+      controller,
+      undefined,
+      undefined,
+      500,
+    );
+
+    vi.useFakeTimers();
+
+    const taskPromise = task.result;
+    await vi.advanceTimersByTimeAsync(600);
     await taskPromise;
 
     vi.useRealTimers();

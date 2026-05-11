@@ -2006,6 +2006,7 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           this.tts?.model,
           this.tts?.provider,
+          this.agentSession.sessionOptions.ttsReadIdleTimeout,
         );
         tasks.push(ttsTask);
         replyTtsGenData = ttsGenData;
@@ -2014,6 +2015,7 @@ export class AgentActivity implements RecognitionHooks {
           ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -2023,6 +2025,7 @@ export class AgentActivity implements RecognitionHooks {
           audio,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -2189,6 +2192,7 @@ export class AgentActivity implements RecognitionHooks {
         replyAbortController,
         this.tts?.model,
         this.tts?.provider,
+        this.agentSession.sessionOptions.ttsReadIdleTimeout,
       );
     };
 
@@ -2280,6 +2284,7 @@ export class AgentActivity implements RecognitionHooks {
           ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
@@ -2752,6 +2757,7 @@ export class AgentActivity implements RecognitionHooks {
                 abortController,
                 this.tts?.model,
                 this.tts?.provider,
+                this.agentSession.sessionOptions.ttsReadIdleTimeout,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;
@@ -2777,6 +2783,7 @@ export class AgentActivity implements RecognitionHooks {
                 realtimeAudioResult,
                 audioOutput,
                 abortController,
+                this.agentSession.sessionOptions.forwardAudioIdleTimeout,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
