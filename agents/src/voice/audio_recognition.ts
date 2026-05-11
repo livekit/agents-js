@@ -641,12 +641,12 @@ export class AudioRecognition {
   }
 
   private ensureUserTurnSpan(startTime?: number): Span {
-    if (startTime !== undefined && this.userTurnStart === undefined) {
-      this.userTurnStart = startTime;
-    }
-
     if (this.userTurnSpan && this.userTurnSpan.isRecording()) {
       return this.userTurnSpan;
+    }
+
+    if (startTime !== undefined && this.userTurnStart === undefined) {
+      this.userTurnStart = startTime;
     }
 
     this.userTurnSpan = tracer.startSpan({
