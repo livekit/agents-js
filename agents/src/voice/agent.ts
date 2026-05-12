@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream } from 'node:stream/web';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -113,6 +113,8 @@ export interface ModelSettings {
   toolChoice?: ToolChoice;
 }
 
+export type TTSPronunciationMap = Record<string, string>;
+
 export interface AgentOptions<UserData> {
   id?: string;
   instructions: string;
@@ -125,6 +127,8 @@ export interface AgentOptions<UserData> {
   turnHandling?: TurnHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
+  /** Text replacements applied before TTS synthesis. */
+  ttsPronunciationMap?: TTSPronunciationMap;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
   /** @deprecated use turnHandling.interruption.enabled instead */
@@ -141,6 +145,7 @@ export class Agent<UserData = any> {
 
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
+  private _ttsPronunciationMap?: TTSPronunciationMap;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -168,6 +173,7 @@ export class Agent<UserData = any> {
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
+    ttsPronunciationMap,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -221,6 +227,7 @@ export class Agent<UserData = any> {
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
+    this._ttsPronunciationMap = ttsPronunciationMap;
 
     this._agentActivity = undefined;
   }
@@ -243,6 +250,10 @@ export class Agent<UserData = any> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
+  }
+
+  get ttsPronunciationMap(): TTSPronunciationMap | undefined {
+    return this._ttsPronunciationMap;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -478,7 +489,7 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(text);
+      stream.updateInputStream(applyTTSPronunciationMapToStream(text, agent.ttsPronunciationMap));
 
       let cleaned = false;
       const cleanup = () => {
@@ -530,6 +541,33 @@ export class Agent<UserData = any> {
       return audio;
     },
   };
+}
+
+function applyTTSPronunciationMapToStream(
+  text: ReadableStream<string>,
+  pronunciationMap?: TTSPronunciationMap,
+): ReadableStream<string> {
+  if (!pronunciationMap || Object.keys(pronunciationMap).length === 0) {
+    return text;
+  }
+
+  return text.pipeThrough(
+    new TransformStream<string, string>({
+      transform(chunk, controller) {
+        controller.enqueue(applyTTSPronunciationMap(chunk, pronunciationMap));
+      },
+    }),
+  );
+}
+
+function applyTTSPronunciationMap(text: string, pronunciationMap: TTSPronunciationMap): string {
+  let updated = text;
+  for (const [term, pronunciation] of Object.entries(pronunciationMap)) {
+    if (term.length > 0) {
+      updated = updated.split(term).join(pronunciation);
+    }
+  }
+  return updated;
 }
 
 export interface AgentTaskOptions<UserData = any> extends AgentOptions<UserData> {
