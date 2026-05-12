@@ -54,7 +54,8 @@ const CSV_COLUMNS = [
   'experience_task',
   'behavioral_task',
   'summary',
-  'disqualificationReason',
+  'evaluation',
+  'disqualification_reason',
 ] as const;
 
 function toCsvValue(value: unknown): string {
@@ -85,7 +86,7 @@ function disqualifyTool() {
       const reason = `[DISQUALIFIED] ${disqualificationReason}`;
       await writeCsvRow(ctx.userData.filename, {
         name: ctx.userData.candidateName || 'unknown',
-        disqualificationReason: reason,
+        disqualification_reason: reason,
       });
       await ctx.session.say(
         `Thanks for your time today. We are ending the interview now. Reason: ${disqualificationReason}.`,
