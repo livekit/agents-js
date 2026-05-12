@@ -37,7 +37,11 @@ import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.j
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import type { STTNode } from './io.js';
-import type { BaseEndpointing } from './turn_config/endpointing.js';
+import {
+  type BaseEndpointing,
+  createEndpointing,
+  defaultEndpointingOptions,
+} from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface EndOfTurnInfo {
@@ -148,7 +152,11 @@ export interface AudioRecognitionOptions {
    */
   backchannelBoundary?: number | [number, number] | null;
   /** Endpointing delay strategy. */
-  endpointing: BaseEndpointing;
+  endpointing?: BaseEndpointing;
+  /** @deprecated Use endpointing instead. */
+  minEndpointingDelay?: number;
+  /** @deprecated Use endpointing instead. */
+  maxEndpointingDelay?: number;
   /** Root span context for tracing. */
   rootSpanContext?: Context;
   /** STT model name for tracing */
@@ -254,7 +262,13 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
-    this.endpointing = opts.endpointing;
+    this.endpointing =
+      opts.endpointing ??
+      createEndpointing({
+        ...defaultEndpointingOptions,
+        minDelay: opts.minEndpointingDelay ?? defaultEndpointingOptions.minDelay,
+        maxDelay: opts.maxEndpointingDelay ?? defaultEndpointingOptions.maxDelay,
+      });
     this.lastLanguage = undefined;
     this.rootSpanContext = opts.rootSpanContext;
     this.sttModel = opts.sttModel;
