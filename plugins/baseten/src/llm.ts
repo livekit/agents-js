@@ -7,7 +7,7 @@
  * Configures the OpenAI plugin to work with Baseten's OpenAI-compatible API
  */
 import type { APIConnectOptions } from '@livekit/agents';
-import { DEFAULT_API_CONNECT_OPTIONS, inference, llm } from '@livekit/agents';
+import { DEFAULT_LLM_API_CONNECT_OPTIONS, inference, llm } from '@livekit/agents';
 import { OpenAI } from 'openai';
 import type { BasetenLLMOptions } from './types.js';
 
@@ -73,7 +73,7 @@ export class OpenAILLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,

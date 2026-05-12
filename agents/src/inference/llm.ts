@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
 import type { APIConnectOptions } from '../types.js';
-import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { DEFAULT_LLM_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
 import {
   type AnyString,
@@ -250,7 +250,7 @@ export class LLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     inferenceClass,

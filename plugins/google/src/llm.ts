@@ -7,7 +7,7 @@ import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
-  DEFAULT_API_CONNECT_OPTIONS,
+  DEFAULT_LLM_API_CONNECT_OPTIONS,
   llm,
   shortuuid,
 } from '@livekit/agents';
@@ -186,7 +186,7 @@ export class LLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     toolChoice,
     extraKwargs,
     geminiTools,

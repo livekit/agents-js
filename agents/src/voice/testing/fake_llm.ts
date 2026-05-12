@@ -5,7 +5,7 @@ import type { ChatContext } from '../../llm/chat_context.js';
 import { FunctionCall } from '../../llm/chat_context.js';
 import { LLMStream as BaseLLMStream, LLM, type LLMStream } from '../../llm/llm.js';
 import type { ToolChoice, ToolContext } from '../../llm/tool_context.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import { type APIConnectOptions, DEFAULT_LLM_API_CONNECT_OPTIONS } from '../../types.js';
 import { delay } from '../../utils.js';
 
 export interface FakeLLMResponse {
@@ -39,7 +39,7 @@ export class FakeLLM extends LLM {
   chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
   }: {
     chatCtx: ChatContext;
     toolCtx?: ToolContext;

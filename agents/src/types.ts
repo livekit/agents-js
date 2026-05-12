@@ -25,6 +25,11 @@ export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
   timeoutMs: 10000,
 };
 
+export const DEFAULT_LLM_API_CONNECT_OPTIONS: APIConnectOptions = {
+  ...DEFAULT_API_CONNECT_OPTIONS,
+  timeoutMs: 30000,
+};
+
 /**
  * Return the interval for the given number of retries.
  * The first retry is immediate, and then uses specified retryIntervalMs.
@@ -65,7 +70,7 @@ export interface ResolvedSessionConnectOptions {
 
 export const DEFAULT_SESSION_CONNECT_OPTIONS: ResolvedSessionConnectOptions = {
   sttConnOptions: DEFAULT_API_CONNECT_OPTIONS,
-  llmConnOptions: DEFAULT_API_CONNECT_OPTIONS,
+  llmConnOptions: DEFAULT_LLM_API_CONNECT_OPTIONS,
   ttsConnOptions: DEFAULT_API_CONNECT_OPTIONS,
   maxUnrecoverableErrors: 3,
 };

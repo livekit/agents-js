@@ -6,7 +6,7 @@ import {
   APIConnectionError,
   APIStatusError,
   APITimeoutError,
-  DEFAULT_API_CONNECT_OPTIONS,
+  DEFAULT_LLM_API_CONNECT_OPTIONS,
   llm,
   log,
   toError,
@@ -78,7 +78,7 @@ class ResponsesHttpLLM extends llm.LLM {
   override chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
@@ -411,7 +411,7 @@ export class LLM extends llm.LLM {
   override chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,

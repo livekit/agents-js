@@ -7,7 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ConnectionPool,
-  DEFAULT_API_CONNECT_OPTIONS,
+  DEFAULT_LLM_API_CONNECT_OPTIONS,
   llm,
   stream,
   toError,
@@ -232,7 +232,7 @@ export class WSLLM extends llm.LLM {
   chat({
     chatCtx,
     toolCtx,
-    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    connOptions = DEFAULT_LLM_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
