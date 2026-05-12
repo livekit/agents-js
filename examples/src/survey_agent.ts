@@ -11,7 +11,7 @@ import {
   voice,
 } from '@livekit/agents';
 // import * as phonic from '@livekit/agents-plugin-phonic';
-import { access, appendFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -46,26 +46,32 @@ type BehavioralResults = {
   workStyle: 'independent' | 'team_player';
 };
 
+const CSV_COLUMNS = [
+  'name',
+  'intro_task',
+  'email_task',
+  'commute_task',
+  'experience_task',
+  'behavioral_task',
+  'summary',
+  'disqualificationReason',
+] as const;
+
 function toCsvValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
   const raw = typeof value === 'string' ? value : JSON.stringify(value);
   return `"${raw.replace(/"/g, '""')}"`;
 }
 
 async function writeCsvRow(path: string, data: Record<string, unknown>): Promise<void> {
-  let hasFile = true;
+  const fh = await open(path, 'a');
   try {
-    await access(path);
-  } catch {
-    hasFile = false;
+    const header = (await fh.stat()).size === 0 ? CSV_COLUMNS.join(',') + '\n' : '';
+    const row = CSV_COLUMNS.map((key) => toCsvValue(data[key])).join(',') + '\n';
+    await fh.appendFile(header + row, 'utf8');
+  } finally {
+    await fh.close();
   }
-
-  const keys = Object.keys(data);
-  const row = keys.map((key) => toCsvValue(data[key])).join(',') + '\n';
-
-  if (!hasFile) {
-    await appendFile(path, keys.join(',') + '\n', 'utf8');
-  }
-  await appendFile(path, row, 'utf8');
 }
 
 function disqualifyTool() {
@@ -340,6 +346,7 @@ class SurveyAgent extends voice.Agent<SurveyUserData> {
     }
 
     const mergedResults: Record<string, unknown> = {
+      name: this.session.userData.candidateName,
       ...result.taskResults,
       summary: summaryText,
     };
