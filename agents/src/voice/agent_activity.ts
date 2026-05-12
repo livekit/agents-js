@@ -2697,12 +2697,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const onFirstFrame = (startedSpeakingAt?: number) => {
+      const agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
       if (this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech(startedSpeakingAt);
+        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
       }
     };
 
@@ -3458,7 +3459,7 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech();
+          this.audioRecognition.onStartOfAgentSpeech(Date.now());
         }
         if (this.isInterruptionDetectionEnabled) {
           this.disableVadInterruptionSoon();

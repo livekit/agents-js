@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ExpFilter } from '../../utils.js';
+
 /**
  * Configuration for endpointing, which determines when the user's turn is complete.
  */
@@ -40,76 +42,6 @@ export const defaultEndpointingOptions = {
 } as const satisfies EndpointingOptions;
 
 const AGENT_SPEECH_LEADING_SILENCE_GRACE_PERIOD = 250;
-
-class EndpointingExpFilter {
-  #alpha: number;
-  #filtered: number | undefined;
-  #initial: number | undefined;
-  #minVal: number | undefined;
-  #maxVal: number | undefined;
-
-  constructor({
-    alpha,
-    initial,
-    minVal,
-    maxVal,
-  }: {
-    alpha: number;
-    initial?: number;
-    minVal?: number;
-    maxVal?: number;
-  }) {
-    if (alpha <= 0 || alpha > 1) {
-      throw new Error('alpha must be in (0, 1].');
-    }
-    this.#alpha = alpha;
-    this.#initial = initial;
-    this.#filtered = initial;
-    this.#minVal = minVal;
-    this.#maxVal = maxVal;
-  }
-
-  reset(opts: { alpha?: number; initial?: number; minVal?: number; maxVal?: number } = {}) {
-    if (opts.alpha !== undefined) {
-      if (opts.alpha <= 0 || opts.alpha > 1) {
-        throw new Error('alpha must be in (0, 1].');
-      }
-      this.#alpha = opts.alpha;
-    }
-    if (opts.initial !== undefined) {
-      this.#initial = opts.initial;
-      this.#filtered = opts.initial;
-    }
-    if (opts.minVal !== undefined) {
-      this.#minVal = opts.minVal;
-    }
-    if (opts.maxVal !== undefined) {
-      this.#maxVal = opts.maxVal;
-    }
-  }
-
-  apply(exp: number, sample: number): number {
-    if (this.#filtered === undefined) {
-      this.#filtered = sample;
-    } else {
-      const a = this.#alpha ** exp;
-      this.#filtered = a * this.#filtered + (1 - a) * sample;
-    }
-
-    if (this.#maxVal !== undefined && this.#filtered > this.#maxVal) {
-      this.#filtered = this.#maxVal;
-    }
-    if (this.#minVal !== undefined && this.#filtered < this.#minVal) {
-      this.#filtered = this.#minVal;
-    }
-
-    return this.#filtered;
-  }
-
-  get value(): number | undefined {
-    return this.#filtered ?? this.#initial;
-  }
-}
 
 export class BaseEndpointing {
   protected _minDelay: number;
@@ -156,8 +88,8 @@ export class BaseEndpointing {
 }
 
 export class DynamicEndpointing extends BaseEndpointing {
-  #utterancePause: EndpointingExpFilter;
-  #turnPause: EndpointingExpFilter;
+  #utterancePause: ExpFilter;
+  #turnPause: ExpFilter;
   #utteranceStartedAt: number | undefined;
   #utteranceEndedAt: number | undefined;
   #agentSpeechStartedAt: number | undefined;
@@ -174,13 +106,13 @@ export class DynamicEndpointing extends BaseEndpointing {
     alpha?: number;
   }) {
     super({ minDelay, maxDelay });
-    this.#utterancePause = new EndpointingExpFilter({
+    this.#utterancePause = new ExpFilter({
       alpha,
       initial: minDelay,
       minVal: minDelay,
       maxVal: maxDelay,
     });
-    this.#turnPause = new EndpointingExpFilter({
+    this.#turnPause = new ExpFilter({
       alpha,
       initial: maxDelay,
       minVal: minDelay,

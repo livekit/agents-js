@@ -424,7 +424,7 @@ export class AudioRecognition {
     this.backchannelBoundaryCallback = undefined;
   }
 
-  async onStartOfAgentSpeech(startedAt: number = Date.now()) {
+  async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
 

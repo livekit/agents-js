@@ -49,7 +49,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: 250 });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
@@ -66,7 +66,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: [100, 999] });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
 
       vi.advanceTimersByTime(99);
@@ -81,7 +81,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: null });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(false);
 
@@ -94,7 +94,7 @@ describe('AudioRecognition backchannel boundary', () => {
     it('disables both sides cleanly when undefined', async () => {
       const ar = createRecognition();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       expect(ar.backchannelBoundaryActive).toBe(false);
 
       await ar.close();
@@ -104,7 +104,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: [0, 500] });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(false);
 
@@ -128,18 +128,18 @@ describe('AudioRecognition backchannel boundary', () => {
   describe('lifecycle', () => {
     it('re-arms the start cooldown when onStartOfAgentSpeech is called again', async () => {
       // Models the false-interruption resume path: the agent is paused and resumed,
-      // so AgentActivity calls onStartOfAgentSpeech() a second time.
+      // so AgentActivity calls onStartOfAgentSpeech a second time.
       const ar = createRecognition({ backchannelBoundary: 200 });
       const cb1 = vi.fn();
       const cb2 = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb1;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
       vi.advanceTimersByTime(50);
       // resume path -> re-arm the timer 50ms in
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb2;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
@@ -160,7 +160,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: 500 });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
@@ -178,7 +178,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: [1000, 500] });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
@@ -195,7 +195,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: 1000 });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
@@ -212,7 +212,7 @@ describe('AudioRecognition backchannel boundary', () => {
       const ar = createRecognition({ backchannelBoundary: 1000 });
       const cb = vi.fn();
 
-      await ar.onStartOfAgentSpeech();
+      await ar.onStartOfAgentSpeech(Date.now());
       ar.backchannelBoundaryCallback = cb;
       expect(ar.backchannelBoundaryActive).toBe(true);
 
