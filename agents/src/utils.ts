@@ -355,8 +355,6 @@ export class ExpFilter {
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number);
-  constructor(opts: { alpha: number; initial?: number; minVal?: number; maxVal?: number });
   constructor(
     alphaOrOpts: number | { alpha: number; initial?: number; minVal?: number; maxVal?: number },
     max?: number,
@@ -374,8 +372,6 @@ export class ExpFilter {
     this.#max = alphaOrOpts.maxVal;
   }
 
-  reset(alpha?: number): void;
-  reset(opts: { alpha?: number; initial?: number; minVal?: number; maxVal?: number }): void;
   reset(
     alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
   ) {
