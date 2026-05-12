@@ -1975,8 +1975,8 @@ export class AgentActivity implements RecognitionHooks {
     let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
-      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
+      replyStartedSpeakingAt = startedSpeakingAt;
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
@@ -2265,8 +2265,11 @@ export class AgentActivity implements RecognitionHooks {
 
     let agentStartedSpeakingAt: number | undefined;
     let agentStartedForwardingAt: number | undefined;
-    const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
-      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (
+      audioOutRef: _AudioOut | null,
+      startedSpeakingAt: number = Date.now(),
+    ) => {
+      agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
@@ -2696,14 +2699,13 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = (startedSpeakingAt?: number) => {
-      const agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (startedSpeakingAt: number = Date.now()) => {
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
       if (this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
+        this.audioRecognition.onStartOfAgentSpeech(startedSpeakingAt);
       }
     };
 
