@@ -269,7 +269,7 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
     });
   }
 
-  private checkCompletion() {
+  protected checkCompletion() {
     if (this.partial.strengths && this.partial.weaknesses && this.partial.workStyle) {
       this.complete({
         strengths: this.partial.strengths,

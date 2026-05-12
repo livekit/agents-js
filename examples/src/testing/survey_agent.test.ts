@@ -8,28 +8,21 @@
  * Demonstrates the best practices documented in
  * https://docs.livekit.io/agents/logic/tasks/#testing-task-groups:
  *
- * - Initialize userData: tasks read session.userData.candidateName and write
- *   into taskResults.
- * - Sleep before the first session.run() and between TaskGroup sub-tasks so the
- *   new sub-task can take over.
- * - Drive multiple turns and use containsFunctionCall() instead of coupling to
- *   a specific event index.
- * - Parse item.args with JSON.parse before asserting.
- * - Don't assert on startup output produced in onEnter().
- * - Test tasks in isolation and as a group.
- *
- * Test-only adjustment: test task subclasses no-op onEnter() prompts because
- * FakeLLM is user-input driven. The behavioral test also suppresses the
- * follow-up prompt emitted after partial records. SurveyAgentForTesting disables
- * the final CSV write and skips the email step so the test stays offline-safe
- * and side-effect free.
+ * - Initialize userData on the AgentSession.
+ * - Future-based readiness signaling instead of sleep-based delays.
+ * - containsFunctionCall({ name, args }) with partial matching for simple
+ *   value checks; JSON.parse only for richer assertions (range checks, regex).
+ * - No assertions on startup output produced in onEnter().
+ * - onEnter() resolves a ready Future instead of awaiting generateReply().
+ * - Tasks tested in isolation and as a group.
+ * - Regression test for disqualify (analogous to out_of_scope).
  */
 import { Future, asError, beta, initializeLogger, voice } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  type BehavioralResults,
   BehavioralTask,
   CommuteTask,
+  EmailTask,
   ExperienceTask,
   IntroTask,
   type SurveyUserData,
@@ -41,14 +34,16 @@ type TaskCompletedEvent = beta.TaskCompletedEvent;
 
 initializeLogger({ pretty: true, level: 'warn' });
 
-const TASK_TRANSITION_DELAY = 500;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+interface ReadyHolder {
+  current: Future<void>;
+}
 
 function createUserData(): SurveyUserData {
   return { filename: 'survey-results-test.csv', candidateName: '', taskResults: {} };
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function withFutureResolution<T>(done: Future<T>, fn: () => Promise<T>): Promise<void> {
@@ -69,46 +64,83 @@ async function runAndWait(session: voice.AgentSession<SurveyUserData>, userInput
   return result;
 }
 
-function calledTools(session: voice.AgentSession<SurveyUserData>): Set<string> {
-  return new Set(
-    session.history.items.filter((item) => item.type === 'function_call').map((item) => item.name),
-  );
-}
+// ---------------------------------------------------------------------------
+// Test task subclasses — resolve a ready Future in onEnter() instead of
+// calling generateReply(), so the test knows when to send input.
+// ---------------------------------------------------------------------------
 
-function lastCalls(session: voice.AgentSession<SurveyUserData>, names: Set<string>) {
-  const found = new Map<string, { args: string }>();
-  for (const item of [...session.history.items].reverse()) {
-    if (item.type === 'function_call' && names.has(item.name) && !found.has(item.name)) {
-      found.set(item.name, item);
-    }
-    if (found.size === names.size) break;
-  }
-  return found;
-}
+class TestIntroTask extends IntroTask {
+  private readonly ready: ReadyHolder;
 
-async function driveUntilCalled(
-  session: voice.AgentSession<SurveyUserData>,
-  options: {
-    expected: string | Set<string>;
-    initial: string;
-    nudge?: string;
-    maxTurns?: number;
-  },
-) {
-  const required =
-    typeof options.expected === 'string' ? new Set([options.expected]) : options.expected;
-  await runAndWait(session, options.initial);
-
-  for (let turn = 1; turn < (options.maxTurns ?? 4); turn++) {
-    const called = calledTools(session);
-    if ([...required].every((name) => called.has(name))) break;
-    await runAndWait(session, options.nudge ?? "Yes, that's right. Please go ahead and record it.");
+  constructor(ready: ReadyHolder) {
+    super();
+    this.ready = ready;
   }
 
-  const called = calledTools(session);
-  expect([...required].every((name) => called.has(name))).toBe(true);
-  return lastCalls(session, required);
+  async onEnter() {
+    this.ready.current.resolve();
+  }
 }
+
+class TestEmailTask extends EmailTask {
+  private readonly ready: ReadyHolder;
+
+  constructor(ready: ReadyHolder) {
+    super();
+    this.ready = ready;
+  }
+
+  async onEnter() {
+    this.ready.current.resolve();
+  }
+}
+
+class TestCommuteTask extends CommuteTask {
+  private readonly ready: ReadyHolder;
+
+  constructor(ready: ReadyHolder) {
+    super();
+    this.ready = ready;
+  }
+
+  async onEnter() {
+    this.ready.current.resolve();
+  }
+}
+
+class TestExperienceTask extends ExperienceTask {
+  private readonly ready: ReadyHolder;
+
+  constructor(ready: ReadyHolder) {
+    super();
+    this.ready = ready;
+  }
+
+  async onEnter() {
+    this.ready.current.resolve();
+  }
+}
+
+class TestBehavioralTask extends BehavioralTask {
+  private readonly ready: ReadyHolder;
+
+  constructor(ready: ReadyHolder) {
+    super();
+    this.ready = ready;
+  }
+
+  protected checkCompletion() {
+    super.checkCompletion();
+  }
+
+  async onEnter() {
+    this.ready.current.resolve();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parent agents for isolated and grouped tests
+// ---------------------------------------------------------------------------
 
 class SingleTaskAgent<ResultT> extends voice.Agent<SurveyUserData> {
   constructor(private readonly task: voice.AgentTask<ResultT, SurveyUserData>) {
@@ -120,68 +152,54 @@ class SingleTaskAgent<ResultT> extends voice.Agent<SurveyUserData> {
   }
 }
 
-class TestIntroTask extends IntroTask {
-  async onEnter() {}
-}
+function createSurveyTestAgent(opts: {
+  done: Future<TaskGroupResult>;
+  introReady: ReadyHolder;
+  emailReady: ReadyHolder;
+  commuteReady: ReadyHolder;
+  experienceReady: ReadyHolder;
+  onTaskCompleted?: (event: TaskCompletedEvent) => Promise<void>;
+}) {
+  return class SurveyTestAgent extends voice.Agent<SurveyUserData> {
+    constructor() {
+      super({ instructions: 'You are a survey agent screening candidates.' });
+    }
 
-class TestCommuteTask extends CommuteTask {
-  async onEnter() {}
-}
+    async onEnter() {
+      await withFutureResolution(opts.done, async () => {
+        const group = new TaskGroup({
+          summarizeChatCtx: false,
+          onTaskCompleted: opts.onTaskCompleted,
+        });
 
-class TestExperienceTask extends ExperienceTask {
-  async onEnter() {}
-}
+        group.add(() => new TestIntroTask(opts.introReady), {
+          id: 'intro',
+          description: 'Collect name and intro.',
+        });
+        group.add(() => new TestEmailTask(opts.emailReady), {
+          id: 'email',
+          description: 'Collect email.',
+        });
+        group.add(() => new TestCommuteTask(opts.commuteReady), {
+          id: 'commute',
+          description: 'Ask about commute.',
+        });
+        group.add(() => new TestExperienceTask(opts.experienceReady), {
+          id: 'experience',
+          description: 'Collect work history.',
+        });
 
-class TestBehavioralTask extends BehavioralTask {
-  constructor() {
-    super();
-    Object.defineProperty(this, 'checkCompletion', {
-      value: () => {
-        const partial = (this as unknown as { partial: Partial<BehavioralResults> }).partial;
-        if (partial.strengths && partial.weaknesses && partial.workStyle) {
-          this.complete({
-            strengths: partial.strengths,
-            weaknesses: partial.weaknesses,
-            workStyle: partial.workStyle,
-          });
-        }
-      },
-    });
-  }
-
-  async onEnter() {}
-}
-
-class SurveyAgentForTesting extends voice.Agent<SurveyUserData> {
-  constructor(
-    private readonly completedIds: string[],
-    private readonly done: Future<TaskGroupResult>,
-  ) {
-    super({ instructions: 'You are a survey agent screening candidates.' });
-  }
-
-  async onEnter() {
-    await withFutureResolution(this.done, async () => {
-      const group = new TaskGroup({
-        summarizeChatCtx: false,
-        onTaskCompleted: async (event: TaskCompletedEvent) => {
-          this.completedIds.push(event.taskId);
-        },
+        const result = await group.run();
+        this.session.userData.taskResults = result.taskResults;
+        return result;
       });
-
-      group.add(() => new TestIntroTask(), { id: 'intro', description: 'Collect name and intro.' });
-      group.add(() => new TestCommuteTask(), { id: 'commute', description: 'Ask about commute.' });
-      group.add(() => new TestExperienceTask(), {
-        id: 'experience',
-        description: 'Collect work history.',
-      });
-
-      const result = await group.run();
-      this.session.userData.taskResults = result.taskResults;
-      return result;
-    });
-  }
+    }
+  };
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 describe('survey_agent TaskGroup reference', { timeout: 120_000 }, () => {
   const sessions: voice.AgentSession<SurveyUserData>[] = [];
@@ -195,156 +213,434 @@ describe('survey_agent TaskGroup reference', { timeout: 120_000 }, () => {
     const session = new voice.AgentSession<SurveyUserData>({ llm, userData: createUserData() });
     sessions.push(session);
     await session.start({ agent });
-    await delay(TASK_TRANSITION_DELAY);
     return session;
   }
 
-  it('IntroTask records the candidate name', async () => {
-    const fakeLLM = createFakeLLM([
-      {
-        input:
-          "Hi, my name is Alice. I'm a backend engineer with five years of experience building APIs at Acme.",
-        toolCalls: [{ name: 'saveIntro', args: { name: 'Alice', intro: 'Backend engineer.' } }],
-      },
-    ]);
-    const session = await startSession(new SingleTaskAgent(new TestIntroTask()), fakeLLM);
+  // -----------------------------------------------------------------------
+  // Isolated task tests
+  // -----------------------------------------------------------------------
 
-    await driveUntilCalled(session, {
-      expected: 'saveIntro',
-      initial:
+  describe('IntroTask (isolated)', () => {
+    it('records the candidate name via saveIntro', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const fakeLLM = createFakeLLM([
+        {
+          input:
+            "Hi, my name is Alice. I'm a backend engineer with five years of experience building APIs at Acme.",
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Alice', intro: 'Backend engineer.' } }],
+        },
+      ]);
+      const session = await startSession(new SingleTaskAgent(new TestIntroTask(ready)), fakeLLM);
+      await ready.current.await;
+
+      const result = await runAndWait(
+        session,
         "Hi, my name is Alice. I'm a backend engineer with five years of experience building APIs at Acme.",
+      );
+      result.expect.containsFunctionCall({ name: 'saveIntro', args: { name: 'Alice' } });
+      expect(session.userData.candidateName.toLowerCase()).toBe('alice');
     });
 
-    expect(session.userData.candidateName.toLowerCase()).toBe('alice');
-  });
+    it('returns the tool output confirming the saved intro', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const fakeLLM = createFakeLLM([
+        {
+          input: "I'm Bob, a fullstack developer.",
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Bob', intro: 'Fullstack developer.' } }],
+        },
+      ]);
+      const session = await startSession(new SingleTaskAgent(new TestIntroTask(ready)), fakeLLM);
+      await ready.current.await;
 
-  it('CommuteTask records commute flexibility', async () => {
-    const fakeLLM = createFakeLLM([
-      {
-        input: 'Yes, I can commute three days a week. I usually take the subway.',
-        toolCalls: [{ name: 'saveCommute', args: { canCommute: true, commuteMethod: 'subway' } }],
-      },
-    ]);
-    const session = await startSession(new SingleTaskAgent(new TestCommuteTask()), fakeLLM);
-
-    const calls = await driveUntilCalled(session, {
-      expected: 'saveCommute',
-      initial: 'Yes, I can commute three days a week. I usually take the subway.',
+      const result = await runAndWait(session, "I'm Bob, a fullstack developer.");
+      result.expect.containsFunctionCallOutput({});
     });
-
-    const args = JSON.parse(calls.get('saveCommute')!.args);
-    expect(args.canCommute).toBe(true);
-    expect(args.commuteMethod).toBe('subway');
   });
 
-  it('ExperienceTask records years and description', async () => {
-    const input =
-      'I have five years of experience total. I started as a junior engineer at Acme working on data pipelines for two years, then moved to Globex as a senior backend engineer for the past three years.';
-    const fakeLLM = createFakeLLM([
-      {
-        input,
-        toolCalls: [
-          {
-            name: 'saveExperience',
-            args: {
-              yearsOfExperience: 5,
-              experienceDescription: 'Acme data pipelines, Globex APIs.',
+  describe('EmailTask (isolated)', () => {
+    it('records the candidate email via saveEmail', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const fakeLLM = createFakeLLM([
+        {
+          input: 'alice@example.com',
+          toolCalls: [{ name: 'saveEmail', args: { email: 'alice@example.com' } }],
+        },
+      ]);
+      const session = await startSession(new SingleTaskAgent(new TestEmailTask(ready)), fakeLLM);
+      await ready.current.await;
+
+      const result = await runAndWait(session, 'alice@example.com');
+      result.expect.containsFunctionCall({
+        name: 'saveEmail',
+        args: { email: 'alice@example.com' },
+      });
+    });
+  });
+
+  describe('CommuteTask (isolated)', () => {
+    it('records commute flexibility via saveCommute', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const fakeLLM = createFakeLLM([
+        {
+          input: 'Yes, I can commute three days a week. I usually take the subway.',
+          toolCalls: [{ name: 'saveCommute', args: { canCommute: true, commuteMethod: 'subway' } }],
+        },
+      ]);
+      const session = await startSession(new SingleTaskAgent(new TestCommuteTask(ready)), fakeLLM);
+      await ready.current.await;
+
+      const result = await runAndWait(
+        session,
+        'Yes, I can commute three days a week. I usually take the subway.',
+      );
+      result.expect.containsFunctionCall({
+        name: 'saveCommute',
+        args: { canCommute: true, commuteMethod: 'subway' },
+      });
+    });
+  });
+
+  describe('ExperienceTask (isolated)', () => {
+    it('records years and description via saveExperience', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const input =
+        'I have five years of experience total. I started as a junior engineer at Acme working on data pipelines for two years, then moved to Globex as a senior backend engineer for the past three years.';
+      const fakeLLM = createFakeLLM([
+        {
+          input,
+          toolCalls: [
+            {
+              name: 'saveExperience',
+              args: {
+                yearsOfExperience: 5,
+                experienceDescription: 'Acme data pipelines, Globex APIs.',
+              },
             },
-          },
-        ],
-      },
-    ]);
-    const session = await startSession(new SingleTaskAgent(new TestExperienceTask()), fakeLLM);
+          ],
+        },
+      ]);
+      const session = await startSession(
+        new SingleTaskAgent(new TestExperienceTask(ready)),
+        fakeLLM,
+      );
+      await ready.current.await;
 
-    const calls = await driveUntilCalled(session, { expected: 'saveExperience', initial: input });
+      const result = await runAndWait(session, input);
+      result.expect.containsFunctionCall({
+        name: 'saveExperience',
+        args: { yearsOfExperience: 5 },
+      });
 
-    const args = JSON.parse(calls.get('saveExperience')!.args);
-    expect(args.yearsOfExperience).toBe(5);
-    expect(args.experienceDescription.toLowerCase()).toContain('acme');
-  });
-
-  it('BehavioralTask completes after all three records', async () => {
-    const input =
-      'My biggest strength is debugging hard distributed systems issues. My main weakness is that I sometimes over-engineer early prototypes. I work best as part of a team.';
-    const fakeLLM = createFakeLLM([
-      {
-        input,
-        toolCalls: [
-          { name: 'saveStrengths', args: { strengths: 'Debugging distributed systems.' } },
-          { name: 'saveWeaknesses', args: { weaknesses: 'Sometimes over-engineers prototypes.' } },
-          { name: 'saveWorkStyle', args: { workStyle: 'team_player' } },
-        ],
-      },
-    ]);
-    const session = await startSession(new SingleTaskAgent(new TestBehavioralTask()), fakeLLM);
-
-    await driveUntilCalled(session, {
-      expected: new Set(['saveStrengths', 'saveWeaknesses', 'saveWorkStyle']),
-      initial: input,
-      maxTurns: 6,
+      // Use JSON.parse for the substring check — the helper only does exact matching.
+      const args = JSON.parse(
+        result.expect.containsFunctionCall({ name: 'saveExperience' }).event().item.args,
+      );
+      expect(args.experienceDescription.toLowerCase()).toContain('acme');
     });
   });
 
-  it('full TaskGroup flow records ordered task results', async () => {
-    const completedIds: string[] = [];
-    const done = new Future<TaskGroupResult>();
-    const fakeLLM = createFakeLLM([
-      {
-        input:
-          "My name is Bob, I'm a software engineer with eight years of experience focused on APIs.",
-        toolCalls: [{ name: 'saveIntro', args: { name: 'Bob', intro: 'API-focused engineer.' } }],
-      },
-      {
-        input: "Yes, I can commute three days a week. I'd be driving in.",
-        toolCalls: [{ name: 'saveCommute', args: { canCommute: true, commuteMethod: 'driving' } }],
-      },
-      {
-        input:
-          'I have eight years total, five at Initech on backend systems and the last three at Hooli leading an API team.',
-        toolCalls: [
-          {
-            name: 'saveExperience',
-            args: {
-              yearsOfExperience: 8,
-              experienceDescription: 'Five years at Initech, three years at Hooli.',
+  describe('BehavioralTask (isolated)', () => {
+    it('completes after all three save tools fire', async () => {
+      const ready: ReadyHolder = { current: new Future<void>() };
+      const input =
+        'My biggest strength is debugging hard distributed systems issues. My main weakness is that I sometimes over-engineer early prototypes. I work best as part of a team.';
+      const fakeLLM = createFakeLLM([
+        {
+          input,
+          toolCalls: [
+            { name: 'saveStrengths', args: { strengths: 'Debugging distributed systems.' } },
+            {
+              name: 'saveWeaknesses',
+              args: { weaknesses: 'Sometimes over-engineers prototypes.' },
             },
-          },
-        ],
-      },
-    ]);
-    const session = await startSession(new SurveyAgentForTesting(completedIds, done), fakeLLM);
+            { name: 'saveWorkStyle', args: { workStyle: 'team_player' } },
+          ],
+        },
+      ]);
+      const session = await startSession(
+        new SingleTaskAgent(new TestBehavioralTask(ready)),
+        fakeLLM,
+      );
+      await ready.current.await;
 
-    await driveUntilCalled(session, {
-      expected: 'saveIntro',
-      initial:
+      const result = await runAndWait(session, input);
+      result.expect.containsFunctionCall({
+        name: 'saveStrengths',
+        args: { strengths: 'Debugging distributed systems.' },
+      });
+      result.expect.containsFunctionCall({
+        name: 'saveWeaknesses',
+        args: { weaknesses: 'Sometimes over-engineers prototypes.' },
+      });
+      result.expect.containsFunctionCall({
+        name: 'saveWorkStyle',
+        args: { workStyle: 'team_player' },
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // TaskGroup flow tests
+  // -----------------------------------------------------------------------
+
+  describe('TaskGroup flow', () => {
+    it('collects intro, email, commute, and experience sequentially', async () => {
+      const done = new Future<TaskGroupResult>();
+      const completedIds: string[] = [];
+      const introReady: ReadyHolder = { current: new Future<void>() };
+      const emailReady: ReadyHolder = { current: new Future<void>() };
+      const commuteReady: ReadyHolder = { current: new Future<void>() };
+      const experienceReady: ReadyHolder = { current: new Future<void>() };
+
+      const Agent = createSurveyTestAgent({
+        done,
+        introReady,
+        emailReady,
+        commuteReady,
+        experienceReady,
+        onTaskCompleted: async ({ taskId }) => {
+          completedIds.push(taskId);
+        },
+      });
+
+      const fakeLLM = createFakeLLM([
+        {
+          input:
+            "My name is Bob, I'm a software engineer with eight years of experience focused on APIs.",
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Bob', intro: 'API-focused engineer.' } }],
+        },
+        {
+          input: 'bob@example.com',
+          toolCalls: [{ name: 'saveEmail', args: { email: 'bob@example.com' } }],
+        },
+        {
+          input: "Yes, I can commute three days a week. I'd be driving in.",
+          toolCalls: [
+            { name: 'saveCommute', args: { canCommute: true, commuteMethod: 'driving' } },
+          ],
+        },
+        {
+          input:
+            'I have eight years total, five at Initech on backend systems and the last three at Hooli leading an API team.',
+          toolCalls: [
+            {
+              name: 'saveExperience',
+              args: {
+                yearsOfExperience: 8,
+                experienceDescription: 'Five years at Initech, three years at Hooli.',
+              },
+            },
+          ],
+        },
+      ]);
+
+      const session = await startSession(new Agent(), fakeLLM);
+      await introReady.current.await;
+
+      const introResult = await runAndWait(
+        session,
         "My name is Bob, I'm a software engineer with eight years of experience focused on APIs.",
-    });
-    await delay(TASK_TRANSITION_DELAY);
+      );
+      introResult.expect.containsFunctionCall({ name: 'saveIntro', args: { name: 'Bob' } });
 
-    await driveUntilCalled(session, {
-      expected: 'saveCommute',
-      initial: "Yes, I can commute three days a week. I'd be driving in.",
-    });
-    await delay(TASK_TRANSITION_DELAY);
+      await emailReady.current.await;
 
-    await driveUntilCalled(session, {
-      expected: 'saveExperience',
-      initial:
+      const emailResult = await runAndWait(session, 'bob@example.com');
+      emailResult.expect.containsFunctionCall({
+        name: 'saveEmail',
+        args: { email: 'bob@example.com' },
+      });
+
+      await commuteReady.current.await;
+
+      const commuteResult = await runAndWait(
+        session,
+        "Yes, I can commute three days a week. I'd be driving in.",
+      );
+      commuteResult.expect.containsFunctionCall({
+        name: 'saveCommute',
+        args: { canCommute: true, commuteMethod: 'driving' },
+      });
+
+      await experienceReady.current.await;
+
+      const expResult = await runAndWait(
+        session,
         'I have eight years total, five at Initech on backend systems and the last three at Hooli leading an API team.',
+      );
+      expResult.expect.containsFunctionCall({
+        name: 'saveExperience',
+        args: { yearsOfExperience: 8 },
+      });
+
+      const tgResult = await done.await;
+      expect(completedIds).toEqual(['intro', 'email', 'commute', 'experience']);
+      expect(Object.keys(tgResult.taskResults).sort()).toEqual([
+        'commute',
+        'email',
+        'experience',
+        'intro',
+      ]);
     });
 
-    const result = await done.await;
-    const results = session.userData.taskResults;
+    it('onTaskCompleted callback fires with correct task IDs and results', async () => {
+      const done = new Future<TaskGroupResult>();
+      const callbackLog: { taskId: string; result: unknown }[] = [];
+      const introReady: ReadyHolder = { current: new Future<void>() };
+      const emailReady: ReadyHolder = { current: new Future<void>() };
+      const commuteReady: ReadyHolder = { current: new Future<void>() };
+      const experienceReady: ReadyHolder = { current: new Future<void>() };
 
-    expect(completedIds).toEqual(['intro', 'commute', 'experience']);
-    expect(Object.keys(result.taskResults).sort()).toEqual(['commute', 'experience', 'intro']);
-    expect((results.intro as { name: string }).name.toLowerCase()).toBe('bob');
-    expect((results.commute as { canCommute: boolean; commuteMethod: string }).canCommute).toBe(
-      true,
-    );
-    expect((results.commute as { canCommute: boolean; commuteMethod: string }).commuteMethod).toBe(
-      'driving',
-    );
-    expect((results.experience as { yearsOfExperience: number }).yearsOfExperience).toBe(8);
+      const Agent = createSurveyTestAgent({
+        done,
+        introReady,
+        emailReady,
+        commuteReady,
+        experienceReady,
+        onTaskCompleted: async (event) => {
+          callbackLog.push({ taskId: event.taskId, result: event.result });
+        },
+      });
+
+      const fakeLLM = createFakeLLM([
+        {
+          input: 'Name is Dana.',
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Dana', intro: 'Software engineer.' } }],
+        },
+        {
+          input: 'dana@test.com',
+          toolCalls: [{ name: 'saveEmail', args: { email: 'dana@test.com' } }],
+        },
+        {
+          input: 'I drive to work.',
+          toolCalls: [
+            { name: 'saveCommute', args: { canCommute: true, commuteMethod: 'driving' } },
+          ],
+        },
+        {
+          input: 'Three years at Acme.',
+          toolCalls: [
+            {
+              name: 'saveExperience',
+              args: { yearsOfExperience: 3, experienceDescription: 'Three years at Acme.' },
+            },
+          ],
+        },
+      ]);
+
+      const session = await startSession(new Agent(), fakeLLM);
+      await introReady.current.await;
+
+      await runAndWait(session, 'Name is Dana.');
+      await emailReady.current.await;
+
+      await runAndWait(session, 'dana@test.com');
+      await commuteReady.current.await;
+
+      await runAndWait(session, 'I drive to work.');
+      await experienceReady.current.await;
+
+      await runAndWait(session, 'Three years at Acme.');
+      await done.await;
+
+      expect(callbackLog).toHaveLength(4);
+      expect(callbackLog[0]!.taskId).toBe('intro');
+      expect(callbackLog[1]!.taskId).toBe('email');
+      expect(callbackLog[2]!.taskId).toBe('commute');
+      expect(callbackLog[3]!.taskId).toBe('experience');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Regression tests — out_of_scope lets the user revisit completed tasks.
+  // -----------------------------------------------------------------------
+
+  describe('TaskGroup regressions', () => {
+    it('single regression lets user correct intro after moving to email', async () => {
+      const done = new Future<TaskGroupResult>();
+      const introReady: ReadyHolder = { current: new Future<void>() };
+      const emailReady: ReadyHolder = { current: new Future<void>() };
+      const commuteReady: ReadyHolder = { current: new Future<void>() };
+      const experienceReady: ReadyHolder = { current: new Future<void>() };
+
+      const Agent = createSurveyTestAgent({
+        done,
+        introReady,
+        emailReady,
+        commuteReady,
+        experienceReady,
+      });
+
+      const fakeLLM = createFakeLLM([
+        {
+          input: 'My name is Alice.',
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Alice', intro: 'Software engineer.' } }],
+        },
+        {
+          input: 'Wait, I want to change my name to Bob.',
+          toolCalls: [{ name: 'out_of_scope', args: { task_ids: ['intro'] } }],
+        },
+        {
+          input: 'My name is Bob.',
+          toolCalls: [{ name: 'saveIntro', args: { name: 'Bob', intro: 'Software engineer.' } }],
+        },
+        {
+          input: 'bob@example.com',
+          toolCalls: [{ name: 'saveEmail', args: { email: 'bob@example.com' } }],
+        },
+        {
+          input: 'I take the bus.',
+          toolCalls: [{ name: 'saveCommute', args: { canCommute: true, commuteMethod: 'bus' } }],
+        },
+        {
+          input: 'Two years at Acme.',
+          toolCalls: [
+            {
+              name: 'saveExperience',
+              args: { yearsOfExperience: 2, experienceDescription: 'Two years at Acme.' },
+            },
+          ],
+        },
+      ]);
+
+      const session = await startSession(new Agent(), fakeLLM);
+      await introReady.current.await;
+
+      // Complete intro_task.
+      introReady.current = new Future<void>();
+      const introResult = await runAndWait(session, 'My name is Alice.');
+      introResult.expect.containsFunctionCall({ name: 'saveIntro' });
+      await emailReady.current.await;
+
+      // Regress — out_of_scope causes run() to reject with OutOfScopeError.
+      introReady.current = new Future<void>();
+      const regressResult = session.run({
+        userInput: 'Wait, I want to change my name to Bob.',
+      });
+      await expect(regressResult.wait()).rejects.toThrow('out_of_scope');
+      regressResult.expect.containsFunctionCall({ name: 'out_of_scope' });
+      await introReady.current.await;
+
+      // Provide corrected name.
+      emailReady.current = new Future<void>();
+      const correctedResult = await runAndWait(session, 'My name is Bob.');
+      correctedResult.expect.containsFunctionCall({ name: 'saveIntro', args: { name: 'Bob' } });
+      await emailReady.current.await;
+
+      // Complete remaining tasks.
+      commuteReady.current = new Future<void>();
+      await runAndWait(session, 'bob@example.com');
+      await commuteReady.current.await;
+
+      experienceReady.current = new Future<void>();
+      await runAndWait(session, 'I take the bus.');
+      await experienceReady.current.await;
+
+      await runAndWait(session, 'Two years at Acme.');
+
+      const tgResult = await done.await;
+      expect((tgResult.taskResults['intro'] as { name: string }).name).toBe('Bob');
+      expect(tgResult.taskResults['email']).toEqual({ email: 'bob@example.com' });
+    });
   });
 });
