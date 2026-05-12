@@ -97,6 +97,26 @@ export interface STTV3Options extends STTBaseOptions {
   prompt?: string;
   /** Return chunk-level timestamps in REST response */
   withTimestamps?: boolean;
+  /** Fine-grained VAD positive speech threshold (WS only). */
+  positiveSpeechThreshold?: number;
+  /** Fine-grained VAD negative speech threshold (WS only). */
+  negativeSpeechThreshold?: number;
+  /** Fine-grained VAD minimum speech frames (WS only). */
+  minSpeechFrames?: number;
+  /** Fine-grained VAD first-turn minimum speech frames (WS only). */
+  firstTurnMinSpeechFrames?: number;
+  /** Fine-grained VAD negative frames count (WS only). */
+  negativeFramesCount?: number;
+  /** Fine-grained VAD negative frames window (WS only). */
+  negativeFramesWindow?: number;
+  /** Fine-grained VAD start speech volume threshold (WS only). */
+  startSpeechVolumeThreshold?: number;
+  /** Fine-grained VAD interrupt minimum speech frames (WS only). */
+  interruptMinSpeechFrames?: number;
+  /** Fine-grained VAD pre-speech padding frames (WS only). */
+  preSpeechPadFrames?: number;
+  /** Fine-grained VAD initial ignored frames (WS only). */
+  numInitialIgnoredFrames?: number;
 }
 
 /** Combined options — discriminated by `model` field */
@@ -121,6 +141,17 @@ interface ResolvedSTTOptions {
   // WS-only flags
   highVadSensitivity?: boolean;
   flushSignal?: boolean;
+  // saaras:v3 WS-only fine-grained VAD params
+  positiveSpeechThreshold?: number;
+  negativeSpeechThreshold?: number;
+  minSpeechFrames?: number;
+  firstTurnMinSpeechFrames?: number;
+  negativeFramesCount?: number;
+  negativeFramesWindow?: number;
+  startSpeechVolumeThreshold?: number;
+  interruptMinSpeechFrames?: number;
+  preSpeechPadFrames?: number;
+  numInitialIgnoredFrames?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +217,16 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
     base.prompt = v3Opts.prompt;
     base.withTimestamps = v3Opts.withTimestamps;
+    base.positiveSpeechThreshold = v3Opts.positiveSpeechThreshold;
+    base.negativeSpeechThreshold = v3Opts.negativeSpeechThreshold;
+    base.minSpeechFrames = v3Opts.minSpeechFrames;
+    base.firstTurnMinSpeechFrames = v3Opts.firstTurnMinSpeechFrames;
+    base.negativeFramesCount = v3Opts.negativeFramesCount;
+    base.negativeFramesWindow = v3Opts.negativeFramesWindow;
+    base.startSpeechVolumeThreshold = v3Opts.startSpeechVolumeThreshold;
+    base.interruptMinSpeechFrames = v3Opts.interruptMinSpeechFrames;
+    base.preSpeechPadFrames = v3Opts.preSpeechPadFrames;
+    base.numInitialIgnoredFrames = v3Opts.numInitialIgnoredFrames;
   } else {
     // saarika:v2.5
     let languageCode = normalizeLanguage(
@@ -236,6 +277,38 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
   }
   if (opts.flushSignal != null) {
     params.set('flush_signal', String(opts.flushSignal));
+  }
+  if (opts.model === 'saaras:v3') {
+    if (opts.positiveSpeechThreshold != null) {
+      params.set('positive_speech_threshold', String(opts.positiveSpeechThreshold));
+    }
+    if (opts.negativeSpeechThreshold != null) {
+      params.set('negative_speech_threshold', String(opts.negativeSpeechThreshold));
+    }
+    if (opts.minSpeechFrames != null) {
+      params.set('min_speech_frames', String(opts.minSpeechFrames));
+    }
+    if (opts.firstTurnMinSpeechFrames != null) {
+      params.set('first_turn_min_speech_frames', String(opts.firstTurnMinSpeechFrames));
+    }
+    if (opts.negativeFramesCount != null) {
+      params.set('negative_frames_count', String(opts.negativeFramesCount));
+    }
+    if (opts.negativeFramesWindow != null) {
+      params.set('negative_frames_window', String(opts.negativeFramesWindow));
+    }
+    if (opts.startSpeechVolumeThreshold != null) {
+      params.set('start_speech_volume_threshold', String(opts.startSpeechVolumeThreshold));
+    }
+    if (opts.interruptMinSpeechFrames != null) {
+      params.set('interrupt_min_speech_frames', String(opts.interruptMinSpeechFrames));
+    }
+    if (opts.preSpeechPadFrames != null) {
+      params.set('pre_speech_pad_frames', String(opts.preSpeechPadFrames));
+    }
+    if (opts.numInitialIgnoredFrames != null) {
+      params.set('num_initial_ignored_frames', String(opts.numInitialIgnoredFrames));
+    }
   }
 
   return `${base}?${params.toString()}`;
