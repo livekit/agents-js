@@ -38,7 +38,7 @@ class InfoTask extends voice.AgentTask<string> {
 
   async onEnter() {
     this.session.generateReply({
-      userInput: 'Ask the user for their ${info}',
+      userInput: `Ask the user for their ${info}`,
     });
   }
 }
