@@ -120,7 +120,7 @@ export function filterMarkdown(text: ReadableStream<string>): ReadableStream<str
 
         let lastSplitPos = 0;
         for (const token of inlineSplitTokens) {
-          lastSplitPos = Math.max(lastSplitPos, buffer.lastIndexOf(token, lastSplitPos));
+          lastSplitPos = Math.max(lastSplitPos, buffer.lastIndexOf(token));
           if (lastSplitPos >= buffer.length - 1) break;
         }
 
