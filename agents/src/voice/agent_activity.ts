@@ -507,7 +507,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
       endpointing: createEndpointing({
         ...this.agentSession.sessionOptions.turnHandling.endpointing,
-        ...this.agent.turnHandling?.endpointing,
+        ...(this.agent.turnHandling?.endpointing ?? {}),
       }),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
