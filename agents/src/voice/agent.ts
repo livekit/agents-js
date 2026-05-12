@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, TransformStream } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -551,13 +551,23 @@ function applyTTSPronunciationMapToStream(
     return text;
   }
 
-  return text.pipeThrough(
-    new TransformStream<string, string>({
-      transform(chunk, controller) {
-        controller.enqueue(applyTTSPronunciationMap(chunk, pronunciationMap));
-      },
-    }),
-  );
+  return new ReadableStream<string>({
+    async start(controller) {
+      const reader = text.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(applyTTSPronunciationMap(value, pronunciationMap));
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
 }
 
 function applyTTSPronunciationMap(text: string, pronunciationMap: TTSPronunciationMap): string {
