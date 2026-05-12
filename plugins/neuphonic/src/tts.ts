@@ -9,11 +9,12 @@ import {
   log,
   normalizeLanguage,
   shortuuid,
+  stream,
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import { type TTSEncodings, type TTSLangCodes, type TTSModels } from './models.js';
 
 const AUTHORIZATION_HEADER = 'X-API-KEY';
@@ -198,8 +199,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
+    // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+      const eventChannel = stream.createStreamChannel<RawData>();
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
@@ -209,80 +212,85 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      while (!closing) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            ws.removeAllListeners();
+      const onMessage = (data: RawData) => {
+        void eventChannel.write(data).catch((error: unknown) => {
+          this.#logger.debug(
+            { error },
+            'Failed writing Neuphonic event to channel (likely closed)',
+          );
+        });
+      };
 
-            ws.on('message', (data) => {
-              try {
-                const json = JSON.parse(data.toString());
-
-                if (json?.data?.audio) {
-                  const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
-                  for (const frame of bstream.write(audio)) {
-                    sendLastFrame(requestId, false);
-                    lastFrame = frame;
-                  }
-
-                  if (json?.data?.stop) {
-                    // This is a bool flag, it is True when audio reaches "<STOP>"
-                    for (const frame of bstream.flush()) {
-                      sendLastFrame(requestId, false);
-                      lastFrame = frame;
-                    }
-                    sendLastFrame(requestId, true);
-                    this.queue.put(SynthesizeStream.END_OF_STREAM);
-
-                    closing = true;
-                    ws.close();
-                    resolve();
-                    return;
-                  }
-                }
-                resolve();
-              } catch (error) {
-                this.#logger.error(`Error parsing WebSocket message: ${error}`);
-                reject(error);
-              }
-            });
-
-            ws.on('error', (error) => {
-              this.#logger.error(`WebSocket error: ${error}`);
-              if (!closing) {
-                closing = true;
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-                ws.close();
-              }
-              reject(error);
-            });
-
-            ws.on('close', (code, reason) => {
-              if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-              }
-              // Only reject if we haven't processed all expected frames
-              if (!closing) {
-                reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
-              } else {
-                resolve();
-              }
-            });
-          });
-        } catch (err) {
-          if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
-            if (err.message.includes('Queue is closed')) {
-              this.#logger.warn(
-                { err },
-                'Queue closed during transcript processing (expected during disconnect)',
-              );
-            } else {
-              this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
-            }
-          }
-          break;
+      const onClose = (code: number, reason: Buffer) => {
+        if (!closing) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason.toString()}`);
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
         }
+        void eventChannel.close();
+      };
+
+      const onError = (err: Error) => {
+        this.#logger.error({ err }, 'Neuphonic WebSocket error');
+        if (!closing) {
+          closing = true;
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          ws.close();
+        }
+        void eventChannel.close();
+      };
+
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
+
+      try {
+        const reader = eventChannel.stream().getReader();
+
+        while (!closing) {
+          const result = await reader.read();
+          if (result.done) break;
+
+          const json = JSON.parse(result.value.toString());
+          if (!json?.data?.audio) continue;
+
+          const audio = new Int8Array(Buffer.from(json.data.audio, 'base64'));
+          for (const frame of bstream.write(audio)) {
+            sendLastFrame(requestId, false);
+            lastFrame = frame;
+          }
+
+          if (json?.data?.stop) {
+            // This is a bool flag, it is True when audio reaches "<STOP>"
+            for (const frame of bstream.flush()) {
+              sendLastFrame(requestId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(requestId, true);
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+
+            closing = true;
+            ws.close();
+            break;
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+          if (
+            err.message.includes('Queue is closed') ||
+            err.message.includes('Channel is closed')
+          ) {
+            this.#logger.warn(
+              { err },
+              'Channel closed during transcript processing (expected during disconnect)',
+            );
+          } else {
+            this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
+          }
+        }
+      } finally {
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
       }
     };
 
