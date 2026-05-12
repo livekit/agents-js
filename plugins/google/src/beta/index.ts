@@ -2,5 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { TTS, type GeminiTTSModels, type GeminiVoices, type TTSOptions } from './gemini_tts.js';
+export {
+  TTS,
+  type CustomPronunciationParams,
+  type CustomPronunciations,
+  type GeminiTTSModels,
+  type GeminiVoices,
+  type TTSOptions,
+} from './gemini_tts.js';
 export * as realtime from './realtime/index.js';
