@@ -15,32 +15,32 @@ import { open } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-type SurveyUserData = {
+export type SurveyUserData = {
   filename: string;
   candidateName: string;
   taskResults: Record<string, unknown>;
 };
 
-type IntroResults = {
+export type IntroResults = {
   name: string;
   intro: string;
 };
 
-type EmailResults = {
+export type EmailResults = {
   email: string;
 };
 
-type CommuteResults = {
+export type CommuteResults = {
   canCommute: boolean;
   commuteMethod: 'driving' | 'bus' | 'subway' | 'none';
 };
 
-type ExperienceResults = {
+export type ExperienceResults = {
   yearsOfExperience: number;
   experienceDescription: string;
 };
 
-type BehavioralResults = {
+export type BehavioralResults = {
   strengths: string;
   weaknesses: string;
   workStyle: 'independent' | 'team_player';
@@ -96,7 +96,7 @@ function disqualifyTool() {
   });
 }
 
-class IntroTask extends voice.AgentTask<IntroResults> {
+export class IntroTask extends voice.AgentTask<IntroResults, SurveyUserData> {
   constructor() {
     super({
       instructions:
@@ -126,7 +126,7 @@ class IntroTask extends voice.AgentTask<IntroResults> {
   }
 }
 
-class EmailTask extends voice.AgentTask<EmailResults> {
+export class EmailTask extends voice.AgentTask<EmailResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
@@ -155,7 +155,7 @@ class EmailTask extends voice.AgentTask<EmailResults> {
   }
 }
 
-class CommuteTask extends voice.AgentTask<CommuteResults> {
+export class CommuteTask extends voice.AgentTask<CommuteResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
@@ -188,7 +188,7 @@ class CommuteTask extends voice.AgentTask<CommuteResults> {
   }
 }
 
-class ExperienceTask extends voice.AgentTask<ExperienceResults> {
+export class ExperienceTask extends voice.AgentTask<ExperienceResults, SurveyUserData> {
   constructor() {
     const disqualify = disqualifyTool();
     super({
@@ -221,7 +221,7 @@ class ExperienceTask extends voice.AgentTask<ExperienceResults> {
   }
 }
 
-class BehavioralTask extends voice.AgentTask<BehavioralResults> {
+export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUserData> {
   private partial: Partial<BehavioralResults> = {};
 
   constructor() {
@@ -275,7 +275,7 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
     });
   }
 
-  private checkCompletion() {
+  protected checkCompletion() {
     if (this.partial.strengths && this.partial.weaknesses && this.partial.workStyle) {
       this.complete({
         strengths: this.partial.strengths,
@@ -292,7 +292,7 @@ class BehavioralTask extends voice.AgentTask<BehavioralResults> {
   }
 }
 
-class SurveyAgent extends voice.Agent<SurveyUserData> {
+export class SurveyAgent extends voice.Agent<SurveyUserData> {
   constructor() {
     super({
       instructions:
@@ -379,4 +379,8 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Only run CLI when executed directly, not when imported for testing.
+// eslint-disable-next-line turbo/no-undeclared-env-vars
+if (process.env.VITEST === undefined) {
+  cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+}
