@@ -11,6 +11,7 @@ import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import type { SpeechEvent, SpeechStream } from '../stt/stt.js';
 import { STT } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
+import * as utils from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AMD, AMDCategory } from './amd.js';
 import { AgentSessionEventTypes } from './events.js';
@@ -399,30 +400,42 @@ describe('AMD', () => {
   });
 
   it('should fall back to session.llm when no cloud creds are available', async () => {
-    const session = new MockSession();
-    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }));
-    llm.on('error', () => {});
-    session.llm = llm;
-    const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
+    const spy = vi.spyOn(utils, 'isUsingCloud').mockReturnValue(false);
+    try {
+      const session = new MockSession();
+      const llm = new StaticLLM(
+        JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }),
+      );
+      llm.on('error', () => {});
+      session.llm = llm;
+      const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
 
-    const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Hello?',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
-    await expect(promise).resolves.toMatchObject({
-      category: AMDCategory.HUMAN,
-      reason: expect.any(String),
-    });
+      const promise = amd.execute();
+      session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+        type: 'user_input_transcribed',
+        transcript: 'Hello?',
+        isFinal: true,
+        speakerId: null,
+        createdAt: Date.now(),
+        language: null,
+      });
+      await expect(promise).resolves.toMatchObject({
+        category: AMDCategory.HUMAN,
+        reason: expect.any(String),
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('should throw when no cloud creds and session has no compatible LLM', () => {
-    const session = new MockSession();
-    expect(() => new AMD(asAgentSession(session))).toThrow(/no LLM available/);
+    const spy = vi.spyOn(utils, 'isUsingCloud').mockReturnValue(false);
+    try {
+      const session = new MockSession();
+      expect(() => new AMD(asAgentSession(session))).toThrow(/no LLM available/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('should not close caller-owned LLM in aclose()', async () => {
