@@ -364,25 +364,23 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = { ...tools };
-    this.toolDefinitions = Object.entries(tools)
-      .filter(([_, tool]) => llm.isFunctionTool(tool))
-      .map(([name, tool]) => ({
-        type: 'custom_websocket',
-        tool_schema: {
-          type: 'function',
-          function: {
-            name,
-            description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters),
-            strict: true,
-          },
+    this.toolDefinitions = llm.functionToolEntries(tools).map(([name, tool]) => ({
+      type: 'custom_websocket',
+      tool_schema: {
+        type: 'function',
+        function: {
+          name,
+          description: tool.description,
+          parameters: llm.toJsonSchema(tool.parameters),
+          strict: true,
         },
-        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-        // Tool chaining and tool calls during speech are not supported at this time
-        // for ease of implementation within the RealtimeSession generations framework
-        wait_for_speech_before_tool_call: true,
-        allow_tool_chaining: false,
-      }));
+      },
+      tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+      // Tool chaining and tool calls during speech are not supported at this time
+      // for ease of implementation within the RealtimeSession generations framework
+      wait_for_speech_before_tool_call: true,
+      allow_tool_chaining: false,
+    }));
 
     this.toolsReady.resolve();
   }
@@ -402,23 +400,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (tools !== undefined) {
       this._tools = { ...tools };
-      this.toolDefinitions = Object.entries(tools)
-        .filter(([, tool]) => llm.isFunctionTool(tool))
-        .map(([name, tool]) => ({
-          type: 'custom_websocket',
-          tool_schema: {
-            type: 'function',
-            function: {
-              name,
-              description: tool.description,
-              parameters: llm.toJsonSchema(tool.parameters),
-              strict: true,
-            },
+      this.toolDefinitions = llm.functionToolEntries(tools).map(([name, tool]) => ({
+        type: 'custom_websocket',
+        tool_schema: {
+          type: 'function',
+          function: {
+            name,
+            description: tool.description,
+            parameters: llm.toJsonSchema(tool.parameters),
+            strict: true,
           },
-          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-          wait_for_speech_before_tool_call: true,
-          allow_tool_chaining: false,
-        }));
+        },
+        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+        wait_for_speech_before_tool_call: true,
+        allow_tool_chaining: false,
+      }));
     }
     if (chatCtx !== undefined) {
       this._chatCtx = chatCtx.copy();
