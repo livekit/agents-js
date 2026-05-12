@@ -95,7 +95,7 @@ class ResponsesHttpLLM extends llm.LLM {
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (toolCtx && llm.functionToolEntries(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -181,8 +181,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
-      const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+      let tools: OpenAI.Responses.Tool[] | undefined = this.toolCtx
+        ? llm.functionToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               name: name,
@@ -202,8 +202,14 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           })
         : undefined;
 
+      for (const providerTool of this.toolCtx ? llm.providerDefinedTools(this.toolCtx) : []) {
+        if (providerTool.id.startsWith('openai_')) {
+          (tools ??= []).push(providerTool.config as unknown as OpenAI.Responses.Tool);
+        }
+      }
+
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
-      if (!tools) {
+      if (!tools || tools.length === 0) {
         delete requestOptions.tool_choice;
       }
 
@@ -211,7 +217,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         {
           model: this.model,
           input: messages,
-          tools: tools,
+          tools: tools && tools.length > 0 ? tools : undefined,
           stream: true,
           ...requestOptions,
         },

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { FunctionDeclaration, Schema } from '@google/genai';
+import type { FunctionDeclaration, Schema, Tool } from '@google/genai';
 import { llm } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
 
@@ -139,7 +139,7 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
 export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  for (const [name, tool] of Object.entries(toolCtx)) {
+  for (const [name, tool] of llm.functionToolEntries(toolCtx)) {
     const { description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 
@@ -154,4 +154,11 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
   }
 
   return functionDeclarations;
+}
+
+export function toProviderTools(toolCtx: llm.ToolContext): Tool[] {
+  return llm
+    .providerDefinedTools(toolCtx)
+    .filter((tool) => tool.id.startsWith('gemini_'))
+    .map((tool) => tool.config as Tool);
 }

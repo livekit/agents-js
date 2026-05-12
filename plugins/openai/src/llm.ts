@@ -509,7 +509,7 @@ export class LLM extends llm.LLM {
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (toolCtx && llm.functionToolEntries(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 

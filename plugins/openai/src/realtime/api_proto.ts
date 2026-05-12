@@ -86,20 +86,25 @@ export type ServerEventType =
 
 export type AudioBase64Bytes = string;
 
-export interface Tool {
-  type: 'function';
-  name: string;
-  description?: string;
-  parameters: {
-    type: 'object';
-    properties: {
-      [prop: string]: {
-        [prop: string]: any;
+export type Tool =
+  | {
+      type: 'function';
+      name: string;
+      description?: string;
+      parameters: {
+        type: 'object';
+        properties: {
+          [prop: string]: {
+            [prop: string]: any;
+          };
+        };
+        required: string[];
       };
+    }
+  | {
+      type: string;
+      [key: string]: unknown;
     };
-    required: string[];
-  };
-}
 
 export type TurnDetectionType =
   | {

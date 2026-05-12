@@ -3,11 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   handoff,
+  functionToolEntries,
   isFunctionTool,
+  isProviderDefinedTool,
+  providerDefinedTools,
   tool,
   ToolError,
   ToolFlag,
   type AgentHandoff,
+  type FunctionToolContext,
   type FunctionTool,
   type ProviderDefinedTool,
   type Tool,

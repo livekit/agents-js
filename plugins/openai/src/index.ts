@@ -8,6 +8,7 @@ export * from './models.js';
 export * as realtime from './realtime/index.js';
 export * as responses from './responses/index.js';
 export { STT, type STTOptions } from './stt.js';
+export * as tools from './tools.js';
 export { ChunkedStream, TTS, type TTSOptions } from './tts.js';
 export * as ws from './ws/index.js';
 

@@ -693,10 +693,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // TODO(brian): these logics below are noops I think, leaving it here to keep
     // parity with the python but we should remove them later
-    const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
+    const retainedToolNames = new Set(
+      ev.session.tools.map((tool) => ('name' in tool ? tool.name : undefined)),
+    );
     const retainedTools = Object.fromEntries(
       Object.entries(_tools).filter(
-        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
+        ([name, tool]) =>
+          (llm.isFunctionTool(tool) && retainedToolNames.has(name)) ||
+          llm.isProviderDefinedTool(tool),
       ),
     );
 
@@ -709,6 +713,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     const oaiTools: api_proto.Tool[] = [];
 
     for (const [name, tool] of Object.entries(_tools)) {
+      if (llm.isProviderDefinedTool(tool)) {
+        if (this.oaiRealtimeModel.provider.includes('api.x.ai') && tool.id.startsWith('xai_')) {
+          oaiTools.push(tool.config as api_proto.Tool);
+        }
+        continue;
+      }
+
       if (!llm.isFunctionTool(tool)) {
         this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
         continue;
@@ -716,9 +727,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       const { parameters: toolParameters, description } = tool;
       try {
-        const parameters = llm.toJsonSchema(
-          toolParameters,
-        ) as unknown as api_proto.Tool['parameters'];
+        const parameters = llm.toJsonSchema(toolParameters) as unknown as Extract<
+          api_proto.Tool,
+          { type: 'function' }
+        >['parameters'];
 
         oaiTools.push({
           name,

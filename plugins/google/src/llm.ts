@@ -13,7 +13,7 @@ import {
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTools } from './tools.js';
-import { toFunctionDeclarations } from './utils.js';
+import { toFunctionDeclarations, toProviderTools } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -214,7 +214,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
+        const toolNames = toolCtx ? llm.functionToolEntries(toolCtx).map(([name]) => name) : [];
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
@@ -347,10 +347,16 @@ export class LLMStream extends llm.LLMStream {
       }));
 
       const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools =
-        functionDeclarations && functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined;
+      const tools: types.Tool[] = [];
+      if (functionDeclarations && functionDeclarations.length > 0) {
+        tools.push({ functionDeclarations });
+      }
+      if (this.#geminiTools) {
+        tools.push(this.#geminiTools);
+      }
+      if (this.toolCtx) {
+        tools.push(...toProviderTools(this.toolCtx));
+      }
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
@@ -368,7 +374,7 @@ export class LLMStream extends llm.LLMStream {
           httpOptions: this.#extraKwargs.httpOptions ?? {
             timeout: Math.floor(this.connOptions.timeoutMs),
           },
-          tools,
+          tools: tools.length > 0 ? tools : undefined,
         },
       });
 

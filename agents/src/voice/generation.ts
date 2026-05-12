@@ -17,6 +17,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  functionToolEntries,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
@@ -445,7 +446,10 @@ export function performLLMInference(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
     );
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
+    span.setAttribute(
+      traceTypes.ATTR_FUNCTION_TOOLS,
+      JSON.stringify(functionToolEntries(toolCtx).map(([name]) => name)),
+    );
 
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);

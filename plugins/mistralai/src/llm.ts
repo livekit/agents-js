@@ -212,7 +212,7 @@ export class LLMStream extends llm.LLMStream {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
       if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
-        for (const [name, func] of Object.entries(this.toolCtx)) {
+        for (const [name, func] of llm.functionToolEntries(this.toolCtx)) {
           toolsList.push({
             type: 'function' as const,
             function: {
@@ -221,6 +221,12 @@ export class LLMStream extends llm.LLMStream {
               parameters: llm.toJsonSchema(func.parameters, true, false),
             },
           });
+        }
+
+        for (const providerTool of llm.providerDefinedTools(this.toolCtx)) {
+          if (providerTool.id.startsWith('mistral_')) {
+            toolsList.push(providerTool.config);
+          }
         }
       }
 

@@ -273,7 +273,7 @@ export class LLM extends llm.LLM {
         ? parallelToolCalls
         : this.opts.modelOptions.parallel_tool_calls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (toolCtx && llm.functionToolEntries(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -379,7 +379,7 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? llm.functionToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               function: {
@@ -406,7 +406,7 @@ export class LLMStream extends llm.LLMStream {
         { ...this.modelOptions },
         tools,
       );
-      if (!tools) {
+      if (!tools || tools.length === 0) {
         delete requestOptions.tool_choice;
       }
 
@@ -434,7 +434,7 @@ export class LLMStream extends llm.LLMStream {
         {
           model: this.model,
           messages,
-          tools,
+          tools: tools && tools.length > 0 ? tools : undefined,
           stream: true,
           stream_options: { include_usage: true },
           ...requestOptions,

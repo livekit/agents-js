@@ -143,7 +143,6 @@ export interface Tool {
   [TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools
 export interface ProviderDefinedTool extends Tool {
   type: 'provider-defined';
 
@@ -190,11 +189,36 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools in the future)
 export type ToolContext<UserData = UnknownUserData> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
+  [name: string]: FunctionTool<any, UserData, any> | ProviderDefinedTool;
+};
+
+export type FunctionToolContext<UserData = UnknownUserData> = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
   [name: string]: FunctionTool<any, UserData, any>;
 };
+
+export function functionToolEntries<UserData = UnknownUserData>(
+  toolCtx: ToolContext<UserData>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
+): [string, FunctionTool<any, UserData, any>][] {
+  return Object.entries(toolCtx).filter(
+    (
+      entry,
+    ): entry is [
+      string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
+      FunctionTool<any, UserData, any>,
+    ] => isFunctionTool(entry[1]),
+  );
+}
+
+export function providerDefinedTools<UserData = UnknownUserData>(
+  toolCtx: ToolContext<UserData>,
+): ProviderDefinedTool[] {
+  return Object.values(toolCtx).filter(isProviderDefinedTool);
+}
 
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
   const toolNames = new Set(Object.keys(ctx1));
@@ -216,8 +240,22 @@ export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean
       return false;
     }
 
-    if (tool1.description !== tool2.description) {
+    if (tool1.type !== tool2.type) {
       return false;
+    }
+
+    if (isFunctionTool(tool1) && isFunctionTool(tool2) && tool1.description !== tool2.description) {
+      return false;
+    }
+
+    if (isProviderDefinedTool(tool1) && isProviderDefinedTool(tool2)) {
+      if (tool1.id !== tool2.id) {
+        return false;
+      }
+
+      if (JSON.stringify(tool1.config) !== JSON.stringify(tool2.config)) {
+        return false;
+      }
     }
   }
 

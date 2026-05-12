@@ -14,7 +14,7 @@ import type {
   FunctionCall as FCItem,
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
-import type { ToolContext } from '../llm/tool_context.js';
+import { type ToolContext, functionToolEntries } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   InterruptionModelUsage,
@@ -466,7 +466,7 @@ function sessionUsageToProto(usage: AgentSessionUsage): pb.AgentSessionUsage {
 
 function toolNames(toolCtx: ToolContext | undefined): string[] {
   if (!toolCtx) return [];
-  return Object.keys(toolCtx);
+  return functionToolEntries(toolCtx).map(([name]) => name);
 }
 
 function protoSerializeOptions(opts: {
