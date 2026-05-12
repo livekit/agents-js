@@ -1,5 +1,35 @@
 # @livekit/agents
 
+## 1.4.1
+
+### Patch Changes
+
+- Expose `AgentSessionOptions.ttsReadIdleTimeout` and `AgentSessionOptions.forwardAudioIdleTimeout` to configure the two pipeline stall guards in `performTTSInference` and `performAudioForwarding`. Useful for custom LLM/TTS backends whose first-token latency can legitimately exceed the previous 10s default. Defaults remain 10 seconds, preserving existing behavior. - [#1461](https://github.com/livekit/agents-js/pull/1461) ([@s-hamdananwar](https://github.com/s-hamdananwar))
+
+- Make default user turn span start times explicit. - [#1456](https://github.com/livekit/agents-js/pull/1456) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent voice pipeline scheduling from hanging when a pipeline task crashes after a speech handle is already marked done. - [#1423](https://github.com/livekit/agents-js/pull/1423) ([@u9g](https://github.com/u9g))
+
+- fix(google): abort pending realtime sends during reconnect - [#1415](https://github.com/livekit/agents-js/pull/1415) ([@u9g](https://github.com/u9g))
+
+- docs(agents): document realtime capabilities - [#1419](https://github.com/livekit/agents-js/pull/1419) ([@u9g](https://github.com/u9g))
+
+- feat(inference): propagate STT extra to SpeechData.metadata - [#1389](https://github.com/livekit/agents-js/pull/1389) ([@toubatbrian](https://github.com/toubatbrian))
+
+  The inference STT plugin now plumbs the gateway's per-transcript `extra` field
+  onto `SpeechData.metadata`, exposing provider-specific signals (e.g. Inworld
+  voice profile, xAI `speech_final`) to consumers.
+
+- fix(worker): use available CPU cores for numIdleProcesses in production - [#1449](https://github.com/livekit/agents-js/pull/1449) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- fix(transcription): rstrip punctuation from interim segments - [#1447](https://github.com/livekit/agents-js/pull/1447) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Emit agent configuration updates in OTLP session logs. - [#1434](https://github.com/livekit/agents-js/pull/1434) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(agents): persist user turn start across VAD bursts - [#1457](https://github.com/livekit/agents-js/pull/1457) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support OpenAI Realtime Whisper STT - [#1429](https://github.com/livekit/agents-js/pull/1429) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.4.0
 
 ### Minor Changes

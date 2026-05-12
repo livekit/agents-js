@@ -1,5 +1,20 @@
 # @livekit/agents-plugin-google
 
+## 1.4.1
+
+### Patch Changes
+
+- feat(google): add `serviceTier` option to LLM (e.g. `ServiceTier.PRIORITY`) - [#1428](https://github.com/livekit/agents-js/pull/1428) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(google): abort pending realtime sends during reconnect - [#1415](https://github.com/livekit/agents-js/pull/1415) ([@u9g](https://github.com/u9g))
+
+- feat(google realtime): expose `toolBehavior` and `toolResponseScheduling` options on the Gemini Live `RealtimeModel` and `RealtimeSession`. `toolBehavior` controls whether function calls are blocking or non-blocking (`Behavior.BLOCKING` / `Behavior.NON_BLOCKING`), and `toolResponseScheduling` controls how tool responses are scheduled into the conversation (`SILENT` / `WHEN_IDLE` / `INTERRUPT`). Note that `toolResponseScheduling` is only supported by the Gemini API, not Vertex AI. Ports livekit/agents#3482. - [#1412](https://github.com/livekit/agents-js/pull/1412) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Gemini realtime non-blocking tool scheduling - [#1412](https://github.com/livekit/agents-js/pull/1412) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`0c038ff92902f42023a73cbae67046fa9406bcd9`](https://github.com/livekit/agents-js/commit/0c038ff92902f42023a73cbae67046fa9406bcd9), [`8e986d3508995598f9b06069bc2c1eb8abd14782`](https://github.com/livekit/agents-js/commit/8e986d3508995598f9b06069bc2c1eb8abd14782), [`90ae41698b20a900e698db7dc683b98c5be0366d`](https://github.com/livekit/agents-js/commit/90ae41698b20a900e698db7dc683b98c5be0366d), [`e449263c2678c9e956c4654d83cedd3da907e9cd`](https://github.com/livekit/agents-js/commit/e449263c2678c9e956c4654d83cedd3da907e9cd), [`f4b0a9e46f44fcf35fd8db2c325653fd38753be4`](https://github.com/livekit/agents-js/commit/f4b0a9e46f44fcf35fd8db2c325653fd38753be4), [`872ebcc838c74486af17c2c9fb782e2a87a4f419`](https://github.com/livekit/agents-js/commit/872ebcc838c74486af17c2c9fb782e2a87a4f419), [`405e376571968398e24ef9fbf318275e6f2911d7`](https://github.com/livekit/agents-js/commit/405e376571968398e24ef9fbf318275e6f2911d7), [`c66c97a719e5a37574325e06ffbba80f531d57af`](https://github.com/livekit/agents-js/commit/c66c97a719e5a37574325e06ffbba80f531d57af), [`4dc2802834fcc691ed3c30075f9ce0bb0682c65f`](https://github.com/livekit/agents-js/commit/4dc2802834fcc691ed3c30075f9ce0bb0682c65f), [`a3b34f2834a56c386928869a322215460858f351`](https://github.com/livekit/agents-js/commit/a3b34f2834a56c386928869a322215460858f351), [`d9c3d8b3c070955784a55b853dd24fc62e35e4ea`](https://github.com/livekit/agents-js/commit/d9c3d8b3c070955784a55b853dd24fc62e35e4ea)]:
+  - @livekit/agents@1.4.1
+
 ## 1.4.0
 
 ### Patch Changes
