@@ -228,7 +228,9 @@ export const runApp = (opts: ServerOptions) => {
             logger.info(`Finished downloading files for ${plugin.title}`);
           } catch (error) {
             failures.push({ plugin, error });
-            logger.error(`Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`);
+            logger.error(
+              `Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`,
+            );
           }
         }
 
