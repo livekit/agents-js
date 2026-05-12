@@ -403,9 +403,7 @@ describe('AMD', () => {
     const spy = vi.spyOn(utils, 'isUsingCloud').mockReturnValue(false);
     try {
       const session = new MockSession();
-      const llm = new StaticLLM(
-        JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }),
-      );
+      const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }));
       llm.on('error', () => {});
       session.llm = llm;
       const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
