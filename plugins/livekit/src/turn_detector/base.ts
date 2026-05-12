@@ -237,7 +237,7 @@ export abstract class EOUModel {
 
     for (const message of chatCtx.items) {
       // skip system and developer messages or tool call messages
-      if (message.type !== 'message' || message.role in ['system', 'developer']) {
+      if (message.type !== 'message' || message.role === 'system' || message.role === 'developer') {
         continue;
       }
 
