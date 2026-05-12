@@ -90,10 +90,10 @@ export class BaseEndpointing {
 export class DynamicEndpointing extends BaseEndpointing {
   #utterancePause: ExpFilter;
   #turnPause: ExpFilter;
-  #utteranceStartedAt: number | undefined;
-  #utteranceEndedAt: number | undefined;
-  #agentSpeechStartedAt: number | undefined;
-  #agentSpeechEndedAt: number | undefined;
+  #utteranceStartedAt?: number;
+  #utteranceEndedAt?: number;
+  #agentSpeechStartedAt?: number;
+  #agentSpeechEndedAt?: number;
   #speaking = false;
 
   constructor({
