@@ -2007,6 +2007,7 @@ export class AgentActivity implements RecognitionHooks {
           this.tts?.model,
           this.tts?.provider,
           this.agentSession.sessionOptions.ttsReadIdleTimeout,
+          this.agentSession.sessionOptions.ttsTextTransforms,
         );
         tasks.push(ttsTask);
         replyTtsGenData = ttsGenData;
@@ -2193,6 +2194,7 @@ export class AgentActivity implements RecognitionHooks {
         this.tts?.model,
         this.tts?.provider,
         this.agentSession.sessionOptions.ttsReadIdleTimeout,
+        this.agentSession.sessionOptions.ttsTextTransforms,
       );
     };
 
@@ -2758,6 +2760,7 @@ export class AgentActivity implements RecognitionHooks {
                 this.tts?.model,
                 this.tts?.provider,
                 this.agentSession.sessionOptions.ttsReadIdleTimeout,
+                this.agentSession.sessionOptions.ttsTextTransforms,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;

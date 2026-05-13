@@ -67,6 +67,7 @@ export default defineAgent({
           'rime/arcana',
         ],
       }),
+      ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
         turnDetection: new livekit.turnDetector.MultilingualModel(),
         interruption: {

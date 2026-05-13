@@ -54,6 +54,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
@@ -567,6 +568,7 @@ export function performTTSInference(
   model?: string,
   provider?: string,
   readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
+  textTransforms?: readonly TextTransform[] | null,
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -622,7 +624,10 @@ export function performTTSInference(
     let firstByteReceived = false;
 
     try {
-      ttsStream = await node(textOnlyStream.readable, modelSettings);
+      const ttsInput = textTransforms
+        ? applyTextTransforms(textOnlyStream.readable, textTransforms)
+        : textOnlyStream.readable;
+      ttsStream = await node(ttsInput, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
         await outputWriter.close();

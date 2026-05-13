@@ -21,6 +21,7 @@ const defaultSessionOptions = {
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
+  ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;
 
 const defaultLegacyVoiceOptions: VoiceOptions = {
