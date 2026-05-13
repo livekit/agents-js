@@ -296,7 +296,7 @@ describe('AgentActivity - toolset updates', () => {
 
     expect(events).toEqual(['setup:new_toolset', 'close:old_toolset']);
     const finalCtx = (agent as { toolCtx: ToolContext }).toolCtx;
-    expect(finalCtx.newTool).toBe(newTool);
+    expect(finalCtx.newTool?.description).toBe(newTool.description);
     expect(finalCtx.oldTool).toBeUndefined();
   });
 });

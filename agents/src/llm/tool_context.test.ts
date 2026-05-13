@@ -33,25 +33,37 @@ describe('Tool Context', () => {
       const second = makeTool('second');
       const toolset = new Toolset({ id: 'merged', tools: { first, second } });
 
-      expect(toolset.toolCtx).toEqual({ first, second });
+      expect(Object.keys(toolset.toolCtx).sort()).toEqual(['first', 'second']);
     });
 
-    it('stamps each owned tool with a back-reference to the Toolset', () => {
+    it('stamps tools accessed via toolCtx with a back-reference to the Toolset', () => {
       const first = makeTool('first');
       const second = makeTool('second');
       const toolset = new Toolset({ id: 'tagged', tools: { first, second } });
 
-      expect(getOwningToolset(first)).toBe(toolset);
-      expect(getOwningToolset(second)).toBe(toolset);
+      const stamped = toolset.toolCtx;
+      expect(getOwningToolset(stamped.first!)).toBe(toolset);
+      expect(getOwningToolset(stamped.second!)).toBe(toolset);
     });
 
-    it('overwrites prior Toolset references when a tool is reused in a new Toolset', () => {
-      const shared = makeTool('shared');
-      const first = new Toolset({ id: 'first', tools: { shared } });
-      expect(getOwningToolset(shared)).toBe(first);
+    it('does not mutate the original tool objects passed to the constructor', () => {
+      const original = makeTool('original');
+      const toolset = new Toolset({ id: 'owner', tools: { original } });
 
-      const second = new Toolset({ id: 'second', tools: { shared } });
-      expect(getOwningToolset(shared)).toBe(second);
+      // touch the getter to ensure stamping does not happen on the originals
+      toolset.toolCtx;
+
+      expect(getOwningToolset(original)).toBeUndefined();
+    });
+
+    it('does not stamp tools that bypass toolCtx', () => {
+      const direct = makeTool('direct');
+      // Even though `direct` is registered in a Toolset, accessing it without going through
+      // toolCtx leaves it unstamped — the agent only sees an owning Toolset when the user
+      // spreads `toolset.toolCtx` into the agent's tools map.
+      new Toolset({ id: 'owner', tools: { direct } });
+
+      expect(getOwningToolset(direct)).toBeUndefined();
     });
 
     it('leaves direct tools without a Toolset reference', () => {

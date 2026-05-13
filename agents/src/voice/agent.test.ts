@@ -77,7 +77,7 @@ describe('Agent', () => {
       tools: { ...toolset.toolCtx },
     });
 
-    expect(agent.toolCtx.lookup).toBe(lookup);
+    expect(agent.toolCtx.lookup?.description).toBe(lookup.description);
     expect('toolsets' in agent).toBe(false);
   });
 
@@ -115,7 +115,7 @@ describe('Agent', () => {
 
     await agent.updateTools({ ...toolset.toolCtx });
 
-    expect(agent.toolCtx.lookup).toBe(lookup);
+    expect(agent.toolCtx.lookup?.description).toBe(lookup.description);
   });
 
   it('should require AgentTask to run inside task context', async () => {

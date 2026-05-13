@@ -217,25 +217,22 @@ export class Toolset<UserData = UnknownUserData> {
   constructor({ id, tools }: { id: string; tools?: ToolContext<UserData> }) {
     this.#id = id;
     this.#tools = { ...tools };
-    // Stamp each owned tool with a reference to this Toolset so it can be discovered later
-    // from any ToolContext via getOwningToolset(). Tools spread from another Toolset get
-    // their reference overwritten — composition via spread does not preserve the inner owner.
-    for (const functionTool of Object.values(this.#tools)) {
-      Object.defineProperty(functionTool, TOOLSET_REF_SYMBOL, {
-        value: this,
-        configurable: true,
-        enumerable: false,
-        writable: true,
-      });
-    }
   }
 
   get id(): string {
     return this.#id;
   }
 
+  // Returns shallow clones of the owned tools with this Toolset attached via TOOLSET_REF_SYMBOL.
+  // Stamping is lazy and clone-based so the original tool objects passed in are never mutated:
+  // a tool used directly in `new Agent({ tools: { tool } })` stays unowned, while the same tool
+  // accessed via `someToolset.toolCtx` carries the back-reference for lifecycle discovery.
   get toolCtx(): ToolContext<UserData> {
-    return { ...this.#tools };
+    const result: ToolContext<UserData> = {};
+    for (const [name, functionTool] of Object.entries(this.#tools)) {
+      result[name] = { ...functionTool, [TOOLSET_REF_SYMBOL]: this };
+    }
+    return result;
   }
 
   async setup(): Promise<this> {
