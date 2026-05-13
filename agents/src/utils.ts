@@ -25,19 +25,19 @@ import { log } from './log.js';
 export type Expand<T> = T extends Function
   ? T
   : T extends object
-  ? T extends Array<infer U>
-  ? Array<Expand<U>>
-  : T extends Map<infer K, infer V>
-  ? Map<Expand<K>, Expand<V>>
-  : T extends Set<infer M>
-  ? Set<Expand<M>>
-  : { [K in keyof T]: Expand<T[K]> }
-  : T;
+    ? T extends Array<infer U>
+      ? Array<Expand<U>>
+      : T extends Map<infer K, infer V>
+        ? Map<Expand<K>, Expand<V>>
+        : T extends Set<infer M>
+          ? Set<Expand<M>>
+          : { [K in keyof T]: Expand<T[K]> }
+    : T;
 
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
-export const noop = () => { };
+export const noop = () => {};
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
