@@ -17,7 +17,15 @@ import {
   SpeechEventType,
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import {
+  type AudioBuffer,
+  Event,
+  Task,
+  cancelAndWait,
+  shortuuid,
+  startSoon,
+  waitForAbort,
+} from '../utils.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -206,6 +214,8 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
  * Livekit Cloud Inference STT
  */
 export class STT<TModel extends STTModels> extends BaseSTT {
+  label = 'inference.STT';
+
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
 
@@ -286,10 +296,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       fallback: normalizedFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
-  }
-
-  get label(): string {
-    return 'inference.STT';
   }
 
   get model(): string {
@@ -402,6 +408,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 }
 
 export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
+  label = 'inference.SpeechStream';
+
   private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
@@ -417,15 +425,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
   ) {
-    super(sttImpl, opts.sampleRate, connOptions, false);
+    super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
     this.stt = sttImpl;
     this.connOptions = connOptions;
-    this.start();
-  }
-
-  get label(): string {
-    return 'inference.SpeechStream';
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   updateOptions(

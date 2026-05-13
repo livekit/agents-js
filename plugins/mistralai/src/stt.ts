@@ -13,6 +13,7 @@ import {
   asLanguageCode,
   log,
   mergeFrames,
+  startSoon,
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -202,6 +203,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = { ...opts };
     this.#vad = vad;
     this.#detectedLanguage = opts.language ?? '';
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   protected async run(): Promise<void> {

@@ -12,6 +12,7 @@ import {
   getBaseLanguage,
   log,
   normalizeLanguage,
+  startSoon,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -172,6 +173,7 @@ export class SpeechStream extends stt.SpeechStream {
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
     );
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   protected async run() {

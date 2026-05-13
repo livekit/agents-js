@@ -11,6 +11,7 @@ import {
   log,
   mergeFrames,
   normalizeLanguage,
+  startSoon,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -544,6 +545,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.closed = false;
     this.#audioEnergyFilter = new AudioEnergyFilter();
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   updateOptions(opts: Partial<STTOptions>) {

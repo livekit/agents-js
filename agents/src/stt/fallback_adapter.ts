@@ -5,7 +5,7 @@ import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Task, cancelAndWait } from '../utils.js';
+import { Task, cancelAndWait, startSoon } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { StreamAdapter } from './stream_adapter.js';
 import {
@@ -297,6 +297,7 @@ class FallbackSpeechStream extends SpeechStream {
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, undefined, connOptions);
     this.fallbackAdapter = adapter;
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   // Skip `metrics_collected` emission in the adapter stream — children's
