@@ -1079,14 +1079,14 @@ export class AgentActivity implements RecognitionHooks {
       name: 'AgentActivity.realtimeGeneration',
     });
 
-    const pendingAutoToolReplyFut = this.pendingAutoToolReplyFut;
-    if (pendingAutoToolReplyFut && !pendingAutoToolReplyFut.done) {
+    const fut = this.pendingAutoToolReplyFut;
+    if (fut && !fut.done) {
       const runState = this.agentSession._globalRunState;
       if (runState && !runState.done()) {
         runState._watchHandle(handle);
       }
       this.pendingAutoToolReplyFut = undefined;
-      pendingAutoToolReplyFut.resolve();
+      fut.resolve();
     }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
@@ -3051,7 +3051,7 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
-      let autoToolReplyFut: Future<void, never> | undefined;
+      let fut: Future<void, never> | undefined;
       if (
         this.llm.capabilities.autoToolReplyGeneration &&
         shouldGenerateToolReply &&
@@ -3059,13 +3059,13 @@ export class AgentActivity implements RecognitionHooks {
       ) {
         const runState = this.agentSession._globalRunState;
         if (runState && !runState.done()) {
-          autoToolReplyFut = new Future();
-          this.pendingAutoToolReplyFut = autoToolReplyFut;
+          fut = new Future();
+          this.pendingAutoToolReplyFut = fut;
           const llmLabel = this.llm.label();
           const waitTask = Task.from(
             async () => {
               try {
-                await waitUntilTimeout(autoToolReplyFut!.await, 5000);
+                await waitUntilTimeout(fut!.await, 5000);
               } catch (error) {
                 if (error instanceof IdleTimeoutError) {
                   this.logger.warn(
@@ -3075,6 +3075,10 @@ export class AgentActivity implements RecognitionHooks {
                   return;
                 }
                 throw error;
+              } finally {
+                if (this.pendingAutoToolReplyFut === fut) {
+                  this.pendingAutoToolReplyFut = undefined;
+                }
               }
             },
             undefined,
@@ -3091,11 +3095,11 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
-        if (autoToolReplyFut && !autoToolReplyFut.done) {
-          if (this.pendingAutoToolReplyFut === autoToolReplyFut) {
+        if (fut && !fut.done) {
+          if (this.pendingAutoToolReplyFut === fut) {
             this.pendingAutoToolReplyFut = undefined;
           }
-          autoToolReplyFut.resolve();
+          fut.resolve();
         }
       }
     }
