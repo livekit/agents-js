@@ -831,9 +831,11 @@ export class AgentSession<
    */
   run<T = unknown>({
     userInput,
+    inputModality,
     outputType,
   }: {
     userInput: string;
+    inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
@@ -857,7 +859,7 @@ export class AgentSession<
       try {
         const unlock = await this.activityLock.lock();
         unlock();
-        this.generateReply({ userInput });
+        this.generateReply({ userInput, inputModality });
       } catch (e) {
         runState._reject(asError(e));
       }

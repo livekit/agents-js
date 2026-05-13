@@ -37,6 +37,12 @@ export interface AudioContent {
   transcript?: string;
 }
 
+type InstructionsOptions = {
+  audio: string;
+  text?: string | undefined;
+  represent?: string | undefined;
+};
+
 /**
  * Instructions that adapt based on the user's input modality (audio vs. text).
  *
@@ -57,10 +63,39 @@ export class Instructions {
   /** The currently rendered string (what providers should treat as content). */
   readonly value: string;
 
-  constructor(audio: string, options: { text?: string; represent?: string } = {}) {
-    this.audio = audio;
+  constructor(options: InstructionsOptions) {
+    this.audio = options.audio;
     this.textVariant = options.text;
-    this.value = options.represent ?? audio;
+    this.value = options.represent ?? options.audio;
+  }
+
+  static tpl(
+    strings: TemplateStringsArray,
+    ...values: Array<Instructions | string | number | boolean | null | undefined>
+  ): Instructions {
+    const render = (mode: 'audio' | 'text' | 'value') => {
+      let result = strings[0]!;
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i]!;
+        if (value instanceof Instructions) {
+          result += mode === 'audio' ? value.audio : mode === 'text' ? value.text : value.value;
+        } else {
+          result += String(value);
+        }
+        result += strings[i + 1]!;
+      }
+      return result;
+    };
+
+    const hasTextVariant = values.some(
+      (value) => value instanceof Instructions && value.textVariant !== undefined,
+    );
+
+    return new Instructions({
+      audio: render('audio'),
+      text: hasTextVariant ? render('text') : undefined,
+      represent: render('value'),
+    });
   }
 
   /** The text variant of the instructions. Falls back to {@link audio}. */
@@ -74,7 +109,8 @@ export class Instructions {
    * be called again for a different modality (e.g. across tool-call turns).
    */
   asModality(modality: 'audio' | 'text'): Instructions {
-    return new Instructions(this.audio, {
+    return new Instructions({
+      audio: this.audio,
       text: this.textVariant,
       represent: modality === 'audio' ? this.audio : this.text,
     });
@@ -84,12 +120,14 @@ export class Instructions {
   concat(other: string | Instructions): Instructions {
     if (other instanceof Instructions) {
       const hasText = this.textVariant !== undefined || other.textVariant !== undefined;
-      return new Instructions(this.audio + other.audio, {
+      return new Instructions({
+        audio: this.audio + other.audio,
         text: hasText ? this.text + other.text : undefined,
         represent: this.value + other.value,
       });
     }
-    return new Instructions(this.audio + other, {
+    return new Instructions({
+      audio: this.audio + other,
       text: this.textVariant !== undefined ? this.textVariant + other : undefined,
       represent: this.value + other,
     });
@@ -129,7 +167,8 @@ export function concatInstructions(...parts: Array<string | Instructions>): stri
       acc = acc.concat(next);
     } else if (next instanceof Instructions) {
       // string + Instructions (radd-style): prepend `acc` to both variants.
-      acc = new Instructions(acc + next.audio, {
+      acc = new Instructions({
+        audio: acc + next.audio,
         text: next.textVariant !== undefined ? acc + next.textVariant : undefined,
         represent: acc + next.value,
       });

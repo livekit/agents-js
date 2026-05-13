@@ -437,7 +437,7 @@ describe('ChatContext._summarize', () => {
         item.extra?.is_summary !== true,
     );
     expect(rawTailMessages).toHaveLength(4);
-    expect(rawTailMessages.map((item) => item.textContent)).toEqual([
+    expect(rawTailMessages.map((item) => (item as ChatMessage).textContent)).toEqual([
       'Order #123',
       'Found your order. Let me check the warranty.',
       'Thanks.',
@@ -1240,8 +1240,72 @@ describe('ChatContext.isEquivalent', () => {
 });
 
 describe('Instructions', () => {
+  it('constructs from an object with audio and text variants', () => {
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+
+    expect(instr.audio).toBe('audio variant');
+    expect(instr.text).toBe('text variant');
+    expect(instr.value).toBe('audio variant');
+  });
+
+  it('tpl propagates Instructions interpolations into audio and text variants', () => {
+    const instr = Instructions.tpl`persona
+${new Instructions({ audio: 'audio rules', text: 'text rules' })}
+extra`;
+
+    expect(instr).toBeInstanceOf(Instructions);
+    expect(instr.audio).toBe('persona\naudio rules\nextra');
+    expect(instr.text).toBe('persona\ntext rules\nextra');
+    expect(instr.value).toBe('persona\naudio rules\nextra');
+    expect(instr.asModality('text').value).toBe('persona\ntext rules\nextra');
+  });
+
+  it('tpl preserves audio-only interpolation as audio-only output', () => {
+    const instr = Instructions.tpl`prefix ${new Instructions({ audio: 'same' })} suffix`;
+
+    expect(instr.textVariant).toBeUndefined();
+    expect(instr.audio).toBe('prefix same suffix');
+    expect(instr.text).toBe('prefix same suffix');
+  });
+
+  it('tpl interpolates primitive values into both variants', () => {
+    const instr = Instructions.tpl`date=${'2026-05-13'} enabled=${true} count=${3}`;
+
+    expect(instr.textVariant).toBeUndefined();
+    expect(instr.audio).toBe('date=2026-05-13 enabled=true count=3');
+    expect(instr.text).toBe('date=2026-05-13 enabled=true count=3');
+    expect(instr.value).toBe('date=2026-05-13 enabled=true count=3');
+  });
+
+  it('tpl combines multiple modality-aware interpolations', () => {
+    const instr = Instructions.tpl`${new Instructions({ audio: 'audio A', text: 'text A' })} / ${new Instructions({ audio: 'audio B', text: 'text B' })}`;
+
+    expect(instr.audio).toBe('audio A / audio B');
+    expect(instr.text).toBe('text A / text B');
+    expect(instr.value).toBe('audio A / audio B');
+  });
+
+  it('tpl preserves the current rendered value of resolved interpolations', () => {
+    const resolved = new Instructions({ audio: 'audio rules', text: 'text rules' }).asModality(
+      'text',
+    );
+    const instr = Instructions.tpl`prefix ${resolved} suffix`;
+
+    expect(instr.audio).toBe('prefix audio rules suffix');
+    expect(instr.text).toBe('prefix text rules suffix');
+    expect(instr.value).toBe('prefix text rules suffix');
+  });
+
+  it('tpl stringifies null and undefined values like template literals', () => {
+    const instr = Instructions.tpl`null=${null} undefined=${undefined}`;
+
+    expect(instr.textVariant).toBeUndefined();
+    expect(instr.audio).toBe('null=null undefined=undefined');
+    expect(instr.text).toBe('null=null undefined=undefined');
+  });
+
   it('serializes to a dict with both variants and round-trips through toJSON', () => {
-    const instr = new Instructions('audio variant', { text: 'text variant' });
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
 
     const ctx = new ChatContext([ChatMessage.create({ role: 'system', content: [instr] })]);
     const data = ctx.toJSON();
@@ -1256,20 +1320,20 @@ describe('Instructions', () => {
   });
 
   it('omits the text key in toJSON when only audio variant is provided', () => {
-    const instr = new Instructions('audio only');
+    const instr = new Instructions({ audio: 'audio only' });
     expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'audio only' });
   });
 
   it('falls back text -> audio when no text variant is provided', () => {
-    const instr = new Instructions('audio only');
+    const instr = new Instructions({ audio: 'audio only' });
     expect(instr.audio).toBe('audio only');
     expect(instr.text).toBe('audio only');
     expect(instr.value).toBe('audio only');
   });
 
   it('concatenates two Instructions, propagating both variants', () => {
-    const a = new Instructions('audio A', { text: 'text A' });
-    const b = new Instructions('audio B', { text: 'text B' });
+    const a = new Instructions({ audio: 'audio A', text: 'text A' });
+    const b = new Instructions({ audio: 'audio B', text: 'text B' });
     const result = a.concat(b);
     expect(result).toBeInstanceOf(Instructions);
     expect(result.audio).toBe('audio Aaudio B');
@@ -1277,14 +1341,14 @@ describe('Instructions', () => {
   });
 
   it('concatenates Instructions + string, propagating both variants', () => {
-    const instr = new Instructions('audio', { text: 'text' });
+    const instr = new Instructions({ audio: 'audio', text: 'text' });
     const result = instr.concat(' suffix');
     expect(result.audio).toBe('audio suffix');
     expect(result.text).toBe('text suffix');
   });
 
   it('concatInstructions handles string + Instructions (radd-style)', () => {
-    const instr = new Instructions('audio', { text: 'text' });
+    const instr = new Instructions({ audio: 'audio', text: 'text' });
     const result = concatInstructions('prefix ', instr);
     expect(result).toBeInstanceOf(Instructions);
     if (!(result instanceof Instructions)) return;
@@ -1293,7 +1357,7 @@ describe('Instructions', () => {
   });
 
   it('preserves text=undefined when concatenating an audio-only instructions', () => {
-    const audioOnly = new Instructions('audio only');
+    const audioOnly = new Instructions({ audio: 'audio only' });
     const result = audioOnly.concat(' more');
     expect(result.textVariant).toBeUndefined();
     expect(result.audio).toBe('audio only more');
@@ -1301,8 +1365,8 @@ describe('Instructions', () => {
   });
 
   it('when only one side has a text variant, the other contributes its audio', () => {
-    const a = new Instructions('audio A', { text: 'text A' });
-    const b = new Instructions('audio B');
+    const a = new Instructions({ audio: 'audio A', text: 'text A' });
+    const b = new Instructions({ audio: 'audio B' });
     const result = concatInstructions(a, ' ', b);
     expect(result).toBeInstanceOf(Instructions);
     if (!(result instanceof Instructions)) return;
@@ -1311,7 +1375,7 @@ describe('Instructions', () => {
   });
 
   it('asModality returns a copy with both variants preserved', () => {
-    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
 
     let resolved = instr.asModality('audio');
     expect(resolved.value).toBe('audio instructions');
@@ -1325,20 +1389,20 @@ describe('Instructions', () => {
   });
 
   it('can switch modality after a previous resolution', () => {
-    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
     const resolvedText = instr.asModality('text');
     const resolvedAudio = resolvedText.asModality('audio');
     expect(resolvedAudio.value).toBe('audio instructions');
   });
 
   it('asModality on audio-only Instructions returns audio for both modalities', () => {
-    const audioOnly = new Instructions('audio only');
+    const audioOnly = new Instructions({ audio: 'audio only' });
     expect(audioOnly.asModality('audio').value).toBe('audio only');
     expect(audioOnly.asModality('text').value).toBe('audio only');
   });
 
   it('applyInstructionsModality rewrites the system message content', () => {
-    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
     const ctx = new ChatContext([
       ChatMessage.create({
         id: INSTRUCTIONS_MESSAGE_ID,
@@ -1370,7 +1434,7 @@ describe('Instructions', () => {
   });
 
   it('survives copy and lets a different modality be applied to the copy', () => {
-    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
     const baseCtx = new ChatContext([
       ChatMessage.create({
         id: INSTRUCTIONS_MESSAGE_ID,

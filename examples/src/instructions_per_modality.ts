@@ -50,11 +50,13 @@ class SchedulingAgent extends voice.Agent {
     const now = new Date();
     const weekday = now.toLocaleDateString(undefined, { weekday: 'long' });
     const currentDate = `${now.toISOString().slice(0, 10)} ${weekday}`;
+    const instructions = new llm.Instructions({
+      audio: BASE_INSTRUCTIONS(AUDIO_SPECIFIC, currentDate),
+      text: BASE_INSTRUCTIONS(TEXT_SPECIFIC, currentDate),
+    });
 
     super({
-      instructions: new llm.Instructions(BASE_INSTRUCTIONS(AUDIO_SPECIFIC, currentDate), {
-        text: BASE_INSTRUCTIONS(TEXT_SPECIFIC, currentDate),
-      }),
+      instructions,
       tools: {
         bookAppointment: llm.tool({
           description: 'Book an appointment.',
