@@ -18,7 +18,7 @@ import {
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
-import { getJobContext, type JobContext } from '../../job.js';
+import { type JobContext, getJobContext } from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
