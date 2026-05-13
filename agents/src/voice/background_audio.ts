@@ -355,7 +355,7 @@ export class BackgroundAudioPlayer {
    * Get the current track publication
    */
   getPublication(): LocalTrackPublication | undefined {
-    return this.publication;
+    return this.findCurrentPublication() ?? this.publication;
   }
 
   private async publishTrack(): Promise<void> {
