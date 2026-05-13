@@ -172,6 +172,11 @@ export const createConversationItemAddedEvent = (
 
 export type FunctionToolsExecutedEvent = {
   type: 'function_tools_executed';
+  /**
+   * Function calls and outputs are parallel arrays: the output at a given index
+   * belongs to the call at the same index, and its `callId` matches the paired
+   * function call's `callId`.
+   */
   functionCalls: FunctionCall[];
   functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
@@ -197,6 +202,7 @@ export const createFunctionToolsExecutedEvent = ({
 export const zipFunctionCallsAndOutputs = (
   event: FunctionToolsExecutedEvent,
 ): Array<[FunctionCall, FunctionCallOutput]> => {
+  // Pair calls with outputs by list position.
   return event.functionCalls.map((call, index) => [call, event.functionCallOutputs[index]!]);
 };
 
