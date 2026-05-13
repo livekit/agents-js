@@ -442,9 +442,14 @@ class Connection {
         }
       };
 
-      const onClose = () => {
+      const onClose = (code: number) => {
         if (!this.#closed && this.#contextData.size > 0) {
-          this.#logger.warn('websocket closed unexpectedly');
+          errorFuture.resolve(
+            new APIStatusError({
+              message: 'ElevenLabs websocket connection closed unexpectedly',
+              options: { statusCode: code || -1 },
+            }),
+          );
         }
         messageChannel.close();
       };
