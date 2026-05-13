@@ -644,6 +644,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.settled = true;
     this.cleanup();
     this.setSpanAttributes(result);
+    log().info(
+      {
+        category: result.category,
+        reason: result.reason,
+        isMachine: result.isMachine,
+        speechDurationMs: result.speechDurationMs,
+        delayMs: result.delayMs,
+        transcript: result.transcript,
+      },
+      'amd prediction',
+    );
     if (result.isMachine && this.interruptOnMachine) {
       this.session.interrupt({ force: true }).await.catch(() => {});
     }
