@@ -14,7 +14,7 @@ import type {
   FunctionCall as FCItem,
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
-import { Instructions } from '../llm/chat_context.js';
+import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
@@ -296,7 +296,7 @@ function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
       for (const c of msg.content) {
         if (typeof c === 'string') {
           content.push(new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c } }));
-        } else if (c instanceof Instructions) {
+        } else if (isInstructions(c)) {
           content.push(
             new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c.value } }),
           );
@@ -805,7 +805,7 @@ export class SessionHost {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
         id: agent.id,
-        instructions: String(agent.instructions),
+        instructions: renderInstructions(agent.instructions),
         tools: toolNames(agent.toolCtx),
         chatCtx: chatItemsToProto(agent.chatCtx.items),
       }),

@@ -38,10 +38,24 @@ export interface AudioContent {
 }
 
 type InstructionsOptions = {
+  /** The audio/voice variant of the instructions. */
   audio: string;
-  text?: string | undefined;
-  represent?: string | undefined;
+  /** The text variant of the instructions; falls back to `audio` when omitted. */
+  text?: string;
+  /** The currently rendered string value, used by `value`/`toString()`. */
+  represent?: string;
 };
+
+const INSTRUCTIONS_SYMBOL = Symbol.for('livekit.agents.Instructions');
+
+export function isInstructions(value: unknown): value is Instructions {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    INSTRUCTIONS_SYMBOL in value &&
+    (value as Record<symbol, boolean>)[INSTRUCTIONS_SYMBOL] === true
+  );
+}
 
 /**
  * Instructions that adapt based on the user's input modality (audio vs. text).
@@ -55,17 +69,20 @@ type InstructionsOptions = {
 export class Instructions {
   readonly type = 'instructions' as const;
 
-  readonly audio: string;
+  private readonly _audioVariant: string;
 
   /** Raw text variant; falls back to {@link audio} when omitted. */
-  readonly textVariant: string | undefined;
+  private readonly _textVariant?: string;
 
   /** The currently rendered string (what providers should treat as content). */
   readonly value: string;
 
+  /** @internal Symbol marker for type identification */
+  readonly [INSTRUCTIONS_SYMBOL] = true;
+
   constructor(options: InstructionsOptions) {
-    this.audio = options.audio;
-    this.textVariant = options.text;
+    this._audioVariant = options.audio;
+    this._textVariant = options.text;
     this.value = options.represent ?? options.audio;
   }
 
@@ -77,7 +94,7 @@ export class Instructions {
       let result = strings[0]!;
       for (let i = 0; i < values.length; i++) {
         const value = values[i]!;
-        if (value instanceof Instructions) {
+        if (isInstructions(value)) {
           result += mode === 'audio' ? value.audio : mode === 'text' ? value.text : value.value;
         } else {
           result += String(value);
@@ -88,7 +105,7 @@ export class Instructions {
     };
 
     const hasTextVariant = values.some(
-      (value) => value instanceof Instructions && value.textVariant !== undefined,
+      (value) => isInstructions(value) && value._textVariant !== undefined,
     );
 
     return new Instructions({
@@ -98,9 +115,14 @@ export class Instructions {
     });
   }
 
+  /** The audio (voice) variant of the instructions. */
+  get audio(): string {
+    return this._audioVariant;
+  }
+
   /** The text variant of the instructions. Falls back to {@link audio}. */
   get text(): string {
-    return this.textVariant ?? this.audio;
+    return this._textVariant ?? this.audio;
   }
 
   /**
@@ -111,15 +133,15 @@ export class Instructions {
   asModality(modality: 'audio' | 'text'): Instructions {
     return new Instructions({
       audio: this.audio,
-      text: this.textVariant,
+      text: this._textVariant,
       represent: modality === 'audio' ? this.audio : this.text,
     });
   }
 
   /** Concatenate, propagating both variants and the current rendered value. */
   concat(other: string | Instructions): Instructions {
-    if (other instanceof Instructions) {
-      const hasText = this.textVariant !== undefined || other.textVariant !== undefined;
+    if (isInstructions(other)) {
+      const hasText = this._textVariant !== undefined || other._textVariant !== undefined;
       return new Instructions({
         audio: this.audio + other.audio,
         text: hasText ? this.text + other.text : undefined,
@@ -128,7 +150,7 @@ export class Instructions {
     }
     return new Instructions({
       audio: this.audio + other,
-      text: this.textVariant !== undefined ? this.textVariant + other : undefined,
+      text: this._textVariant !== undefined ? this._textVariant + other : undefined,
       represent: this.value + other,
     });
   }
@@ -142,11 +164,19 @@ export class Instructions {
       type: 'instructions',
       audio: this.audio,
     };
-    if (this.textVariant !== undefined) {
-      result.text = this.textVariant;
+    if (this._textVariant !== undefined) {
+      result.text = this._textVariant;
     }
     return result;
   }
+}
+
+export function renderInstructions(
+  instructions: string | Instructions,
+  modality?: 'audio' | 'text',
+): string {
+  if (typeof instructions === 'string') return instructions;
+  return modality === undefined ? instructions.value : instructions.asModality(modality).value;
 }
 
 /**
@@ -157,21 +187,17 @@ export class Instructions {
  */
 export function concatInstructions(...parts: Array<string | Instructions>): string | Instructions {
   if (parts.length === 0) return '';
-  const hasInstructions = parts.some((p) => p instanceof Instructions);
+  const hasInstructions = parts.some((p) => isInstructions(p));
   if (!hasInstructions) return parts.join('');
 
   let acc = parts[0]!;
   for (let i = 1; i < parts.length; i++) {
     const next = parts[i]!;
-    if (acc instanceof Instructions) {
+    if (isInstructions(acc)) {
       acc = acc.concat(next);
-    } else if (next instanceof Instructions) {
+    } else if (isInstructions(next)) {
       // string + Instructions (radd-style): prepend `acc` to both variants.
-      acc = new Instructions({
-        audio: acc + next.audio,
-        text: next.textVariant !== undefined ? acc + next.textVariant : undefined,
-        represent: acc + next.value,
-      });
+      acc = new Instructions({ audio: acc }).concat(next);
     } else {
       acc = acc + next;
     }
@@ -314,7 +340,7 @@ export class ChatMessage {
    */
   get textContent(): string | undefined {
     const parts = this.content
-      .filter((c): c is string | Instructions => typeof c === 'string' || c instanceof Instructions)
+      .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
       .map((c) => (typeof c === 'string' ? c : c.value));
     return parts.length > 0 ? parts.join('\n') : undefined;
   }
@@ -323,7 +349,7 @@ export class ChatMessage {
     return this.content.map((c) => {
       if (typeof c === 'string') {
         return c as JSONValue;
-      } else if (c instanceof Instructions) {
+      } else if (isInstructions(c)) {
         return c.toJSON() as JSONValue;
       } else if (c.type === 'image_content') {
         return {
@@ -650,10 +676,9 @@ export class AgentConfigUpdate {
     };
 
     if (this.instructions !== undefined) {
-      result.instructions =
-        this.instructions instanceof Instructions
-          ? (this.instructions.toJSON() as JSONValue)
-          : this.instructions;
+      result.instructions = isInstructions(this.instructions)
+        ? (this.instructions.toJSON() as JSONValue)
+        : this.instructions;
     }
     if (this.toolsAdded !== undefined) {
       result.toolsAdded = this.toolsAdded;
@@ -1040,7 +1065,7 @@ export class ChatContext {
         return false;
       }
 
-      if (contentA instanceof Instructions && contentB instanceof Instructions) {
+      if (isInstructions(contentA) && isInstructions(contentB)) {
         if (
           contentA.audio !== contentB.audio ||
           contentA.text !== contentB.text ||
@@ -1051,7 +1076,7 @@ export class ChatContext {
         continue;
       }
 
-      if (contentA instanceof Instructions || contentB instanceof Instructions) {
+      if (isInstructions(contentA) || isInstructions(contentB)) {
         return false;
       }
 

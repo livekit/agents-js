@@ -20,6 +20,7 @@ import {
   type Instructions,
   type MetricsReport,
   concatInstructions,
+  renderInstructions,
 } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -439,7 +440,7 @@ export class AgentActivity implements RecognitionHooks {
       try {
         const realtimeInstructions =
           !rtReused || capabilities.midSessionInstructionsUpdate
-            ? String(this.agent.instructions)
+            ? renderInstructions(this.agent.instructions)
             : undefined;
         await this.realtimeSession!._updateSession(
           realtimeInstructions,
@@ -2126,7 +2127,7 @@ export class AgentActivity implements RecognitionHooks {
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
-      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, String(instructions));
+      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
     if (newMessage) {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
@@ -3175,7 +3176,9 @@ export class AgentActivity implements RecognitionHooks {
 
     try {
       const generationEvent = await this.realtimeSession.generateReply(
-        instructions !== undefined ? String(instructions) : undefined,
+        instructions !== undefined
+          ? renderInstructions(instructions, speechHandle.inputDetails.modality)
+          : undefined,
       );
       await this.realtimeGenerationTask(
         speechHandle,

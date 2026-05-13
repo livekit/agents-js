@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
-import { Instructions } from '../chat_context.js';
+import { isInstructions } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { groupToolCalls } from './utils.js';
 
@@ -70,7 +70,7 @@ async function toChatItem(item: ChatItem) {
       if (typeof content === 'string') {
         if (textContent) textContent += '\n';
         textContent += content;
-      } else if (content instanceof Instructions) {
+      } else if (isInstructions(content)) {
         if (textContent) textContent += '\n';
         textContent += content.value;
       } else if (content.type === 'image_content') {
@@ -233,7 +233,7 @@ async function toResponsesChatItem(item: ChatItem) {
       if (typeof content === 'string') {
         if (textContent) textContent += '\n';
         textContent += content;
-      } else if (content instanceof Instructions) {
+      } else if (isInstructions(content)) {
         if (textContent) textContent += '\n';
         textContent += content.value;
       } else if (content.type === 'image_content') {

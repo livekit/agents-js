@@ -7,12 +7,13 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import type { Instructions } from '../llm/chat_context.js';
 import {
   type ChatContext,
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
-  Instructions,
+  isInstructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
@@ -444,7 +445,7 @@ export function applyInstructionsModality(
   const item = chatCtx.items[idx]!;
   if (item.type !== 'message') return;
 
-  const hasModalitySpecific = item.content.some((c) => c instanceof Instructions);
+  const hasModalitySpecific = item.content.some((c) => isInstructions(c));
   if (!hasModalitySpecific) return;
 
   // ChatContext.copy shadows the original item; create a new instance so the
@@ -453,7 +454,7 @@ export function applyInstructionsModality(
   chatCtx.items[idx] = ChatMessage.create({
     id: item.id,
     role: item.role,
-    content: item.content.map((c) => (c instanceof Instructions ? c.asModality(modality) : c)),
+    content: item.content.map((c) => (isInstructions(c) ? c.asModality(modality) : c)),
     interrupted: item.interrupted,
     createdAt: item.createdAt,
     transcriptConfidence: item.transcriptConfidence,

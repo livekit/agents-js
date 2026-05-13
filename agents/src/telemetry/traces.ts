@@ -23,7 +23,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
-import { Instructions } from '../llm/chat_context.js';
+import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -375,7 +375,7 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       id: item.id,
       role: ROLE_MAP[item.role] ?? (item.role.toUpperCase() as ProtoRole),
       content: item.content.map((c: ChatContent) => ({
-        text: typeof c === 'string' ? c : c instanceof Instructions ? c.value : String(c),
+        text: typeof c === 'string' ? c : isInstructions(c) ? c.value : String(c),
       })),
       createdAt: toRFC3339(item.createdAt),
     };
@@ -459,7 +459,7 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       createdAt: toRFC3339(item.createdAt),
     };
     if (item.instructions !== undefined) {
-      configUpdate.instructions = String(item.instructions);
+      configUpdate.instructions = renderInstructions(item.instructions);
     }
     if (item.toolsAdded !== undefined) {
       configUpdate.toolsAdded = item.toolsAdded;

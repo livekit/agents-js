@@ -16,6 +16,8 @@ import {
   Instructions,
   ReadonlyChatContext,
   concatInstructions,
+  isInstructions,
+  renderInstructions,
 } from './chat_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
@@ -1248,6 +1250,14 @@ describe('Instructions', () => {
     expect(instr.value).toBe('audio variant');
   });
 
+  it('identifies Instructions with a type guard', () => {
+    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+
+    expect(isInstructions(instr)).toBe(true);
+    expect(isInstructions('audio variant')).toBe(false);
+    expect(isInstructions({ type: 'instructions', audio: 'audio variant' })).toBe(false);
+  });
+
   it('tpl propagates Instructions interpolations into audio and text variants', () => {
     const instr = Instructions.tpl`persona
 ${new Instructions({ audio: 'audio rules', text: 'text rules' })}
@@ -1263,7 +1273,7 @@ extra`;
   it('tpl preserves audio-only interpolation as audio-only output', () => {
     const instr = Instructions.tpl`prefix ${new Instructions({ audio: 'same' })} suffix`;
 
-    expect(instr.textVariant).toBeUndefined();
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'prefix same suffix' });
     expect(instr.audio).toBe('prefix same suffix');
     expect(instr.text).toBe('prefix same suffix');
   });
@@ -1271,7 +1281,10 @@ extra`;
   it('tpl interpolates primitive values into both variants', () => {
     const instr = Instructions.tpl`date=${'2026-05-13'} enabled=${true} count=${3}`;
 
-    expect(instr.textVariant).toBeUndefined();
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'date=2026-05-13 enabled=true count=3',
+    });
     expect(instr.audio).toBe('date=2026-05-13 enabled=true count=3');
     expect(instr.text).toBe('date=2026-05-13 enabled=true count=3');
     expect(instr.value).toBe('date=2026-05-13 enabled=true count=3');
@@ -1299,7 +1312,10 @@ extra`;
   it('tpl stringifies null and undefined values like template literals', () => {
     const instr = Instructions.tpl`null=${null} undefined=${undefined}`;
 
-    expect(instr.textVariant).toBeUndefined();
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'null=null undefined=undefined',
+    });
     expect(instr.audio).toBe('null=null undefined=undefined');
     expect(instr.text).toBe('null=null undefined=undefined');
   });
@@ -1331,6 +1347,15 @@ extra`;
     expect(instr.value).toBe('audio only');
   });
 
+  it('renderInstructions returns strings and resolved Instructions values explicitly', () => {
+    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+
+    expect(renderInstructions('plain instructions')).toBe('plain instructions');
+    expect(renderInstructions(instr)).toBe('audio instructions');
+    expect(renderInstructions(instr, 'audio')).toBe('audio instructions');
+    expect(renderInstructions(instr, 'text')).toBe('text instructions');
+  });
+
   it('concatenates two Instructions, propagating both variants', () => {
     const a = new Instructions({ audio: 'audio A', text: 'text A' });
     const b = new Instructions({ audio: 'audio B', text: 'text B' });
@@ -1350,8 +1375,8 @@ extra`;
   it('concatInstructions handles string + Instructions (radd-style)', () => {
     const instr = new Instructions({ audio: 'audio', text: 'text' });
     const result = concatInstructions('prefix ', instr);
-    expect(result).toBeInstanceOf(Instructions);
-    if (!(result instanceof Instructions)) return;
+    expect(isInstructions(result)).toBe(true);
+    if (!isInstructions(result)) return;
     expect(result.audio).toBe('prefix audio');
     expect(result.text).toBe('prefix text');
   });
@@ -1359,7 +1384,7 @@ extra`;
   it('preserves text=undefined when concatenating an audio-only instructions', () => {
     const audioOnly = new Instructions({ audio: 'audio only' });
     const result = audioOnly.concat(' more');
-    expect(result.textVariant).toBeUndefined();
+    expect(result.toJSON()).toEqual({ type: 'instructions', audio: 'audio only more' });
     expect(result.audio).toBe('audio only more');
     expect(result.text).toBe('audio only more');
   });
@@ -1368,8 +1393,8 @@ extra`;
     const a = new Instructions({ audio: 'audio A', text: 'text A' });
     const b = new Instructions({ audio: 'audio B' });
     const result = concatInstructions(a, ' ', b);
-    expect(result).toBeInstanceOf(Instructions);
-    if (!(result instanceof Instructions)) return;
+    expect(isInstructions(result)).toBe(true);
+    if (!isInstructions(result)) return;
     expect(result.audio).toBe('audio A audio B');
     expect(result.text).toBe('text A audio B');
   });
@@ -1413,11 +1438,11 @@ extra`;
 
     applyInstructionsModality(ctx, { modality: 'audio' });
     let content = (ctx.items[0]! as ChatMessage).content[0]!;
-    expect(content instanceof Instructions ? content.value : '').toBe('audio instructions');
+    expect(isInstructions(content) ? content.value : '').toBe('audio instructions');
 
     applyInstructionsModality(ctx, { modality: 'text' });
     content = (ctx.items[0]! as ChatMessage).content[0]!;
-    expect(content instanceof Instructions ? content.value : '').toBe('text instructions');
+    expect(isInstructions(content) ? content.value : '').toBe('text instructions');
   });
 
   it('applyInstructionsModality is a no-op when content has no Instructions', () => {
@@ -1448,9 +1473,7 @@ extra`;
     applyInstructionsModality(turn2, { modality: 'audio' });
 
     const turn2Content = (turn2.items[0]! as ChatMessage).content[0]!;
-    expect(turn2Content instanceof Instructions ? turn2Content.value : '').toBe(
-      'audio instructions',
-    );
+    expect(isInstructions(turn2Content) ? turn2Content.value : '').toBe('audio instructions');
 
     // base context content is untouched (was the original instr)
     expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
