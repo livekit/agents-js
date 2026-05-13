@@ -1325,12 +1325,6 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.sessionHost?.close();
-    this.sessionHost = undefined;
-
-    await this._roomIO?.close();
-    this._roomIO = undefined;
-
     await this.activity?.close();
     this.activity = undefined;
 
@@ -1358,6 +1352,12 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
+
+    await this.sessionHost?.close();
+    this.sessionHost = undefined;
+
+    await this._roomIO?.close();
+    this._roomIO = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }
