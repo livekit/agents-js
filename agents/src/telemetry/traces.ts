@@ -24,7 +24,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
-import { Instructions } from '../llm/index.js';
+import { Instructions } from '../llm/chat_context.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import type { SessionReport } from '../voice/report.js';
