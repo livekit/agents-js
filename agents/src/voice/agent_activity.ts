@@ -197,7 +197,8 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
-  // Holds RunResult open while waiting for a realtime model to auto-generate a tool reply.
+  // Placeholder used to hold a RunResult open while waiting for a realtime
+  // model to auto-generate a tool reply (autoToolReplyGeneration=true).
   private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
@@ -3051,6 +3052,8 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
+      // If the realtime model auto-generates the tool reply, install a
+      // placeholder so the active RunResult waits for that reply.
       let fut: Future<void, never> | undefined;
       if (
         this.llm.capabilities.autoToolReplyGeneration &&
