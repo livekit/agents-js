@@ -12,7 +12,6 @@ import {
   delay,
   log,
   normalizeLanguage,
-  startSoon,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -181,7 +180,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   /**

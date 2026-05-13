@@ -12,7 +12,6 @@ import {
   type VADStream,
   mergeFrames,
   normalizeLanguage,
-  startSoon,
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -464,7 +463,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, REALTIME_SAMPLE_RATE, connOptions);
     this.#options = options;
     this.#onClose = onClose;
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   updateOptions(options: ResolvedSTTOptions): void {

@@ -13,7 +13,7 @@ import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
-import { AsyncIterableQueue, delay, toError } from '../utils.js';
+import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
@@ -251,6 +251,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
+  private started = false;
 
   protected abortController = new AbortController();
 
@@ -258,6 +259,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     stt: STT,
     sampleRate?: number,
     connectionOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    autoStart = true,
   ) {
     this.#stt = stt;
     this._connOptions = connectionOptions;
@@ -265,6 +267,23 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.neededSampleRate = sampleRate;
     this.monitorMetrics();
     this.pumpInput();
+
+    if (autoStart) {
+      this.start();
+    }
+  }
+
+  /**
+   * Starts the background recognition task.
+   *
+   * Subclasses that need to finish initialization before `run()` can pass
+   * `autoStart: false` to the constructor and call this at the end of their
+   * own constructor.
+   */
+  protected start() {
+    if (this.started) return;
+    this.started = true;
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   /**
@@ -275,7 +294,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
    * @throws {APIConnectionError} When all retry attempts are exhausted
    * @internal Not annotated with Throws<> because this is fire-and-forget via startSoon()
    */
-  protected async mainTask(): Promise<void> {
+  private async mainTask(): Promise<void> {
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
         return await this.run();

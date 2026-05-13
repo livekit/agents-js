@@ -12,7 +12,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { asLanguageCode } from '../../language.js';
 import type { APIConnectOptions } from '../../types.js';
-import { AsyncIterableQueue, type AudioBuffer, delay, startSoon } from '../../utils.js';
+import { AsyncIterableQueue, type AudioBuffer, delay } from '../../utils.js';
 import {
   STT,
   type STTCapabilities,
@@ -235,7 +235,6 @@ export class FakeRecognizeStream extends SpeechStream {
     super(stt, undefined, connOptions);
     this._fakeStt = stt;
     this.label = `${stt.label}.stream`;
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   // Ref: python tests/fake_stt.py - 162-164 lines

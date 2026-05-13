@@ -5,7 +5,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
-import { isStreamClosedError, startSoon } from '../utils.js';
+import { isStreamClosedError } from '../utils.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { SpeechEvent } from './stt.js';
@@ -50,7 +50,6 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#stt = stt;
     this.#vadStream = vad.stream();
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   close() {

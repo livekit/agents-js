@@ -7,7 +7,6 @@ import {
   Task,
   log,
   normalizeLanguage,
-  startSoon,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -99,7 +98,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate);
     this.#opts = opts;
     this.closed = false;
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
   private getWsUrl(): string {
