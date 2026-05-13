@@ -417,10 +417,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
   ) {
-    super(sttImpl, opts.sampleRate, connOptions);
+    super(sttImpl, opts.sampleRate, connOptions, false);
     this.opts = opts;
     this.stt = sttImpl;
     this.connOptions = connOptions;
+    this.start();
   }
 
   get label(): string {

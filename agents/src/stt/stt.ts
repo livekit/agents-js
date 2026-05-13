@@ -251,6 +251,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
+  private started = false;
 
   protected abortController = new AbortController();
 
@@ -258,6 +259,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     stt: STT,
     sampleRate?: number,
     connectionOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    autoStart = true,
   ) {
     this.#stt = stt;
     this._connOptions = connectionOptions;
@@ -266,10 +268,21 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this.monitorMetrics();
     this.pumpInput();
 
-    // this is a hack to immitate asyncio.create_task so that mainTask
-    // is run **after** the constructor has finished. Otherwise we get
-    // runtime error when trying to access class variables in the
-    // `run` method.
+    if (autoStart) {
+      this.start();
+    }
+  }
+
+  /**
+   * Starts the background recognition task.
+   *
+   * Subclasses that need to finish initialization before `run()` can pass
+   * `autoStart: false` to the constructor and call this at the end of their
+   * own constructor.
+   */
+  protected start() {
+    if (this.started) return;
+    this.started = true;
     startSoon(() => this.mainTask().finally(() => this.queue.close()));
   }
 
