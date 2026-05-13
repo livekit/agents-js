@@ -747,12 +747,25 @@ export class AgentActivity implements RecognitionHooks {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentActivity handles tools for any Agent<UserData>
   async updateTools(tools: ToolContext<any>, toolsets?: readonly Toolset<any>[]): Promise<void> {
     const oldToolNames = new Set(Object.keys(this.tools));
+    const oldToolsets = this.agent._toolsets;
+    const newToolsets = Array.from(toolsets ?? []);
+    const addedToolsets = newToolsets.filter((toolset) => !oldToolsets.includes(toolset));
+    const removedToolsets = oldToolsets.filter((toolset) => !newToolsets.includes(toolset));
+
+    if (this._toolsetsSetup) {
+      await this.setupToolsets(addedToolsets, false);
+    }
+
     this.agent._setTools({ tools, toolsets });
 
     const toolCtx = this.agent.toolCtx;
     const newToolNames = new Set(Object.keys(toolCtx));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+
+    if (this._toolsetsSetup) {
+      await this.closeToolsets(removedToolsets, false);
+    }
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -3606,37 +3619,43 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition = undefined;
   }
 
-  private async setupToolsets(): Promise<void> {
-    if (this._toolsetsSetup) {
+  private async setupToolsets(
+    toolsets: readonly Toolset[] = this.agent._toolsets,
+    updateSetupState = true,
+  ): Promise<void> {
+    if (updateSetupState && this._toolsetsSetup) {
       return;
     }
 
-    const outputs = await Promise.allSettled(
-      this.agent._toolsets.map((toolset) => toolset.setup()),
-    );
+    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.setup()));
 
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error setting up toolset');
       }
     }
-    this._toolsetsSetup = true;
+    if (updateSetupState) {
+      this._toolsetsSetup = true;
+    }
   }
 
-  private async closeToolsets(): Promise<void> {
-    if (!this._toolsetsSetup) {
+  private async closeToolsets(
+    toolsets: readonly Toolset[] = this.agent._toolsets,
+    updateSetupState = true,
+  ): Promise<void> {
+    if (updateSetupState && !this._toolsetsSetup) {
       return;
     }
 
-    const outputs = await Promise.allSettled(
-      this.agent._toolsets.map((toolset) => toolset.aclose()),
-    );
+    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.aclose()));
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error closing toolset');
       }
     }
-    this._toolsetsSetup = false;
+    if (updateSetupState) {
+      this._toolsetsSetup = false;
+    }
   }
 }
 

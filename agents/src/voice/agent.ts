@@ -134,8 +134,6 @@ export interface AgentOptions<UserData> {
   allowInterruptions?: boolean;
 }
 
-type AgentToolsOptions<UserData> = Omit<ConstructorParameters<typeof Toolset<UserData>>[0], 'id'>;
-
 export class Agent<UserData = any> {
   private _id: string;
   private _stt?: STT;

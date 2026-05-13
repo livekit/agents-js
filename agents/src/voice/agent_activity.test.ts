@@ -17,6 +17,7 @@
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
+import { type ToolContext, Toolset, tool } from '../llm/index.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
@@ -227,6 +228,88 @@ describe('AgentActivity - mainTask', () => {
 
     const result = await raceTimeout(mainTaskPromise, 2000);
     expect(result).toBe('resolved');
+  });
+});
+
+describe('AgentActivity - toolset updates', () => {
+  it('sets up newly added toolsets and closes replaced toolsets during live updates', async () => {
+    const events: string[] = [];
+
+    class RecordingToolset extends Toolset {
+      override async setup(): Promise<this> {
+        events.push(`setup:${this.id}`);
+        return this;
+      }
+
+      override async aclose(): Promise<void> {
+        events.push(`close:${this.id}`);
+      }
+    }
+
+    const oldTool = tool({
+      description: 'Old tool',
+      execute: async () => 'old',
+    });
+    const newTool = tool({
+      description: 'New tool',
+      execute: async () => 'new',
+    });
+    const oldToolset = new RecordingToolset({ id: 'old_toolset', tools: { oldTool } });
+    const newToolset = new RecordingToolset({ id: 'new_toolset', tools: { newTool } });
+
+    let currentToolCtx: ToolContext = oldToolset.tools;
+    const agent = {
+      _chatCtx: {
+        insert: vi.fn(),
+      },
+      _setTools: vi.fn(
+        ({ tools, toolsets }: { tools?: ToolContext; toolsets?: readonly Toolset[] }) => {
+          agent._toolsets = Array.from(toolsets ?? []);
+          currentToolCtx = new Toolset({
+            id: 'agent_tools',
+            tools,
+            toolsets: agent._toolsets,
+          }).tools;
+        },
+      ),
+      _toolsets: [oldToolset] as Toolset[],
+    };
+    Object.defineProperty(agent, 'toolCtx', {
+      get: () => currentToolCtx,
+    });
+
+    const updateTools = (AgentActivity.prototype as Record<string, unknown>).updateTools as (
+      this: unknown,
+      tools: ToolContext,
+      toolsets?: readonly Toolset[],
+    ) => Promise<void>;
+    const setupToolsets = (AgentActivity.prototype as Record<string, unknown>).setupToolsets;
+    const closeToolsets = (AgentActivity.prototype as Record<string, unknown>).closeToolsets;
+    const fakeActivity = {
+      _toolsetsSetup: true,
+      agent,
+      agentSession: {
+        history: {
+          insert: vi.fn(),
+        },
+      },
+      llm: undefined,
+      logger: {
+        error: vi.fn(),
+      },
+      realtimeSession: {
+        updateTools: vi.fn(),
+      },
+      setupToolsets,
+      closeToolsets,
+      tools: currentToolCtx,
+    };
+
+    await updateTools.call(fakeActivity, {}, [newToolset]);
+
+    expect(events).toEqual(['setup:new_toolset', 'close:old_toolset']);
+    expect(agent.toolCtx.newTool).toBe(newTool);
+    expect(agent.toolCtx.oldTool).toBeUndefined();
   });
 });
 
