@@ -1147,27 +1147,6 @@ export const isHosted = (): boolean => {
   return process.env.LIVEKIT_REMOTE_EOT_URL !== undefined;
 };
 
-/**
- * Whether LiveKit Cloud inference credentials are available.
- *
- * Returns `true` only when `LIVEKIT_URL` points to a LiveKit Cloud host
- * **and** the inference credential env-var fallback chain resolves:
- * `LIVEKIT_INFERENCE_API_KEY` falling back to `LIVEKIT_API_KEY`,
- * and `LIVEKIT_INFERENCE_API_SECRET` falling back to `LIVEKIT_API_SECRET`.
- */
-export const isUsingCloud = (): boolean => {
-  const rawUrl = process.env.LIVEKIT_URL;
-  if (!rawUrl) return false;
-  try {
-    if (!isCloud(new URL(rawUrl))) return false;
-  } catch {
-    return false;
-  }
-  const apiKey = process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
-  return !!(apiKey && apiSecret);
-};
-
 export function asError(maybeError: unknown): Error {
   if (maybeError instanceof Error) {
     return maybeError;

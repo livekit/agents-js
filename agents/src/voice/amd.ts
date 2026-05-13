@@ -18,7 +18,7 @@ import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { STT, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay, isUsingCloud, waitForTrackPublication } from '../utils.js';
+import { Task, delay, isCloud, waitForTrackPublication } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -248,11 +248,27 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     options: AMDOptions = {},
   ) {
     super();
-    const { llm, owned: llmOwned } = this.resolveLLM(options.llm);
-    this.llm = llm;
+
+    let { llm, stt } = options;
+    if (llm === undefined || stt === undefined) {
+      const rawUrl = process.env.LIVEKIT_URL ?? '';
+      const apiKey = process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
+      const apiSecret = process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
+      let autoSelect = false;
+      try {
+        autoSelect = isCloud(new URL(rawUrl)) && !!(apiKey && apiSecret);
+      } catch {
+        // invalid URL — not cloud
+      }
+      if (llm === undefined) llm = autoSelect ? DEFAULT_AMD_LLM_MODEL : undefined;
+      if (stt === undefined) stt = autoSelect ? DEFAULT_AMD_STT_MODEL : undefined;
+    }
+
+    const { llm: resolvedLLM, owned: llmOwned } = this.resolveLLM(llm);
+    this.llm = resolvedLLM;
     this.llmOwned = llmOwned;
 
-    const sttResolution = this.resolveSTT(options.stt);
+    const sttResolution = this.resolveSTT(stt);
     this.stt = sttResolution.stt;
     this.sttOwned = sttResolution.owned;
 
@@ -828,18 +844,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_resolve_classifier`.
    * - `LLM` instance: caller-owned, used as-is.
    * - string: construct a Cloud Inference LLM (AMD-owned).
-   * - `undefined`: auto-select — use Cloud Inference when credentials are
-   *   available, otherwise fall back to `session.llm`.
+   * - `undefined`: fall back to `session.llm`.
    */
-  private resolveLLM(option: LLM | string | undefined): { llm: LLM; owned: boolean } {
+  private resolveLLM(option?: LLM | string): { llm: LLM; owned: boolean } {
     if (option instanceof LLM) {
       return { llm: option, owned: false };
     }
     if (typeof option === 'string') {
       return { llm: this.constructInferenceLLM(option), owned: true };
-    }
-    if (isUsingCloud()) {
-      return { llm: this.constructInferenceLLM(DEFAULT_AMD_LLM_MODEL), owned: true };
     }
     const sessionLLM = this.session.llm;
     if (sessionLLM instanceof LLM) {
@@ -855,10 +867,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_InferenceSTT(stt) if isinstance(stt, str) else stt`.
    * - `STT` instance: caller-owned.
    * - string: AMD-owned Cloud Inference STT.
-   * - `undefined`: auto-select — use Cloud Inference when credentials are
-   *   available, otherwise listen to session-level STT events.
+   * - `undefined`: listen to session-level STT events.
    */
-  private resolveSTT(option: STT | string | undefined): {
+  private resolveSTT(option?: STT | string): {
     stt: STT | undefined;
     owned: boolean;
   } {
@@ -867,9 +878,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     if (typeof option === 'string') {
       return { stt: this.constructInferenceSTT(option), owned: true };
-    }
-    if (isUsingCloud()) {
-      return { stt: this.constructInferenceSTT(DEFAULT_AMD_STT_MODEL), owned: true };
     }
     return { stt: undefined, owned: false };
   }

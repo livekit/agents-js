@@ -11,7 +11,6 @@ import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import type { SpeechEvent, SpeechStream } from '../stt/stt.js';
 import { STT } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
-import * as utils from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AMD, AMDCategory } from './amd.js';
 import { AgentSessionEventTypes } from './events.js';
@@ -400,7 +399,7 @@ describe('AMD', () => {
   });
 
   it('should fall back to session.llm when no cloud creds are available', async () => {
-    const spy = vi.spyOn(utils, 'isUsingCloud').mockReturnValue(false);
+    vi.stubEnv('LIVEKIT_URL', '');
     try {
       const session = new MockSession();
       const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }));
@@ -422,17 +421,17 @@ describe('AMD', () => {
         reason: expect.any(String),
       });
     } finally {
-      spy.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 
   it('should throw when no cloud creds and session has no compatible LLM', () => {
-    const spy = vi.spyOn(utils, 'isUsingCloud').mockReturnValue(false);
+    vi.stubEnv('LIVEKIT_URL', '');
     try {
       const session = new MockSession();
       expect(() => new AMD(asAgentSession(session))).toThrow(/no LLM available/);
     } finally {
-      spy.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 
