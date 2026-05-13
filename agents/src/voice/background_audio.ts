@@ -81,6 +81,7 @@ export interface BackgroundAudioStartOptions {
 // Kept small to avoid abrupt cutoffs when removing sounds
 const AUDIO_SOURCE_BUFFER_MS = 400;
 const STREAM_TIMEOUT_MS = 2000;
+const BACKGROUND_AUDIO_TRACK_NAME = 'background_audio';
 
 export class PlayHandle {
   private doneFuture = new Future<void>();
@@ -146,7 +147,6 @@ export class BackgroundAudioPlayer {
   private agentSession?: AgentSession;
   private publication?: LocalTrackPublication;
   private trackPublishOptions?: TrackPublishOptions;
-  private republishTask?: Task<void>;
 
   private ambientHandle?: PlayHandle;
   private thinkingHandle?: PlayHandle;
@@ -305,8 +305,6 @@ export class BackgroundAudioPlayer {
       }
     });
 
-    this.room.on('reconnected', this.onReconnected);
-
     this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     if (!this.ambientSound) return;
 
@@ -326,10 +324,6 @@ export class BackgroundAudioPlayer {
 
     await cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
 
-    if (this.republishTask) {
-      await this.republishTask.cancelAndWait(TASK_TIMEOUT_MS);
-    }
-
     await this.audioMixer.aclose();
     await this.audioSource.close();
 
@@ -338,11 +332,23 @@ export class BackgroundAudioPlayer {
     }
 
     this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-    this.room?.off('reconnected', this.onReconnected);
 
-    if (this.publication && this.publication.sid) {
-      await this.room?.localParticipant?.unpublishTrack(this.publication.sid);
+    // The cached publication SID may be stale if the SDK auto-republished it
+    // during a full reconnect, so resolve the current publication by track
+    // name before unpublishing.
+    const current = this.findCurrentPublication();
+    if (current && current.sid) {
+      await this.room?.localParticipant?.unpublishTrack(current.sid);
     }
+  }
+
+  private findCurrentPublication(): LocalTrackPublication | undefined {
+    const pubs = this.room?.localParticipant?.trackPublications;
+    if (!pubs) return undefined;
+    for (const pub of pubs.values()) {
+      if (pub.name === BACKGROUND_AUDIO_TRACK_NAME) return pub;
+    }
+    return undefined;
   }
 
   /**
@@ -357,7 +363,7 @@ export class BackgroundAudioPlayer {
       return;
     }
 
-    const track = LocalAudioTrack.createAudioTrack('background_audio', this.audioSource);
+    const track = LocalAudioTrack.createAudioTrack(BACKGROUND_AUDIO_TRACK_NAME, this.audioSource);
 
     if (this.room?.localParticipant === undefined) {
       throw new Error('Local participant not available');
@@ -370,22 +376,6 @@ export class BackgroundAudioPlayer {
 
     this.publication = publication;
     this.#logger.debug(`Background audio track published: ${this.publication.sid}`);
-  }
-
-  private onReconnected = (): void => {
-    if (this.republishTask) {
-      this.republishTask.cancel();
-    }
-
-    this.publication = undefined;
-    this.republishTask = Task.from(async () => {
-      await this.republishTrackTask();
-    });
-  };
-
-  private async republishTrackTask(): Promise<void> {
-    // TODO (Brian): add lock protection when implementing lock
-    await this.publishTrack();
   }
 
   private async runMixerTask(): Promise<void> {
