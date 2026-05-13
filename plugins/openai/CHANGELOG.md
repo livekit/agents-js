@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.4.2
+
+### Patch Changes
+
+- Fail download-files when plugin downloads fail - [#1481](https://github.com/livekit/agents-js/pull/1481) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Updated dependencies [[`1ad05ff49c223ef90ac7b5c325d184e9ff1138d2`](https://github.com/livekit/agents-js/commit/1ad05ff49c223ef90ac7b5c325d184e9ff1138d2), [`c049c9349682dec5c09f054ee6fe7c6a4644c201`](https://github.com/livekit/agents-js/commit/c049c9349682dec5c09f054ee6fe7c6a4644c201), [`67018d5730e2a63b304f39a04a3fc1fa79b02dce`](https://github.com/livekit/agents-js/commit/67018d5730e2a63b304f39a04a3fc1fa79b02dce), [`d40997c7af65fd9f9b92b8b6de671c568a60bded`](https://github.com/livekit/agents-js/commit/d40997c7af65fd9f9b92b8b6de671c568a60bded), [`2a31b8d7db220dc156ed200148032b771cf18b85`](https://github.com/livekit/agents-js/commit/2a31b8d7db220dc156ed200148032b771cf18b85), [`15fccea771304a7cc7326ba4e4b30524e0dbf843`](https://github.com/livekit/agents-js/commit/15fccea771304a7cc7326ba4e4b30524e0dbf843)]:
+  - @livekit/agents@1.4.2
+
 ## 1.4.1
 
 ### Patch Changes
