@@ -1,11 +1,29 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, AudioByteStream, shortuuid, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  APITimeoutError,
+  AudioByteStream,
+  Future,
+  type TimedString,
+  asError,
+  createTimedString,
+  log,
+  shortuuid,
+  stream,
+  tokenize,
+  tts,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { type RawData, WebSocket } from 'ws';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
 const RIME_BASE_URL = 'https://users.rime.ai/v1/rime-tts';
+const RIME_WS_BASE_URL = 'wss://users-ws.rime.ai';
 const RIME_TTS_SAMPLE_RATE = 24000;
 const RIME_TTS_CHANNELS = 1;
 
@@ -37,6 +55,9 @@ export interface TTSOptions {
   modelId: TTSModels | string;
   baseURL?: string;
   apiKey?: string;
+  useWebsocket?: boolean;
+  segment?: string;
+  tokenizer?: tokenize.SentenceTokenizer;
   lang?: DefaultLanguages | string;
   repetition_penalty?: number;
   temperature?: number;
@@ -44,13 +65,14 @@ export interface TTSOptions {
   max_tokens?: number;
   samplingRate?: number;
   speedAlpha?: number;
+  reduceLatency?: boolean;
   pauseBetweenBrackets?: boolean;
   phonemizeBetweenBrackets?: boolean;
   inlineSpeedAlpha?: string;
   noTextNormalization?: boolean;
   saveOovs?: boolean;
   /** Additional Rime API parameters */
-  [key: string]: string | number | boolean | undefined;
+  [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -58,7 +80,106 @@ const defaultTTSOptions: TTSOptions = {
   speaker: 'luna',
   apiKey: process.env.RIME_API_KEY,
   baseURL: RIME_BASE_URL,
+  useWebsocket: false,
+  segment: 'bySentence',
 };
+
+function modelParams(opts: TTSOptions): Record<string, string | number | boolean> {
+  const params: Record<string, string | number | boolean> = {};
+  if (opts.lang !== undefined) params.lang = opts.lang;
+
+  if (opts.modelId === 'arcana') {
+    if (opts.repetition_penalty !== undefined) params.repetition_penalty = opts.repetition_penalty;
+    if (opts.temperature !== undefined) params.temperature = opts.temperature;
+    if (opts.top_p !== undefined) params.top_p = opts.top_p;
+    if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+  } else if (opts.modelId.includes('mist')) {
+    if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
+    if (opts.pauseBetweenBrackets !== undefined) {
+      params.pauseBetweenBrackets = opts.pauseBetweenBrackets;
+    }
+    if (opts.phonemizeBetweenBrackets !== undefined) {
+      params.phonemizeBetweenBrackets = opts.phonemizeBetweenBrackets;
+    }
+  }
+
+  return params;
+}
+
+function fetchPayload(opts: TTSOptions, text: string): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    speaker: opts.speaker,
+    text,
+    modelId: opts.modelId,
+    ...modelParams(opts),
+  };
+
+  if (opts.samplingRate !== undefined) payload.samplingRate = opts.samplingRate;
+  if (opts.modelId === 'mistv2' && opts.reduceLatency !== undefined) {
+    payload.reduceLatency = opts.reduceLatency;
+  }
+
+  for (const [key, value] of Object.entries(opts)) {
+    if (
+      value === undefined ||
+      [
+        'apiKey',
+        'baseURL',
+        'useWebsocket',
+        'segment',
+        'tokenizer',
+        'speaker',
+        'modelId',
+        'lang',
+        'repetition_penalty',
+        'temperature',
+        'top_p',
+        'max_tokens',
+        'samplingRate',
+        'speedAlpha',
+        'pauseBetweenBrackets',
+        'phonemizeBetweenBrackets',
+        'reduceLatency',
+      ].includes(key)
+    ) {
+      continue;
+    }
+    payload[key] = value;
+  }
+
+  return payload;
+}
+
+function wsUrl(opts: TTSOptions): string {
+  const params = new URLSearchParams();
+  const sampleRate = getSampleRate(opts);
+  const query: Record<string, string | number | boolean> = {
+    speaker: opts.speaker,
+    modelId: opts.modelId,
+    audioFormat: 'pcm',
+    samplingRate: sampleRate,
+    segment: opts.segment ?? 'bySentence',
+    ...modelParams(opts),
+  };
+
+  for (const [key, value] of Object.entries(query)) {
+    params.set(key, typeof value === 'boolean' ? String(value) : `${value}`);
+  }
+
+  return `${opts.baseURL}/ws3?${params.toString()}`;
+}
+
+function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
+  const useWebsocket = Boolean(
+    opts.useWebsocket || opts.baseURL?.startsWith('ws://') || opts.baseURL?.startsWith('wss://'),
+  );
+  return {
+    ...defaultTTSOptions,
+    ...opts,
+    useWebsocket,
+    baseURL: opts.baseURL ?? (useWebsocket ? RIME_WS_BASE_URL : RIME_BASE_URL),
+  };
+}
 
 export class TTS extends tts.TTS {
   private opts: TTSOptions;
@@ -74,16 +195,26 @@ export class TTS extends tts.TTS {
    * @param opts - Configuration options for the TTS instance
    */
 
-  constructor(opts: Partial<TTSOptions> = defaultTTSOptions) {
-    const sampleRate = getSampleRate(opts);
+  constructor(opts: Partial<TTSOptions> = {}) {
+    const resolvedOpts = resolveOptions(opts);
+    const sampleRate = getSampleRate(resolvedOpts);
     super(sampleRate, RIME_TTS_CHANNELS, {
-      streaming: false,
+      streaming: resolvedOpts.useWebsocket ?? false,
+      alignedTranscript: resolvedOpts.useWebsocket ?? false,
     });
 
-    this.opts = { ...defaultTTSOptions, ...opts };
+    this.opts = resolvedOpts;
     if (this.opts.apiKey === undefined) {
       throw new Error('RIME API key is required, whether as an argument or as $RIME_API_KEY');
     }
+  }
+
+  get model(): string {
+    return this.opts.modelId;
+  }
+
+  get provider(): string {
+    return 'Rime';
   }
 
   /**
@@ -92,7 +223,7 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    this.opts = { ...this.opts, ...opts };
+    this.opts = resolveOptions({ ...this.opts, ...opts });
   }
 
   /**
@@ -106,11 +237,19 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
+    if (this.opts.useWebsocket) {
+      throw new Error(
+        'Rime TTS one-shot synthesize requires useWebsocket=false at construction time',
+      );
+    }
+    return new ChunkedStream(this, text, { ...this.opts }, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    throw new Error('Streaming is not supported on RimeTTS');
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    if (!this.opts.useWebsocket) {
+      throw new Error('Rime TTS streaming requires useWebsocket=true at construction time');
+    }
+    return new SynthesizeStream(this, { ...this.opts }, options?.connOptions);
   }
 }
 
@@ -150,10 +289,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        ...Object.fromEntries(
-          Object.entries(this.opts).filter(([k]) => !['apiKey', 'baseURL'].includes(k)),
-        ),
-        text: this.text,
+        ...fetchPayload(this.opts, this.text),
       }),
       signal: this.abortSignal,
     });
@@ -199,5 +335,259 @@ export class ChunkedStream extends tts.ChunkedStream {
       reader.releaseLock();
       this.queue.close();
     }
+  }
+}
+
+export class SynthesizeStream extends tts.SynthesizeStream {
+  label = 'rime-tts.SynthesizeStream';
+  #opts: TTSOptions;
+  #logger = log();
+  #tokenizer: tokenize.SentenceStream;
+
+  constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
+    this.#opts = opts;
+    this.#tokenizer = (opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()).stream();
+  }
+
+  protected async run() {
+    const requestId = shortuuid();
+    const contextId = shortuuid();
+    const bstream = new AudioByteStream(getSampleRate(this.#opts), RIME_TTS_CHANNELS);
+    const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
+    const errorFuture = new Future<Error>();
+    const inputSentFuture = new Future<void>();
+    let emptyInput = false;
+    let ws: WebSocket | undefined;
+
+    const inputTask = async () => {
+      for await (const data of this.input) {
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          this.#tokenizer.flush();
+          continue;
+        }
+        this.#tokenizer.pushText(data);
+      }
+      this.#tokenizer.endInput();
+    };
+
+    const sendTask = async () => {
+      let sentCount = 0;
+      for await (const event of this.#tokenizer) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          throw new APIConnectionError({ message: 'Rime WebSocket connection is closed' });
+        }
+        ws.send(JSON.stringify({ text: `${event.token} `, contextId }));
+        if (!inputSentFuture.done) inputSentFuture.resolve();
+        sentCount += 1;
+      }
+
+      if (sentCount === 0) {
+        emptyInput = true;
+        if (!inputSentFuture.done) inputSentFuture.resolve();
+        return;
+      }
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        throw new APIConnectionError({ message: 'Rime WebSocket connection is closed' });
+      }
+      ws.send(JSON.stringify({ operation: 'flush', contextId }));
+    };
+
+    const recvTask = async () => {
+      await inputSentFuture.await;
+      if (emptyInput) return;
+
+      let lastFrame: AudioFrame | undefined;
+      let pendingTimedTranscripts: TimedString[] = [];
+      const sendLastFrame = (segmentId: string, final: boolean) => {
+        if (!lastFrame || this.queue.closed) return;
+        this.queue.put({
+          requestId,
+          segmentId,
+          frame: lastFrame,
+          final,
+          timedTranscripts:
+            pendingTimedTranscripts.length > 0 ? pendingTimedTranscripts : undefined,
+        });
+        lastFrame = undefined;
+        pendingTimedTranscripts = [];
+      };
+
+      const reader = messageChannel.stream().getReader();
+      try {
+        while (!this.closed && !this.abortSignal.aborted) {
+          const [result, socketError] = await Promise.race([
+            reader.read().then((result) => [result, undefined] as const),
+            errorFuture.await.then((error) => [undefined, error] as const),
+          ]);
+          if (socketError) throw socketError;
+          if (!result || result.done) break;
+
+          const data = result.value;
+          const type = data.type;
+          if (type === 'chunk') {
+            const audioBuffer = Buffer.from(data.data as string, 'base64');
+            const audioData = audioBuffer.buffer.slice(
+              audioBuffer.byteOffset,
+              audioBuffer.byteOffset + audioBuffer.byteLength,
+            );
+            for (const frame of bstream.write(audioData)) {
+              sendLastFrame(contextId, false);
+              lastFrame = frame;
+            }
+          } else if (type === 'timestamps') {
+            const wordTimestamps = data.word_timestamps as Record<string, unknown> | undefined;
+            const words = wordTimestamps?.words as string[] | undefined;
+            const starts = wordTimestamps?.start as number[] | undefined;
+            const ends = wordTimestamps?.end as number[] | undefined;
+            if (words && starts && ends) {
+              const count = Math.min(words.length, starts.length, ends.length);
+              for (let i = 0; i < count; i += 1) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: `${words[i]} `,
+                    startTime: starts[i]!,
+                    endTime: ends[i]!,
+                  }),
+                );
+              }
+            }
+          } else if (type === 'done') {
+            for (const frame of bstream.flush()) {
+              sendLastFrame(contextId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(contextId, true);
+            break;
+          } else if (type === 'error') {
+            throw new APIError(`Rime ws error: ${String(data.message ?? '(no message)')}`);
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
+    const onMessage = (rawData: RawData) => {
+      try {
+        void messageChannel.write(JSON.parse(rawData.toString()));
+      } catch (error) {
+        this.#logger.warn({ error }, 'failed to parse Rime WebSocket message');
+      }
+    };
+    const onClose = (code: number, reason: Buffer) => {
+      if (!this.abortSignal.aborted) {
+        errorFuture.resolve(
+          new APIStatusError({
+            message: `Rime ws closed unexpectedly: ${reason.toString()}`,
+            options: { statusCode: code },
+          }),
+        );
+      }
+      void messageChannel.close();
+    };
+    const onError = (error: Error) => {
+      errorFuture.resolve(error);
+      void messageChannel.close();
+    };
+
+    try {
+      ws = await connectRimeWebSocket({
+        url: wsUrl(this.#opts),
+        apiKey: this.#opts.apiKey!,
+        timeoutMs: this.connOptions.timeoutMs,
+        abortSignal: this.abortSignal,
+      });
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
+
+      await Promise.all([inputTask(), sendTask(), recvTask()]);
+    } catch (error) {
+      if (this.abortSignal.aborted) return;
+      if (error instanceof APIError) throw error;
+      const err = asError(error);
+      if (err.message.includes('timeout')) {
+        throw new APITimeoutError({ message: `Rime WS error: ${err.message}` });
+      }
+      throw new APIConnectionError({ message: `Rime WS error: ${err.message}` });
+    } finally {
+      if (!inputSentFuture.done) inputSentFuture.resolve();
+      this.#tokenizer.close();
+      void messageChannel.close();
+      if (ws) {
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
+        closeRimeWebSocket(ws);
+      }
+    }
+  }
+}
+
+async function connectRimeWebSocket({
+  url,
+  apiKey,
+  timeoutMs,
+  abortSignal,
+}: {
+  url: string;
+  apiKey: string;
+  timeoutMs: number;
+  abortSignal: AbortSignal;
+}): Promise<WebSocket> {
+  if (abortSignal.aborted) throw new Error('aborted');
+  const ws = new WebSocket(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    handshakeTimeout: timeoutMs,
+  });
+  const fut = new Future<void>();
+  let timeout: NodeJS.Timeout | undefined;
+
+  const cleanup = () => {
+    if (timeout) clearTimeout(timeout);
+    ws.off('open', onOpen);
+    ws.off('error', onError);
+    ws.off('close', onClose);
+    abortSignal.removeEventListener('abort', onAbort);
+  };
+  const onOpen = () => fut.resolve();
+  const onError = (error: Error) => fut.reject(error);
+  const onClose = (code: number, reason: Buffer) =>
+    fut.reject(
+      new Error(`WebSocket closed before open (code=${code}, reason=${reason.toString()})`),
+    );
+  const onAbort = () => fut.reject(new Error('aborted'));
+
+  ws.on('open', onOpen);
+  ws.on('error', onError);
+  ws.on('close', onClose);
+  abortSignal.addEventListener('abort', onAbort, { once: true });
+  if (timeoutMs > 0)
+    timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
+
+  try {
+    await fut.await;
+    return ws;
+  } catch (error) {
+    closeRimeWebSocket(ws);
+    throw error;
+  } finally {
+    cleanup();
+  }
+}
+
+function closeRimeWebSocket(ws: WebSocket) {
+  try {
+    ws.on('error', () => {});
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ operation: 'eos' }));
+      ws.close();
+    } else if (ws.readyState !== WebSocket.CLOSED) {
+      ws.terminate();
+    }
+  } catch {
+    // best-effort close
   }
 }
