@@ -723,6 +723,24 @@ export class AgentActivity implements RecognitionHooks {
     return this.audioRecognition?.subscribeAudioStream();
   }
 
+  async updateInstructions(instructions: string): Promise<void> {
+    this.agent._instructions = instructions;
+
+    const configUpdate = new AgentConfigUpdate({ instructions });
+    this.agent._chatCtx.insert(configUpdate);
+    this.agentSession.history.insert(configUpdate);
+
+    if (this.realtimeSession) {
+      await this.realtimeSession.updateInstructions(instructions);
+    } else {
+      updateInstructions({
+        chatCtx: this.agent._chatCtx,
+        instructions,
+        addIfMissing: true,
+      });
+    }
+  }
+
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
     chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
 
