@@ -1,5 +1,5 @@
 ---
-'@livekit/agents': minor
+'@livekit/agents': patch
 ---
 
 feat(agents): add modality-aware `Instructions` with audio/text variants
