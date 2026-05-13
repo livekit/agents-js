@@ -189,6 +189,7 @@ function warnIfNotEvaluated(
  * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
  */
 export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) {
+  private _log = log();
   private readonly llm: LLM;
   /** Dedicated STT for AMD-only transcription, or `undefined` if listening to session events. */
   private readonly stt: STT | undefined;
@@ -373,14 +374,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       try {
         await this.stt.close();
       } catch (e) {
-        log().warn({ err: e }, 'AMD failed to close owned STT');
+        this._log.warn({ err: e }, 'AMD failed to close owned STT');
       }
     }
     if (this.llmOwned) {
       try {
         await this.llm.aclose();
       } catch (e) {
-        log().warn({ err: e }, 'AMD failed to close owned LLM');
+        this._log.warn({ err: e }, 'AMD failed to close owned LLM');
       }
     }
   }
@@ -450,7 +451,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.sttPumpTask = Task.from(({ signal }) => this.runSTTPump(signal));
     this.sttPumpTask.result.catch((err) => {
       if (this.settled) return;
-      log().warn({ err }, 'AMD dedicated STT pump exited with error');
+      this._log.warn({ err }, 'AMD dedicated STT pump exited with error');
     });
   }
 
@@ -514,7 +515,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       } catch (err) {
         if (this.settled) return;
-        log().debug({ err }, 'AMD dedicated STT receive pump error');
+        this._log.debug({ err }, 'AMD dedicated STT receive pump error');
       }
     })();
 
@@ -558,7 +559,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         // room disconnected, aborted by `cleanup`, or the function rejects),
         // fall back to starting the timer so the run still settles within
         // `noSpeechTimeoutMs`.
-        log().debug({ err }, 'AMD track gating failed; starting no-speech timer immediately');
+        this._log.debug({ err }, 'AMD track gating failed; starting no-speech timer immediately');
         if (!this.settled) {
           this.startNoSpeechTimer();
         }
@@ -644,7 +645,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.settled = true;
     this.cleanup();
     this.setSpanAttributes(result);
-    log().info(
+    this._log.info(
       {
         category: result.category,
         reason: result.reason,
@@ -672,7 +673,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       )._onAmdPrediction?.(result);
     } catch (err) {
-      log().debug({ err }, 'AMD: session host failed to handle amd_prediction');
+      this._log.debug({ err }, 'AMD: session host failed to handle amd_prediction');
     }
     this.emit('amd_prediction', result);
   }
@@ -1050,7 +1051,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           abortSignal: undefined as unknown as AbortSignal,
         });
       } catch (error) {
-        log().warn({ error, toolName: tc.name }, 'AMD tool execution failed');
+        this._log.warn({ error, toolName: tc.name }, 'AMD tool execution failed');
       }
     }
 
