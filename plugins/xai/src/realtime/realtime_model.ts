@@ -32,6 +32,10 @@ export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, '
 }
 
 export class RealtimeModel extends OpenAIRealtimeModel {
+  override label(): string {
+    return 'xai.RealtimeModel';
+  }
+
   constructor(options: RealtimeModelOptions = {}) {
     super({
       baseURL: XAI_BASE_URL,

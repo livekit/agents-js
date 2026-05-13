@@ -94,9 +94,7 @@ export abstract class RealtimeModel {
     return 'unknown';
   }
 
-  label(): string {
-    return `${this.provider}/${this.model}`;
-  }
+  abstract label(): string;
 
   abstract session(): RealtimeSession;
 

@@ -153,6 +153,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
   }
 
+  label(): string {
+    return 'openai.RealtimeModel';
+  }
+
   constructor(
     options: {
       model?: string;

@@ -157,6 +157,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     return this._options.model;
   }
 
+  label(): string {
+    return 'google.RealtimeModel';
+  }
+
   constructor(
     options: {
       /**
