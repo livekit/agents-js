@@ -447,7 +447,7 @@ class Connection {
           errorFuture.resolve(
             new APIStatusError({
               message: 'ElevenLabs websocket connection closed unexpectedly',
-              options: { statusCode: code || -1 },
+              options: { statusCode: code },
             }),
           );
         }
