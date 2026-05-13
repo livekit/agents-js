@@ -52,7 +52,16 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  cancelAndWait,
+  isDevMode,
+  isHosted,
+  waitFor,
+  waitUntilTimeout,
+} from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -188,6 +197,9 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
+  // Placeholder used to hold a RunResult open while waiting for a realtime
+  // model to auto-generate a tool reply (autoToolReplyGeneration=true).
+  private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -1067,6 +1079,16 @@ export class AgentActivity implements RecognitionHooks {
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
+
+    const fut = this.pendingAutoToolReplyFut;
+    if (fut && !fut.done) {
+      const runState = this.agentSession._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(handle);
+      }
+      this.pendingAutoToolReplyFut = undefined;
+      fut.resolve();
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
@@ -3030,6 +3052,45 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
+      // If the realtime model auto-generates the tool reply, install a
+      // placeholder so the active RunResult waits for that reply.
+      let fut: Future<void, never> | undefined;
+      if (
+        this.llm.capabilities.autoToolReplyGeneration &&
+        shouldGenerateToolReply &&
+        this.pendingAutoToolReplyFut === undefined
+      ) {
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          fut = new Future();
+          this.pendingAutoToolReplyFut = fut;
+          const llmLabel = this.llm.label();
+          const waitTask = Task.from(
+            async () => {
+              try {
+                await waitUntilTimeout(fut!.await, 5000);
+              } catch (error) {
+                if (error instanceof IdleTimeoutError) {
+                  this.logger.warn(
+                    { llm: llmLabel },
+                    'timed out waiting for realtime auto tool reply',
+                  );
+                  return;
+                }
+                throw error;
+              } finally {
+                if (this.pendingAutoToolReplyFut === fut) {
+                  this.pendingAutoToolReplyFut = undefined;
+                }
+              }
+            },
+            undefined,
+            'AgentActivity.waitForAutoToolReply',
+          );
+          runState._watchHandle(waitTask);
+        }
+      }
+
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
@@ -3037,6 +3098,12 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
+        if (fut && !fut.done) {
+          if (this.pendingAutoToolReplyFut === fut) {
+            this.pendingAutoToolReplyFut = undefined;
+          }
+          fut.resolve();
+        }
       }
     }
 
