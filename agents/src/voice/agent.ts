@@ -21,7 +21,9 @@ import {
   RealtimeModel,
   type ToolChoice,
   type ToolContext,
+  type Toolset,
 } from '../llm/index.js';
+import { toolContextFromTools } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
@@ -118,6 +120,7 @@ export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
+  toolsets?: readonly Toolset<UserData>[];
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -130,6 +133,8 @@ export interface AgentOptions<UserData> {
   /** @deprecated use turnHandling.interruption.enabled instead */
   allowInterruptions?: boolean;
 }
+
+type AgentToolsOptions<UserData> = Omit<ConstructorParameters<typeof Toolset<UserData>>[0], 'id'>;
 
 export class Agent<UserData = any> {
   private _id: string;
@@ -152,13 +157,17 @@ export class Agent<UserData = any> {
   _instructions: string;
 
   /** @internal */
-  _tools?: ToolContext<UserData>;
+  _toolCtx: ToolContext<UserData>;
+
+  /** @internal */
+  _toolsets: Toolset<UserData>[];
 
   constructor({
     id,
     instructions,
     chatCtx,
     tools,
+    toolsets,
     turnDetection,
     stt,
     vad,
@@ -184,10 +193,12 @@ export class Agent<UserData = any> {
     }
 
     this._instructions = instructions;
-    this._tools = { ...tools };
+    this._toolCtx = {};
+    this._toolsets = [];
+    this._setTools({ tools, toolsets });
     this._chatCtx = chatCtx
       ? chatCtx.copy({
-          toolCtx: this._tools,
+          toolCtx: this.toolCtx,
         })
       : ChatContext.empty();
 
@@ -258,7 +269,7 @@ export class Agent<UserData = any> {
   }
 
   get toolCtx(): ToolContext<UserData> {
-    return { ...this._tools };
+    return toolContextFromTools({ tools: this._toolCtx, toolsets: this._toolsets });
   }
 
   get session(): AgentSession<UserData> {
@@ -334,14 +345,26 @@ export class Agent<UserData = any> {
   }
 
   // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
-  async updateTools(tools: ToolContext): Promise<void> {
+  async updateTools(
+    tools: ToolContext<UserData>,
+    toolsets?: readonly Toolset<UserData>[],
+  ): Promise<void> {
     if (!this._agentActivity) {
-      this._tools = { ...tools };
-      this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+      this._setTools({ tools, toolsets });
+      this._chatCtx = this._chatCtx.copy({ toolCtx: this.toolCtx });
       return;
     }
 
-    await this._agentActivity.updateTools(tools);
+    await this._agentActivity.updateTools(tools, toolsets);
+  }
+
+  /** @internal */
+  _setTools(options: {
+    tools?: ToolContext<UserData>;
+    toolsets?: readonly Toolset<UserData>[];
+  }): void {
+    this._toolCtx = { ...options.tools };
+    this._toolsets = Array.from(options.toolsets ?? []);
   }
 
   static default = {

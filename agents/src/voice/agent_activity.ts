@@ -34,6 +34,7 @@ import {
   type ToolChoice,
   type ToolContext,
   ToolFlag,
+  type Toolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
@@ -196,6 +197,7 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
+  private _toolsetsSetup = false;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -401,6 +403,8 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     this.agent._agentActivity = this;
+
+    await this.setupToolsets();
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
@@ -740,13 +744,15 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async updateTools(tools: ToolContext): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentActivity handles tools for any Agent<UserData>
+  async updateTools(tools: ToolContext<any>, toolsets?: readonly Toolset<any>[]): Promise<void> {
     const oldToolNames = new Set(Object.keys(this.tools));
-    const newToolNames = new Set(Object.keys(tools));
+    this.agent._setTools({ tools, toolsets });
+
+    const toolCtx = this.agent.toolCtx;
+    const newToolNames = new Set(Object.keys(toolCtx));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
-
-    this.agent._tools = { ...tools };
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -758,12 +764,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(tools);
+      await this.realtimeSession.updateTools(toolCtx);
     }
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
-      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: tools }));
+      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx }));
     }
   }
 
@@ -3595,8 +3601,42 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSpans?.clear();
     await this.realtimeSession?.close();
     await this.audioRecognition?.close();
+    await this.closeToolsets();
     this.realtimeSession = undefined;
     this.audioRecognition = undefined;
+  }
+
+  private async setupToolsets(): Promise<void> {
+    if (this._toolsetsSetup) {
+      return;
+    }
+
+    const outputs = await Promise.allSettled(
+      this.agent._toolsets.map((toolset) => toolset.setup()),
+    );
+
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error setting up toolset');
+      }
+    }
+    this._toolsetsSetup = true;
+  }
+
+  private async closeToolsets(): Promise<void> {
+    if (!this._toolsetsSetup) {
+      return;
+    }
+
+    const outputs = await Promise.allSettled(
+      this.agent._toolsets.map((toolset) => toolset.aclose()),
+    );
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error closing toolset');
+      }
+    }
+    this._toolsetsSetup = false;
   }
 }
 

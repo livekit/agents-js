@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { tool } from '../llm/index.js';
+import { Toolset, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
@@ -64,6 +64,23 @@ describe('Agent', () => {
     expect(agentTools.getTool2?.description).toBe('Second test tool');
   });
 
+  it('should create agent with a toolset', () => {
+    const lookup = tool({
+      description: 'Lookup test data',
+      parameters: z.object({}),
+      execute: async () => 'lookup result',
+    });
+    const toolset = new Toolset({ id: 'test_toolset', tools: { lookup } });
+
+    const agent = new Agent({
+      instructions: 'You are a helpful assistant with a toolset',
+      toolsets: [toolset],
+    });
+
+    expect(agent.toolCtx.lookup).toBe(lookup);
+    expect('toolsets' in agent).toBe(false);
+  });
+
   it('should return a copy of tools, not the original reference', () => {
     const instructions = 'You are a helpful assistant';
     const mockTool = tool({
@@ -85,6 +102,20 @@ describe('Agent', () => {
     // Should contain the same set of tools
     expect(tools1).toEqual(tools2);
     expect(tools1).toEqual(tools);
+  });
+
+  it('should update tools from a toolset before the agent starts', async () => {
+    const lookup = tool({
+      description: 'Lookup test data',
+      parameters: z.object({}),
+      execute: async () => 'lookup result',
+    });
+    const toolset = new Toolset({ id: 'test_toolset', tools: { lookup } });
+    const agent = new Agent({ instructions: 'You are a helpful assistant' });
+
+    await agent.updateTools({}, [toolset]);
+
+    expect(agent.toolCtx.lookup).toBe(lookup);
   });
 
   it('should require AgentTask to run inside task context', async () => {

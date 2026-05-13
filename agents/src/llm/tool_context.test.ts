@@ -1,14 +1,109 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { type ToolOptions, tool } from './tool_context.js';
+import type { RunContext } from '../voice/run_context.js';
+import {
+  type FunctionTool,
+  type ProviderDefinedTool,
+  type ToolCalledEvent,
+  type ToolCompletedEvent,
+  type ToolOptions,
+  Toolset,
+  tool,
+} from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
+  describe('Toolset', () => {
+    const makeTool = (name: string) =>
+      tool({
+        description: `${name} tool`,
+        parameters: z.object({}),
+        execute: async () => name,
+      });
+
+    it('flattens nested toolsets into a tool context', () => {
+      const first = makeTool('first');
+      const second = makeTool('second');
+      const third = makeTool('third');
+      const child = new Toolset({ id: 'child', tools: { second } });
+      const root = new Toolset({ id: 'root', tools: { first }, toolsets: [child] });
+
+      const ctx: Record<string, unknown> = { ...root.tools, third };
+
+      expect(ctx.first).toBe(first);
+      expect(ctx.second).toBe(second);
+      expect(ctx.third).toBe(third);
+    });
+
+    it('allows duplicate names only for the same function tool instance', () => {
+      const duplicate = makeTool('duplicate');
+      const sameToolset = new Toolset({ id: 'same', tools: { duplicate } });
+
+      expect(
+        new Toolset({ id: 'combined', tools: { duplicate }, toolsets: [sameToolset] }).tools
+          .duplicate,
+      ).toBe(duplicate);
+
+      const otherDuplicate = makeTool('duplicate');
+      expect(
+        () =>
+          new Toolset({
+            id: 'conflict',
+            tools: { duplicate: otherDuplicate },
+            toolsets: [sameToolset],
+          }).tools,
+      ).toThrow('duplicate function name: duplicate');
+    });
+
+    it('recursively sets up and closes nested toolsets', async () => {
+      const events: string[] = [];
+
+      class RecordingToolset extends Toolset {
+        override async setup(): Promise<this> {
+          events.push(`setup:${this.id}`);
+          return await super.setup();
+        }
+
+        override async aclose(): Promise<void> {
+          events.push(`close:${this.id}`);
+          await super.aclose();
+        }
+      }
+
+      const child = new RecordingToolset({ id: 'child' });
+      const root = new RecordingToolset({ id: 'root', toolsets: [child] });
+
+      await root.setup();
+      await root.aclose();
+
+      expect(events).toEqual(['setup:root', 'setup:child', 'close:root', 'close:child']);
+    });
+
+    it('accepts a single merged tool context', () => {
+      const first = makeTool('first');
+      const second = makeTool('second');
+      const baseTools = { first };
+      const extraTools = { second };
+      const toolset = new Toolset({ id: 'merged', tools: { ...baseTools, ...extraTools } });
+
+      expect(toolset.tools).toEqual({ first, second });
+    });
+
+    it('returns nested toolsets as key-value paired tools', () => {
+      const first = makeTool('first');
+      const second = makeTool('second');
+      const child = new Toolset({ id: 'child', tools: { second } });
+      const root = new Toolset({ id: 'root', tools: { first }, toolsets: [child] });
+
+      expect(root.tools).toEqual({ first, second });
+    });
+  });
+
   describe('oaiParams', () => {
     it('should handle basic object schema', () => {
       const schema = z.object({
@@ -403,5 +498,125 @@ describe('Tool Context', () => {
         ).toBe('string');
       });
     });
+  });
+});
+
+describe('tool type inference', () => {
+  it('should infer argument type from zod schema', () => {
+    const toolType = tool({
+      description: 'test',
+      parameters: z.object({ number: z.number() }),
+      execute: async () => 'test' as const,
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
+  });
+
+  it('should infer provider defined tool type', () => {
+    const toolType = tool({
+      id: 'code-interpreter',
+      config: {
+        language: 'python',
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<ProviderDefinedTool>();
+  });
+
+  it('should infer run context type', () => {
+    const toolType = tool({
+      description: 'test',
+      parameters: z.object({ number: z.number() }),
+      execute: async ({ number }, { ctx }: ToolOptions<{ name: string }>) => {
+        return `The number is ${number}, ${ctx.userData.name}`;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      FunctionTool<{ number: number }, { name: string }, string>
+    >();
+  });
+
+  it('should not accept primitive zod schemas', () => {
+    expect(() => {
+      // @ts-expect-error - Testing that non-object schemas are rejected
+      tool({
+        name: 'test',
+        description: 'test',
+        parameters: z.string(),
+        execute: async () => 'test' as const,
+      });
+    }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
+  });
+
+  it('should not accept array schemas', () => {
+    expect(() => {
+      // @ts-expect-error - Testing that array schemas are rejected
+      tool({
+        name: 'test',
+        description: 'test',
+        parameters: z.array(z.string()),
+        execute: async () => 'test' as const,
+      });
+    }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
+  });
+
+  it('should not accept union schemas', () => {
+    expect(() => {
+      // @ts-expect-error - Testing that union schemas are rejected
+      tool({
+        name: 'test',
+        description: 'test',
+        parameters: z.union([z.object({ a: z.string() }), z.object({ b: z.number() })]),
+        execute: async () => 'test' as const,
+      });
+    }).toThrowError('Tool parameters must be a Zod object schema (z.object(...))');
+  });
+
+  it('should not accept non-Zod values as parameters', () => {
+    expect(() => {
+      // @ts-expect-error - Testing that non-Zod values are rejected
+      tool({
+        name: 'test',
+        description: 'test',
+        parameters: 'invalid schema',
+        execute: async () => 'test' as const,
+      });
+    }).toThrowError('Tool parameters must be a Zod object schema or a raw JSON schema');
+  });
+
+  it('should infer empty object type when parameters are omitted', () => {
+    const toolType = tool({
+      description: 'Simple action without parameters',
+      execute: async () => 'done' as const,
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<FunctionTool<Record<string, never>, unknown, 'done'>>();
+  });
+
+  it('should infer correct types with context but no parameters', () => {
+    const toolType = tool({
+      description: 'Action with context',
+      execute: async (args, { ctx }: ToolOptions<{ userId: number }>) => {
+        expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
+        expectTypeOf(ctx.userData.userId).toEqualTypeOf<number>();
+        return ctx.userData.userId;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      FunctionTool<Record<string, never>, { userId: number }, number>
+    >();
+  });
+
+  it('should type toolset event payloads', () => {
+    expectTypeOf<ToolCalledEvent<{ userId: string }>>().toEqualTypeOf<{
+      ctx: RunContext<{ userId: string }>;
+      arguments: Record<string, unknown>;
+    }>();
+    expectTypeOf<ToolCompletedEvent<{ userId: string }>>().toEqualTypeOf<{
+      ctx: RunContext<{ userId: string }>;
+      output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
+    }>();
   });
 });

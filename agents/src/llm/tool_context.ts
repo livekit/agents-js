@@ -196,6 +196,96 @@ export type ToolContext<UserData = UnknownUserData> = {
   [name: string]: FunctionTool<any, UserData, any>;
 };
 
+type ToolsetToolsOptions<UserData = UnknownUserData> = {
+  tools?: ToolContext<UserData>;
+  toolsets?: readonly Toolset<UserData>[];
+};
+
+export interface ToolCalledEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolCompletedEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
+}
+
+export class Toolset<UserData = UnknownUserData> {
+  readonly #id: string;
+  readonly #tools: ToolContext<UserData>;
+  readonly #toolsets: Toolset<UserData>[];
+
+  constructor({
+    id,
+    tools,
+    toolsets,
+  }: {
+    id: string;
+    tools?: ToolContext<UserData>;
+    toolsets?: readonly Toolset<UserData>[];
+  }) {
+    this.#id = id;
+    this.#tools = { ...tools };
+    this.#toolsets = Array.from(toolsets ?? []);
+  }
+
+  get id(): string {
+    return this.#id;
+  }
+
+  // JS keeps runtime tools as keyed ToolContext maps, so nested Toolsets are flattened here.
+  get tools(): ToolContext<UserData> {
+    return toolContextFromTools({ tools: this.#tools, toolsets: this.#toolsets });
+  }
+
+  async setup(): Promise<this> {
+    await Promise.all(this.#toolsets.map((toolset) => toolset.setup()));
+    return this;
+  }
+
+  async aclose(): Promise<void> {
+    await Promise.all(this.#toolsets.map((toolset) => toolset.aclose()));
+  }
+}
+
+/** @internal */
+export function toolContextFromTools<UserData = UnknownUserData>(
+  options: ToolsetToolsOptions<UserData>,
+): ToolContext<UserData> {
+  const { tools, toolsets } = options;
+  const toolCtx: ToolContext<UserData> = {};
+
+  const addFunctionTool = (
+    name: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool registry stores generic function tools
+    functionTool: FunctionTool<any, UserData, any>,
+  ) => {
+    const existing = toolCtx[name];
+    if (existing) {
+      if (existing !== functionTool) {
+        throw new Error(`duplicate function name: ${name}`);
+      }
+      return;
+    }
+    toolCtx[name] = functionTool;
+  };
+
+  if (tools) {
+    for (const [name, functionTool] of Object.entries(tools)) {
+      addFunctionTool(name, functionTool);
+    }
+  }
+
+  for (const toolset of toolsets ?? []) {
+    for (const [name, functionTool] of Object.entries(toolset.tools)) {
+      addFunctionTool(name, functionTool);
+    }
+  }
+
+  return toolCtx;
+}
+
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
   const toolNames = new Set(Object.keys(ctx1));
   const toolNames2 = new Set(Object.keys(ctx2));
