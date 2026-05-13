@@ -52,7 +52,16 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  cancelAndWait,
+  isDevMode,
+  isHosted,
+  waitFor,
+  waitUntilTimeout,
+} from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -3052,23 +3061,21 @@ export class AgentActivity implements RecognitionHooks {
         if (runState && !runState.done()) {
           autoToolReplyFut = new Future();
           this.pendingAutoToolReplyFut = autoToolReplyFut;
-          const llmLabel = `${this.llm.provider}/${this.llm.model}`;
+          const llmLabel = this.llm.label();
           const waitTask = Task.from(
             async () => {
-              await new Promise<void>((resolve) => {
-                const timeoutId = setTimeout(() => {
+              try {
+                await waitUntilTimeout(autoToolReplyFut!.await, 5000);
+              } catch (error) {
+                if (error instanceof IdleTimeoutError) {
                   this.logger.warn(
-                    { model: llmLabel },
+                    { llm: llmLabel },
                     'timed out waiting for realtime auto tool reply',
                   );
-                  resolve();
-                }, 5000);
-
-                void autoToolReplyFut!.await.then(() => {
-                  clearTimeout(timeoutId);
-                  resolve();
-                });
-              });
+                  return;
+                }
+                throw error;
+              }
             },
             undefined,
             'AgentActivity.waitForAutoToolReply',

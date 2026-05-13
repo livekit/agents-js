@@ -94,6 +94,10 @@ export abstract class RealtimeModel {
     return 'unknown';
   }
 
+  label(): string {
+    return `${this.provider}/${this.model}`;
+  }
+
   abstract session(): RealtimeSession;
 
   abstract close(): Promise<void>;
