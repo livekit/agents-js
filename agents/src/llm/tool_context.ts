@@ -218,7 +218,7 @@ export class Toolset<UserData = UnknownUserData> {
     this.#id = id;
     this.#tools = { ...tools };
     // Stamp each owned tool with a reference to this Toolset so it can be discovered later
-    // from any ToolContext via getToolsetReference(). Tools spread from another Toolset get
+    // from any ToolContext via getOwningToolset(). Tools spread from another Toolset get
     // their reference overwritten — composition via spread does not preserve the inner owner.
     for (const functionTool of Object.values(this.#tools)) {
       Object.defineProperty(functionTool, TOOLSET_REF_SYMBOL, {
@@ -249,7 +249,7 @@ export class Toolset<UserData = UnknownUserData> {
  * Returns the Toolset that owns the given tool, or undefined if the tool was not registered
  * through a Toolset.
  */
-export function getToolsetReference<UserData = UnknownUserData>(
+export function getOwningToolset<UserData = UnknownUserData>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tools accept any parameter/result types
   functionTool: FunctionTool<any, UserData, any>,
 ): Toolset<UserData> | undefined {
@@ -267,7 +267,7 @@ export function collectToolsets<UserData = UnknownUserData>(
 ): Toolset<UserData>[] {
   const seen = new Set<Toolset<UserData>>();
   for (const functionTool of Object.values(toolCtx)) {
-    const toolset = getToolsetReference(functionTool);
+    const toolset = getOwningToolset(functionTool);
     if (toolset) {
       seen.add(toolset);
     }

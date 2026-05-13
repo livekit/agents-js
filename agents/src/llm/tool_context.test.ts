@@ -14,7 +14,7 @@ import {
   type ToolOptions,
   Toolset,
   collectToolsets,
-  getToolsetReference,
+  getOwningToolset,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
@@ -41,22 +41,22 @@ describe('Tool Context', () => {
       const second = makeTool('second');
       const toolset = new Toolset({ id: 'tagged', tools: { first, second } });
 
-      expect(getToolsetReference(first)).toBe(toolset);
-      expect(getToolsetReference(second)).toBe(toolset);
+      expect(getOwningToolset(first)).toBe(toolset);
+      expect(getOwningToolset(second)).toBe(toolset);
     });
 
     it('overwrites prior Toolset references when a tool is reused in a new Toolset', () => {
       const shared = makeTool('shared');
       const first = new Toolset({ id: 'first', tools: { shared } });
-      expect(getToolsetReference(shared)).toBe(first);
+      expect(getOwningToolset(shared)).toBe(first);
 
       const second = new Toolset({ id: 'second', tools: { shared } });
-      expect(getToolsetReference(shared)).toBe(second);
+      expect(getOwningToolset(shared)).toBe(second);
     });
 
     it('leaves direct tools without a Toolset reference', () => {
       const direct = makeTool('direct');
-      expect(getToolsetReference(direct)).toBeUndefined();
+      expect(getOwningToolset(direct)).toBeUndefined();
     });
 
     it('default setup and aclose are no-ops', async () => {
