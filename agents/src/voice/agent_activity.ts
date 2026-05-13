@@ -188,6 +188,7 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
+  private pendingAutoToolReplyFuture?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -1067,6 +1068,16 @@ export class AgentActivity implements RecognitionHooks {
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
+
+    const autoReplyFuture = this.pendingAutoToolReplyFuture;
+    if (autoReplyFuture && !autoReplyFuture.done) {
+      const runState = this.agentSession._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(handle);
+      }
+      this.pendingAutoToolReplyFuture = undefined;
+      autoReplyFuture.resolve();
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
@@ -3023,6 +3034,50 @@ export class AgentActivity implements RecognitionHooks {
           await new ThrowsPromise<void, never>((resolve) => setImmediate(resolve));
         }
       }
+
+      let autoReplyFuture: Future<void, never> | undefined;
+      if (
+        this.llm.capabilities.autoToolReplyGeneration &&
+        shouldGenerateToolReply &&
+        !this.pendingAutoToolReplyFuture
+      ) {
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          const pendingAutoReplyFuture = new Future<void, never>();
+          autoReplyFuture = pendingAutoReplyFuture;
+          this.pendingAutoToolReplyFuture = pendingAutoReplyFuture;
+          const llmLabel = `${this.llm.provider}/${this.llm.model}`;
+          const task = Task.from(
+            async () => {
+              let timeout: NodeJS.Timeout | undefined;
+              try {
+                const timedOut = await new Promise<boolean>((resolve) => {
+                  timeout = setTimeout(() => resolve(true), 5000);
+                  pendingAutoReplyFuture.await.then(() => resolve(false));
+                });
+
+                if (timedOut) {
+                  this.logger.warn(
+                    { llm: llmLabel },
+                    'timed out waiting for realtime auto tool reply',
+                  );
+                }
+              } finally {
+                if (timeout) {
+                  clearTimeout(timeout);
+                }
+                if (this.pendingAutoToolReplyFuture === pendingAutoReplyFuture) {
+                  this.pendingAutoToolReplyFuture = undefined;
+                }
+              }
+            },
+            undefined,
+            'AgentActivity.waitForAutoToolReply',
+          );
+          runState._watchHandle(task);
+        }
+      }
+
       const chatCtx = this.realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
 
@@ -3037,6 +3092,12 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
+        if (autoReplyFuture && !autoReplyFuture.done) {
+          if (this.pendingAutoToolReplyFuture === autoReplyFuture) {
+            this.pendingAutoToolReplyFuture = undefined;
+          }
+          autoReplyFuture.resolve();
+        }
       }
     }
 
