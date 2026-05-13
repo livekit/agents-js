@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  collectToolsets,
+  getToolsetReference,
   handoff,
   isFunctionTool,
   tool,

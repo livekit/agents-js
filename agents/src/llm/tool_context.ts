@@ -196,11 +196,6 @@ export type ToolContext<UserData = UnknownUserData> = {
   [name: string]: FunctionTool<any, UserData, any>;
 };
 
-type ToolsetToolsOptions<UserData = UnknownUserData> = {
-  tools?: ToolContext<UserData>;
-  toolsets?: readonly Toolset<UserData>[];
-};
-
 export interface ToolCalledEvent<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
   arguments: Record<string, unknown>;
@@ -211,79 +206,73 @@ export interface ToolCompletedEvent<UserData = UnknownUserData> {
   output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
 }
 
+// Symbol used to back-reference the owning Toolset from each FunctionTool. Registered in the
+// global symbol registry so cross-realm equality holds.
+export const TOOLSET_REF_SYMBOL = Symbol.for('livekit.agents.Toolset');
+
 export class Toolset<UserData = UnknownUserData> {
   readonly #id: string;
   readonly #tools: ToolContext<UserData>;
-  readonly #toolsets: Toolset<UserData>[];
 
-  constructor({
-    id,
-    tools,
-    toolsets,
-  }: {
-    id: string;
-    tools?: ToolContext<UserData>;
-    toolsets?: readonly Toolset<UserData>[];
-  }) {
+  constructor({ id, tools }: { id: string; tools?: ToolContext<UserData> }) {
     this.#id = id;
     this.#tools = { ...tools };
-    this.#toolsets = Array.from(toolsets ?? []);
+    // Stamp each owned tool with a reference to this Toolset so it can be discovered later
+    // from any ToolContext via getToolsetReference(). Tools spread from another Toolset get
+    // their reference overwritten — composition via spread does not preserve the inner owner.
+    for (const functionTool of Object.values(this.#tools)) {
+      Object.defineProperty(functionTool, TOOLSET_REF_SYMBOL, {
+        value: this,
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+    }
   }
 
   get id(): string {
     return this.#id;
   }
 
-  // JS keeps runtime tools as keyed ToolContext maps, so nested Toolsets are flattened here.
-  get tools(): ToolContext<UserData> {
-    return toolContextFromTools({ tools: this.#tools, toolsets: this.#toolsets });
+  get toolCtx(): ToolContext<UserData> {
+    return { ...this.#tools };
   }
 
   async setup(): Promise<this> {
-    await Promise.all(this.#toolsets.map((toolset) => toolset.setup()));
     return this;
   }
 
-  async aclose(): Promise<void> {
-    await Promise.all(this.#toolsets.map((toolset) => toolset.aclose()));
-  }
+  async aclose(): Promise<void> {}
 }
 
-/** @internal */
-export function toolContextFromTools<UserData = UnknownUserData>(
-  options: ToolsetToolsOptions<UserData>,
-): ToolContext<UserData> {
-  const { tools, toolsets } = options;
-  const toolCtx: ToolContext<UserData> = {};
+/**
+ * Returns the Toolset that owns the given tool, or undefined if the tool was not registered
+ * through a Toolset.
+ */
+export function getToolsetReference<UserData = UnknownUserData>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tools accept any parameter/result types
+  functionTool: FunctionTool<any, UserData, any>,
+): Toolset<UserData> | undefined {
+  return (functionTool as unknown as Record<symbol, Toolset<UserData> | undefined>)[
+    TOOLSET_REF_SYMBOL
+  ];
+}
 
-  const addFunctionTool = (
-    name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool registry stores generic function tools
-    functionTool: FunctionTool<any, UserData, any>,
-  ) => {
-    const existing = toolCtx[name];
-    if (existing) {
-      if (existing !== functionTool) {
-        throw new Error(`duplicate function name: ${name}`);
-      }
-      return;
-    }
-    toolCtx[name] = functionTool;
-  };
-
-  if (tools) {
-    for (const [name, functionTool] of Object.entries(tools)) {
-      addFunctionTool(name, functionTool);
-    }
-  }
-
-  for (const toolset of toolsets ?? []) {
-    for (const [name, functionTool] of Object.entries(toolset.tools)) {
-      addFunctionTool(name, functionTool);
+/**
+ * Walks a ToolContext and returns the unique set of Toolsets that own its tools (deduped by
+ * reference). Tools without an owning Toolset are ignored.
+ */
+export function collectToolsets<UserData = UnknownUserData>(
+  toolCtx: ToolContext<UserData>,
+): Toolset<UserData>[] {
+  const seen = new Set<Toolset<UserData>>();
+  for (const functionTool of Object.values(toolCtx)) {
+    const toolset = getToolsetReference(functionTool);
+    if (toolset) {
+      seen.add(toolset);
     }
   }
-
-  return toolCtx;
+  return Array.from(seen);
 }
 
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {

@@ -53,7 +53,9 @@ export default defineAgent({
     const agent = new voice.Agent({
       instructions:
         'You are a helpful assistant. Use the location toolset when users ask about weather or timezones.',
-      toolsets: [locationTools],
+      tools: {
+        ...locationTools.toolCtx,
+      },
     });
 
     const session = new voice.AgentSession({

@@ -257,31 +257,19 @@ describe('AgentActivity - toolset updates', () => {
     const oldToolset = new RecordingToolset({ id: 'old_toolset', tools: { oldTool } });
     const newToolset = new RecordingToolset({ id: 'new_toolset', tools: { newTool } });
 
-    let currentToolCtx: ToolContext = oldToolset.tools;
     const agent = {
       _chatCtx: {
         insert: vi.fn(),
       },
-      _setTools: vi.fn(
-        ({ tools, toolsets }: { tools?: ToolContext; toolsets?: readonly Toolset[] }) => {
-          agent._toolsets = Array.from(toolsets ?? []);
-          currentToolCtx = new Toolset({
-            id: 'agent_tools',
-            tools,
-            toolsets: agent._toolsets,
-          }).tools;
-        },
-      ),
-      _toolsets: [oldToolset] as Toolset[],
+      _toolCtx: { ...oldToolset.toolCtx } as ToolContext,
     };
     Object.defineProperty(agent, 'toolCtx', {
-      get: () => currentToolCtx,
+      get: () => ({ ...agent._toolCtx }),
     });
 
     const updateTools = (AgentActivity.prototype as Record<string, unknown>).updateTools as (
       this: unknown,
       tools: ToolContext,
-      toolsets?: readonly Toolset[],
     ) => Promise<void>;
     const setupToolsets = (AgentActivity.prototype as Record<string, unknown>).setupToolsets;
     const closeToolsets = (AgentActivity.prototype as Record<string, unknown>).closeToolsets;
@@ -302,14 +290,14 @@ describe('AgentActivity - toolset updates', () => {
       },
       setupToolsets,
       closeToolsets,
-      tools: currentToolCtx,
     };
 
-    await updateTools.call(fakeActivity, {}, [newToolset]);
+    await updateTools.call(fakeActivity, { ...newToolset.toolCtx });
 
     expect(events).toEqual(['setup:new_toolset', 'close:old_toolset']);
-    expect(agent.toolCtx.newTool).toBe(newTool);
-    expect(agent.toolCtx.oldTool).toBeUndefined();
+    const finalCtx = (agent as { toolCtx: ToolContext }).toolCtx;
+    expect(finalCtx.newTool).toBe(newTool);
+    expect(finalCtx.oldTool).toBeUndefined();
   });
 });
 

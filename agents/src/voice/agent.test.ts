@@ -64,7 +64,7 @@ describe('Agent', () => {
     expect(agentTools.getTool2?.description).toBe('Second test tool');
   });
 
-  it('should create agent with a toolset', () => {
+  it('should create agent with a toolset spread into tools', () => {
     const lookup = tool({
       description: 'Lookup test data',
       parameters: z.object({}),
@@ -74,7 +74,7 @@ describe('Agent', () => {
 
     const agent = new Agent({
       instructions: 'You are a helpful assistant with a toolset',
-      toolsets: [toolset],
+      tools: { ...toolset.toolCtx },
     });
 
     expect(agent.toolCtx.lookup).toBe(lookup);
@@ -113,7 +113,7 @@ describe('Agent', () => {
     const toolset = new Toolset({ id: 'test_toolset', tools: { lookup } });
     const agent = new Agent({ instructions: 'You are a helpful assistant' });
 
-    await agent.updateTools({}, [toolset]);
+    await agent.updateTools({ ...toolset.toolCtx });
 
     expect(agent.toolCtx.lookup).toBe(lookup);
   });

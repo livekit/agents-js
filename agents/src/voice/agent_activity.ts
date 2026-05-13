@@ -35,6 +35,7 @@ import {
   type ToolContext,
   ToolFlag,
   type Toolset,
+  collectToolsets,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
@@ -745,25 +746,23 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentActivity handles tools for any Agent<UserData>
-  async updateTools(tools: ToolContext<any>, toolsets?: readonly Toolset<any>[]): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.tools));
-    const oldToolsets = this.agent._toolsets;
-    const newToolsets = Array.from(toolsets ?? []);
+  async updateTools(tools: ToolContext<any>): Promise<void> {
+    const oldToolCtx = this.agent.toolCtx;
+    const oldToolNames = new Set(Object.keys(oldToolCtx));
+    const oldToolsets = collectToolsets(oldToolCtx);
+
+    this.agent._toolCtx = { ...tools };
+
+    const toolCtx = this.agent.toolCtx;
+    const newToolNames = new Set(Object.keys(toolCtx));
+    const newToolsets = collectToolsets(toolCtx);
+    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
+    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
     const addedToolsets = newToolsets.filter((toolset) => !oldToolsets.includes(toolset));
     const removedToolsets = oldToolsets.filter((toolset) => !newToolsets.includes(toolset));
 
     if (this._toolsetsSetup) {
       await this.setupToolsets(addedToolsets, false);
-    }
-
-    this.agent._setTools({ tools, toolsets });
-
-    const toolCtx = this.agent.toolCtx;
-    const newToolNames = new Set(Object.keys(toolCtx));
-    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
-    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
-
-    if (this._toolsetsSetup) {
       await this.closeToolsets(removedToolsets, false);
     }
 
@@ -3620,7 +3619,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async setupToolsets(
-    toolsets: readonly Toolset[] = this.agent._toolsets,
+    toolsets: readonly Toolset[] = collectToolsets(this.agent.toolCtx),
     updateSetupState = true,
   ): Promise<void> {
     if (updateSetupState && this._toolsetsSetup) {
@@ -3640,7 +3639,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async closeToolsets(
-    toolsets: readonly Toolset[] = this.agent._toolsets,
+    toolsets: readonly Toolset[] = collectToolsets(this.agent.toolCtx),
     updateSetupState = true,
   ): Promise<void> {
     if (updateSetupState && !this._toolsetsSetup) {

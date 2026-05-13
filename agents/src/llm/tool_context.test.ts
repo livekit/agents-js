@@ -13,6 +13,8 @@ import {
   type ToolCompletedEvent,
   type ToolOptions,
   Toolset,
+  collectToolsets,
+  getToolsetReference,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
@@ -26,81 +28,92 @@ describe('Tool Context', () => {
         execute: async () => name,
       });
 
-    it('flattens nested toolsets into a tool context', () => {
+    it('exposes its tools via toolCtx', () => {
       const first = makeTool('first');
       const second = makeTool('second');
-      const third = makeTool('third');
-      const child = new Toolset({ id: 'child', tools: { second } });
-      const root = new Toolset({ id: 'root', tools: { first }, toolsets: [child] });
+      const toolset = new Toolset({ id: 'merged', tools: { first, second } });
 
-      const ctx: Record<string, unknown> = { ...root.tools, third };
-
-      expect(ctx.first).toBe(first);
-      expect(ctx.second).toBe(second);
-      expect(ctx.third).toBe(third);
+      expect(toolset.toolCtx).toEqual({ first, second });
     });
 
-    it('allows duplicate names only for the same function tool instance', () => {
-      const duplicate = makeTool('duplicate');
-      const sameToolset = new Toolset({ id: 'same', tools: { duplicate } });
+    it('stamps each owned tool with a back-reference to the Toolset', () => {
+      const first = makeTool('first');
+      const second = makeTool('second');
+      const toolset = new Toolset({ id: 'tagged', tools: { first, second } });
 
-      expect(
-        new Toolset({ id: 'combined', tools: { duplicate }, toolsets: [sameToolset] }).tools
-          .duplicate,
-      ).toBe(duplicate);
-
-      const otherDuplicate = makeTool('duplicate');
-      expect(
-        () =>
-          new Toolset({
-            id: 'conflict',
-            tools: { duplicate: otherDuplicate },
-            toolsets: [sameToolset],
-          }).tools,
-      ).toThrow('duplicate function name: duplicate');
+      expect(getToolsetReference(first)).toBe(toolset);
+      expect(getToolsetReference(second)).toBe(toolset);
     });
 
-    it('recursively sets up and closes nested toolsets', async () => {
+    it('overwrites prior Toolset references when a tool is reused in a new Toolset', () => {
+      const shared = makeTool('shared');
+      const first = new Toolset({ id: 'first', tools: { shared } });
+      expect(getToolsetReference(shared)).toBe(first);
+
+      const second = new Toolset({ id: 'second', tools: { shared } });
+      expect(getToolsetReference(shared)).toBe(second);
+    });
+
+    it('leaves direct tools without a Toolset reference', () => {
+      const direct = makeTool('direct');
+      expect(getToolsetReference(direct)).toBeUndefined();
+    });
+
+    it('default setup and aclose are no-ops', async () => {
+      const toolset = new Toolset({ id: 'noop' });
+      await expect(toolset.setup()).resolves.toBe(toolset);
+      await expect(toolset.aclose()).resolves.toBeUndefined();
+    });
+
+    it('lets subclasses override lifecycle hooks', async () => {
       const events: string[] = [];
 
       class RecordingToolset extends Toolset {
         override async setup(): Promise<this> {
           events.push(`setup:${this.id}`);
-          return await super.setup();
+          return this;
         }
 
         override async aclose(): Promise<void> {
           events.push(`close:${this.id}`);
-          await super.aclose();
         }
       }
 
-      const child = new RecordingToolset({ id: 'child' });
-      const root = new RecordingToolset({ id: 'root', toolsets: [child] });
+      const toolset = new RecordingToolset({ id: 'recording' });
+      await toolset.setup();
+      await toolset.aclose();
 
-      await root.setup();
-      await root.aclose();
+      expect(events).toEqual(['setup:recording', 'close:recording']);
+    });
+  });
 
-      expect(events).toEqual(['setup:root', 'setup:child', 'close:root', 'close:child']);
+  describe('collectToolsets', () => {
+    const makeTool = (name: string) =>
+      tool({
+        description: `${name} tool`,
+        parameters: z.object({}),
+        execute: async () => name,
+      });
+
+    it('returns the unique set of Toolsets backing a ToolContext', () => {
+      const a = makeTool('a');
+      const b = makeTool('b');
+      const c = makeTool('c');
+      const direct = makeTool('direct');
+
+      const left = new Toolset({ id: 'left', tools: { a, b } });
+      const right = new Toolset({ id: 'right', tools: { c } });
+
+      const ctx = { ...left.toolCtx, ...right.toolCtx, direct };
+      const toolsets = collectToolsets(ctx);
+
+      expect(toolsets).toHaveLength(2);
+      expect(new Set(toolsets)).toEqual(new Set([left, right]));
     });
 
-    it('accepts a single merged tool context', () => {
-      const first = makeTool('first');
-      const second = makeTool('second');
-      const baseTools = { first };
-      const extraTools = { second };
-      const toolset = new Toolset({ id: 'merged', tools: { ...baseTools, ...extraTools } });
-
-      expect(toolset.tools).toEqual({ first, second });
-    });
-
-    it('returns nested toolsets as key-value paired tools', () => {
-      const first = makeTool('first');
-      const second = makeTool('second');
-      const child = new Toolset({ id: 'child', tools: { second } });
-      const root = new Toolset({ id: 'root', tools: { first }, toolsets: [child] });
-
-      expect(root.tools).toEqual({ first, second });
+    it('returns an empty array when no tool carries a Toolset reference', () => {
+      const direct = makeTool('direct');
+      expect(collectToolsets({ direct })).toEqual([]);
     });
   });
 
