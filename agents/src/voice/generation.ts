@@ -12,6 +12,7 @@ import {
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
+  Instructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
@@ -379,7 +380,7 @@ export function createToolOutput(params: {
   });
 }
 
-const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
+export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
 
 /**
  * Update the instruction message in the chat context or insert a new one if missing.
@@ -394,7 +395,7 @@ const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
  */
 export function updateInstructions(options: {
   chatCtx: ChatContext;
-  instructions: string;
+  instructions: string | Instructions;
   addIfMissing: boolean;
 }) {
   const { chatCtx, instructions, addIfMissing } = options;
@@ -422,6 +423,43 @@ export function updateInstructions(options: {
       }),
     );
   }
+}
+
+/**
+ * Apply the correct {@link Instructions} variant for the turn's input modality.
+ *
+ * Locates the instructions message (by {@link INSTRUCTIONS_MESSAGE_ID}) and,
+ * if its content contains any {@link Instructions} entries, rebuilds the
+ * message so each Instructions renders as the chosen variant. No-op when no
+ * modality-aware instructions are present.
+ */
+export function applyInstructionsModality(
+  chatCtx: ChatContext,
+  options: { modality: 'audio' | 'text' },
+) {
+  const { modality } = options;
+  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+  if (idx === undefined) return;
+
+  const item = chatCtx.items[idx]!;
+  if (item.type !== 'message') return;
+
+  const hasModalitySpecific = item.content.some((c) => c instanceof Instructions);
+  if (!hasModalitySpecific) return;
+
+  // ChatContext.copy shadows the original item; create a new instance so the
+  // base context's content isn't mutated when the same Instructions is reused
+  // across turns.
+  chatCtx.items[idx] = ChatMessage.create({
+    id: item.id,
+    role: item.role,
+    content: item.content.map((c) => (c instanceof Instructions ? c.asModality(modality) : c)),
+    interrupted: item.interrupted,
+    createdAt: item.createdAt,
+    transcriptConfidence: item.transcriptConfidence,
+    metrics: item.metrics,
+    extra: item.extra,
+  });
 }
 
 export function performLLMInference(

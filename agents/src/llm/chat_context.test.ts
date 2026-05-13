@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
   type AudioContent,
@@ -12,7 +13,9 @@ import {
   FunctionCall,
   FunctionCallOutput,
   type ImageContent,
+  Instructions,
   ReadonlyChatContext,
+  concatInstructions,
 } from './chat_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
@@ -1233,5 +1236,159 @@ describe('ChatContext.isEquivalent', () => {
 
       expect(ctx1.isEquivalent(ctx2)).toBe(true);
     });
+  });
+});
+
+describe('Instructions', () => {
+  it('serializes to a dict with both variants and round-trips through toJSON', () => {
+    const instr = new Instructions('audio variant', { text: 'text variant' });
+
+    const ctx = new ChatContext([ChatMessage.create({ role: 'system', content: [instr] })]);
+    const data = ctx.toJSON();
+    const items = (data.items as Record<string, unknown>[])!;
+    const content = (items[0]!.content as Record<string, unknown>[])![0]!;
+
+    expect(content).toEqual({
+      type: 'instructions',
+      audio: 'audio variant',
+      text: 'text variant',
+    });
+  });
+
+  it('omits the text key in toJSON when only audio variant is provided', () => {
+    const instr = new Instructions('audio only');
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'audio only' });
+  });
+
+  it('falls back text -> audio when no text variant is provided', () => {
+    const instr = new Instructions('audio only');
+    expect(instr.audio).toBe('audio only');
+    expect(instr.text).toBe('audio only');
+    expect(instr.value).toBe('audio only');
+  });
+
+  it('concatenates two Instructions, propagating both variants', () => {
+    const a = new Instructions('audio A', { text: 'text A' });
+    const b = new Instructions('audio B', { text: 'text B' });
+    const result = a.concat(b);
+    expect(result).toBeInstanceOf(Instructions);
+    expect(result.audio).toBe('audio Aaudio B');
+    expect(result.text).toBe('text Atext B');
+  });
+
+  it('concatenates Instructions + string, propagating both variants', () => {
+    const instr = new Instructions('audio', { text: 'text' });
+    const result = instr.concat(' suffix');
+    expect(result.audio).toBe('audio suffix');
+    expect(result.text).toBe('text suffix');
+  });
+
+  it('concatInstructions handles string + Instructions (radd-style)', () => {
+    const instr = new Instructions('audio', { text: 'text' });
+    const result = concatInstructions('prefix ', instr);
+    expect(result).toBeInstanceOf(Instructions);
+    if (!(result instanceof Instructions)) return;
+    expect(result.audio).toBe('prefix audio');
+    expect(result.text).toBe('prefix text');
+  });
+
+  it('preserves text=undefined when concatenating an audio-only instructions', () => {
+    const audioOnly = new Instructions('audio only');
+    const result = audioOnly.concat(' more');
+    expect(result.textVariant).toBeUndefined();
+    expect(result.audio).toBe('audio only more');
+    expect(result.text).toBe('audio only more');
+  });
+
+  it('when only one side has a text variant, the other contributes its audio', () => {
+    const a = new Instructions('audio A', { text: 'text A' });
+    const b = new Instructions('audio B');
+    const result = concatInstructions(a, ' ', b);
+    expect(result).toBeInstanceOf(Instructions);
+    if (!(result instanceof Instructions)) return;
+    expect(result.audio).toBe('audio A audio B');
+    expect(result.text).toBe('text A audio B');
+  });
+
+  it('asModality returns a copy with both variants preserved', () => {
+    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+
+    let resolved = instr.asModality('audio');
+    expect(resolved.value).toBe('audio instructions');
+    expect(resolved.audio).toBe('audio instructions');
+    expect(resolved.text).toBe('text instructions');
+
+    resolved = instr.asModality('text');
+    expect(resolved.value).toBe('text instructions');
+    expect(resolved.audio).toBe('audio instructions');
+    expect(resolved.text).toBe('text instructions');
+  });
+
+  it('can switch modality after a previous resolution', () => {
+    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const resolvedText = instr.asModality('text');
+    const resolvedAudio = resolvedText.asModality('audio');
+    expect(resolvedAudio.value).toBe('audio instructions');
+  });
+
+  it('asModality on audio-only Instructions returns audio for both modalities', () => {
+    const audioOnly = new Instructions('audio only');
+    expect(audioOnly.asModality('audio').value).toBe('audio only');
+    expect(audioOnly.asModality('text').value).toBe('audio only');
+  });
+
+  it('applyInstructionsModality rewrites the system message content', () => {
+    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instr],
+      }),
+    ]);
+
+    applyInstructionsModality(ctx, { modality: 'audio' });
+    let content = (ctx.items[0]! as ChatMessage).content[0]!;
+    expect(content instanceof Instructions ? content.value : '').toBe('audio instructions');
+
+    applyInstructionsModality(ctx, { modality: 'text' });
+    content = (ctx.items[0]! as ChatMessage).content[0]!;
+    expect(content instanceof Instructions ? content.value : '').toBe('text instructions');
+  });
+
+  it('applyInstructionsModality is a no-op when content has no Instructions', () => {
+    const ctx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: ['plain string instructions'],
+      }),
+    ]);
+    const before = (ctx.items[0]! as ChatMessage).content[0];
+    applyInstructionsModality(ctx, { modality: 'text' });
+    expect((ctx.items[0]! as ChatMessage).content[0]).toBe(before);
+  });
+
+  it('survives copy and lets a different modality be applied to the copy', () => {
+    const instr = new Instructions('audio instructions', { text: 'text instructions' });
+    const baseCtx = new ChatContext([
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instr],
+      }),
+    ]);
+    const turn1 = baseCtx.copy();
+    applyInstructionsModality(turn1, { modality: 'text' });
+    const turn2 = turn1.copy();
+    applyInstructionsModality(turn2, { modality: 'audio' });
+
+    const turn2Content = (turn2.items[0]! as ChatMessage).content[0]!;
+    expect(turn2Content instanceof Instructions ? turn2Content.value : '').toBe(
+      'audio instructions',
+    );
+
+    // base context content is untouched (was the original instr)
+    expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
   });
 });

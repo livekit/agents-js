@@ -22,7 +22,12 @@ import type { InterruptionDetectionError } from '../inference/interruption/error
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
-import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  type Instructions,
+} from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -743,9 +748,11 @@ export class AgentSession<
   generateReply(options?: {
     userInput?: string | ChatMessage;
     chatCtx?: ChatContext;
-    instructions?: string;
+    instructions?: string | Instructions;
     toolChoice?: ToolChoice;
     allowInterruptions?: boolean;
+    /** The input modality used for generating the reply. Defaults to `"text"`. */
+    inputModality?: 'audio' | 'text';
   }): SpeechHandle {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -761,18 +768,20 @@ export class AgentSession<
             })
           : undefined;
 
+    const inputDetails = { modality: options?.inputModality ?? 'text' } as const;
+
     const doGenerateReply = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use generateReply()');
         }
-        return nextActivity.generateReply({ userMessage, ...options });
+        return nextActivity.generateReply({ userMessage, ...options, inputDetails });
       }
 
       // Handoff can race with scheduling pause between the check above and generateReply().
       // If that happens, retry on the next activity instead of surfacing an avoidable error.
       try {
-        return activity.generateReply({ userMessage, ...options });
+        return activity.generateReply({ userMessage, ...options, inputDetails });
       } catch (error) {
         const canFallback = nextActivity !== undefined && isSchedulingPausedError(error);
         if (!canFallback) {
@@ -782,7 +791,7 @@ export class AgentSession<
           { error },
           'generateReply scheduling raced with handoff drain; retrying on next activity',
         );
-        return nextActivity.generateReply({ userMessage, ...options });
+        return nextActivity.generateReply({ userMessage, ...options, inputDetails });
       }
     };
 

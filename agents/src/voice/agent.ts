@@ -12,7 +12,7 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import { ReadonlyChatContext } from '../llm/chat_context.js';
+import { type Instructions, ReadonlyChatContext } from '../llm/chat_context.js';
 import type { ChatMessage, FunctionCall } from '../llm/index.js';
 import {
   type ChatChunk,
@@ -115,7 +115,7 @@ export interface ModelSettings {
 
 export interface AgentOptions<UserData> {
   id?: string;
-  instructions: string;
+  instructions: string | Instructions;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
   stt?: STT | STTModelString;
@@ -149,7 +149,7 @@ export class Agent<UserData = any> {
   _chatCtx: ChatContext;
 
   /** @internal */
-  _instructions: string;
+  _instructions: string | Instructions;
 
   /** @internal */
   _tools?: ToolContext<UserData>;
@@ -253,7 +253,7 @@ export class Agent<UserData = any> {
     return this._id;
   }
 
-  get instructions(): string {
+  get instructions(): string | Instructions {
     return this._instructions;
   }
 

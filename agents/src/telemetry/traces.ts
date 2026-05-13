@@ -456,7 +456,7 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       createdAt: toRFC3339(item.createdAt),
     };
     if (item.instructions !== undefined) {
-      configUpdate.instructions = item.instructions;
+      configUpdate.instructions = String(item.instructions);
     }
     if (item.toolsAdded !== undefined) {
       configUpdate.toolsAdded = item.toolsAdded;
