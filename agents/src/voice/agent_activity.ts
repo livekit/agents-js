@@ -188,6 +188,8 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
+  // Holds RunResult open while waiting for a realtime model to auto-generate a tool reply.
+  private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -1067,6 +1069,16 @@ export class AgentActivity implements RecognitionHooks {
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
+
+    const pendingAutoToolReplyFut = this.pendingAutoToolReplyFut;
+    if (pendingAutoToolReplyFut && !pendingAutoToolReplyFut.done) {
+      const runState = this.agentSession._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(handle);
+      }
+      this.pendingAutoToolReplyFut = undefined;
+      pendingAutoToolReplyFut.resolve();
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
@@ -3030,6 +3042,41 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
+      let autoToolReplyFut: Future<void, never> | undefined;
+      if (
+        this.llm.capabilities.autoToolReplyGeneration &&
+        shouldGenerateToolReply &&
+        this.pendingAutoToolReplyFut === undefined
+      ) {
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          autoToolReplyFut = new Future();
+          this.pendingAutoToolReplyFut = autoToolReplyFut;
+          const llmLabel = `${this.llm.provider}/${this.llm.model}`;
+          const waitTask = Task.from(
+            async () => {
+              await new Promise<void>((resolve) => {
+                const timeoutId = setTimeout(() => {
+                  this.logger.warn(
+                    { model: llmLabel },
+                    'timed out waiting for realtime auto tool reply',
+                  );
+                  resolve();
+                }, 5000);
+
+                void autoToolReplyFut!.await.then(() => {
+                  clearTimeout(timeoutId);
+                  resolve();
+                });
+              });
+            },
+            undefined,
+            'AgentActivity.waitForAutoToolReply',
+          );
+          runState._watchHandle(waitTask);
+        }
+      }
+
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
@@ -3037,6 +3084,12 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
+        if (autoToolReplyFut && !autoToolReplyFut.done) {
+          if (this.pendingAutoToolReplyFut === autoToolReplyFut) {
+            this.pendingAutoToolReplyFut = undefined;
+          }
+          autoToolReplyFut.resolve();
+        }
       }
     }
 
