@@ -18,7 +18,7 @@ import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { STT, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { Task, delay, waitForTrackPublication } from '../utils.js';
+import { Task, delay, isCloud, waitForTrackPublication } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -54,24 +54,25 @@ export type AMDCallbacks = {
 
 export interface AMDOptions {
   /**
-   * LLM used to classify call greetings. Resolution order:
+   * LLM used to classify call greetings.
    * - `LLM` instance: used as-is (caller-owned; AMD will not close it).
    * - `string`: treated as a Cloud Inference model id (e.g. `'openai/gpt-4o-mini'`)
    *   and an inference LLM is constructed (AMD-owned).
-   * - `null`: explicitly opt out of the AMD default and reuse `session.llm`
-   *   (mirrors python `NOT_GIVEN`). Throws if the session has no compatible LLM.
-   * - `undefined` (default): use the bundled default model string.
+   * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
+   *   are available in the environment, uses `'google/gemini-3.1-flash-lite'` via
+   *   the inference gateway; otherwise falls back to the session's own LLM.
    */
-  llm?: LLM | string | null;
+  llm?: LLM | string;
   /**
-   * Dedicated STT used to transcribe call audio for AMD. Resolution order
-   * mirrors `llm` above. When set (or default), AMD subscribes to a private
-   * audio branch from {@link AudioRecognition} and never depends on the
-   * pipeline STT — useful when the session is using a realtime model that
-   * does not surface user transcripts. Pass `null` to disable the dedicated
-   * STT and listen to session-level `UserInputTranscribed` events instead.
+   * Dedicated STT used to transcribe call audio for AMD.
+   * - `STT` instance: used as-is (caller-owned; AMD will not close it).
+   * - `string`: treated as a Cloud Inference model id (e.g. `'cartesia/ink-whisper'`)
+   *   and an inference STT is constructed (AMD-owned).
+   * - `undefined` (default): auto-select — if LiveKit Cloud inference credentials
+   *   are available in the environment, uses `'cartesia/ink-whisper'` via the
+   *   inference gateway; otherwise reuses the session's existing STT transcripts.
    */
-  stt?: STT | string | null;
+  stt?: STT | string;
   interruptOnMachine?: boolean;
   /** If no final transcript arrives within this window, settle as MACHINE_UNAVAILABLE. */
   noSpeechTimeoutMs?: number;
@@ -108,11 +109,11 @@ const DEFAULT_DETECTION_TIMEOUT_MS = 20_000;
 const MAX_EXTENSIONS = 3;
 const MAX_EXTENSION_MS = 10_000;
 
-const DEFAULT_AMD_LLM_MODEL = 'google/gemini-3.1-flash-lite-preview';
+const DEFAULT_AMD_LLM_MODEL = 'google/gemini-3.1-flash-lite';
 const DEFAULT_AMD_STT_MODEL = 'cartesia/ink-whisper';
 
 const EVALUATED_LLM_MODELS: ReadonlySet<string> = new Set([
-  'google/gemini-3.1-flash-lite-preview',
+  'google/gemini-3.1-flash-lite',
   'google/gemini-3-flash-preview',
   'openai/gpt-4.1',
   'openai/gpt-5.2',
@@ -247,11 +248,27 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     options: AMDOptions = {},
   ) {
     super();
-    const { llm, owned: llmOwned } = this.resolveLLM(options.llm);
-    this.llm = llm;
+
+    let { llm, stt } = options;
+    if (llm === undefined || stt === undefined) {
+      const rawUrl = process.env.LIVEKIT_URL ?? '';
+      const apiKey = process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
+      const apiSecret = process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
+      let autoSelect = false;
+      try {
+        autoSelect = isCloud(new URL(rawUrl)) && !!(apiKey && apiSecret);
+      } catch {
+        // invalid URL — not cloud
+      }
+      if (llm === undefined) llm = autoSelect ? DEFAULT_AMD_LLM_MODEL : undefined;
+      if (stt === undefined) stt = autoSelect ? DEFAULT_AMD_STT_MODEL : undefined;
+    }
+
+    const { llm: resolvedLLM, owned: llmOwned } = this.resolveLLM(llm);
+    this.llm = resolvedLLM;
     this.llmOwned = llmOwned;
 
-    const sttResolution = this.resolveSTT(options.stt);
+    const sttResolution = this.resolveSTT(stt);
     this.stt = sttResolution.stt;
     this.sttOwned = sttResolution.owned;
 
@@ -827,36 +844,32 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * Mirrors python `_resolve_classifier`.
    * - `LLM` instance: caller-owned, used as-is.
    * - string: construct a Cloud Inference LLM (AMD-owned).
-   * - `null`: explicit opt-out — fall back to `session.llm` (must be an LLM).
-   * - `undefined`: bundled default model.
+   * - `undefined`: fall back to `session.llm`.
    */
-  private resolveLLM(option: LLM | string | null | undefined): { llm: LLM; owned: boolean } {
+  private resolveLLM(option?: LLM | string): { llm: LLM; owned: boolean } {
     if (option instanceof LLM) {
       return { llm: option, owned: false };
     }
     if (typeof option === 'string') {
       return { llm: this.constructInferenceLLM(option), owned: true };
     }
-    if (option === null) {
-      const sessionLLM = this.session.llm;
-      if (sessionLLM instanceof LLM) {
-        return { llm: sessionLLM, owned: false };
-      }
-      throw new Error(
-        'AMD was configured with `llm: null` but the session has no LLM to fall back on.',
-      );
+    const sessionLLM = this.session.llm;
+    if (sessionLLM instanceof LLM) {
+      return { llm: sessionLLM, owned: false };
     }
-    return { llm: this.constructInferenceLLM(DEFAULT_AMD_LLM_MODEL), owned: true };
+    throw new Error(
+      'AMD: no LLM available. Either set LIVEKIT_API_KEY/LIVEKIT_API_SECRET for ' +
+        'Cloud Inference or pass an LLM instance.',
+    );
   }
 
   /**
    * Mirrors python `_InferenceSTT(stt) if isinstance(stt, str) else stt`.
    * - `STT` instance: caller-owned.
    * - string: AMD-owned Cloud Inference STT.
-   * - `null`: explicitly opt out of a dedicated STT (listen to session events).
-   * - `undefined`: bundled default model.
+   * - `undefined`: listen to session-level STT events.
    */
-  private resolveSTT(option: STT | string | null | undefined): {
+  private resolveSTT(option?: STT | string): {
     stt: STT | undefined;
     owned: boolean;
   } {
@@ -866,10 +879,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (typeof option === 'string') {
       return { stt: this.constructInferenceSTT(option), owned: true };
     }
-    if (option === null) {
-      return { stt: undefined, owned: false };
-    }
-    return { stt: this.constructInferenceSTT(DEFAULT_AMD_STT_MODEL), owned: true };
+    return { stt: undefined, owned: false };
   }
 
   private constructInferenceLLM(model: string): LLM {
