@@ -88,6 +88,9 @@ export const ATTR_INTERRUPTION_TOTAL_DURATION = 'lk.interruption.total_duration'
 export const ATTR_INTERRUPTION_PREDICTION_DURATION = 'lk.interruption.prediction_duration';
 export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_delay';
 
+// fallback adapter
+export const ATTR_FALLBACK_ATTEMPT_INDEX = 'lk.fallback.attempt_index';
+
 // metrics
 export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';
@@ -128,3 +131,12 @@ export const ATTR_EXCEPTION_MESSAGE = 'exception.message';
 
 // Platform-specific attributes
 export const ATTR_LANGFUSE_COMPLETION_START_TIME = 'langfuse.observation.completion_start_time';
+/**
+ * Observation classification used by tracing backends that infer cost from
+ * span shape. Set to `span` on layers that wrap a real provider call
+ * (FallbackAdapter wrappers, inner `llm_request` / `tts_request`) so cost is
+ * counted once at the outer `llm_node` / `tts_node`. Set to `generation` on
+ * the layer that owns the final usage tokens. LiveKit Cloud tracing ignores
+ * this attribute and continues to read `gen_ai.usage.*` directly.
+ */
+export const ATTR_LANGFUSE_OBSERVATION_TYPE = 'langfuse.observation.type';
