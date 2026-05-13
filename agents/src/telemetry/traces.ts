@@ -24,6 +24,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
+import { Instructions } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import type { SessionReport } from '../voice/report.js';
@@ -373,7 +374,9 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
     const msg: ProtoMessage = {
       id: item.id,
       role: ROLE_MAP[item.role] ?? (item.role.toUpperCase() as ProtoRole),
-      content: item.content.map((c: ChatContent) => ({ text: c })),
+      content: item.content.map((c: ChatContent) => ({
+        text: typeof c === 'string' ? c : c instanceof Instructions ? c.value : String(c),
+      })),
       createdAt: toRFC3339(item.createdAt),
     };
 
