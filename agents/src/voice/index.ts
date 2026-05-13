@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export { Agent, AgentTask, StopResponse, type AgentOptions, type ModelSettings } from './agent.js';
+export {
+  Agent,
+  AgentTask,
+  StopResponse,
+  type AgentOptions,
+  type ModelSettings,
+  type TTSPronunciationMap,
+} from './agent.js';
 export * from './amd.js';
 export {
   AgentSession,
