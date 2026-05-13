@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.4.2
+
+### Patch Changes
+
+- fix: do not republish background audio tracks after reconnect - [#1487](https://github.com/livekit/agents-js/pull/1487) ([@davidzhao](https://github.com/davidzhao))
+
+- Fail download-files when plugin downloads fail - [#1481](https://github.com/livekit/agents-js/pull/1481) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(amd): update default models and drop null support - [#1476](https://github.com/livekit/agents-js/pull/1476) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add TTS pronunciation customization support to agents, Google Gemini TTS, and Sarvam TTS. - [#1473](https://github.com/livekit/agents-js/pull/1473) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(amd): add default amd prediction log - [#1496](https://github.com/livekit/agents-js/pull/1496) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add TTS text transforms with built-in markdown/emoji filtering, streaming replacement, and custom callable transform support. - [#1477](https://github.com/livekit/agents-js/pull/1477) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.1
 
 ### Patch Changes
