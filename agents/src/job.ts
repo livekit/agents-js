@@ -85,6 +85,8 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  apiKey?: string;
+  apiSecret?: string;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -282,8 +284,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
 
     try {
-      const client = new RoomServiceClient(this.#info.url);
+      const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
+      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
     } catch (error) {
       this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
     }

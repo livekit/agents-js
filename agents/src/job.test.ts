@@ -17,7 +17,7 @@ vi.mock('livekit-server-sdk', () => ({
   RoomServiceClient: roomServiceClientMock,
 }));
 
-function createJobContext() {
+function createJobContext(infoOverrides: Partial<RunningJobInfo> = {}) {
   const room = {
     name: 'connected-room',
     on: vi.fn(),
@@ -41,6 +41,7 @@ function createJobContext() {
       url: 'wss://example.livekit.cloud',
       token: 'token',
       workerId: 'worker-id',
+      ...infoOverrides,
     } as unknown as RunningJobInfo,
     room as unknown as Room,
     vi.fn(),
@@ -50,12 +51,32 @@ function createJobContext() {
 }
 
 describe('JobContext.deleteRoom', () => {
-  it('deletes the connected room by default using the job URL', async () => {
+  it('deletes the connected room by default using the job URL and credentials', async () => {
+    const ctx = createJobContext({
+      apiKey: 'api-key',
+      apiSecret: 'api-secret',
+    });
+
+    await ctx.deleteRoom();
+
+    expect(roomServiceClientMock).toHaveBeenCalledWith(
+      'wss://example.livekit.cloud',
+      'api-key',
+      'api-secret',
+    );
+    expect(deleteRoomMock).toHaveBeenCalledWith('connected-room');
+  });
+
+  it('falls back to environment credentials when job credentials are absent', async () => {
     const ctx = createJobContext();
 
     await ctx.deleteRoom();
 
-    expect(roomServiceClientMock).toHaveBeenCalledWith('wss://example.livekit.cloud');
+    expect(roomServiceClientMock).toHaveBeenCalledWith(
+      'wss://example.livekit.cloud',
+      undefined,
+      undefined,
+    );
     expect(deleteRoomMock).toHaveBeenCalledWith('connected-room');
   });
 
