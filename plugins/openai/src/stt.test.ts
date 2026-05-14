@@ -5,7 +5,8 @@ import { VAD as BaseVAD, type VADStream } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { describe, expect, it, vi } from 'vitest';
-import { STT, SpeechStream } from './stt.js';
+import type { SpeechStream } from './stt.js';
+import { STT } from './stt.js';
 
 const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
 
