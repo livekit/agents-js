@@ -526,6 +526,7 @@ export class AgentActivity implements RecognitionHooks {
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
+      shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
     });
 
     if (reuseResources?.sttPipeline) {
@@ -819,11 +820,9 @@ export class AgentActivity implements RecognitionHooks {
     // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
     // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
     // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
-    const aecWarmupAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
+    const discardAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
       transform: (frame, controller) => {
-        const shouldDiscardForAecWarmup =
-          this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
-        if (!shouldDiscardForAecWarmup) {
+        if (!this.shouldDiscardInputAudio()) {
           controller.enqueue(frame);
         }
       },
@@ -832,20 +831,30 @@ export class AgentActivity implements RecognitionHooks {
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
 
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
-        .pipeThrough(aecWarmupAudioFilter)
-        .tee();
-      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
+      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+      this.realtimeSession.setInputAudioStream(realtimeAudioStream.pipeThrough(discardAudioFilter));
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
+        this.audioStream.stream.pipeThrough(discardAudioFilter),
       );
     } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
-      );
+      this.audioRecognition.setInputAudioStream(this.audioStream.stream);
     }
+  }
+
+  private shouldDiscardInputAudio(): boolean {
+    const aecWarmupActive =
+      this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
+
+    const uninterruptibleSpeechActive =
+      this._currentSpeech !== undefined &&
+      !this._currentSpeech.done() &&
+      !this._currentSpeech.interrupted &&
+      !this._currentSpeech.allowInterruptions &&
+      (this.turnHandling.interruption?.discardAudioIfUninterruptible ?? false);
+
+    return aecWarmupActive || uninterruptibleSpeechActive;
   }
 
   detachAudioInput(): void {
