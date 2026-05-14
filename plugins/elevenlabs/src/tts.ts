@@ -8,7 +8,6 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
-  Future,
   type TimedString,
   asError,
   createTimedString,
@@ -431,7 +430,6 @@ class Connection {
   async #recvLoop(): Promise<void> {
     try {
       const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
-      const errorFuture = new Future<Error>();
 
       const onMessage = (rawData: Buffer) => {
         try {
@@ -444,19 +442,19 @@ class Connection {
 
       const onClose = (code: number) => {
         if (!this.#closed && this.#contextData.size > 0) {
-          errorFuture.reject(
+          messageChannel.abort(
             new APIStatusError({
               message: 'ElevenLabs websocket connection closed unexpectedly',
               options: { statusCode: code },
             }),
           );
+        } else {
+          messageChannel.close();
         }
-        messageChannel.close();
       };
 
       const onError = (error: Error) => {
-        errorFuture.reject(error);
-        messageChannel.close();
+        messageChannel.abort(error);
       };
 
       // Set up persistent listeners
@@ -595,11 +593,6 @@ class Connection {
               break;
             }
           }
-        }
-
-        // Throw any error that occurred
-        if (errorFuture.done) {
-          await errorFuture.await;
         }
       } finally {
         reader.releaseLock();
