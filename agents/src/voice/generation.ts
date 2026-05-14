@@ -54,6 +54,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { type AgentConstructor, mockToolsStorage } from './testing/run_result.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -1098,11 +1099,29 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
+              const opts = {
                 ctx: new RunContext(session, speechHandle, toolCall),
                 toolCallId: toolCall.callId,
                 abortSignal: signal,
-              });
+              };
+
+              const mock = mockToolsStorage
+                .getStore()
+                ?.get(session.currentAgent.constructor as AgentConstructor)?.[toolCall.name];
+
+              if (mock) {
+                logger.debug(
+                  {
+                    function: toolCall.name,
+                    arguments: parsedArgs,
+                    speech_id: speechHandle.id,
+                  },
+                  'executing mock tool',
+                );
+                return await mock(parsedArgs, opts);
+              }
+
+              return await tool.execute(parsedArgs, opts);
             },
           );
 
