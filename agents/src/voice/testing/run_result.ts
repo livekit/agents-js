@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
@@ -28,8 +29,9 @@ import {
 } from './types.js';
 
 // Type for agent constructor (used in assertions)
+/** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentConstructor = new (...args: any[]) => Agent;
+export type AgentConstructor = new (...args: any[]) => Agent;
 // In JS we use a zod schema so runtime validation and TS generic inference stay aligned.
 type OutputSchema<T> = z.ZodType<T>;
 
@@ -948,9 +950,53 @@ export class AssertionError extends Error {
   }
 }
 
-// TODO: mockTools() utility for mocking tool implementations in tests
-// Will be implemented for test suites.
-// See Python run_result.py lines 1010-1031 for reference.
+/**
+ * A mock tool function. Can be sync or async. Receives the parsed tool arguments
+ * and tool options (matching the regular `execute` signature), but the mock is free
+ * to ignore them. Whatever the function returns becomes the tool output. Throwing
+ * produces a tool error event, just like a real tool execute.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type MockToolFn = (...args: any[]) => any;
+
+/** Map from agent constructor to a record of mocked tools by name. */
+export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
+
+/** @internal */
+export const mockToolsStorage = new AsyncLocalStorage<MockToolsMap>();
+
+/**
+ * Temporarily assign a set of mock tool callables to a specific Agent type within
+ * the current async context. While the callback is running, tool calls for the
+ * matching agent type and tool name will be routed to the supplied mock instead of
+ * the real `execute` implementation.
+ *
+ * @param agent - The Agent constructor whose tools should be mocked.
+ * @param mocks - A record mapping tool name to a mock implementation.
+ * @param callback - The async function executed under the mock context.
+ *
+ * @example
+ * ```typescript
+ * await mockTools(
+ *   MyAgent,
+ *   { orderItem: () => ({ success: true }) },
+ *   async () => {
+ *     const result = await session.run({ userInput: 'Order a burger' });
+ *     result.expect.nextEvent().isFunctionCall({ name: 'orderItem' });
+ *   },
+ * );
+ * ```
+ */
+export async function mockTools<T>(
+  agent: AgentConstructor,
+  mocks: Record<string, MockToolFn>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const current = mockToolsStorage.getStore();
+  const updated: MockToolsMap = new Map(current ?? []);
+  updated.set(agent, mocks);
+  return mockToolsStorage.run(updated, callback);
+}
 
 /**
  * Format events for debug output, optionally marking a selected index.
