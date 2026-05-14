@@ -375,7 +375,7 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       id: item.id,
       role: ROLE_MAP[item.role] ?? (item.role.toUpperCase() as ProtoRole),
       content: item.content.map((c: ChatContent) => ({
-        text: typeof c === 'string' ? c : isInstructions(c) ? c.value : String(c),
+        text: isInstructions(c) ? c.value : c,
       })),
       createdAt: toRFC3339(item.createdAt),
     };
