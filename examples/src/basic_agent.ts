@@ -125,6 +125,7 @@ export default defineAgent({
       agent,
       room: ctx.room,
       inputOptions: {
+        deleteRoomOnClose: true,
         noiseCancellation: BackgroundVoiceCancellation(),
       },
     });
