@@ -241,9 +241,7 @@ export default defineAgent({
       },
     });
 
-    session.generateReply({
-      userInput: 'Greet to the user',
-    });
+    await session.say('Hello, I can help you schedule an appointment!');
   },
 });
 

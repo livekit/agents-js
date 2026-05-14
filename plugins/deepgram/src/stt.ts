@@ -36,6 +36,12 @@ export interface STTOptions {
   keywords: [string, number][];
   keyterm: string[];
   profanityFilter: boolean;
+  /**
+   * Redact sensitive information from the transcription. Accepts a single value or list of
+   * values. Supported values: "pci", "numbers", "ssn", "true" (redact all).
+   * See https://developers.deepgram.com/docs/redaction for details.
+   */
+  redact: string | string[];
   dictation: boolean;
   diarize: boolean;
   numerals: boolean;
@@ -59,6 +65,7 @@ const defaultSTTOptions: STTOptions = {
   keywords: [],
   keyterm: [],
   profanityFilter: false,
+  redact: [],
   dictation: false,
   diarize: false,
   numerals: false,
@@ -192,15 +199,16 @@ export class SpeechStream extends stt.SpeechStream {
         keywords: this.#opts.keywords.map((x) => x.join(':')),
         keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
+        redact: this.#opts.redact,
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
       };
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined) {
           if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            streamURL.searchParams.append(k, encodeURIComponent(v));
+            streamURL.searchParams.append(k, String(v));
           } else {
-            v.forEach((x) => streamURL.searchParams.append(k, encodeURIComponent(x)));
+            v.forEach((x) => streamURL.searchParams.append(k, String(x)));
           }
         }
       });

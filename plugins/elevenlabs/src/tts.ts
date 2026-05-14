@@ -73,6 +73,7 @@ export interface TTSOptions {
   inactivityTimeout?: number;
   syncAlignment?: boolean;
   applyTextNormalization?: 'auto' | 'on' | 'off';
+  applyLanguageTextNormalization?: boolean;
   preferredAlignment?: 'normalized' | 'original';
   autoMode?: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
@@ -96,6 +97,7 @@ interface ResolvedTTSOptions {
   inactivityTimeout: number;
   syncAlignment: boolean;
   applyTextNormalization: 'auto' | 'on' | 'off';
+  applyLanguageTextNormalization?: boolean;
   preferredAlignment: 'normalized' | 'original';
   autoMode: boolean;
   pronunciationDictionaryLocators?: PronunciationDictionaryLocator[];
@@ -155,6 +157,9 @@ function multiStreamUrl(opts: ResolvedTTSOptions): string {
   params.push(`enable_logging=${opts.enableLogging}`);
   params.push(`inactivity_timeout=${opts.inactivityTimeout}`);
   params.push(`apply_text_normalization=${opts.applyTextNormalization}`);
+  if (opts.applyLanguageTextNormalization !== undefined) {
+    params.push(`apply_language_text_normalization=${opts.applyLanguageTextNormalization}`);
+  }
   if (opts.syncAlignment) {
     params.push('sync_alignment=true');
   }
@@ -372,6 +377,12 @@ class Connection {
               context_id: content.contextId,
             };
 
+            if (this.#opts.chunkLengthSchedule) {
+              initPkt.generation_config = {
+                chunk_length_schedule: this.#opts.chunkLengthSchedule,
+              };
+            }
+
             if (this.#opts.pronunciationDictionaryLocators) {
               initPkt.pronunciation_dictionary_locators =
                 this.#opts.pronunciationDictionaryLocators.map((locator) => ({
@@ -431,15 +442,20 @@ class Connection {
         }
       };
 
-      const onClose = () => {
+      const onClose = (code: number) => {
         if (!this.#closed && this.#contextData.size > 0) {
-          this.#logger.warn('websocket closed unexpectedly');
+          errorFuture.reject(
+            new APIStatusError({
+              message: 'ElevenLabs websocket connection closed unexpectedly',
+              options: { statusCode: code },
+            }),
+          );
         }
         messageChannel.close();
       };
 
       const onError = (error: Error) => {
-        errorFuture.resolve(error);
+        errorFuture.reject(error);
         messageChannel.close();
       };
 
@@ -583,7 +599,7 @@ class Connection {
 
         // Throw any error that occurred
         if (errorFuture.done) {
-          throw await errorFuture.await;
+          await errorFuture.await;
         }
       } finally {
         reader.releaseLock();
@@ -644,7 +660,7 @@ export class TTS extends tts.TTS {
   label = 'elevenlabs.TTS';
 
   constructor(opts: TTSOptions = {}) {
-    const autoMode = opts.autoMode ?? true;
+    const autoMode = opts.autoMode ?? opts.chunkLengthSchedule === undefined;
     const encoding = opts.encoding ?? DEFAULT_ENCODING;
     const sampleRate = sampleRateFromFormat(encoding);
     const syncAlignment = opts.syncAlignment ?? true;
@@ -697,6 +713,7 @@ export class TTS extends tts.TTS {
       inactivityTimeout: opts.inactivityTimeout ?? WS_INACTIVITY_TIMEOUT,
       syncAlignment: opts.syncAlignment ?? true,
       applyTextNormalization: opts.applyTextNormalization ?? 'auto',
+      applyLanguageTextNormalization: opts.applyLanguageTextNormalization,
       preferredAlignment: opts.preferredAlignment ?? 'normalized',
       autoMode,
       pronunciationDictionaryLocators: opts.pronunciationDictionaryLocators,

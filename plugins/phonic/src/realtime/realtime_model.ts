@@ -67,6 +67,10 @@ export class RealtimeModel extends llm.RealtimeModel {
     return 'phonic';
   }
 
+  label(): string {
+    return 'phonic.RealtimeModel';
+  }
+
   constructor(
     options: {
       /**

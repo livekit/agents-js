@@ -51,8 +51,8 @@ class ChatItemGroup {
       this.toolCalls.push(item);
     } else if (item.type === 'function_call_output') {
       this.toolOutputs.push(item);
-    } else if (item.type === 'agent_handoff') {
-      // provider formatters don't serialize handoff records into model input.
+    } else if (item.type === 'agent_handoff' || item.type === 'agent_config_update') {
+      // provider formatters don't serialize session metadata records into model input.
     }
     return this;
   }

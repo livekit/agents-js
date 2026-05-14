@@ -162,10 +162,12 @@ export class ChunkedStream extends tts.ChunkedStream {
       throw new Error(`Rime AI TTS request failed: ${response.status} ${response.statusText}`);
     }
 
-    const buffer = await response.arrayBuffer();
+    if (!response.body) {
+      throw new Error('Rime AI TTS response has no body');
+    }
+
     const sampleRate = getSampleRate(this.opts);
     const audioByteStream = new AudioByteStream(sampleRate, RIME_TTS_CHANNELS);
-    const frames = audioByteStream.write(buffer);
     let lastFrame: AudioFrame | undefined;
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
@@ -174,12 +176,28 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
     };
 
-    for (const frame of frames) {
-      sendLastFrame(requestId, false);
-      lastFrame = frame;
-    }
-    sendLastFrame(requestId, true);
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-    this.queue.close();
+        for (const frame of audioByteStream.write(value)) {
+          sendLastFrame(requestId, false);
+          lastFrame = frame;
+        }
+      }
+
+      for (const frame of audioByteStream.flush()) {
+        if (frame.samplesPerChannel === 0) continue;
+        sendLastFrame(requestId, false);
+        lastFrame = frame;
+      }
+
+      sendLastFrame(requestId, true);
+    } finally {
+      reader.releaseLock();
+      this.queue.close();
+    }
   }
 }

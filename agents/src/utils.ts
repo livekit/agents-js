@@ -11,10 +11,10 @@ import type {
 import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
-import { v4 as uuidv4 } from 'uuid';
 import { log } from './log.js';
 
 /**
@@ -98,20 +98,18 @@ export class Queue<T> {
     this.#limit = limit;
   }
 
-  async get(): Promise<T> {
-    const _get = async (): Promise<T> => {
-      if (this.items.length === 0) {
-        await once(this.#events, 'put');
-      }
-      let item = this.items.shift();
-      if (typeof item === 'undefined') {
-        item = await _get();
-      }
-      return item;
-    };
+  async get(options: { signal?: AbortSignal } = {}): Promise<T> {
+    while (this.items.length === 0) {
+      await once(this.#events, 'put', { signal: options.signal });
+    }
 
-    const item = _get();
+    const item = this.items.shift();
     this.#events.emit('get');
+
+    if (typeof item === 'undefined') {
+      return this.get(options);
+    }
+
     return item;
   }
 
@@ -353,31 +351,67 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 /** @internal */
 export class ExpFilter {
   #alpha: number;
+  #min?: number;
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(
+    alphaOrOpts: number | { alpha: number; initial?: number; minVal?: number; maxVal?: number },
+    max?: number,
+  ) {
+    if (typeof alphaOrOpts === 'number') {
+      this.#alpha = alphaOrOpts;
+      this.#max = max;
+      return;
+    }
+
+    this.#validateAlpha(alphaOrOpts.alpha);
+    this.#alpha = alphaOrOpts.alpha;
+    this.#filtered = alphaOrOpts.initial;
+    this.#min = alphaOrOpts.minVal;
+    this.#max = alphaOrOpts.maxVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(
+    alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
+  ) {
+    if (typeof alphaOrOpts === 'object') {
+      if (alphaOrOpts.alpha !== undefined) {
+        this.#validateAlpha(alphaOrOpts.alpha);
+        this.#alpha = alphaOrOpts.alpha;
+      }
+      if (alphaOrOpts.initial !== undefined) {
+        this.#filtered = alphaOrOpts.initial;
+      }
+      if (alphaOrOpts.minVal !== undefined) {
+        this.#min = alphaOrOpts.minVal;
+      }
+      if (alphaOrOpts.maxVal !== undefined) {
+        this.#max = alphaOrOpts.maxVal;
+      }
+      return;
     }
+
+    if (alphaOrOpts) {
+      this.#alpha = alphaOrOpts;
+    }
+
     this.#filtered = undefined;
   }
 
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+    if (this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
     } else {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -387,8 +421,18 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
   set alpha(alpha: number) {
     this.#alpha = alpha;
+  }
+
+  #validateAlpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
@@ -620,7 +664,7 @@ export function withResolvers<T = unknown>() {
  * @returns A short UUID with the prefix.
  */
 export function shortuuid(prefix: string = ''): string {
-  return `${prefix}${uuidv4().slice(0, 12)}`;
+  return `${prefix}${randomUUID().slice(0, 12)}`;
 }
 
 const READONLY_SYMBOL = Symbol('Readonly');
@@ -710,15 +754,37 @@ export function resampleStream({
   outputRate: number;
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
+  let currentInputRate = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
       if (chunk.samplesPerChannel === 0) {
         controller.enqueue(chunk);
         return;
       }
-      if (!resampler) {
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+
+      if (chunk.sampleRate === outputRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+          resampler = null;
+        }
+        controller.enqueue(chunk);
+        return;
       }
+
+      if (!resampler || currentInputRate !== chunk.sampleRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+        }
+        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        currentInputRate = chunk.sampleRate;
+      }
+
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
@@ -729,6 +795,7 @@ export function resampleStream({
           controller.enqueue(frame);
         }
         resampler.close();
+        resampler = null;
       }
     },
   });
@@ -757,6 +824,24 @@ export function isStreamClosedError(error: unknown): boolean {
     error instanceof Error &&
     (error.message === 'Stream is closed' || error.message === 'Input is closed')
   );
+}
+
+/**
+ * Check if an error indicates writes to a closed WritableStream.
+ *
+ * @param error - The error to check.
+ * @returns True if the error is a writable stream closed error.
+ */
+export function isWritableStreamClosedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if ('code' in error && (error as { code?: string }).code === 'ERR_INVALID_STATE') {
+    return true;
+  }
+
+  return error.message.includes('WritableStream is closed');
 }
 
 /** FFmpeg error messages expected during normal teardown/shutdown. */
@@ -921,13 +1006,35 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
+  waitForSubscription = false,
+  signal,
 }: {
   room: Room;
-  identity: string;
+  /**
+   * Restrict matching to a specific participant identity. When omitted (or
+   * `undefined`), matches whichever remote participant publishes a matching
+   * track first. Pass `''` to match no one (rare, use `undefined` instead).
+   */
+  identity?: string;
   kind: TrackKind;
+  /**
+   * If true, only resolve once the matching track is subscribed (i.e.
+   * `publication.subscribed` is true and `publication.track` is set).
+   * Mirrors python `wait_for_track_publication(wait_for_subscription=True)`.
+   */
+  waitForSubscription?: boolean;
+  /**
+   * Optional AbortSignal that rejects the promise and detaches all room
+   * listeners when fired. Without this, callers that lose interest in the
+   * publication leak listeners until the room disconnects.
+   */
+  signal?: AbortSignal;
 }): Promise<RemoteTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
+  }
+  if (signal?.aborted) {
+    throw new Error('waitForTrackPublication aborted');
   }
 
   const fut = new Future<RemoteTrackPublication>();
@@ -939,32 +1046,69 @@ export async function waitForTrackPublication({
     return k === kind;
   };
 
+  const matches = (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    if (identity !== undefined && participant.identity !== identity) return false;
+    if (!kindMatch(publication.kind)) return false;
+    if (waitForSubscription && !(publication.subscribed && publication.track !== undefined)) {
+      return false;
+    }
+    return true;
+  };
+
   const onTrackPublished = (
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
   ) => {
     if (fut.done) return;
-    if (
-      (identity === undefined || participant.identity === identity) &&
-      kindMatch(publication.kind)
-    ) {
+    if (matches(publication, participant)) {
       fut.resolve(publication);
     }
   };
 
-  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  // RoomEvent.TrackSubscribed signature: (track, publication, participant).
+  const onTrackSubscribed = (
+    _track: unknown,
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (fut.done) return;
+    if (matches(publication, participant)) {
+      fut.resolve(publication);
+    }
+  };
+
+  if (waitForSubscription) {
+    room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+  } else {
+    room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForTrackPublication aborted'));
+    }
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
-        onTrackPublished(publication, p);
-        if (fut.done) break;
+        if (matches(publication, p)) {
+          fut.resolve(publication);
+          break;
+        }
       }
+      if (fut.done) break;
     }
 
     return await fut.await;
   } finally {
-    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    if (waitForSubscription) {
+      room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+    } else {
+      room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 

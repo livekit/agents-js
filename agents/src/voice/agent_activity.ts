@@ -13,7 +13,12 @@ import type { Logger } from 'pino';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { type ChatContext, ChatMessage, type MetricsReport } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  type ChatContext,
+  ChatMessage,
+  type MetricsReport,
+} from '../llm/chat_context.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -47,7 +52,16 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  cancelAndWait,
+  isDevMode,
+  isHosted,
+  waitFor,
+  waitUntilTimeout,
+} from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -90,6 +104,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
+import { createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -183,6 +198,9 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
+  // Placeholder used to hold a RunResult open while waiting for a realtime
+  // model to auto-generate a tool reply (autoToolReplyGeneration=true).
+  private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -459,7 +477,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // TODO(parity): Record initial AgentConfigUpdate in chat context
+    const initialTools = Object.keys(this.tools);
+    if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
+      const initialConfig = new AgentConfigUpdate({
+        instructions: this.agent.instructions,
+        toolsAdded: initialTools.length > 0 ? initialTools : undefined,
+      });
+      this.agent._chatCtx.insert(initialConfig);
+      this.agentSession.history.insert(initialConfig);
+    }
 
     // metrics and error handling
     if (this.llm instanceof LLM) {
@@ -489,16 +515,17 @@ export class AgentActivity implements RecognitionHooks {
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
-      minEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.minDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.maxDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      backchannelBoundary:
+        this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
+      endpointing: createEndpointing({
+        ...this.agentSession.sessionOptions.turnHandling.endpointing,
+        ...(this.agent.turnHandling?.endpointing ?? {}),
+      }),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
+      shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
     });
 
     if (reuseResources?.sttPipeline) {
@@ -557,9 +584,13 @@ export class AgentActivity implements RecognitionHooks {
         let reusable =
           capabilities.midSessionChatCtxUpdate ||
           this.realtimeSession.chatCtx
-            .copy({ excludeInstructions: true, excludeHandoff: true })
+            .copy({ excludeInstructions: true, excludeHandoff: true, excludeConfigUpdate: true })
             .isEquivalent(
-              newActivity.agent.chatCtx.copy({ excludeInstructions: true, excludeHandoff: true }),
+              newActivity.agent.chatCtx.copy({
+                excludeInstructions: true,
+                excludeHandoff: true,
+                excludeConfigUpdate: true,
+              }),
             );
 
         // instructions update is supported or instructions are the same
@@ -696,6 +727,14 @@ export class AgentActivity implements RecognitionHooks {
     return this.audioRecognition?.inputStartedAt;
   }
 
+  /**
+   * @internal — used by AMD to obtain a private branch of the participant
+   * audio stream that does not interfere with the pipeline VAD/STT.
+   */
+  subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
+    return this.audioRecognition?.subscribeAudioStream();
+  }
+
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
     chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
 
@@ -713,9 +752,22 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
   async updateTools(tools: ToolContext): Promise<void> {
+    const oldToolNames = new Set(Object.keys(this.tools));
+    const newToolNames = new Set(Object.keys(tools));
+    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
+    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+
     this.agent._tools = { ...tools };
+
+    if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
+      const configUpdate = new AgentConfigUpdate({
+        toolsAdded: toolsAdded.length > 0 ? toolsAdded : undefined,
+        toolsRemoved: toolsRemoved.length > 0 ? toolsRemoved : undefined,
+      });
+      this.agent._chatCtx.insert(configUpdate);
+      this.agentSession.history.insert(configUpdate);
+    }
 
     if (this.realtimeSession) {
       await this.realtimeSession.updateTools(tools);
@@ -767,11 +819,9 @@ export class AgentActivity implements RecognitionHooks {
     // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
     // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
     // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
-    const aecWarmupAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
+    const discardAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
       transform: (frame, controller) => {
-        const shouldDiscardForAecWarmup =
-          this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
-        if (!shouldDiscardForAecWarmup) {
+        if (!this.shouldDiscardInputAudio()) {
           controller.enqueue(frame);
         }
       },
@@ -780,20 +830,34 @@ export class AgentActivity implements RecognitionHooks {
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
 
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
-        .pipeThrough(aecWarmupAudioFilter)
-        .tee();
-      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
+      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+      this.realtimeSession.setInputAudioStream(realtimeAudioStream.pipeThrough(discardAudioFilter));
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
+        this.audioStream.stream.pipeThrough(discardAudioFilter),
       );
     } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
-      );
+      this.audioRecognition.setInputAudioStream(this.audioStream.stream);
     }
+  }
+
+  private shouldDiscardInputAudio(): boolean {
+    const aecWarmupActive =
+      this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
+
+    const discardAudioIfUninterruptible =
+      this.agent.turnHandling?.interruption?.discardAudioIfUninterruptible ??
+      this.agentSession.sessionOptions.turnHandling.interruption.discardAudioIfUninterruptible;
+
+    const uninterruptibleSpeechActive =
+      this._currentSpeech !== undefined &&
+      !this._currentSpeech.done() &&
+      !this._currentSpeech.interrupted &&
+      !this._currentSpeech.allowInterruptions &&
+      discardAudioIfUninterruptible;
+
+    return aecWarmupActive || uninterruptibleSpeechActive;
   }
 
   detachAudioInput(): void {
@@ -1027,6 +1091,16 @@ export class AgentActivity implements RecognitionHooks {
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
+
+    const fut = this.pendingAutoToolReplyFut;
+    if (fut && !fut.done) {
+      const runState = this.agentSession._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(handle);
+      }
+      this.pendingAutoToolReplyFut = undefined;
+      fut.resolve();
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
@@ -1936,16 +2010,18 @@ export class AgentActivity implements RecognitionHooks {
     let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
-      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
+      replyStartedSpeakingAt = startedSpeakingAt;
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -1966,6 +2042,8 @@ export class AgentActivity implements RecognitionHooks {
           replyAbortController,
           this.tts?.model,
           this.tts?.provider,
+          this.agentSession.sessionOptions.ttsReadIdleTimeout,
+          this.agentSession.sessionOptions.ttsTextTransforms,
         );
         tasks.push(ttsTask);
         replyTtsGenData = ttsGenData;
@@ -1974,6 +2052,7 @@ export class AgentActivity implements RecognitionHooks {
           ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -1983,6 +2062,7 @@ export class AgentActivity implements RecognitionHooks {
           audio,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         tasks.push(forwardTask);
         audioOut = _audioOut;
@@ -2036,7 +2116,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
@@ -2149,6 +2229,8 @@ export class AgentActivity implements RecognitionHooks {
         replyAbortController,
         this.tts?.model,
         this.tts?.provider,
+        this.agentSession.sessionOptions.ttsReadIdleTimeout,
+        this.agentSession.sessionOptions.ttsTextTransforms,
       );
     };
 
@@ -2220,16 +2302,21 @@ export class AgentActivity implements RecognitionHooks {
 
     let agentStartedSpeakingAt: number | undefined;
     let agentStartedForwardingAt: number | undefined;
-    const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
-      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (
+      audioOutRef: _AudioOut | null,
+      startedSpeakingAt: number = Date.now(),
+    ) => {
+      agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
-        this.isInterruptionByAudioActivityEnabled = false;
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.disableVadInterruptionSoon();
       }
     };
 
@@ -2240,6 +2327,7 @@ export class AgentActivity implements RecognitionHooks {
           ttsGenData.audioStream,
           audioOutput,
           replyAbortController,
+          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
         );
         audioOut = _audioOut;
         tasks.push(forwardTask);
@@ -2390,8 +2478,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2400,7 +2490,9 @@ export class AgentActivity implements RecognitionHooks {
         { speech_id: speechHandle.id, message: forwardedText },
         'playout completed with interrupt',
       );
-      speechHandle._markGenerationDone();
+      if (speechHandle._hasGenerations) {
+        speechHandle._markGenerationDone();
+      }
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -2433,16 +2525,18 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
 
     // mark the playout done before waiting for the tool execution
-    speechHandle._markGenerationDone();
+    if (speechHandle._hasGenerations) {
+      speechHandle._markGenerationDone();
+    }
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;
@@ -2642,11 +2736,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    const onFirstFrame = (startedSpeakingAt: number = Date.now()) => {
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(startedSpeakingAt);
+      }
     };
 
     const readMessages = async (
@@ -2708,6 +2805,8 @@ export class AgentActivity implements RecognitionHooks {
                 abortController,
                 this.tts?.model,
                 this.tts?.provider,
+                this.agentSession.sessionOptions.ttsReadIdleTimeout,
+                this.agentSession.sessionOptions.ttsTextTransforms,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;
@@ -2733,6 +2832,7 @@ export class AgentActivity implements RecognitionHooks {
                 realtimeAudioResult,
                 audioOutput,
                 abortController,
+                this.agentSession.sessionOptions.forwardAudioIdleTimeout,
               );
               forwardTasks.push(forwardTask);
               audioOut = _audioOut;
@@ -2887,6 +2987,12 @@ export class AgentActivity implements RecognitionHooks {
           'playout completed with interrupt',
         );
       }
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+      }
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
@@ -2924,6 +3030,9 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
     }
 
     if (toolOutput.output.length === 0) {
@@ -2976,6 +3085,45 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
+      // If the realtime model auto-generates the tool reply, install a
+      // placeholder so the active RunResult waits for that reply.
+      let fut: Future<void, never> | undefined;
+      if (
+        this.llm.capabilities.autoToolReplyGeneration &&
+        shouldGenerateToolReply &&
+        this.pendingAutoToolReplyFut === undefined
+      ) {
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          fut = new Future();
+          this.pendingAutoToolReplyFut = fut;
+          const llmLabel = this.llm.label();
+          const waitTask = Task.from(
+            async () => {
+              try {
+                await waitUntilTimeout(fut!.await, 5000);
+              } catch (error) {
+                if (error instanceof IdleTimeoutError) {
+                  this.logger.warn(
+                    { llm: llmLabel },
+                    'timed out waiting for realtime auto tool reply',
+                  );
+                  return;
+                }
+                throw error;
+              } finally {
+                if (this.pendingAutoToolReplyFut === fut) {
+                  this.pendingAutoToolReplyFut = undefined;
+                }
+              }
+            },
+            undefined,
+            'AgentActivity.waitForAutoToolReply',
+          );
+          runState._watchHandle(waitTask);
+        }
+      }
+
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
@@ -2983,6 +3131,12 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
+        if (fut && !fut.done) {
+          if (this.pendingAutoToolReplyFut === fut) {
+            this.pendingAutoToolReplyFut = undefined;
+          }
+          fut.resolve();
+        }
       }
     }
 
@@ -3390,10 +3544,10 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech();
+          this.audioRecognition.onStartOfAgentSpeech(Date.now());
         }
         if (this.isInterruptionDetectionEnabled) {
-          this.isInterruptionByAudioActivityEnabled = false;
+          this.disableVadInterruptionSoon();
         }
         audioOutput.resume();
         resumed = true;
@@ -3452,7 +3606,31 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  /**
+   * Disable VAD-based interruption either immediately or after the backchannel boundary
+   * cooldown expires. While the cooldown is active the VAD path stays enabled, allowing the
+   * user to correct themselves at the very start of agent speech.
+   */
+  private disableVadInterruptionSoon(): void {
+    const audioRecognition = this.audioRecognition;
+    if (audioRecognition && audioRecognition.backchannelBoundaryActive) {
+      audioRecognition.backchannelBoundaryCallback = () => {
+        // Only disable VAD interruption if the agent is still speaking when the timer expires.
+        if (
+          this.agentSession.agentState === 'speaking' &&
+          this.isInterruptionByAudioActivityEnabled
+        ) {
+          this.logger.trace('backchannel boundary expired');
+          this.isInterruptionByAudioActivityEnabled = false;
+        }
+      };
+    } else {
+      this.isInterruptionByAudioActivityEnabled = false;
+    }
+  }
+
   private restoreInterruptionByAudioActivity(): void {
+    this.audioRecognition?.cancelBackchannelBoundary();
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }
 

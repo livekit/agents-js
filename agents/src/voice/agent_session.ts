@@ -46,6 +46,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
+import type { AMD, AMDPredictionEvent } from './amd.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import {
   type AgentEvent,
@@ -82,6 +83,7 @@ import {
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import type { TextTransform } from './transcription/text_transforms.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
@@ -100,14 +102,20 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
+  ttsReadIdleTimeout: number;
+  forwardAudioIdleTimeout: number;
+  ttsTextTransforms: readonly TextTransform[] | null;
 }
 
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
   aecWarmupDuration: 3000,
+  ttsReadIdleTimeout: 10_000,
+  forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
+  ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -182,11 +190,34 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   aecWarmupDuration?: number | null;
 
   /**
+   * Maximum time in milliseconds to wait for the next frame on the TTS audio stream
+   * inside `performTTSInference`. Applies to every read, including the first.
+   * If exceeded, the TTS stream is forcibly closed and a stall warning is logged.
+   * @defaultValue 10000
+   */
+  ttsReadIdleTimeout?: number;
+
+  /**
+   * Maximum time in milliseconds to wait for the next frame while forwarding TTS
+   * audio to the audio output inside `performAudioForwarding`. Applies to every read,
+   * including the first. If exceeded, forwarding is forcibly closed and a stall
+   * warning is logged.
+   * @defaultValue 10000
+   */
+  forwardAudioIdleTimeout?: number;
+
+  /**
    * Configuration for turn handling.
    */
   turnHandling?: Partial<TurnHandlingOptions>;
 
   useTtsAlignedTranscript?: boolean;
+
+  /**
+   * Transforms to apply to TTS input text. Built-in transforms are `filter_markdown`
+   * and `filter_emoji`; pass `null` to disable text transforms.
+   */
+  ttsTextTransforms?: readonly TextTransform[] | null;
 };
 
 type ActivityTransitionOptions = {
@@ -251,6 +282,13 @@ export class AgentSession<
   /** @internal */
   _roomIO?: RoomIO;
 
+  /**
+   * Currently active AMD instance, if one was constructed against this session.
+   * Mirrors python `AgentSession._amd`. Useful for tests, telemetry, and
+   * higher-level helpers that need to introspect classification state.
+   */
+  private _amd: AMD | null = null;
+
   /** @internal */
   _aecWarmupRemaining = 0;
 
@@ -282,7 +320,7 @@ export class AgentSession<
 
   private logger = log();
 
-  constructor(options: AgentSessionOptions<UserData>) {
+  constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
     const { agentSessionOptions: opts, legacyVoiceOptions } =
@@ -662,6 +700,37 @@ export class AgentSession<
     }
 
     return this.activity.interrupt(options);
+  }
+
+  /**
+   * The currently bound `AMD` instance, or `null` if AMD is not in use.
+   * Mirrors python `AgentSession.amd`.
+   */
+  get amd(): AMD | null {
+    return this._amd;
+  }
+
+  /** @internal — used by AMD to register/unregister itself with the session. */
+  _setAmd(amd: AMD | null): void {
+    this._amd = amd;
+  }
+
+  /**
+   * @internal — forwarded to {@link SessionHost} so a connected
+   * {@link RemoteSession} peer receives an `amd_prediction` event when AMD
+   * settles. Mirrors python `AgentSession._session_host._on_amd_prediction`.
+   */
+  _onAmdPrediction(event: AMDPredictionEvent): void {
+    this.sessionHost?._onAmdPrediction(event);
+  }
+
+  /**
+   * @internal — returns a tee'd branch of the active participant audio stream
+   * for AMD's dedicated STT. Returns `undefined` when no `AgentActivity` is
+   * running yet (the AMD STT pump retries until an activity is available).
+   */
+  _subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
+    return this.activity?.subscribeAudioStream();
   }
 
   pauseReplyAuthorization(): void {

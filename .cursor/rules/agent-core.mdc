@@ -506,7 +506,7 @@ For more information, read the example agent file under the `examples` directory
 
 ### Run an example agent under the `examples` directory
 
-`pnpm build && pnpm dlx tsx ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
+`pnpm build && node ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
 
 
 ## License

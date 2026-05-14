@@ -75,6 +75,11 @@ export const ATTR_AMD_CATEGORY = 'lk.amd.category';
 export const ATTR_AMD_REASON = 'lk.amd.reason';
 export const ATTR_AMD_IS_MACHINE = 'lk.amd.is_machine';
 export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
+/** Total user-speech duration captured before the AMD verdict (milliseconds). */
+export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
+/** Time between speech end and the AMD verdict emission (milliseconds). */
+export const ATTR_AMD_DELAY = 'lk.amd.delay';
+export const ATTR_AMD_TRANSCRIPT = 'lk.amd.transcript';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';

@@ -323,7 +323,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
   type: 'session.update';
   session: Partial<{
     // GA fields
-    type?: 'realtime'; // GA: session type
+    type?: 'realtime' | 'transcription'; // GA: session type
     output_modalities?: Modality[]; // GA: renamed from modalities
     audio?: RealtimeAudioConfig; // GA: nested audio config
     max_output_tokens?: number | 'inf'; // GA: renamed from max_response_output_tokens

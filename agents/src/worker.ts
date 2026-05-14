@@ -14,6 +14,7 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
+import { availableParallelism } from 'node:os';
 import { WebSocket } from 'ws';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
@@ -42,8 +43,7 @@ class Default {
 
   static numIdleProcesses(production: boolean): number {
     if (production) {
-      // TODO: use number of cores
-      return 3;
+      return Math.min(availableParallelism(), 4);
     } else {
       return 0;
     }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream } from 'node:stream/web';
+import { ReadableStream, type ReadableStreamDefaultReader } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -113,6 +113,8 @@ export interface ModelSettings {
   toolChoice?: ToolChoice;
 }
 
+export type TTSPronunciationMap = Record<string, string>;
+
 export interface AgentOptions<UserData> {
   id?: string;
   instructions: string;
@@ -125,6 +127,8 @@ export interface AgentOptions<UserData> {
   turnHandling?: TurnHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
+  /** Text replacements applied before TTS synthesis. */
+  ttsPronunciationMap?: TTSPronunciationMap;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
   /** @deprecated use turnHandling.interruption.enabled instead */
@@ -141,6 +145,7 @@ export class Agent<UserData = any> {
 
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
+  private _ttsPronunciationMap?: TTSPronunciationMap;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -168,6 +173,7 @@ export class Agent<UserData = any> {
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
+    ttsPronunciationMap,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -221,6 +227,7 @@ export class Agent<UserData = any> {
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
+    this._ttsPronunciationMap = ttsPronunciationMap;
 
     this._agentActivity = undefined;
   }
@@ -243,6 +250,10 @@ export class Agent<UserData = any> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
+  }
+
+  get ttsPronunciationMap(): TTSPronunciationMap | undefined {
+    return this._ttsPronunciationMap;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -478,15 +489,17 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(text);
+      const ttsInputStream = createTTSPronunciationMapStream(text, agent.ttsPronunciationMap);
+      stream.updateInputStream(ttsInputStream.stream);
 
       let cleaned = false;
-      const cleanup = () => {
+      const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
         stream.close();
+        await ttsInputStream.cancel('tts node cleanup').catch(() => {});
         if (wrappedTts !== activity.tts) {
-          wrappedTts.close();
+          await wrappedTts.close();
         }
       };
 
@@ -505,11 +518,11 @@ export class Agent<UserData = any> {
             }
             controller.close();
           } finally {
-            cleanup();
+            await cleanup();
           }
         },
         cancel() {
-          cleanup();
+          return cleanup();
         },
       });
     },
@@ -529,6 +542,109 @@ export class Agent<UserData = any> {
     ): Promise<ReadableStream<AudioFrame> | null> {
       return audio;
     },
+  };
+}
+
+// Wrap the TTS input stream so pronunciation replacements are applied before synthesis,
+// while keeping a direct cancel hook for cleanup when TTS is interrupted.
+function createTTSPronunciationMapStream(
+  text: ReadableStream<string>,
+  pronunciationMap?: TTSPronunciationMap,
+): { stream: ReadableStream<string>; cancel: (reason?: unknown) => Promise<void> } {
+  if (!pronunciationMap || Object.keys(pronunciationMap).length === 0) {
+    return {
+      stream: text,
+      async cancel(reason?: unknown) {
+        await text.cancel(reason);
+      },
+    };
+  }
+
+  const entries = Object.entries(pronunciationMap);
+  let reader: ReadableStreamDefaultReader<string> | undefined;
+  let cancelled = false;
+
+  const cancel = async (reason?: unknown) => {
+    cancelled = true;
+    await reader?.cancel(reason);
+  };
+
+  const stream = new ReadableStream<string>({
+    async start(controller) {
+      reader = text.getReader();
+      let buffer = '';
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += value;
+          const drained = drainTTSPronunciationBuffer(buffer, entries);
+          buffer = drained.buffer;
+          if (drained.output) {
+            controller.enqueue(drained.output);
+          }
+        }
+
+        if (buffer) {
+          const drained = drainTTSPronunciationBuffer(buffer, entries, true);
+          if (drained.output) {
+            controller.enqueue(drained.output);
+          }
+        }
+
+        if (!cancelled) {
+          controller.close();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          controller.error(error);
+        }
+      } finally {
+        reader?.releaseLock();
+      }
+    },
+    cancel(reason) {
+      return cancel(reason);
+    },
+  });
+
+  return { stream, cancel };
+}
+
+// Emit only text that can no longer become a pronunciation-map key; the retained
+// buffer lets replacements match terms split across stream chunk boundaries.
+function drainTTSPronunciationBuffer(
+  initialBuffer: string,
+  entries: [string, string][],
+  final = false,
+): { output: string; buffer: string } {
+  let buffer = initialBuffer;
+  let output = '';
+
+  while (buffer.length > 0) {
+    const match = entries.find(([term]) => term.length > 0 && buffer.startsWith(term));
+    if (match) {
+      const [term, pronunciation] = match;
+      output += pronunciation;
+      buffer = buffer.slice(term.length);
+      continue;
+    }
+
+    const mayBecomeMatch =
+      !final && entries.some(([term]) => term.length > 0 && term.startsWith(buffer));
+    if (mayBecomeMatch) {
+      break;
+    }
+
+    output += buffer[0];
+    buffer = buffer.slice(1);
+  }
+
+  return {
+    output,
+    buffer,
   };
 }
 

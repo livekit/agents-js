@@ -316,8 +316,8 @@ export class LLM extends llm.LLM {
     }> = {},
   ): LLM {
     return new LLM({
-      model: 'llama-2-13b-chat',
-      baseURL: 'https://text.octoai.run/v1',
+      model: 'llama3.1',
+      baseURL: 'http://localhost:11434/v1',
       apiKey: 'ollama',
       ...opts,
     });

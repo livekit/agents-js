@@ -1,5 +1,159 @@
 # @livekit/agents
 
+## 1.4.2
+
+### Patch Changes
+
+- fix: do not republish background audio tracks after reconnect - [#1487](https://github.com/livekit/agents-js/pull/1487) ([@davidzhao](https://github.com/davidzhao))
+
+- Fail download-files when plugin downloads fail - [#1481](https://github.com/livekit/agents-js/pull/1481) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(amd): update default models and drop null support - [#1476](https://github.com/livekit/agents-js/pull/1476) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add TTS pronunciation customization support to agents, Google Gemini TTS, and Sarvam TTS. - [#1473](https://github.com/livekit/agents-js/pull/1473) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(amd): add default amd prediction log - [#1496](https://github.com/livekit/agents-js/pull/1496) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Add TTS text transforms with built-in markdown/emoji filtering, streaming replacement, and custom callable transform support. - [#1477](https://github.com/livekit/agents-js/pull/1477) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.4.1
+
+### Patch Changes
+
+- Expose `AgentSessionOptions.ttsReadIdleTimeout` and `AgentSessionOptions.forwardAudioIdleTimeout` to configure the two pipeline stall guards in `performTTSInference` and `performAudioForwarding`. Useful for custom LLM/TTS backends whose first-token latency can legitimately exceed the previous 10s default. Defaults remain 10 seconds, preserving existing behavior. - [#1461](https://github.com/livekit/agents-js/pull/1461) ([@s-hamdananwar](https://github.com/s-hamdananwar))
+
+- Make default user turn span start times explicit. - [#1456](https://github.com/livekit/agents-js/pull/1456) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent voice pipeline scheduling from hanging when a pipeline task crashes after a speech handle is already marked done. - [#1423](https://github.com/livekit/agents-js/pull/1423) ([@u9g](https://github.com/u9g))
+
+- fix(google): abort pending realtime sends during reconnect - [#1415](https://github.com/livekit/agents-js/pull/1415) ([@u9g](https://github.com/u9g))
+
+- docs(agents): document realtime capabilities - [#1419](https://github.com/livekit/agents-js/pull/1419) ([@u9g](https://github.com/u9g))
+
+- feat(inference): propagate STT extra to SpeechData.metadata - [#1389](https://github.com/livekit/agents-js/pull/1389) ([@toubatbrian](https://github.com/toubatbrian))
+
+  The inference STT plugin now plumbs the gateway's per-transcript `extra` field
+  onto `SpeechData.metadata`, exposing provider-specific signals (e.g. Inworld
+  voice profile, xAI `speech_final`) to consumers.
+
+- fix(worker): use available CPU cores for numIdleProcesses in production - [#1449](https://github.com/livekit/agents-js/pull/1449) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- fix(transcription): rstrip punctuation from interim segments - [#1447](https://github.com/livekit/agents-js/pull/1447) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- Emit agent configuration updates in OTLP session logs. - [#1434](https://github.com/livekit/agents-js/pull/1434) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(agents): persist user turn start across VAD bursts - [#1457](https://github.com/livekit/agents-js/pull/1457) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support OpenAI Realtime Whisper STT - [#1429](https://github.com/livekit/agents-js/pull/1429) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.4.0
+
+### Minor Changes
+
+- `voice.AMD` reaches feature parity with python. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix(agents): support constructing `AgentSession` with no arguments - [#1410](https://github.com/livekit/agents-js/pull/1410) ([@u9g](https://github.com/u9g))
+
+- `AMD`: cancel the pre-baked HUMAN/`short_greeting` silence timer when a final STT transcript arrives inside the short-speech window, replacing it with a `long_speech` timer anchored at `speechEndedAt + MACHINE_SILENCE_THRESHOLD_MS` so the LLM verdict gets the final word. Mirrors the python fix in [`livekit/agents#5637`](https://github.com/livekit/agents/pull/5637). - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Port AMD improvements from python `livekit/agents#5584`. `voice.AMD` now exposes the previously hard-coded timing thresholds (`humanSpeechThresholdMs`, `humanSilenceThresholdMs`, `machineSilenceThresholdMs`) and the classification `prompt` as constructor options, defers to the LLM (instead of forcing a HUMAN verdict) when a transcript is already available after a short greeting, and accepts a `participantIdentity` hint plus a `suppressCompatibilityWarning` flag. The classifier now offers two LLM tools — `save_prediction` and `postpone_termination` (capped at 3 extensions × 10s) — letting the model request more audio when the transcript is ambiguous; if the model returns plain JSON instead of tool calls, AMD falls back to the previous content-parsing path. AMD also logs a one-shot warning when the resolved LLM is not in the bundled `EVALUATED_LLM_MODELS` list. - [#1368](https://github.com/livekit/agents-js/pull/1368) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(inference): make `inference.LLM` compatible with openai >= 6.36.0 - [#1411](https://github.com/livekit/agents-js/pull/1411) ([@u9g](https://github.com/u9g))
+
+- Add comments to agent side and inference side fallback adapters - [#1398](https://github.com/livekit/agents-js/pull/1398) ([@tmshapland](https://github.com/tmshapland))
+
+- refactor(agents): replace uuid with crypto.randomUUID - [#1392](https://github.com/livekit/agents-js/pull/1392) ([@benasher44](https://github.com/benasher44))
+
+## 1.3.4
+
+### Patch Changes
+
+- Add support for the new `inworld-tts-2` Inworld TTS model. - [#1396](https://github.com/livekit/agents-js/pull/1396) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - Adds `inworld/inworld-tts-2` to the `InworldModels` union exported from
+    `@livekit/agents/inference` so the model is selectable when using the
+    LiveKit Inference Gateway TTS client.
+  - Exports a new `TTSModels` type from `@livekit/agents-plugin-inworld`
+    (`'inworld-tts-2' | 'inworld-tts-1.5-max'`) and updates `TTSOptions.model`
+    to `TTSModels | string`, mirroring the Python plugin so callers get
+    autocomplete for the curated model names while still being able to pass
+    any custom model id.
+
+  Ports https://github.com/livekit/agents/pull/5646 from `livekit/agents`.
+
+## 1.3.3
+
+### Patch Changes
+
+- Port the barge-in cooldown / `backchannelBoundary` interruption window from Python (livekit/agents#5269). When the agent starts speaking, VAD-based interruption now stays active for a configurable cooldown (default `1000` ms) before being disabled, allowing the user to quickly correct themselves at the start of the agent's turn. When the agent finishes speaking, transcripts whose end time falls within the trailing cooldown (default `3500` ms) are released as normal user input instead of being held, surfacing premature answers to the agent's last sentence. The cooldown is configured via `turnHandling.interruption.backchannelBoundary` (a single number applies to both sides; pass `[start, end]` to configure them separately, or `null` to disable). - [#1366](https://github.com/livekit/agents-js/pull/1366) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(stt): add FakeSTT test harness for FallbackAdapter - [#1288](https://github.com/livekit/agents-js/pull/1288) ([@drain-zine](https://github.com/drain-zine))
+
+- Harden RecorderIO teardown by fencing writes before channel closure and stopping - [#1378](https://github.com/livekit/agents-js/pull/1378) ([@toubatbrian](https://github.com/toubatbrian))
+  the forward task first, preventing repeated closed WritableStream write errors on disconnect.
+  Also centralize writable-stream closed error detection in utils and add regression tests.
+
+## 1.3.2
+
+### Patch Changes
+
+- Add `voice.AvatarSession` base class and port the asymmetric-detach warning from the Python `TranscriptSynchronizer`. The new base class registers `aclose` as a job shutdown callback and warns when an avatar session is started after `AgentSession.start()` has already wired an audio output. The transcript synchronizer now tracks `_audioAttached` / `_textAttached` via `onAttached` / `onDetached` and logs a one-shot warning when audio or text is detached asymmetrically (covering external avatars and manual `session.output.audio` / `.transcription` replacement). Existing avatar plugins (anam, bey, lemonslice, trugen) now inherit from `voice.AvatarSession` and call `super.start(agentSession, room)` first. - [#1280](https://github.com/livekit/agents-js/pull/1280) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(inference): drop streamed assistant text from tool call chunks - [#1359](https://github.com/livekit/agents-js/pull/1359) ([@Genmin](https://github.com/Genmin))
+
+- fix(inference): update tts event name and drop unkown type warning - [#1354](https://github.com/livekit/agents-js/pull/1354) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Port the `liveavatar` plugin from the Python `livekit-agents` repo, including the new `videoQuality` parameter from livekit/agents#5552. - [#1324](https://github.com/livekit/agents-js/pull/1324) ([@toubatbrian](https://github.com/toubatbrian))
+
+  The new `@livekit/agents-plugin-liveavatar` package adds a LiveAvatar `AvatarSession` that mirrors the Python plugin: it brings up a LiveAvatar streaming session, opens the realtime websocket, captures the agent's audio output through a queue-based `AudioOutput`, resamples to 24 kHz mono, and forwards base64-encoded chunks (~600 ms first chunk, ~1 s subsequent) to the LiveAvatar service. Inbound websocket events drive playback start/finish notifications back into the `AgentSession`.
+
+  Also exports `voice.AudioOutput` (and its companion `AudioOutputCapabilities` / `PlaybackFinishedEvent` / `PlaybackStartedEvent` types) from `@livekit/agents` so plugin authors can subclass the abstract audio sink.
+
+- feat(telemetry): expose provider request ids on STT/TTS/LLM spans for debugging - [#1319](https://github.com/livekit/agents-js/pull/1319) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Adds the `lk.provider_request_ids` (string[], deduped) span attribute to the
+  `user_turn` (STT), `tts_request_run` (TTS), and `llm_request_run` (LLM) spans
+  so users can correlate traces with the provider's server-side logs.
+
+- emit agent handoffs under conversationitemadded - [#1347](https://github.com/livekit/agents-js/pull/1347) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- feat(room-io): add `jsonFormat` option on `RoomOutputOptions` for timed transcription output. When enabled, each chunk published on the `lk.transcription` datastream topic is a JSON object with `text`, and `start_time`/`end_time` when the chunk is a `TimedString`. Ported from livekit/agents#5472. - [#1305](https://github.com/livekit/agents-js/pull/1305) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Port livekit/agents#5511 + #5532: - [#1304](https://github.com/livekit/agents-js/pull/1304) ([@toubatbrian](https://github.com/toubatbrian))
+
+  - **feat(avatar): add `lk.playback_started` RPC support to `DataStreamAudioOutput`** — new `waitPlaybackStart` constructor option (default `false`). When `true`, the `playbackStarted` event is deferred until the remote avatar worker invokes the `lk.playback_started` RPC instead of firing eagerly on the first captured frame.
+  - **fix/refactor(transcription): drive `SegmentSynchronizerImpl` start-time off `onPlaybackStarted`** — `startWallTime` and `startFuture` are now set when the audio output reports playback start (chained automatically through `SyncedAudioOutput.onPlaybackStarted`), rather than when the first audio frame is pushed. Combined with the close-path fallback from #5532 this keeps the synchronizer correct for both eager (room) and deferred (avatar RPC) playback timing.
+
+  Note: only the consumer side (the agent registering the RPC handler and surfacing the event) is included; agents-js does not have an `AvatarRunner` / `DataStreamAudioReceiver`, so the producer-side `notifyPlaybackStarted` is skipped.
+
+- Gracefully handle unknown inference TTS event type - [#1333](https://github.com/livekit/agents-js/pull/1333) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(deps): update @livekit/rtc-node to 0.13.27 - [#1331](https://github.com/livekit/agents-js/pull/1331) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix lockfile - [#1340](https://github.com/livekit/agents-js/pull/1340) ([@toubatbrian](https://github.com/toubatbrian))
+
+- support new realtime model capability for native transcript synchronization, set to true for phonic - [#1329](https://github.com/livekit/agents-js/pull/1329) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- feat: Resume false interruption feature - [#1320](https://github.com/livekit/agents-js/pull/1320) ([@toubatbrian](https://github.com/toubatbrian))
+
+## 1.3.1
+
+### Minor Changes
+
+- feat(inference/tts): detect aligned transcript capability from provider `modelOptions` (`cartesia.add_timestamps`, `elevenlabs.sync_alignment`, `inworld.timestamp_type`) and forward the gateway's `output_timestamps` WebSocket events as `TimedString` word/character timings attached to the next synthesized audio frame. Ported from livekit/agents#5534. - [#1311](https://github.com/livekit/agents-js/pull/1311) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- fix(voice): await initRecording() to prevent OTEL trace loss in short sessions - [#1300](https://github.com/livekit/agents-js/pull/1300) ([@moyounishimself](https://github.com/moyounishimself))
+
+- support LIVEKIT_AGENT_NAME env var - [#1332](https://github.com/livekit/agents-js/pull/1332) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(deps): update dependency uuid to v14 [security] - [#1313](https://github.com/livekit/agents-js/pull/1313) ([@renovate](https://github.com/apps/renovate))
+
+- feat(metrics): add `playbackLatency` metric on assistant `ChatMessage`s - [#1323](https://github.com/livekit/agents-js/pull/1323) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.3.0
 
 ### Minor Changes

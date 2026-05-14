@@ -44,16 +44,27 @@ export interface RealtimeModelError {
 }
 
 export interface RealtimeCapabilities {
+  /** Whether generated assistant messages can be truncated after interruption. */
   messageTruncation: boolean;
+  /** Whether the model emits server-side speech start and stop events for turn taking. */
   turnDetection: boolean;
+  /** Whether the model emits user audio transcription events. */
   userTranscription: boolean;
+  /** Whether the model automatically generates a reply after receiving tool results. */
   autoToolReplyGeneration: boolean;
+  /** Whether the model can produce audio output directly. */
   audioOutput: boolean;
+  /** Whether function call items already in the chat context can be resumed. */
   manualFunctionCalls: boolean;
+  /** Whether the chat context can be updated mid-session. */
   midSessionChatCtxUpdate?: boolean;
+  /** Whether the instructions can be updated mid-session. */
   midSessionInstructionsUpdate?: boolean;
+  /** Whether the tools can be updated mid-session. */
   midSessionToolsUpdate?: boolean;
+  /** Whether the tool and tool choice can be specified per response. */
   perResponseToolChoice?: boolean;
+  /** Whether the model can synchronize generated transcript timing natively. */
   nativeTranscriptSync?: boolean;
 }
 
@@ -81,6 +92,10 @@ export abstract class RealtimeModel {
 
   get provider(): string {
     return 'unknown';
+  }
+
+  label(): string {
+    return 'RealtimeModel';
   }
 
   abstract session(): RealtimeSession;

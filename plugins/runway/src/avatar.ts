@@ -6,7 +6,6 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
-  getJobContext,
   intervalForRetry,
   voice,
 } from '@livekit/agents';
@@ -72,6 +71,9 @@ export class AvatarSession extends voice.AvatarSession {
   private avatarParticipantIdentity: string;
   private avatarParticipantName: string;
   private connOptions: APIConnectOptions;
+  private room?: Room;
+  private realtimeSessionId?: string;
+  private endSessionPromise?: Promise<void>;
 
   #logger = log();
 
@@ -109,6 +111,7 @@ export class AvatarSession extends voice.AvatarSession {
     options: StartOptions = {},
   ): Promise<void> {
     await super.start(agentSession, room);
+    this.room = room;
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
@@ -139,14 +142,9 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitToken = await at.toJwt();
 
     this.#logger.debug('starting Runway avatar session');
-    const sessionId = await this.createSession(
-      livekitUrl,
-      livekitToken,
-      room.name || '',
-      localParticipantIdentity,
-    );
-    getJobContext(false)?.addShutdownCallback(async () => {
-      await this.cancelRunwayRealtimeSession(sessionId);
+    await this.createSession(livekitUrl, livekitToken, room.name || '', localParticipantIdentity);
+    agentSession.on(voice.AgentSessionEventTypes.Close, () => {
+      void this.ensureEndSessionPromise();
     });
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
@@ -162,7 +160,7 @@ export class AvatarSession extends voice.AvatarSession {
     livekitToken: string,
     roomName: string,
     agentIdentity: string,
-  ): Promise<string> {
+  ): Promise<void> {
     const body: Record<string, unknown> = {
       model: 'gwm1_avatars',
       avatar: this.avatar,
@@ -200,22 +198,16 @@ export class AvatarSession extends voice.AvatarSession {
             options: { statusCode: response.status, body: { error: text } },
           });
         }
-        const payload = (await response.json()) as unknown;
-        const sessionId =
-          typeof payload === 'object' && payload !== null && 'id' in payload
-            ? payload.id
-            : undefined;
-        if (!sessionId || typeof sessionId !== 'string') {
-          throw new APIStatusError({
-            message: 'Runway API response missing session id',
-            options: {
-              statusCode: response.status,
-              body: { error: JSON.stringify(payload) },
-              retryable: false,
-            },
-          });
+        const payload = (await response.json()) as { id?: unknown };
+        if (typeof payload.id === 'string') {
+          this.realtimeSessionId = payload.id;
+        } else {
+          this.#logger.warn(
+            { payload: JSON.stringify(payload) },
+            'Runway API response missing session id; API cancellation fallback will be unavailable',
+          );
         }
-        return sessionId;
+        return;
       } catch (e) {
         if (e instanceof APIStatusError && !e.retryable) throw e;
 
@@ -238,7 +230,57 @@ export class AvatarSession extends voice.AvatarSession {
     });
   }
 
-  private async cancelRunwayRealtimeSession(sessionId: string): Promise<void> {
+  private ensureEndSessionPromise(): Promise<void> | undefined {
+    if (this.endSessionPromise !== undefined) {
+      return this.endSessionPromise;
+    }
+
+    if (this.room === undefined) {
+      return undefined;
+    }
+
+    this.endSessionPromise = this.endRunwayRealtimeSession(this.room);
+    return this.endSessionPromise;
+  }
+
+  private async endRunwayRealtimeSession(room: Room): Promise<void> {
+    // Preferred path: data-channel END_CALL while the room is still connected.
+    // The Runway worker handles this message and shuts the session down through
+    // the normal "user ended call" lifecycle (COMPLETED, not CANCELLED).
+    const localParticipant = room.localParticipant;
+    if (room.isConnected && localParticipant) {
+      try {
+        await localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ type: 'END_CALL' })),
+          {
+            reliable: true,
+            destination_identities: [this.avatarParticipantIdentity],
+          },
+        );
+        this.#logger.debug('sent Runway realtime session end call');
+        return;
+      } catch (error) {
+        this.#logger.warn(
+          { error: String(error) },
+          'error ending Runway realtime session via data channel',
+        );
+      }
+    }
+
+    // Fallback for hard shutdowns where the room is already disconnected
+    // (e.g. aclose() registered as a job shutdown callback runs after
+    // room.disconnect()): cancel the session via API so we don't keep
+    // billing until maxDuration.
+    await this.cancelRunwayRealtimeSession();
+  }
+
+  private async cancelRunwayRealtimeSession(): Promise<void> {
+    const sessionId = this.realtimeSessionId;
+    if (sessionId === undefined) {
+      this.#logger.warn('could not cancel Runway realtime session; no session id available');
+      return;
+    }
+
     try {
       const response = await fetch(`${this.apiUrl}/v1/realtime_sessions/${sessionId}`, {
         method: 'DELETE',
@@ -249,12 +291,11 @@ export class AvatarSession extends voice.AvatarSession {
         },
         signal: AbortSignal.timeout(this.connOptions.timeoutMs),
       });
-
       if (response.ok) {
         this.#logger.debug({ sessionId }, 'cancelled Runway realtime session');
       } else {
         this.#logger.warn(
-          { sessionId, status: response.status },
+          { sessionId, status: response.status, body: await response.text() },
           'could not cancel Runway realtime session',
         );
       }
@@ -264,5 +305,9 @@ export class AvatarSession extends voice.AvatarSession {
         'error cancelling Runway realtime session',
       );
     }
+  }
+
+  override async aclose(): Promise<void> {
+    await this.ensureEndSessionPromise();
   }
 }

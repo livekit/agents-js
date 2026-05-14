@@ -346,11 +346,20 @@ interface ProtoAgentHandoff {
   oldAgentId?: string;
 }
 
+interface ProtoAgentConfigUpdate {
+  id: string;
+  createdAt: string;
+  instructions?: string;
+  toolsAdded?: string[];
+  toolsRemoved?: string[];
+}
+
 interface ProtoChatItem {
   message?: ProtoMessage;
   functionCall?: ProtoFunctionCall;
   functionCallOutput?: ProtoFunctionCallOutput;
   agentHandoff?: ProtoAgentHandoff;
+  agentConfigUpdate?: ProtoAgentConfigUpdate;
 }
 
 /**
@@ -441,6 +450,21 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       handoff.oldAgentId = item.oldAgentId;
     }
     itemDict.agentHandoff = handoff;
+  } else if (item.type === 'agent_config_update') {
+    const configUpdate: ProtoAgentConfigUpdate = {
+      id: item.id,
+      createdAt: toRFC3339(item.createdAt),
+    };
+    if (item.instructions !== undefined) {
+      configUpdate.instructions = item.instructions;
+    }
+    if (item.toolsAdded !== undefined) {
+      configUpdate.toolsAdded = item.toolsAdded;
+    }
+    if (item.toolsRemoved !== undefined) {
+      configUpdate.toolsRemoved = item.toolsRemoved;
+    }
+    itemDict.agentConfigUpdate = configUpdate;
   }
 
   try {

@@ -46,6 +46,8 @@ export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export type XaiSTTModels = 'xai/stt-1';
 
+export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+
 export interface CartesiaOptions {
   /** Minimum volume threshold. Default: not specified. */
   min_volume?: number;
@@ -106,6 +108,45 @@ export interface XaiOptions {
   interim_results?: boolean;
 }
 
+export interface SpeechmaticsOptions {
+  /** Domain to use, for example "finance". */
+  domain?: string;
+  /** BCP-47 locale for output formatting. */
+  output_locale?: string;
+  /** Maximum delay in seconds. Valid range is 0.7-4.0. Default: 1.0. */
+  max_delay?: number;
+  /** Maximum delay mode. */
+  max_delay_mode?: 'flexible' | 'fixed' | string;
+  /** Enable diarization for modes other than "none". */
+  diarization?:
+    | 'none'
+    | 'speaker'
+    | 'channel'
+    | 'channel_and_speaker_change'
+    | 'speaker_change'
+    | string;
+  /** Speaker diarization sensitivity. Valid range is 0.0-1.0. */
+  speaker_sensitivity?: number;
+  /** Maximum number of speakers to detect. */
+  max_speakers?: number;
+  /** Prefer grouping nearby words as the current speaker. */
+  prefer_current_speaker?: boolean;
+  /** Enable partial results. Default: true, overridden by the gateway. */
+  enable_partials?: boolean;
+  /** Enable entity recognition. */
+  enable_entities?: boolean;
+  /** Punctuation override configuration. */
+  punctuation_overrides?: Record<string, unknown>;
+  /** Additional vocabulary entries for custom dictionary support. */
+  additional_vocab?: Array<Record<string, unknown>>;
+  /** Seconds of silence before finalizing an utterance. */
+  end_of_utterance_silence_trigger?: number;
+  /** Audio filtering configuration. */
+  audio_filtering_config?: Record<string, unknown>;
+  /** Transcript filtering configuration. */
+  transcript_filtering_config?: Record<string, unknown>;
+}
+
 export type STTLanguages =
   | 'multi'
   | 'en'
@@ -118,11 +159,15 @@ export type STTLanguages =
   | 'hi'
   | AnyString;
 
-const DIARIZATION_EXTRA_KEYS = ['diarize', 'speaker_labels'] as const;
+const DIARIZATION_EXTRA_KEYS = ['diarize', 'speaker_labels', 'diarization'] as const;
 
 function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): boolean {
   if (!extraKwargs) return false;
-  return DIARIZATION_EXTRA_KEYS.some((key) => Boolean(extraKwargs[key]));
+  return DIARIZATION_EXTRA_KEYS.some((key) => {
+    const value = extraKwargs[key];
+    if (!value) return false;
+    return !(typeof value === 'string' && value.toLowerCase() === 'none');
+  });
 }
 
 type _STTModels =
@@ -130,7 +175,8 @@ type _STTModels =
   | CartesiaModels
   | AssemblyaiModels
   | ElevenlabsSTTModels
-  | XaiSTTModels;
+  | XaiSTTModels
+  | SpeechmaticsModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -144,9 +190,11 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
       ? AssemblyAIOptions
       : TModel extends XaiSTTModels
         ? XaiOptions
-        : Record<string, unknown>;
+        : TModel extends SpeechmaticsModels
+          ? SpeechmaticsOptions
+          : Record<string, unknown>;
 
-/** A fallback model with optional extra configuration. Extra fields are passed through to the provider. */
+/** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
   /** Model name (e.g. "deepgram/nova-3", "assemblyai/universal-streaming", "cartesia/ink-whisper"). */
   model: string;
@@ -674,6 +722,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
       }
 
+      // The gateway carries provider-specific data on the `extra` field
+      // of the transcript message. We surface it on SpeechData.metadata.
+      const extra = data.extra;
+      const metadata =
+        extra &&
+        typeof extra === 'object' &&
+        !Array.isArray(extra) &&
+        Object.keys(extra as Record<string, unknown>).length > 0
+          ? (extra as Record<string, unknown>)
+          : undefined;
+
       const speechData: SpeechData = {
         language,
         startTime: this.startTimeOffset + data.start,
@@ -692,6 +751,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               speakerId: word.speaker_id ?? undefined,
             }),
         ),
+        metadata,
       };
 
       if (eventType === SpeechEventType.FINAL_TRANSCRIPT) {

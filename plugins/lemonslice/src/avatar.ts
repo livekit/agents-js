@@ -249,6 +249,7 @@ export class AvatarSession extends voice.AvatarSession {
       destinationIdentity: this.avatarParticipantIdentity,
       sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
+      waitPlaybackStart: true,
     });
 
     return sessionId;

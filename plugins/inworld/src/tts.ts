@@ -32,6 +32,7 @@ const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
+export type TTSModels = 'inworld-tts-2' | 'inworld-tts-1.5-max';
 export type Encoding = 'PCM' | 'LINEAR16';
 export type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
 export type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
@@ -43,12 +44,14 @@ export type TimestampTransportStrategy =
 export interface TTSOptions {
   apiKey?: string;
   voice: string;
-  model: string;
+  model: TTSModels | string;
   encoding: Encoding;
   bitRate: number;
   sampleRate: number;
   speakingRate: number;
   temperature: number;
+  /** BCP-47 language tag specifying the language the voice should speak in. */
+  language?: string;
   timestampType?: TimestampType;
   textNormalization?: TextNormalization;
   timestampTransportStrategy?: TimestampTransportStrategy;
@@ -74,6 +77,7 @@ interface SynthesizeRequest {
   modelId: string;
   audioConfig: AudioConfig;
   temperature: number;
+  language?: string;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
   timestampTransportStrategy?: TimestampTransportStrategy;
@@ -84,6 +88,7 @@ interface CreateContextConfig {
   modelId: string;
   audioConfig: AudioConfig;
   temperature: number;
+  language?: string;
   bufferCharThreshold: number;
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
@@ -406,6 +411,7 @@ class ChunkedStream extends tts.ChunkedStream {
       modelId: this.#opts.model,
       audioConfig: audioConfig,
       temperature: this.#opts.temperature,
+      language: this.#opts.language,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
@@ -731,6 +737,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
         speakingRate: this.#opts.speakingRate,
       },
       temperature: this.#opts.temperature,
+      language: this.#opts.language,
       bufferCharThreshold: this.#opts.bufferCharThreshold,
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
