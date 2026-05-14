@@ -3210,6 +3210,9 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
+    if (speechHandle.interrupted) {
+      return;
+    }
 
     if (userInput) {
       const chatCtx = this.realtimeSession.chatCtx.copy();
@@ -3228,7 +3231,19 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     try {
-      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      const generateReplyAbortController = new AbortController();
+      const generationPromise = this.realtimeSession.generateReply(instructions, {
+        signal: generateReplyAbortController.signal,
+      });
+      void generationPromise.catch(() => undefined);
+
+      await speechHandle.waitIfNotInterrupted([generationPromise]);
+      if (speechHandle.interrupted) {
+        generateReplyAbortController.abort();
+        return;
+      }
+
+      const generationEvent = await generationPromise;
       await this.realtimeGenerationTask(
         speechHandle,
         generationEvent,

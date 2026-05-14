@@ -4,7 +4,39 @@
 import { llm } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as api_proto from './api_proto.js';
-import { RealtimeModel, livekitItemToOpenAIItem } from './realtime_model.js';
+import { RealtimeModel, RealtimeSession, livekitItemToOpenAIItem } from './realtime_model.js';
+
+type RealtimeSessionInternals = {
+  generateReply: RealtimeSession['generateReply'];
+  responseCreatedFutures: Record<string, unknown>;
+  sendEvent: ReturnType<typeof vi.fn>;
+  textModeRecoveryRetries: number;
+};
+
+function createSessionForTest(): RealtimeSessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
+  session.responseCreatedFutures = {};
+  session.sendEvent = vi.fn();
+  session.textModeRecoveryRetries = 0;
+  return session;
+}
+
+describe('RealtimeSession.generateReply', () => {
+  it('cancels an in-flight response when aborted before response.created', async () => {
+    const session = createSessionForTest();
+    const abortController = new AbortController();
+
+    const promise = session.generateReply('say pineapple', { signal: abortController.signal });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    expect(Object.keys(session.responseCreatedFutures)).toHaveLength(0);
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'response.create' }),
+    );
+    expect(session.sendEvent).toHaveBeenCalledWith({ type: 'response.cancel' });
+  });
+});
 
 describe('livekitItemToOpenAIItem', () => {
   describe('message items', () => {
