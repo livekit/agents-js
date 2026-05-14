@@ -847,12 +847,16 @@ export class AgentActivity implements RecognitionHooks {
     const aecWarmupActive =
       this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
 
+    const discardAudioIfUninterruptible =
+      this.agent.turnHandling?.interruption?.discardAudioIfUninterruptible ??
+      this.agentSession.sessionOptions.turnHandling.interruption.discardAudioIfUninterruptible;
+
     const uninterruptibleSpeechActive =
       this._currentSpeech !== undefined &&
       !this._currentSpeech.done() &&
       !this._currentSpeech.interrupted &&
       !this._currentSpeech.allowInterruptions &&
-      (this.turnHandling.interruption?.discardAudioIfUninterruptible ?? false);
+      discardAudioIfUninterruptible;
 
     return aecWarmupActive || uninterruptibleSpeechActive;
   }
