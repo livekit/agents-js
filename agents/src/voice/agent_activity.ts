@@ -20,6 +20,7 @@ import {
   type Instructions,
   type MetricsReport,
   concatInstructions,
+  instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
 import {
@@ -603,7 +604,7 @@ export class AgentActivity implements RecognitionHooks {
         reusable =
           reusable &&
           (capabilities.midSessionInstructionsUpdate ||
-            this.agent.instructions === newActivity.agent.instructions);
+            instructionsEqual(this.agent.instructions, newActivity.agent.instructions));
 
         // tools update is supported or tools are the same
         reusable =

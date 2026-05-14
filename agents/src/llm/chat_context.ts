@@ -180,6 +180,28 @@ export function renderInstructions(
 }
 
 /**
+ * Compare two instruction values by content. Plain strings compare by value;
+ * {@link Instructions} compare by their audio + text variants so that two
+ * distinct instances with the same content are treated as equal.
+ */
+export function instructionsEqual(
+  a: string | Instructions | undefined,
+  b: string | Instructions | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  const aIsInstr = isInstructions(a);
+  const bIsInstr = isInstructions(b);
+  if (aIsInstr && bIsInstr) {
+    return a.audio === b.audio && a.text === b.text;
+  }
+  if (!aIsInstr && !bIsInstr) {
+    return a === b;
+  }
+  return false;
+}
+
+/**
  * Concatenate any mix of plain strings and {@link Instructions}, propagating
  * both audio/text variants. If no argument is an {@link Instructions} the
  * result is a plain string; otherwise the result is an {@link Instructions}
