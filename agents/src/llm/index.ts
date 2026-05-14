@@ -83,3 +83,17 @@ export {
   type AvailabilityChangedEvent,
   type FallbackAdapterOptions,
 } from './fallback_adapter.js';
+
+export {
+  MCPServer,
+  MCPServerHTTP,
+  MCPServerStdio,
+  type MCPHTTPTransportType,
+  type MCPServerHTTPOptions,
+  type MCPServerOptions,
+  type MCPServerStdioOptions,
+  type MCPToolCallResult,
+  type MCPToolContent,
+  type MCPToolResultContext,
+  type MCPToolResultResolver,
+} from './mcp.js';

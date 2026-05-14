@@ -28,6 +28,7 @@ import {
   type InputSpeechStoppedEvent,
   type InputTranscriptionCompleted,
   LLM,
+  type MCPServer,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -128,6 +129,15 @@ export class SchedulingPausedError extends Error {
 
 export function isSchedulingPausedError(error: unknown): error is SchedulingPausedError {
   return error instanceof SchedulingPausedError;
+}
+
+function sameMcpServerRefs(a: MCPServer[], b: MCPServer[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 export async function cleanupReusableResources(
@@ -269,6 +279,11 @@ export class AgentActivity implements RecognitionHooks {
   _onEnterTask?: Task<void>;
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
+
+  // Tools fetched from MCP servers configured on the active Agent (overrides
+  // session-level configuration). These are merged with the agent-defined
+  // tools whenever ``tools`` / ``toolCtx`` is read.
+  private _mcpTools: ToolContext = {};
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -413,6 +428,8 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     this.agent._agentActivity = this;
+
+    await this._initializeMcpServers();
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
@@ -599,10 +616,16 @@ export class AgentActivity implements RecognitionHooks {
           (capabilities.midSessionInstructionsUpdate ||
             this.agent.instructions === newActivity.agent.instructions);
 
-        // tools update is supported or tools are the same
+        // tools update is supported or tools are the same. Compare agent-level
+        // tools and MCP server references separately: newActivity._mcpTools is
+        // still empty here (it's populated later in _startSession), so reading
+        // newActivity.tools would always look different when MCP servers are
+        // configured.
+        const sameMcpServers = sameMcpServerRefs(this.mcpServers, newActivity.mcpServers);
         reusable =
           reusable &&
-          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+          (capabilities.midSessionToolsUpdate ||
+            (isSameToolContext(this.agent.toolCtx, newActivity.agent.toolCtx) && sameMcpServers));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
@@ -659,7 +682,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tools(): ToolContext {
-    return this.agent.toolCtx;
+    return { ...this.agent.toolCtx, ...this._mcpTools };
   }
 
   get schedulingPaused(): boolean {
@@ -719,7 +742,15 @@ export class AgentActivity implements RecognitionHooks {
   // }
 
   get toolCtx(): ToolContext {
-    return this.agent.toolCtx;
+    return { ...this.agent.toolCtx, ...this._mcpTools };
+  }
+
+  /**
+   * MCP servers active for this activity. Agent-level configuration takes
+   * precedence over session-level configuration.
+   */
+  get mcpServers(): MCPServer[] {
+    return this.agent.mcpServers ?? this.agentSession.mcpServers ?? [];
   }
 
   /** @internal */
@@ -753,7 +784,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateTools(tools: ToolContext): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.tools));
+    // diff is computed against the agent-level tools only; MCP-provided tools
+    // are managed separately and not affected by this call.
+    const oldToolNames = new Set(Object.keys(this.agent.toolCtx));
     const newToolNames = new Set(Object.keys(tools));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
@@ -770,12 +803,13 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(tools);
+      // include MCP tools so the realtime model sees the full tool set.
+      await this.realtimeSession.updateTools(this.tools);
     }
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
-      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: tools }));
+      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: this.tools }));
     }
   }
 
@@ -1704,11 +1738,11 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools = shouldFilterTools
         ? Object.fromEntries(
-            Object.entries(this.agent.toolCtx).filter(
+            Object.entries(this.tools).filter(
               ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
             ),
           )
-        : this.agent.toolCtx;
+        : this.tools;
 
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
@@ -3394,10 +3428,50 @@ export class AgentActivity implements RecognitionHooks {
         this.interruptionDetector.off('error', this.onInterruptionError);
       }
 
+      // close agent-scoped MCP servers; session-scoped ones are kept open for
+      // the next activity and closed when the session shuts down.
+      const agentMcpServers = this.agent.mcpServers;
+      if (agentMcpServers && agentMcpServers.length > 0) {
+        await Promise.allSettled(agentMcpServers.map((server) => server.aclose()));
+      }
+      this._mcpTools = {};
+
       this.agent._agentActivity = undefined;
     } finally {
       unlock();
     }
+  }
+
+  private async _initializeMcpServers(): Promise<void> {
+    const servers = this.mcpServers;
+    if (servers.length === 0) {
+      this._mcpTools = {};
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      servers.map(async (server) => {
+        if (!server.initialized) {
+          await server.initialize();
+        }
+        return server.listTools();
+      }),
+    );
+
+    const merged: ToolContext = {};
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (!result) continue;
+      if (result.status === 'fulfilled') {
+        Object.assign(merged, result.value);
+      } else {
+        this.logger.error(
+          { err: result.reason },
+          'failed to initialize MCP server, its tools will not be available',
+        );
+      }
+    }
+    this._mcpTools = merged;
   }
 
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {

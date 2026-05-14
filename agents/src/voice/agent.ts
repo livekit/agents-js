@@ -13,7 +13,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import { ReadonlyChatContext } from '../llm/chat_context.js';
-import type { ChatMessage, FunctionCall } from '../llm/index.js';
+import type { ChatMessage, FunctionCall, MCPServer } from '../llm/index.js';
 import {
   type ChatChunk,
   ChatContext,
@@ -120,6 +120,13 @@ export interface AgentOptions<UserData> {
   instructions: string;
   chatCtx?: ChatContext;
   tools?: ToolContext<UserData>;
+  /**
+   * List of MCP servers providing additional tools for this agent. Tools
+   * fetched from these servers are merged into the agent's tool context when
+   * the {@link AgentActivity} starts. When set on an Agent, these override the
+   * MCP servers configured on the {@link AgentSession}.
+   */
+  mcpServers?: MCPServer[];
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -159,11 +166,15 @@ export class Agent<UserData = any> {
   /** @internal */
   _tools?: ToolContext<UserData>;
 
+  /** @internal */
+  _mcpServers?: MCPServer[];
+
   constructor({
     id,
     instructions,
     chatCtx,
     tools,
+    mcpServers,
     turnDetection,
     stt,
     vad,
@@ -191,6 +202,7 @@ export class Agent<UserData = any> {
 
     this._instructions = instructions;
     this._tools = { ...tools };
+    this._mcpServers = mcpServers;
     this._chatCtx = chatCtx
       ? chatCtx.copy({
           toolCtx: this._tools,
@@ -270,6 +282,10 @@ export class Agent<UserData = any> {
 
   get toolCtx(): ToolContext<UserData> {
     return { ...this._tools };
+  }
+
+  get mcpServers(): MCPServer[] | undefined {
+    return this._mcpServers;
   }
 
   get session(): AgentSession<UserData> {
