@@ -87,6 +87,8 @@ export interface TTSV3Options extends TTSBaseOptions {
   speaker?: TTSV3Speakers | string;
   /** Temperature for voice variation, 0.01 to 2.0 (v3 only, default 0.6) */
   temperature?: number;
+  /** Custom pronunciation dictionary ID (v3 only) */
+  dictId?: string;
 }
 
 /** Combined options — discriminated by `model` field */
@@ -113,6 +115,7 @@ interface ResolvedTTSOptions {
   enablePreprocessing?: boolean;
   // V3 only
   temperature?: number;
+  dictId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +165,9 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
   };
 
   if (isV3) {
-    base.temperature = (opts as TTSV3Options).temperature ?? V3_DEFAULTS.temperature;
+    const v3 = opts as TTSV3Options;
+    base.temperature = v3.temperature ?? V3_DEFAULTS.temperature;
+    base.dictId = v3.dictId;
   } else {
     const v2 = opts as TTSV2Options;
     base.pitch = v2.pitch ?? V2_DEFAULTS.pitch;
@@ -266,6 +271,7 @@ function buildRequestBody(text: string, opts: ResolvedTTSOptions): Record<string
 
   if (opts.model === 'bulbul:v3') {
     if (opts.temperature != null) body.temperature = opts.temperature;
+    if (opts.dictId != null) body.dict_id = opts.dictId;
   } else {
     if (opts.pitch != null) body.pitch = opts.pitch;
     if (opts.loudness != null) body.loudness = opts.loudness;
@@ -291,6 +297,7 @@ function buildWsConfigMessage(opts: ResolvedTTSOptions): Record<string, unknown>
 
   if (opts.model === 'bulbul:v3') {
     if (opts.temperature != null) data.temperature = opts.temperature;
+    if (opts.dictId != null) data.dict_id = opts.dictId;
   } else {
     if (opts.pitch != null) data.pitch = opts.pitch;
     if (opts.loudness != null) data.loudness = opts.loudness;
@@ -328,7 +335,7 @@ export class TTS extends tts.TTS {
    * When the model changes, only truly shared fields (apiKey,
    * targetLanguageCode, pace, sampleRate, baseURL) carry over.
    * Model-specific fields (speaker, pitch, loudness, temperature,
-   * enablePreprocessing) are dropped so resolveOptions re-applies
+   * dictId, enablePreprocessing) are dropped so resolveOptions re-applies
    * the correct defaults for the new model.
    */
   updateOptions(opts: Partial<TTSOptions>) {

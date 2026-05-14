@@ -55,7 +55,16 @@ import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
-import { Future, Task, cancelAndWait, isDevMode, isHosted, waitFor } from '../utils.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  cancelAndWait,
+  isDevMode,
+  isHosted,
+  waitFor,
+  waitUntilTimeout,
+} from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
 import type { Agent, ModelSettings } from './agent.js';
 import {
@@ -192,6 +201,9 @@ export class AgentActivity implements RecognitionHooks {
   // Tracking them lets interrupt() reach handles that are no longer _currentSpeech but
   // still own an in-flight tool call (which may have scheduled further speech handles).
   private _backgroundSpeeches: Set<SpeechHandle> = new Set();
+  // Placeholder used to hold a RunResult open while waiting for a realtime
+  // model to auto-generate a tool reply (autoToolReplyGeneration=true).
+  private pendingAutoToolReplyFut?: Future<void, never>;
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
@@ -520,6 +532,7 @@ export class AgentActivity implements RecognitionHooks {
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
+      shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
     });
 
     if (reuseResources?.sttPipeline) {
@@ -813,11 +826,9 @@ export class AgentActivity implements RecognitionHooks {
     // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
     // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
     // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
-    const aecWarmupAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
+    const discardAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
       transform: (frame, controller) => {
-        const shouldDiscardForAecWarmup =
-          this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
-        if (!shouldDiscardForAecWarmup) {
+        if (!this.shouldDiscardInputAudio()) {
           controller.enqueue(frame);
         }
       },
@@ -826,20 +837,34 @@ export class AgentActivity implements RecognitionHooks {
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
 
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream
-        .pipeThrough(aecWarmupAudioFilter)
-        .tee();
-      this.realtimeSession.setInputAudioStream(realtimeAudioStream);
+      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+      this.realtimeSession.setInputAudioStream(realtimeAudioStream.pipeThrough(discardAudioFilter));
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
+        this.audioStream.stream.pipeThrough(discardAudioFilter),
       );
     } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(aecWarmupAudioFilter),
-      );
+      this.audioRecognition.setInputAudioStream(this.audioStream.stream);
     }
+  }
+
+  private shouldDiscardInputAudio(): boolean {
+    const aecWarmupActive =
+      this.agentSession.agentState === 'speaking' && this.agentSession._aecWarmupRemaining > 0;
+
+    const discardAudioIfUninterruptible =
+      this.agent.turnHandling?.interruption?.discardAudioIfUninterruptible ??
+      this.agentSession.sessionOptions.turnHandling.interruption.discardAudioIfUninterruptible;
+
+    const uninterruptibleSpeechActive =
+      this._currentSpeech !== undefined &&
+      !this._currentSpeech.done() &&
+      !this._currentSpeech.interrupted &&
+      !this._currentSpeech.allowInterruptions &&
+      discardAudioIfUninterruptible;
+
+    return aecWarmupActive || uninterruptibleSpeechActive;
   }
 
   detachAudioInput(): void {
@@ -1073,6 +1098,16 @@ export class AgentActivity implements RecognitionHooks {
       ownedSpeechHandle: handle,
       name: 'AgentActivity.realtimeGeneration',
     });
+
+    const fut = this.pendingAutoToolReplyFut;
+    if (fut && !fut.done) {
+      const runState = this.agentSession._globalRunState;
+      if (runState && !runState.done()) {
+        runState._watchHandle(handle);
+      }
+      this.pendingAutoToolReplyFut = undefined;
+      fut.resolve();
+    }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
   }
@@ -2021,6 +2056,7 @@ export class AgentActivity implements RecognitionHooks {
           this.tts?.model,
           this.tts?.provider,
           this.agentSession.sessionOptions.ttsReadIdleTimeout,
+          this.agentSession.sessionOptions.ttsTextTransforms,
         );
         tasks.push(ttsTask);
         replyTtsGenData = ttsGenData;
@@ -2210,6 +2246,7 @@ export class AgentActivity implements RecognitionHooks {
         this.tts?.model,
         this.tts?.provider,
         this.agentSession.sessionOptions.ttsReadIdleTimeout,
+        this.agentSession.sessionOptions.ttsTextTransforms,
       );
     };
 
@@ -2775,6 +2812,7 @@ export class AgentActivity implements RecognitionHooks {
                 this.tts?.model,
                 this.tts?.provider,
                 this.agentSession.sessionOptions.ttsReadIdleTimeout,
+                this.agentSession.sessionOptions.ttsTextTransforms,
               );
               tasks.push(ttsTask);
               realtimeAudioResult = ttsGenData.audioStream;
@@ -3044,6 +3082,45 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
       );
 
+      // If the realtime model auto-generates the tool reply, install a
+      // placeholder so the active RunResult waits for that reply.
+      let fut: Future<void, never> | undefined;
+      if (
+        this.llm.capabilities.autoToolReplyGeneration &&
+        shouldGenerateToolReply &&
+        this.pendingAutoToolReplyFut === undefined
+      ) {
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          fut = new Future();
+          this.pendingAutoToolReplyFut = fut;
+          const llmLabel = this.llm.label();
+          const waitTask = Task.from(
+            async () => {
+              try {
+                await waitUntilTimeout(fut!.await, 5000);
+              } catch (error) {
+                if (error instanceof IdleTimeoutError) {
+                  this.logger.warn(
+                    { llm: llmLabel },
+                    'timed out waiting for realtime auto tool reply',
+                  );
+                  return;
+                }
+                throw error;
+              } finally {
+                if (this.pendingAutoToolReplyFut === fut) {
+                  this.pendingAutoToolReplyFut = undefined;
+                }
+              }
+            },
+            undefined,
+            'AgentActivity.waitForAutoToolReply',
+          );
+          runState._watchHandle(waitTask);
+        }
+      }
+
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
@@ -3051,6 +3128,12 @@ export class AgentActivity implements RecognitionHooks {
           { error },
           'failed to update chat context before generating the function calls results',
         );
+        if (fut && !fut.done) {
+          if (this.pendingAutoToolReplyFut === fut) {
+            this.pendingAutoToolReplyFut = undefined;
+          }
+          fut.resolve();
+        }
       }
     }
 

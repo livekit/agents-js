@@ -38,6 +38,7 @@ export interface LLMOptions {
   httpOptions?: types.HttpOptions;
   seed?: number;
   serviceTier?: types.ServiceTier;
+  mediaResolution?: types.MediaResolution;
 }
 
 export class LLM extends llm.LLM {
@@ -87,6 +88,7 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
+   * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
   constructor(
     {
@@ -108,6 +110,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      mediaResolution,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
     },
@@ -179,6 +182,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      mediaResolution,
       apiKey,
     };
   }
@@ -272,6 +276,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.serviceTier !== undefined) {
       extras.serviceTier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.mediaResolution !== undefined) {
+      extras.mediaResolution = this.#opts.mediaResolution;
     }
 
     geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;

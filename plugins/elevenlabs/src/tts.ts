@@ -442,15 +442,20 @@ class Connection {
         }
       };
 
-      const onClose = () => {
+      const onClose = (code: number) => {
         if (!this.#closed && this.#contextData.size > 0) {
-          this.#logger.warn('websocket closed unexpectedly');
+          errorFuture.reject(
+            new APIStatusError({
+              message: 'ElevenLabs websocket connection closed unexpectedly',
+              options: { statusCode: code },
+            }),
+          );
         }
         messageChannel.close();
       };
 
       const onError = (error: Error) => {
-        errorFuture.resolve(error);
+        errorFuture.reject(error);
         messageChannel.close();
       };
 
@@ -594,7 +599,7 @@ class Connection {
 
         // Throw any error that occurred
         if (errorFuture.done) {
-          throw await errorFuture.await;
+          await errorFuture.await;
         }
       } finally {
         reader.releaseLock();

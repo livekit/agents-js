@@ -160,6 +160,9 @@ describe('AgentActivity RT session reuse eligibility', () => {
     get model() {
       return 'fake';
     }
+    label(): string {
+      return 'fake.RealtimeModel';
+    }
     session(): RealtimeSession {
       throw new Error('not implemented');
     }

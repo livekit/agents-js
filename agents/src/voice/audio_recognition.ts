@@ -158,6 +158,8 @@ export interface AudioRecognitionOptions {
   sttProvider?: string;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
+  /** Predicate used to skip frames for STT while still forwarding them to VAD/interruption. */
+  shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
 }
 
 /**
@@ -308,12 +310,28 @@ export class AudioRecognition {
     );
     const primaryInputStream = this.deferredInputStream.stream.pipeThrough(broadcast);
 
+    const filterSttInput = (stream: ReadableStream<AudioFrame>) => {
+      if (!opts.shouldDiscardAudioForStt) {
+        return stream;
+      }
+
+      return stream.pipeThrough(
+        new TransformStream<AudioFrame, AudioFrame>({
+          transform: (frame, controller) => {
+            if (!opts.shouldDiscardAudioForStt!(frame)) {
+              controller.enqueue(frame);
+            }
+          },
+        }),
+      );
+    };
+
     if (opts.interruptionDetection) {
       const [vadInputStream, teedInput] = primaryInputStream.tee();
       const [inputStream, sttInputStream] = teedInput.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        sttInputStream,
+        filterSttInput(sttInputStream),
         this.silenceAudioTransform.readable,
       );
       this.interruptionStreamChannel = createStreamChannel();
@@ -322,7 +340,7 @@ export class AudioRecognition {
       const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        sttInputStream,
+        filterSttInput(sttInputStream),
         this.silenceAudioTransform.readable,
       );
     }

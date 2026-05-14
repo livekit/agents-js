@@ -62,6 +62,17 @@ export interface TTSOptions {
   project?: string;
   location?: string;
   instructions?: string;
+  customPronunciations?: CustomPronunciations;
+}
+
+export interface CustomPronunciationParams {
+  phrase: string;
+  pronunciation: string;
+  phoneticEncoding?: string;
+}
+
+export interface CustomPronunciations {
+  pronunciations: CustomPronunciationParams[];
 }
 
 export class TTS extends tts.TTS {
@@ -86,6 +97,7 @@ export class TTS extends tts.TTS {
     project,
     location,
     instructions,
+    customPronunciations,
   }: Partial<TTSOptions & { apiKey: string }> = {}) {
     super(DEFAULT_SAMPLE_RATE, NUM_CHANNELS, { streaming: false });
 
@@ -125,6 +137,7 @@ export class TTS extends tts.TTS {
       project: finalProject,
       location: finalLocation,
       instructions: instructions ?? DEFAULT_INSTRUCTIONS,
+      customPronunciations,
     };
 
     const clientOptions: types.GoogleGenAIOptions = useVertexai
@@ -203,8 +216,14 @@ export class ChunkedStream extends tts.ChunkedStream {
     };
 
     let inputText = this.inputText;
-    if (this.#tts.opts.instructions) {
-      inputText = `${this.#tts.opts.instructions}:\n"${inputText}"`;
+    const instructions = [
+      this.#tts.opts.instructions,
+      formatCustomPronunciations(this.#tts.opts.customPronunciations),
+    ]
+      .filter((instruction): instruction is string => !!instruction)
+      .join('\n');
+    if (instructions) {
+      inputText = `${instructions}:\n"${inputText}"`;
     }
 
     const contents: types.Content[] = [
@@ -321,4 +340,21 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     sendLastFrame(true);
   }
+}
+
+function formatCustomPronunciations(
+  customPronunciations?: CustomPronunciations,
+): string | undefined {
+  if (!customPronunciations?.pronunciations.length) {
+    return undefined;
+  }
+
+  const rules = customPronunciations.pronunciations.map((pronunciation) => {
+    const encoding = pronunciation.phoneticEncoding
+      ? ` using ${pronunciation.phoneticEncoding}`
+      : '';
+    return `- Pronounce "${pronunciation.phrase}" as "${pronunciation.pronunciation}"${encoding}`;
+  });
+
+  return ['Use these custom pronunciations when speaking the text:', ...rules].join('\n');
 }

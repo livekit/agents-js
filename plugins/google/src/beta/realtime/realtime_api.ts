@@ -102,6 +102,7 @@ interface RealtimeOptions {
   imageEncodeOptions?: typeof DEFAULT_IMAGE_ENCODE_OPTIONS;
   connOptions: APIConnectOptions;
   httpOptions?: HttpOptions;
+  mediaResolution?: types.MediaResolution;
   enableAffectiveDialog?: boolean;
   proactivity?: boolean;
   realtimeInputConfig?: RealtimeInputConfig;
@@ -155,6 +156,10 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   get model(): string {
     return this._options.model;
+  }
+
+  label(): string {
+    return 'google.RealtimeModel';
   }
 
   constructor(
@@ -291,6 +296,11 @@ export class RealtimeModel extends llm.RealtimeModel {
       httpOptions?: HttpOptions;
 
       /**
+       * The media resolution for the session.
+       */
+      mediaResolution?: types.MediaResolution;
+
+      /**
        * Gemini-specific tools to use for the session
        */
       geminiTools?: LLMTools;
@@ -381,6 +391,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       imageEncodeOptions: options.imageEncodeOptions || DEFAULT_IMAGE_ENCODE_OPTIONS,
       connOptions: options.connOptions || DEFAULT_API_CONNECT_OPTIONS,
       httpOptions: options.httpOptions,
+      mediaResolution: options.mediaResolution,
       enableAffectiveDialog: options.enableAffectiveDialog,
       proactivity: options.proactivity,
       realtimeInputConfig: options.realtimeInputConfig,
@@ -1447,6 +1458,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (opts.topK !== undefined) {
       config.topK = opts.topK;
+    }
+    if (opts.mediaResolution !== undefined) {
+      config.mediaResolution = opts.mediaResolution;
     }
 
     if (opts.proactivity !== undefined) {

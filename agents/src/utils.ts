@@ -708,15 +708,37 @@ export function resampleStream({
   outputRate: number;
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
+  let currentInputRate = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
       if (chunk.samplesPerChannel === 0) {
         controller.enqueue(chunk);
         return;
       }
-      if (!resampler) {
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+
+      if (chunk.sampleRate === outputRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+          resampler = null;
+        }
+        controller.enqueue(chunk);
+        return;
       }
+
+      if (!resampler || currentInputRate !== chunk.sampleRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+        }
+        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        currentInputRate = chunk.sampleRate;
+      }
+
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
@@ -727,6 +749,7 @@ export function resampleStream({
           controller.enqueue(frame);
         }
         resampler.close();
+        resampler = null;
       }
     },
   });

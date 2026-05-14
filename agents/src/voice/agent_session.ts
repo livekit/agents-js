@@ -88,6 +88,7 @@ import {
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import type { TextTransform } from './transcription/text_transforms.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
@@ -108,6 +109,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   userAwayTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
+  ttsTextTransforms: readonly TextTransform[] | null;
 }
 
 export const defaultAgentSessionOptions = {
@@ -118,6 +120,7 @@ export const defaultAgentSessionOptions = {
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
   useTtsAlignedTranscript: true,
+  ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -214,6 +217,12 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnHandling?: Partial<TurnHandlingOptions>;
 
   useTtsAlignedTranscript?: boolean;
+
+  /**
+   * Transforms to apply to TTS input text. Built-in transforms are `filter_markdown`
+   * and `filter_emoji`; pass `null` to disable text transforms.
+   */
+  ttsTextTransforms?: readonly TextTransform[] | null;
 };
 
 type ActivityTransitionOptions = {

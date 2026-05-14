@@ -71,7 +71,7 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
     const onPrediction = vi.fn();
     amd.on('amd_prediction', onPrediction);
 
@@ -107,7 +107,7 @@ describe('AMD', () => {
       JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -136,7 +136,7 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -158,7 +158,7 @@ describe('AMD', () => {
     const session = new MockSession();
     const llm = new StaticLLM(new Error('boom'));
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null });
+    const amd = new AMD(asAgentSession(session), { llm });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -178,7 +178,7 @@ describe('AMD', () => {
     const session = new MockSession();
     const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'test' }));
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null });
+    const amd = new AMD(asAgentSession(session), { llm });
 
     const promise = amd.execute();
     await amd.aclose();
@@ -220,7 +220,7 @@ describe('AMD', () => {
     const session = new MockSession();
     const llm = new ToolCallLLM();
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, stt: null, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
     session.emit(AgentSessionEventTypes.UserInputTranscribed, {
@@ -248,7 +248,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      stt: null,
       humanSpeechThresholdMs: 1_000,
       humanSilenceThresholdMs: 250,
       machineSilenceThresholdMs: 750,
@@ -279,7 +278,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      stt: null,
       humanSilenceThresholdMs: 100,
       machineSilenceThresholdMs: 300,
       detectionTimeoutMs: 5_000,
@@ -326,7 +324,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      stt: null,
       humanSilenceThresholdMs: 100,
       machineSilenceThresholdMs: 300,
       detectionTimeoutMs: 5_000,
@@ -360,7 +357,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      stt: null,
       humanSilenceThresholdMs: 50,
       machineSilenceThresholdMs: 200,
       detectionTimeoutMs: 5_000,
@@ -394,7 +390,7 @@ describe('AMD', () => {
     const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live' }));
     llm.on('error', () => {});
 
-    const amd = new AMD(asAgentSession(session), { llm, stt: null });
+    const amd = new AMD(asAgentSession(session), { llm });
     expect(setAmd).toHaveBeenCalledWith(amd);
 
     setAmd.mockClear();
@@ -402,31 +398,41 @@ describe('AMD', () => {
     expect(setAmd).toHaveBeenCalledWith(null);
   });
 
-  it('should fall back to session.llm when llm is null', async () => {
-    const session = new MockSession();
-    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }));
-    llm.on('error', () => {});
-    session.llm = llm;
-    const amd = new AMD(asAgentSession(session), { llm: null, stt: null, detectionTimeoutMs: 50 });
+  it('should fall back to session.llm when no cloud creds are available', async () => {
+    vi.stubEnv('LIVEKIT_URL', '');
+    try {
+      const session = new MockSession();
+      const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'session' }));
+      llm.on('error', () => {});
+      session.llm = llm;
+      const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
 
-    const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Hello?',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
-    await expect(promise).resolves.toMatchObject({
-      category: AMDCategory.HUMAN,
-      reason: expect.any(String),
-    });
+      const promise = amd.execute();
+      session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+        type: 'user_input_transcribed',
+        transcript: 'Hello?',
+        isFinal: true,
+        speakerId: null,
+        createdAt: Date.now(),
+        language: null,
+      });
+      await expect(promise).resolves.toMatchObject({
+        category: AMDCategory.HUMAN,
+        reason: expect.any(String),
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
-  it('should throw when llm is null and session has no compatible LLM', () => {
-    const session = new MockSession();
-    expect(() => new AMD(asAgentSession(session), { llm: null, stt: null })).toThrow(/llm: null/);
+  it('should throw when no cloud creds and session has no compatible LLM', () => {
+    vi.stubEnv('LIVEKIT_URL', '');
+    try {
+      const session = new MockSession();
+      expect(() => new AMD(asAgentSession(session))).toThrow(/no LLM available/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('should not close caller-owned LLM in aclose()', async () => {
@@ -434,7 +440,7 @@ describe('AMD', () => {
     const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }));
     llm.on('error', () => {});
     const acloseSpy = vi.spyOn(llm, 'aclose');
-    const amd = new AMD(asAgentSession(session), { llm, stt: null });
+    const amd = new AMD(asAgentSession(session), { llm });
     await amd.aclose();
     expect(acloseSpy).not.toHaveBeenCalled();
   });
@@ -566,7 +572,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      stt: null,
       detectionTimeoutMs: 5_000,
       suppressCompatibilityWarning: true,
     });
