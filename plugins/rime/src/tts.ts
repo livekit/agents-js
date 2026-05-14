@@ -369,6 +369,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#tokenizer.pushText(data);
       }
       this.#tokenizer.endInput();
+      this.#tokenizer.close();
     };
 
     const sendTask = async () => {
@@ -514,7 +515,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       throw new APIConnectionError({ message: `Rime WS error: ${err.message}` });
     } finally {
       if (!inputSentFuture.done) inputSentFuture.resolve();
-      this.#tokenizer.close();
       void messageChannel.close();
       if (ws) {
         ws.off('message', onMessage);
