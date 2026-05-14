@@ -108,6 +108,7 @@ import {
 } from './generation.js';
 import type { TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import { createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -522,12 +523,10 @@ export class AgentActivity implements RecognitionHooks {
       interruptionDetection: this.interruptionDetector,
       backchannelBoundary:
         this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
-      minEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.minDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.minDelay,
-      maxEndpointingDelay:
-        this.agent.turnHandling?.endpointing?.maxDelay ??
-        this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay,
+      endpointing: createEndpointing({
+        ...this.agentSession.sessionOptions.turnHandling.endpointing,
+        ...(this.agent.turnHandling?.endpointing ?? {}),
+      }),
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -2025,15 +2024,17 @@ export class AgentActivity implements RecognitionHooks {
     let replyStartedForwardingAt: number | undefined;
     let replyTtsGenData: _TTSGenerationData | null = null;
 
-    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt?: number) => {
-      replyStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (audioOut: _AudioOut | null, startedSpeakingAt: number = Date.now()) => {
+      replyStartedSpeakingAt = startedSpeakingAt;
       replyStartedForwardingAt = audioOut?.startedForwardingAt ?? replyStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(replyStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.disableVadInterruptionSoon();
       }
     };
@@ -2129,7 +2130,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+      if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
@@ -2318,15 +2319,20 @@ export class AgentActivity implements RecognitionHooks {
 
     let agentStartedSpeakingAt: number | undefined;
     let agentStartedForwardingAt: number | undefined;
-    const onFirstFrame = (audioOutRef: _AudioOut | null, startedSpeakingAt?: number) => {
-      agentStartedSpeakingAt = startedSpeakingAt ?? Date.now();
+    const onFirstFrame = (
+      audioOutRef: _AudioOut | null,
+      startedSpeakingAt: number = Date.now(),
+    ) => {
+      agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech();
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(agentStartedSpeakingAt);
+      }
+      if (this.isInterruptionDetectionEnabled) {
         this.disableVadInterruptionSoon();
       }
     };
@@ -2489,8 +2495,10 @@ export class AgentActivity implements RecognitionHooks {
 
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
+        if (this.audioRecognition) {
           this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        if (this.isInterruptionDetectionEnabled) {
           this.restoreInterruptionByAudioActivity();
         }
       }
@@ -2534,11 +2542,11 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
-      if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
-        {
-          this.audioRecognition.onEndOfAgentSpeech(Date.now());
-          this.restoreInterruptionByAudioActivity();
-        }
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
 
@@ -2745,11 +2753,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = (startedSpeakingAt?: number) => {
+    const onFirstFrame = (startedSpeakingAt: number = Date.now()) => {
       this.agentSession._updateAgentState('speaking', {
         startTime: startedSpeakingAt,
         otelContext: speechHandle._agentTurnContext,
       });
+      if (this.audioRecognition) {
+        this.audioRecognition.onStartOfAgentSpeech(startedSpeakingAt);
+      }
     };
 
     const readMessages = async (
@@ -2993,6 +3004,12 @@ export class AgentActivity implements RecognitionHooks {
           'playout completed with interrupt',
         );
       }
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+      }
       speechHandle._markGenerationDone();
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
@@ -3030,6 +3047,9 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
     }
 
     if (toolOutput.output.length === 0) {
@@ -3545,7 +3565,7 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech();
+          this.audioRecognition.onStartOfAgentSpeech(Date.now());
         }
         if (this.isInterruptionDetectionEnabled) {
           this.disableVadInterruptionSoon();
