@@ -483,6 +483,9 @@ export class AudioRecognition {
   /** Start interruption inference when agent is speaking and overlap speech starts. */
   async onStartOfOverlapSpeech(speechDuration: number, startedAt: number, userSpeakingSpan?: Span) {
     if (this.isAgentSpeaking) {
+      if (!this.endpointing.overlapping) {
+        this.endpointing.onStartOfSpeech(startedAt, true);
+      }
       this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(
           speechDuration,

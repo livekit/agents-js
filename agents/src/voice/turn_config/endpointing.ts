@@ -171,6 +171,9 @@ export class DynamicEndpointing extends BaseEndpointing {
       return;
     }
 
+    // Audio-activity interruption can arrive before the previous utterance's end timestamp is
+    // finalized. In that case the stored end appears earlier than its start, so pin it just before
+    // agent speech to keep the immediate-interruption pause calculation meaningful.
     if (
       this.#utteranceStartedAt !== undefined &&
       this.#utteranceEndedAt !== undefined &&
@@ -202,31 +205,40 @@ export class DynamicEndpointing extends BaseEndpointing {
       }
     }
 
-    if (
-      this._overlapping ||
-      (this.#agentSpeechStartedAt !== undefined && this.#agentSpeechEndedAt === undefined)
-    ) {
+    const agentStillSpeaking =
+      this.#agentSpeechStartedAt !== undefined && this.#agentSpeechEndedAt === undefined;
+    const betweenUtteranceDelay = this.betweenUtteranceDelay;
+    const betweenTurnDelay = this.betweenTurnDelay;
+
+    if (this._overlapping || agentStillSpeaking) {
       const [turnDelay, interruptionDelay] = this.immediateInterruptionDelay;
-      const pause = this.betweenUtteranceDelay;
-      if (
+      const isImmediateInterruption =
         interruptionDelay > 0 &&
         interruptionDelay <= this.minDelay &&
         turnDelay > 0 &&
         turnDelay <= this.maxDelay &&
-        pause > 0
-      ) {
-        this.#utterancePause.apply(1, pause);
-      } else if (this.betweenTurnDelay > 0) {
-        this.#turnPause.apply(1, this.betweenTurnDelay);
+        betweenUtteranceDelay > 0;
+
+      if (isImmediateInterruption) {
+        // User resumed almost immediately after the agent started, so the prior pause was probably
+        // part of the same user turn. Learn it as minDelay to avoid cutting in next time.
+        this.#utterancePause.apply(1, betweenUtteranceDelay);
+      } else if (betweenTurnDelay > 0) {
+        // User spoke after a more substantial agent-start gap. Treat it as a new turn boundary and
+        // learn that gap as maxDelay.
+        this.#turnPause.apply(1, betweenTurnDelay);
       }
-    } else if (this.betweenTurnDelay > 0) {
-      this.#turnPause.apply(1, this.betweenTurnDelay);
-    } else if (
-      this.betweenUtteranceDelay > 0 &&
-      this.#agentSpeechEndedAt === undefined &&
-      this.#agentSpeechStartedAt === undefined
-    ) {
-      this.#utterancePause.apply(1, this.betweenUtteranceDelay);
+    } else if (betweenTurnDelay > 0) {
+      // Normal case: user ended, agent eventually started. Learn that turn-boundary wait.
+      this.#turnPause.apply(1, betweenTurnDelay);
+    } else {
+      const noAgentSpeechAroundPause =
+        this.#agentSpeechEndedAt === undefined && this.#agentSpeechStartedAt === undefined;
+      if (betweenUtteranceDelay > 0 && noAgentSpeechAroundPause) {
+        // User continued before any agent speech happened. Learn the pause as part of the user's
+        // natural speaking rhythm.
+        this.#utterancePause.apply(1, betweenUtteranceDelay);
+      }
     }
 
     this.#utteranceEndedAt = endedAt;
