@@ -27,20 +27,31 @@ const WS_ENDPOINT = 'stt/v1/transcribe:streamBidirectional';
 const REST_ENDPOINT = 'stt/v1/transcribe';
 const AUDIO_DURATION_REPORT_INTERVAL = 5;
 
+/** Supported Inworld STT model identifiers. */
 export type STTModels = 'inworld/inworld-stt-1' | string;
 
+/** Per-word timestamp entry returned by the Inworld STT API. */
 export interface WordTimestamp {
   word: string;
   confidence?: number;
-  /** Start time in seconds (streaming) or milliseconds (REST — divide by 1000). */
+  /** Start offset in seconds (streaming WebSocket). */
   startTime?: number;
+  /** Start offset in milliseconds (batch REST). */
   startTimeMs?: number;
+  /** End offset in seconds (streaming WebSocket). */
   endTime?: number;
+  /** End offset in milliseconds (batch REST). */
   endTimeMs?: number;
 }
 
-/** Voice profile dimensions returned by inworld/inworld-stt-1. Schema is not publicly documented;
- *  each dimension is expected to be an array of {label, confidence} entries. */
+/**
+ * Acoustic voice profile returned alongside the transcript when
+ * `enableVoiceProfile` is `true`. Each dimension is an array of
+ * `{label, confidence}` candidates ordered by descending confidence.
+ *
+ * @remarks The response schema is not publicly documented by Inworld;
+ * additional dimension keys may appear at runtime.
+ */
 export interface VoiceProfile {
   emotion?: { label: string; confidence: number }[];
   accent?: { label: string; confidence: number }[];
@@ -50,23 +61,38 @@ export interface VoiceProfile {
   [key: string]: unknown;
 }
 
+/** Billing and model metadata returned in batch REST responses. */
 export interface TranscriptionUsage {
+  /** Duration of audio that was transcribed, in milliseconds. */
   transcribedAudioMs?: number;
   modelId?: string;
 }
 
+/** Configuration options for {@link STT}. */
 export interface STTOptions {
+  /** Inworld API key. Defaults to `$INWORLD_API_KEY`. */
   apiKey?: string;
+  /** Model to use. Default: `'inworld/inworld-stt-1'`. */
   model: STTModels;
+  /** BCP-47 language tag. Default: `'en-US'`. */
   language: string;
+  /** Input audio sample rate in Hz. Default: `16000`. */
   sampleRate: number;
+  /** Number of audio channels. Default: `1`. */
   numChannels: number;
+  /** Enable acoustic voice profiling (emotion, accent, age, pitch, style). Default: `true`. */
   enableVoiceProfile: boolean;
+  /** Number of top candidates to return per voice profile dimension. Default: `1`. */
   voiceProfileTopN: number;
+  /** VAD activity threshold (0–1). Omit to use the server default. */
   vadThreshold?: number;
+  /** Minimum silence in ms before committing end-of-turn when confidence is high. Default: `200`. */
   minEndOfTurnSilenceWhenConfident: number;
+  /** Confidence threshold for end-of-turn detection. Default: `0.3`. */
   endOfTurnConfidenceThreshold: number;
+  /** Base URL for the REST API. Default: `'https://api.inworld.ai/'`. */
   baseURL: string;
+  /** Base URL for the WebSocket API. Default: `'wss://api.inworld.ai/'`. */
   wsURL: string;
 }
 
@@ -84,6 +110,18 @@ const defaultSTTOptions: STTOptions = {
   wsURL: DEFAULT_WS_URL,
 };
 
+/**
+ * Inworld STT — supports both streaming (bidirectional WebSocket) and batch (REST) modes.
+ *
+ * When `enableVoiceProfile` is `true` (the default), each recognized transcript includes an
+ * acoustic {@link VoiceProfile} in `SpeechData.metadata.voice_profile`.
+ *
+ * @example
+ * ```ts
+ * const sttInstance = new STT({ enableVoiceProfile: true });
+ * session = new AgentSession({ stt: sttInstance, ... });
+ * ```
+ */
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
@@ -97,6 +135,9 @@ export class STT extends stt.STT {
     return 'Inworld';
   }
 
+  /**
+   * @param opts - Partial {@link STTOptions}. `apiKey` defaults to `$INWORLD_API_KEY`.
+   */
   constructor(opts: Partial<STTOptions> = {}) {
     super({
       streaming: true,
@@ -114,7 +155,11 @@ export class STT extends stt.STT {
 
   async _recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent> {
     const frame = mergeFrames(buffer);
-    const b64 = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength).toString('base64');
+    const b64 = Buffer.from(
+      frame.data.buffer,
+      frame.data.byteOffset,
+      frame.data.byteLength,
+    ).toString('base64');
 
     const url = new URL(REST_ENDPOINT, this.#opts.baseURL);
     const response = await fetch(url.toString(), {
