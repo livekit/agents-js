@@ -518,6 +518,9 @@ export class TranscriptionSynchronizer {
 
   private options: TextSyncOptions;
   private rotateSegmentTask: Task<void>;
+  // number of rotations queued behind the currently-running one; used to warn only
+  // when the backlog grows beyond a single expected overlap
+  private queuedRotations: number = 0;
   private _outputsAttached: boolean = true;
   private closed: boolean = false;
 
@@ -598,7 +601,16 @@ export class TranscriptionSynchronizer {
     }
 
     if (!this.rotateSegmentTask.done) {
-      this.logger.warn('rotateSegment called while previous segment is still being rotated');
+      // The new task chains on the old one via `oldTask.result`, so rotations are
+      // serialized and no transcript data is lost. A single overlap is expected when
+      // turn-boundary events (playback finished, attach/detach, new utterance) fire
+      // back-to-back; only warn once the backlog grows beyond one queued rotation.
+      this.queuedRotations++;
+      if (this.queuedRotations > 1) {
+        this.logger.warn(
+          `rotateSegment backlog: ${this.queuedRotations} rotations queued behind the in-flight one`,
+        );
+      }
     }
     this.rotateSegmentTask = Task.from((controller) =>
       this.rotateSegmentTaskImpl(controller.signal, this.rotateSegmentTask),
@@ -619,16 +631,22 @@ export class TranscriptionSynchronizer {
   }
 
   private async rotateSegmentTaskImpl(abort: AbortSignal, oldTask?: Task<void>) {
-    if (oldTask) {
-      await oldTask.result;
-    }
+    try {
+      if (oldTask) {
+        await oldTask.result;
+      }
 
-    if (abort.aborted) {
-      return;
-    }
+      if (abort.aborted) {
+        return;
+      }
 
-    await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+      await this._impl.close();
+      this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+    } finally {
+      if (this.queuedRotations > 0) {
+        this.queuedRotations--;
+      }
+    }
   }
 }
 
