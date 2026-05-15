@@ -4,9 +4,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { main } from '../download.js';
 
-main().then((code) => {
-  process.exit(code);
-}).catch((error) => {
-  console.error(`Fatal error: ${error}`);
-  process.exit(1);
-});
+main()
+  .then((code) => {
+    process.exit(code);
+  })
+  .catch((error) => {
+    console.error(`Fatal error: ${error}`);
+    process.exit(1);
+  });
