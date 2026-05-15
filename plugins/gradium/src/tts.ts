@@ -304,10 +304,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           this.#logger.debug(`Gradium WebSocket closed: ${code} ${reason.toString()}`);
         }
         clearChunkTimeout();
+        if (!readyFuture.done) {
+          readyFuture.reject(new Error(`WebSocket closed before ready (code=${code})`));
+        }
         void eventChannel.close();
       };
       const onError = (err: Error) => {
         this.#logger.error({ err }, 'Gradium WebSocket error');
+        if (!readyFuture.done) {
+          readyFuture.reject(err);
+        }
         void eventChannel.close();
       };
 
