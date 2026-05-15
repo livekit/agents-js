@@ -196,6 +196,7 @@ examples/src/test_*.ts
 !README.md
 !.changeset/*.md
 !**/README.md
+!**/CHANGELOG.md
 !CONTRIBUTING.md
 !CLAUDE.md
 !.CODE_OF_CONDUCT.md
