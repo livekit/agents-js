@@ -25,8 +25,9 @@ class CollectNameTask extends voice.AgentTask<string> {
       instructions:
         'Collect the user name from the latest user message. As soon as you have it, call save_name.',
       tts: taskTts,
-      tools: {
-        save_name: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_name',
           description: 'Save the user name.',
           parameters: z.object({
             name: z.string().describe('The user name'),
@@ -36,7 +37,7 @@ class CollectNameTask extends voice.AgentTask<string> {
             return `Saved name: ${name}`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -54,8 +55,9 @@ class CollectEmailTask extends voice.AgentTask<string> {
       instructions:
         'Collect the user email from the latest user message. As soon as you have it, call save_email.',
       tts: taskTts,
-      tools: {
-        save_email: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_email',
           description: 'Save the user email.',
           parameters: z.object({
             email: z.string().describe('The user email'),
@@ -65,7 +67,7 @@ class CollectEmailTask extends voice.AgentTask<string> {
             return `Saved email: ${email}`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -82,8 +84,9 @@ class TaskGroupDemoAgent extends voice.Agent {
     super({
       instructions:
         'You are onboarding assistant. When user asks to begin onboarding, call startOnboarding exactly once.',
-      tools: {
-        startOnboarding: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'startOnboarding',
           description: 'Start a two-step onboarding flow (name then email).',
           parameters: z.object({}),
           execute: async () => {
@@ -107,7 +110,7 @@ class TaskGroupDemoAgent extends voice.Agent {
             return JSON.stringify(result.taskResults);
           },
         }),
-      },
+      ],
     });
   }
 

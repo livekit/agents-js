@@ -471,7 +471,7 @@ function sessionUsageToProto(usage: AgentSessionUsage): pb.AgentSessionUsage {
 
 function toolNames(toolCtx: ToolContext | undefined): string[] {
   if (!toolCtx) return [];
-  return Object.keys(toolCtx);
+  return Object.keys(toolCtx.functionTools);
 }
 
 function protoSerializeOptions(opts: {

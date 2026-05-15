@@ -5,8 +5,9 @@ import { initializeLogger, llm as llmlib } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
-const toolCtx: llmlib.ToolContext = {
-  getWeather: llmlib.tool({
+const toolCtx = new llmlib.ToolContext([
+  llmlib.tool({
+    name: 'getWeather',
     description: 'Get the current weather in a given location',
     parameters: z.object({
       location: z.string().describe('The city and state, e.g. San Francisco, CA'),
@@ -14,14 +15,16 @@ const toolCtx: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  playMusic: llmlib.tool({
+  llmlib.tool({
+    name: 'playMusic',
     description: 'Play music',
     parameters: z.object({
       name: z.string().describe('The artist and name of the song'),
     }),
     execute: async () => {},
   }),
-  toggleLight: llmlib.tool({
+  llmlib.tool({
+    name: 'toggleLight',
     description: 'Turn on/off the lights in a room',
     parameters: z.object({
       name: z.string().describe('The room to control'),
@@ -31,7 +34,8 @@ const toolCtx: llmlib.ToolContext = {
       await new Promise((resolve) => setTimeout(resolve, 60_000));
     },
   }),
-  selectCurrencies: llmlib.tool({
+  llmlib.tool({
+    name: 'selectCurrencies',
     description: 'Currencies of a specific area',
     parameters: z.object({
       currencies: z
@@ -40,7 +44,8 @@ const toolCtx: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  updateUserInfo: llmlib.tool({
+  llmlib.tool({
+    name: 'updateUserInfo',
     description: 'Update user info.',
     parameters: z.object({
       email: z.string().optional().describe("User's email address"),
@@ -49,18 +54,20 @@ const toolCtx: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  simulateFailure: llmlib.tool({
+  llmlib.tool({
+    name: 'simulateFailure',
     description: 'Simulate a failure',
     parameters: z.object({}),
     execute: async () => {
       throw new Error('Simulated failure');
     },
   }),
-};
+]);
 
 // Tool context for strict mode - uses nullable() instead of optional()
-const toolCtxStrict: llmlib.ToolContext = {
-  getWeather: llmlib.tool({
+const toolCtxStrict = new llmlib.ToolContext([
+  llmlib.tool({
+    name: 'getWeather',
     description: 'Get the current weather in a given location',
     parameters: z.object({
       location: z.string().describe('The city and state, e.g. San Francisco, CA'),
@@ -68,14 +75,16 @@ const toolCtxStrict: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  playMusic: llmlib.tool({
+  llmlib.tool({
+    name: 'playMusic',
     description: 'Play music',
     parameters: z.object({
       name: z.string().describe('The artist and name of the song'),
     }),
     execute: async () => {},
   }),
-  toggleLight: llmlib.tool({
+  llmlib.tool({
+    name: 'toggleLight',
     description: 'Turn on/off the lights in a room',
     parameters: z.object({
       name: z.string().describe('The room to control'),
@@ -85,7 +94,8 @@ const toolCtxStrict: llmlib.ToolContext = {
       await new Promise((resolve) => setTimeout(resolve, 60_000));
     },
   }),
-  selectCurrencies: llmlib.tool({
+  llmlib.tool({
+    name: 'selectCurrencies',
     description: 'Currencies of a specific area',
     parameters: z.object({
       currencies: z
@@ -94,7 +104,8 @@ const toolCtxStrict: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  updateUserInfo: llmlib.tool({
+  llmlib.tool({
+    name: 'updateUserInfo',
     description: 'Update user info.',
     parameters: z.object({
       email: z.string().nullable().describe("User's email address"),
@@ -103,14 +114,15 @@ const toolCtxStrict: llmlib.ToolContext = {
     }),
     execute: async () => {},
   }),
-  simulateFailure: llmlib.tool({
+  llmlib.tool({
+    name: 'simulateFailure',
     description: 'Simulate a failure',
     parameters: z.object({}),
     execute: async () => {
       throw new Error('Simulated failure');
     },
   }),
-};
+]);
 
 export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
   initializeLogger({ pretty: false });
@@ -315,7 +327,7 @@ const executeCalls = async (calls: llmlib.FunctionCall[]) => {
   const results: llmlib.FunctionCallOutput[] = [];
 
   for (const call of calls) {
-    const tool = toolCtx[call.name];
+    const tool = toolCtx.getFunctionTool(call.name);
     if (!tool) {
       throw new Error(`Tool ${call.name} not found`);
     }

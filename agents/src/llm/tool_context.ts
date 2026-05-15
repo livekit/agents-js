@@ -168,6 +168,12 @@ export interface FunctionTool<
   type: 'function';
 
   /**
+   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
+   * as the function name to call.
+   */
+  name: string;
+
+  /**
    * The description of the tool. Will be used by the language model to decide whether to use the tool.
    */
   description: string;
@@ -190,38 +196,177 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools in the future)
-export type ToolContext<UserData = UnknownUserData> = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
-  [name: string]: FunctionTool<any, UserData, any>;
-};
+/**
+ * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
+ * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
+ * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
+ */
+export class Toolset {
+  readonly #id: string;
+  readonly #tools: Tool[];
 
-export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
-  const toolNames = new Set(Object.keys(ctx1));
-  const toolNames2 = new Set(Object.keys(ctx2));
-
-  if (toolNames.size !== toolNames2.size) {
-    return false;
+  constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
+    this.#id = id;
+    this.#tools = [...tools];
   }
 
-  for (const name of toolNames) {
-    if (!toolNames2.has(name)) {
-      return false;
-    }
+  get id(): string {
+    return this.#id;
+  }
 
-    const tool1 = ctx1[name];
-    const tool2 = ctx2[name];
+  get tools(): readonly Tool[] {
+    return this.#tools;
+  }
 
-    if (!tool1 || !tool2) {
-      return false;
-    }
+  async setup(): Promise<void> {}
 
-    if (tool1.description !== tool2.description) {
-      return false;
+  async aclose(): Promise<void> {}
+}
+
+/**
+ * A flat, addressable view over a heterogeneous list of `Tool` and `Toolset` entries.
+ *
+ * Mirrors the Python `ToolContext`: the original input list is preserved on `_tools`, while
+ * `_functionToolsMap`, `_providerTools`, and `_toolsets` denormalize it for cheap access.
+ * Tools contributed by a `Toolset` are recursively flattened into the function and provider
+ * collections; duplicate function names referencing different instances throw.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
+export type ToolContextEntry<UserData = UnknownUserData> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  FunctionTool<any, UserData, any> | ProviderDefinedTool | Toolset;
+
+export class ToolContext<UserData = UnknownUserData> {
+  private _tools: ToolContextEntry<UserData>[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
+  private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
+  private _providerTools: ProviderDefinedTool[] = [];
+  private _toolsets: Toolset[] = [];
+
+  constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
+    this.updateTools(tools);
+  }
+
+  static empty(): ToolContext {
+    return new ToolContext([]);
+  }
+
+  /** A copy of all function tools in the context, including tools contributed by toolsets. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
+  get functionTools(): Record<string, FunctionTool<any, UserData, any>> {
+    return Object.fromEntries(this._functionToolsMap);
+  }
+
+  /** A copy of all provider tools in the context, including provider tools from toolsets. */
+  get providerTools(): readonly ProviderDefinedTool[] {
+    return [...this._providerTools];
+  }
+
+  /** A copy of the toolsets registered in the context. */
+  get toolsets(): readonly Toolset[] {
+    return [...this._toolsets];
+  }
+
+  /** A copy of the raw tool/toolset list this context was constructed with. */
+  get tools(): readonly ToolContextEntry<UserData>[] {
+    return [...this._tools];
+  }
+
+  /** Flat list of function tools followed by provider tools. */
+  flatten(): Tool[] {
+    return [...this._functionToolsMap.values(), ...this._providerTools];
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
+  getFunctionTool(name: string): FunctionTool<any, UserData, any> | undefined {
+    return this._functionToolsMap.get(name);
+  }
+
+  updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
+    this._tools = [...tools];
+    this._functionToolsMap = new Map();
+    this._providerTools = [];
+    this._toolsets = [];
+
+    const addTool = (tool: ToolContextEntry<UserData> | Tool): void => {
+      if (tool instanceof Toolset) {
+        for (const inner of tool.tools) {
+          addTool(inner);
+        }
+        this._toolsets.push(tool);
+        return;
+      }
+      if (isProviderDefinedTool(tool)) {
+        this._providerTools.push(tool);
+        return;
+      }
+      if (isFunctionTool(tool)) {
+        if (!tool.name) {
+          throw new Error('FunctionTool is missing a name');
+        }
+        const existing = this._functionToolsMap.get(tool.name);
+        if (existing) {
+          if (existing !== tool) {
+            throw new Error(`duplicate function name: ${tool.name}`);
+          }
+          return;
+        }
+        this._functionToolsMap.set(tool.name, tool);
+        return;
+      }
+      throw new Error(`unknown tool type: ${typeof tool}`);
+    };
+
+    for (const tool of tools) {
+      addTool(tool);
     }
   }
 
-  return true;
+  copy(): ToolContext<UserData> {
+    return new ToolContext<UserData>([...this._tools]);
+  }
+
+  equals(other: ToolContext): boolean {
+    if (this._functionToolsMap.size !== other._functionToolsMap.size) {
+      return false;
+    }
+    for (const [name, tool] of this._functionToolsMap) {
+      if (other._functionToolsMap.get(name) !== tool) {
+        return false;
+      }
+    }
+    if (this._providerTools.length !== other._providerTools.length) {
+      return false;
+    }
+    for (let i = 0; i < this._providerTools.length; i++) {
+      if (this._providerTools[i] !== other._providerTools[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/**
+ * Build a list of `Tool` entries out of the legacy `Record<string, FunctionTool>` map shape.
+ * The tool's own `name` is preferred; if absent, the map key is assigned onto the tool so it
+ * carries the correct name forward through the list-based pipeline.
+ */
+export function toolListFromRecord<UserData = UnknownUserData>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Legacy map carries generic function tools
+  record: Record<string, FunctionTool<any, UserData, any>>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Returned list is generic over parameter/result types
+): FunctionTool<any, UserData, any>[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tools: FunctionTool<any, UserData, any>[] = [];
+  for (const [name, fn] of Object.entries(record)) {
+    if (!fn) continue;
+    if (!fn.name) {
+      fn.name = name;
+    }
+    tools.push(fn);
+  }
+  return tools;
 }
 
 export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
@@ -248,11 +393,13 @@ export function tool<
   UserData = UnknownUserData,
   Result = unknown,
 >({
+  name,
   description,
   parameters,
   execute,
   flags,
 }: {
+  name: string;
   description: string;
   parameters: Schema;
   execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
@@ -263,10 +410,12 @@ export function tool<
  * Create a function tool without parameters.
  */
 export function tool<UserData = UnknownUserData, Result = unknown>({
+  name,
   description,
   execute,
   flags,
 }: {
+  name: string;
   description: string;
   parameters?: never;
   execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
@@ -290,6 +439,10 @@ export function tool({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {
   if (tool.execute !== undefined) {
+    if (typeof tool.name !== 'string' || tool.name.length === 0) {
+      throw new Error('tool({ name, ... }) requires a non-empty name');
+    }
+
     // Default parameters to z.object({}) if not provided
     const parameters = tool.parameters ?? z.object({});
 
@@ -305,6 +458,7 @@ export function tool(tool: any): any {
 
     return {
       type: 'function',
+      name: tool.name,
       description: tool.description,
       parameters,
       execute: tool.execute,

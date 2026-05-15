@@ -413,7 +413,7 @@ function processBaseURL({
  * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
@@ -536,7 +536,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    return { ...this._tools } as llm.ToolContext;
+    return this._tools.copy();
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
@@ -698,13 +698,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): these logics below are noops I think, leaving it here to keep
     // parity with the python but we should remove them later
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
-    const retainedTools = Object.fromEntries(
-      Object.entries(_tools).filter(
-        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
-      ),
-    );
+    const retainedTools = Object.entries(_tools.functionTools)
+      .filter(([name]) => retainedToolNames.has(name))
+      .map(([, tool]) => tool);
 
-    this._tools = retainedTools as llm.ToolContext;
+    this._tools = new llm.ToolContext(retainedTools);
 
     unlock();
   }
@@ -712,12 +710,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
-    for (const [name, tool] of Object.entries(_tools)) {
-      if (!llm.isFunctionTool(tool)) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
-        continue;
-      }
-
+    for (const [name, tool] of Object.entries(_tools.functionTools)) {
       const { parameters: toolParameters, description } = tool;
       try {
         const parameters = llm.toJsonSchema(
@@ -998,7 +991,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       events.push(this.createSessionUpdateEvent());
 
       // tools
-      if (Object.keys(this._tools).length > 0) {
+      if (Object.keys(this._tools.functionTools).length > 0) {
         events.push(this.createToolsUpdateEvent(this._tools));
       }
 

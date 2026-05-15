@@ -76,8 +76,9 @@ class MainAgent extends voice.Agent<UserData> {
       tts: ttsOptions['elevenlabs'](),
       llm: llmOptions['openai'](),
       turnDetection: eouOptions['multilingual'](),
-      tools: {
-        testAgent: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'testAgent',
           description:
             'Called when user want to test an agent with STT, TTS, EOU, LLM, and optionally realtime LLM configuration',
           parameters: z.object({
@@ -102,7 +103,7 @@ class MainAgent extends voice.Agent<UserData> {
             });
           },
         }),
-      },
+      ],
     });
   }
 
@@ -159,8 +160,9 @@ class TestAgent extends voice.Agent<UserData> {
       tts: tts,
       llm: realtimeModel ?? model,
       turnDetection: eou,
-      tools: {
-        testTool: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'testTool',
           description: "Testing agent's tool calling ability",
           parameters: z
             .object({
@@ -173,7 +175,8 @@ class TestAgent extends voice.Agent<UserData> {
             };
           },
         }),
-        nextAgent: llm.tool({
+        llm.tool({
+          name: 'nextAgent',
           description:
             'Called when user confirm current agent is working and want to proceed to next agent',
           parameters: z.object({
@@ -204,7 +207,7 @@ class TestAgent extends voice.Agent<UserData> {
             });
           },
         }),
-      },
+      ],
     });
 
     this.sttChoice = sttChoice;

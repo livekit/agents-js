@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
 import type { LLM } from '../../llm/llm.js';
-import { tool } from '../../llm/tool_context.js';
+import { ToolContext, tool } from '../../llm/tool_context.js';
 import type { Task } from '../../utils.js';
 import { Future } from '../../utils.js';
 import type { Agent } from '../agent.js';
@@ -817,6 +817,7 @@ export class MessageAssert extends EventAssert {
 
     // Create the check_intent tool
     const checkIntentTool = tool({
+      name: 'check_intent',
       description:
         'Determines whether the message correctly fulfills the given intent. ' +
         'Returns success=true if the message satisfies the intent, false otherwise. ' +
@@ -853,7 +854,7 @@ export class MessageAssert extends EventAssert {
 
     const stream = llm.chat({
       chatCtx,
-      toolCtx: { check_intent: checkIntentTool },
+      toolCtx: new ToolContext([checkIntentTool]),
       toolChoice: { type: 'function', function: { name: 'check_intent' } },
       extraKwargs: { temperature: 0 },
     });

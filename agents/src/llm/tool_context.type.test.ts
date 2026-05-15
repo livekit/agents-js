@@ -8,6 +8,7 @@ import { type FunctionTool, type ProviderDefinedTool, type ToolOptions, tool } f
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
     const toolType = tool({
+      name: 'test',
       description: 'test',
       parameters: z.object({ number: z.number() }),
       execute: async () => 'test' as const,
@@ -29,6 +30,7 @@ describe('tool type inference', () => {
 
   it('should infer run context type', () => {
     const toolType = tool({
+      name: 'test',
       description: 'test',
       parameters: z.object({ number: z.number() }),
       execute: async ({ number }, { ctx }: ToolOptions<{ name: string }>) => {
@@ -91,6 +93,7 @@ describe('tool type inference', () => {
 
   it('should infer empty object type when parameters are omitted', () => {
     const toolType = tool({
+      name: 'simpleAction',
       description: 'Simple action without parameters',
       execute: async () => 'done' as const,
     });
@@ -100,6 +103,7 @@ describe('tool type inference', () => {
 
   it('should infer correct types with context but no parameters', () => {
     const toolType = tool({
+      name: 'actionWithCtx',
       description: 'Action with context',
       execute: async (args, { ctx }: ToolOptions<{ userId: number }>) => {
         expectTypeOf(args).toEqualTypeOf<Record<string, never>>();

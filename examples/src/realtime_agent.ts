@@ -24,6 +24,7 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -34,6 +35,7 @@ export default defineAgent({
     });
 
     const toggleLight = llm.tool({
+      name: 'toggleLight',
       description: 'Called when the user asks to turn on or off the light.',
       parameters: z.object({
         room: roomNameSchema.describe('The room to turn the light in'),
@@ -65,10 +67,7 @@ export default defineAgent({
       instructions:
         "You are a helpful assistant created by LiveKit, always speaking English, you can hear the user's message and respond to it.",
       chatCtx,
-      tools: {
-        getWeather,
-        toggleLight,
-      },
+      tools: [getWeather, toggleLight],
     });
 
     const session = new voice.AgentSession({

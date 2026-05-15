@@ -171,7 +171,7 @@ export const oaiBuildFunctionInfo = (
   toolName: string,
   rawArgs: string,
 ): FunctionCall => {
-  const tool = toolCtx[toolName];
+  const tool = toolCtx.getFunctionTool(toolName);
   if (!tool) {
     throw new Error(`AI tool ${toolName} not found`);
   }
@@ -187,7 +187,7 @@ export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
-  const tool = toolCtx[toolCall.name]!;
+  const tool = toolCtx.getFunctionTool(toolCall.name)!;
   let args: object | undefined;
   let params: object | undefined;
 

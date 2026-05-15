@@ -485,7 +485,10 @@ export function performLLMInference(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
     );
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
+    span.setAttribute(
+      traceTypes.ATTR_FUNCTION_TOOLS,
+      JSON.stringify(Object.keys(toolCtx.functionTools)),
+    );
 
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
@@ -992,7 +995,7 @@ export function performToolExecutions({
 
       // TODO(brian): assert other toolChoice values
 
-      const tool = toolCtx[toolCall.name];
+      const tool = toolCtx.getFunctionTool(toolCall.name);
       if (!tool) {
         logger.warn(
           {

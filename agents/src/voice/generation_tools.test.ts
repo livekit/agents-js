@@ -4,7 +4,7 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, tool } from '../llm/index.js';
+import { FunctionCall, ToolContext, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
@@ -63,6 +63,7 @@ describe('Generation + Tool Execution', () => {
     // Tool that takes > 5 seconds
     let toolAborted = false;
     const getWeather = tool({
+      name: 'getWeather',
       description: 'weather',
       parameters: z.object({ location: z.string() }),
       execute: async ({ location }, { abortSignal }) => {
@@ -87,7 +88,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_test', _itemAdded: () => {} } as any,
-      toolCtx: { getWeather } as any,
+      toolCtx: new ToolContext([getWeather]) as any,
       toolCallStream,
       controller: replyAbortController,
       onToolExecutionStarted: () => {},
@@ -115,6 +116,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ msg: z.string() }),
       execute: async ({ msg }) => `echo: ${msg}`,
@@ -130,7 +132,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_test2', _itemAdded: () => {} } as any,
-      toolCtx: { echo } as any,
+      toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -147,6 +149,7 @@ describe('Generation + Tool Execution', () => {
 
     let aborted = false;
     const longOp = tool({
+      name: 'longOp',
       description: 'longOp',
       parameters: z.object({ ms: z.number() }),
       execute: async ({ ms }, { abortSignal }) => {
@@ -170,7 +173,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_abort', _itemAdded: () => {} } as any,
-      toolCtx: { longOp } as any,
+      toolCtx: new ToolContext([longOp]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -189,6 +192,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ msg: z.string() }),
       execute: async ({ msg }) => `echo: ${msg}`,
@@ -205,7 +209,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_invalid', _itemAdded: () => {} } as any,
-      toolCtx: { echo } as any,
+      toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -220,11 +224,13 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const sum = tool({
+      name: 'sum',
       description: 'sum',
       parameters: z.object({ a: z.number(), b: z.number() }),
       execute: async ({ a, b }) => a + b,
     });
     const upper = tool({
+      name: 'upper',
       description: 'upper',
       parameters: z.object({ s: z.string() }),
       execute: async ({ s }) => s.toUpperCase(),
@@ -245,7 +251,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_multi', _itemAdded: () => {} } as any,
-      toolCtx: { sum, upper } as any,
+      toolCtx: new ToolContext([sum, upper]) as any,
       toolCallStream,
       controller: replyAbortController,
     });

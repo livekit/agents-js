@@ -84,10 +84,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
 
       const outOfScopeTool = this.buildOutOfScopeTool(taskId);
       if (outOfScopeTool) {
-        await this._currentTask.updateTools({
-          ...this._currentTask.toolCtx,
-          out_of_scope: outOfScopeTool,
-        });
+        await this._currentTask.updateTools([...this._currentTask.toolCtx.tools, outOfScopeTool]);
       }
 
       try {
@@ -190,6 +187,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
     const visitedTasks = this._visitedTasks;
 
     return tool({
+      name: 'out_of_scope',
       description,
       flags: ToolFlag.IGNORE_ON_ENTER,
       parameters: z.object({

@@ -13,8 +13,7 @@ import type { LLMModels, STTModels } from '../inference/index.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { FunctionCall } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { isFunctionTool, tool } from '../llm/tool_context.js';
-import type { ToolContext } from '../llm/tool_context.js';
+import { ToolContext, isFunctionTool, tool } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { STT, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -934,6 +933,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const isStale = (): boolean => generation !== this.detectGeneration || this.settled;
 
     const savePrediction = tool({
+      name: 'save_prediction',
       description: 'Save the AMD prediction to the verdict.',
       parameters: z.object({
         label: z.enum([
@@ -966,6 +966,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     });
 
     const postponeTermination = tool({
+      name: 'postpone_termination',
       description:
         'Postpone the termination of the classification task. ' +
         'Use when the transcript is ambiguous and more audio is expected.',
@@ -996,10 +997,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       },
     });
 
-    const toolCtx: ToolContext = { save_prediction: savePrediction };
+    const toolList: import('../llm/index.js').ToolContextEntry[] = [savePrediction];
     if (this.extensionCount < MAX_EXTENSIONS) {
-      toolCtx.postpone_termination = postponeTermination;
+      toolList.push(postponeTermination);
     }
+    const toolCtx = new ToolContext(toolList);
 
     const chatCtx = new ChatContext();
     chatCtx.addMessage({ role: 'system', content: this.prompt });
@@ -1035,7 +1037,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // Execute tool calls (save_prediction populates `savedResult`,
     // postpone_termination mutates the silence timer and returns).
     for (const tc of toolCalls) {
-      const fnTool = toolCtx[tc.name];
+      const fnTool = toolCtx.getFunctionTool(tc.name);
       if (!fnTool || !isFunctionTool(fnTool)) continue;
       let parsedArgs: unknown = {};
       try {

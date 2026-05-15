@@ -36,11 +36,13 @@ import {
   type RealtimeModelError,
   type RealtimeSession,
   type ToolChoice,
-  type ToolContext,
+  ToolContext,
+  type ToolContextEntry,
   ToolFlag,
+  Toolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
-import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
+import { isSameToolChoice } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -608,8 +610,7 @@ export class AgentActivity implements RecognitionHooks {
 
         // tools update is supported or tools are the same
         reusable =
-          reusable &&
-          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+          reusable && (capabilities.midSessionToolsUpdate || this.tools.equals(newActivity.tools));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
@@ -759,13 +760,14 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async updateTools(tools: ToolContext): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.tools));
-    const newToolNames = new Set(Object.keys(tools));
+  async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
+    const oldToolNames = new Set(Object.keys(this.tools.functionTools));
+    const newToolCtx = new ToolContext(tools);
+    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
 
-    this.agent._tools = { ...tools };
+    this.agent._toolCtx = newToolCtx;
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -777,12 +779,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(tools);
+      await this.realtimeSession.updateTools(newToolCtx);
     }
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
-      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: tools }));
+      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: newToolCtx }));
     }
   }
 
@@ -1421,7 +1423,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       info,
       chatCtx: chatCtx.copy(),
-      tools: { ...this.tools },
+      tools: this.tools.copy(),
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };
@@ -1725,11 +1727,15 @@ export class AgentActivity implements RecognitionHooks {
       const shouldFilterTools =
         onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
 
-      const tools = shouldFilterTools
-        ? Object.fromEntries(
-            Object.entries(this.agent.toolCtx).filter(
-              ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
-            ),
+      const tools: ToolContext = shouldFilterTools
+        ? new ToolContext(
+            this.agent.toolCtx.tools.filter((t) => {
+              if (t instanceof Toolset) return true;
+              if (t.type === 'function') {
+                return !((t as unknown as { flags: number }).flags & ToolFlag.IGNORE_ON_ENTER);
+              }
+              return true;
+            }),
           )
         : this.agent.toolCtx;
 
@@ -1912,7 +1918,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         preemptive.info.newTranscript === userMessage?.textContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
-        isSameToolContext(preemptive.tools, this.tools) &&
+        preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;

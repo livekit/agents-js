@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { type ToolOptions, tool } from './tool_context.js';
+import {
+  ToolContext,
+  type ToolOptions,
+  Toolset,
+  tool,
+  toolListFromRecord,
+} from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -77,6 +83,7 @@ describe('Tool Context', () => {
   describe('tool', () => {
     it('should create and execute a basic core tool', async () => {
       const getWeather = tool({
+        name: 'getWeather',
         description: 'Get the weather for a given location',
         parameters: z.object({
           location: z.string(),
@@ -95,6 +102,7 @@ describe('Tool Context', () => {
 
     it('should properly type a callable function', async () => {
       const testFunction = tool({
+        name: 'testFunction',
         description: 'Test function',
         parameters: z.object({
           name: z.string().describe('The user name'),
@@ -114,6 +122,7 @@ describe('Tool Context', () => {
 
     it('should handle async execution', async () => {
       const testFunction = tool({
+        name: 'asyncTestFunction',
         description: 'Async test function',
         parameters: z.object({
           delay: z.number().describe('Delay in milliseconds'),
@@ -157,6 +166,7 @@ describe('Tool Context', () => {
     describe('optional parameters', () => {
       it('should create a tool without parameters', async () => {
         const simpleAction = tool({
+          name: 'simpleAction',
           description: 'Perform a simple action',
           execute: async () => {
             return 'Action performed';
@@ -175,6 +185,7 @@ describe('Tool Context', () => {
 
       it('should support .optional() fields in tool parameters', async () => {
         const weatherTool = tool({
+          name: 'weatherTool',
           description: 'Get weather information',
           parameters: z.object({
             location: z.string().describe('The city or location').optional(),
@@ -205,6 +216,7 @@ describe('Tool Context', () => {
 
       it('should handle tools with context but no parameters', async () => {
         const greetUser = tool({
+          name: 'greetUser',
           description: 'Greet the current user',
           execute: async (_, { ctx }: ToolOptions<{ username: string }>) => {
             return `Hello, ${ctx.userData.username}!`;
@@ -217,6 +229,7 @@ describe('Tool Context', () => {
 
       it('should create a tool that accesses tool call id without parameters', async () => {
         const getCallId = tool({
+          name: 'getCallId',
           description: 'Get the current tool call ID',
           execute: async (_, { toolCallId }) => {
             return `Tool call ID: ${toolCallId}`;
@@ -231,6 +244,7 @@ describe('Tool Context', () => {
     describe('Zod v3 and v4 compatibility', () => {
       it('should work with Zod v3 schemas', async () => {
         const v3Tool = tool({
+          name: 'v3Tool',
           description: 'A tool using Zod v3 schema',
           parameters: z3.object({
             name: z3.string(),
@@ -250,6 +264,7 @@ describe('Tool Context', () => {
 
       it('should work with Zod v4 schemas', async () => {
         const v4Tool = tool({
+          name: 'v4Tool',
           description: 'A tool using Zod v4 schema',
           parameters: z4.object({
             name: z4.string(),
@@ -269,6 +284,7 @@ describe('Tool Context', () => {
 
       it('should handle v4 schemas with optional fields', async () => {
         const v4Tool = tool({
+          name: 'v4OptionalTool',
           description: 'Tool with optional field using v4',
           parameters: z4.object({
             required: z4.string(),
@@ -291,6 +307,7 @@ describe('Tool Context', () => {
 
       it('should handle v4 enum schemas', async () => {
         const v4Tool = tool({
+          name: 'v4EnumTool',
           description: 'Tool with enum using v4',
           parameters: z4.object({
             color: z4.enum(['red', 'blue', 'green']),
@@ -306,6 +323,7 @@ describe('Tool Context', () => {
 
       it('should handle v4 array schemas', async () => {
         const v4Tool = tool({
+          name: 'v4ArrayTool',
           description: 'Tool with array using v4',
           parameters: z4.object({
             tags: z4.array(z4.string()),
@@ -324,6 +342,7 @@ describe('Tool Context', () => {
 
       it('should handle v4 nested object schemas', async () => {
         const v4Tool = tool({
+          name: 'v4NestedTool',
           description: 'Tool with nested object using v4',
           parameters: z4.object({
             user: z4.object({
@@ -403,5 +422,177 @@ describe('Tool Context', () => {
         ).toBe('string');
       });
     });
+  });
+});
+
+describe('tool() name requirement', () => {
+  it('throws when name is missing', () => {
+    expect(() =>
+      // @ts-expect-error - name is required
+      tool({
+        description: 'no name',
+        execute: async () => 'x',
+      }),
+    ).toThrow('requires a non-empty name');
+  });
+
+  it('throws when name is empty', () => {
+    expect(() =>
+      tool({
+        name: '',
+        description: 'empty name',
+        execute: async () => 'x',
+      }),
+    ).toThrow('requires a non-empty name');
+  });
+
+  it('stores the name on the returned function tool', () => {
+    const t = tool({
+      name: 'doStuff',
+      description: 'd',
+      execute: async () => 'x',
+    });
+    expect(t.name).toBe('doStuff');
+  });
+});
+
+describe('Toolset', () => {
+  it('exposes its id and the tools it was constructed with', () => {
+    const a = tool({ name: 'a', description: 'a', execute: async () => 'a' });
+    const b = tool({ name: 'b', description: 'b', execute: async () => 'b' });
+    const ts = new Toolset({ id: 'set1', tools: [a, b] });
+
+    expect(ts.id).toBe('set1');
+    expect(ts.tools).toEqual([a, b]);
+  });
+
+  it('default setup and aclose are no-ops', async () => {
+    const ts = new Toolset({ id: 'noop', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('lets subclasses override lifecycle hooks', async () => {
+    const events: string[] = [];
+    class Recording extends Toolset {
+      override async setup(): Promise<void> {
+        events.push(`setup:${this.id}`);
+      }
+      override async aclose(): Promise<void> {
+        events.push(`close:${this.id}`);
+      }
+    }
+
+    const ts = new Recording({ id: 'rec', tools: [] });
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup:rec', 'close:rec']);
+  });
+});
+
+describe('ToolContext', () => {
+  const makeFn = (name: string) =>
+    tool({
+      name,
+      description: `${name} tool`,
+      execute: async () => name,
+    });
+
+  it('empty() returns an empty context', () => {
+    const ctx = ToolContext.empty();
+    expect(ctx.functionTools).toEqual({});
+    expect(ctx.providerTools).toEqual([]);
+    expect(ctx.toolsets).toEqual([]);
+    expect(ctx.flatten()).toEqual([]);
+  });
+
+  it('indexes function tools by name and supports lookup', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ctx = new ToolContext([a, b]);
+
+    expect(ctx.functionTools).toEqual({ a, b });
+    expect(ctx.getFunctionTool('a')).toBe(a);
+    expect(ctx.getFunctionTool('b')).toBe(b);
+    expect(ctx.getFunctionTool('missing')).toBeUndefined();
+  });
+
+  it('throws on duplicate function names referencing different instances', () => {
+    const a1 = makeFn('a');
+    const a2 = makeFn('a');
+    expect(() => new ToolContext([a1, a2])).toThrow('duplicate function name: a');
+  });
+
+  it('skips duplicate names when the same instance is added twice', () => {
+    const a = makeFn('a');
+    const ctx = new ToolContext([a, a]);
+    expect(ctx.getFunctionTool('a')).toBe(a);
+  });
+
+  it('flattens function tools out of a Toolset and tracks the toolset itself', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const direct = makeFn('direct');
+
+    const ctx = new ToolContext([direct, ts]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b', 'direct']);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('separates provider tools from function tools', () => {
+    const fnA = makeFn('a');
+    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const ctx = new ToolContext([fnA, provider]);
+
+    expect(ctx.functionTools).toEqual({ a: fnA });
+    expect(ctx.providerTools).toEqual([provider]);
+    expect(ctx.flatten()).toEqual([fnA, provider]);
+  });
+
+  it('updateTools replaces the entire context', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ctx = new ToolContext([a]);
+    ctx.updateTools([b]);
+    expect(ctx.getFunctionTool('a')).toBeUndefined();
+    expect(ctx.getFunctionTool('b')).toBe(b);
+  });
+
+  it('copy() yields an independent context with the same tools', () => {
+    const a = makeFn('a');
+    const ctx = new ToolContext([a]);
+    const dup = ctx.copy();
+
+    expect(dup.getFunctionTool('a')).toBe(a);
+    dup.updateTools([]);
+    expect(ctx.getFunctionTool('a')).toBe(a);
+    expect(dup.getFunctionTool('a')).toBeUndefined();
+  });
+
+  it('equals() compares function tool maps and provider lists by identity', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const c = makeFn('c');
+
+    expect(new ToolContext([a, b]).equals(new ToolContext([a, b]))).toBe(true);
+    expect(new ToolContext([a, b]).equals(new ToolContext([a]))).toBe(false);
+    expect(new ToolContext([a, b]).equals(new ToolContext([a, c]))).toBe(false);
+  });
+});
+
+describe('toolListFromRecord', () => {
+  it('converts a map to a list and stamps the map key onto unnamed tools', () => {
+    const named = tool({ name: 'named', description: 'd', execute: async () => 'x' });
+    // Simulate a legacy unnamed tool by clearing its name.
+    const unnamed = tool({ name: 'placeholder', description: 'd', execute: async () => 'y' });
+    (unnamed as { name: string }).name = '';
+
+    const list = toolListFromRecord({ named, lookup: unnamed });
+
+    expect(list).toContain(named);
+    expect(list).toContain(unnamed);
+    expect((unnamed as { name: string }).name).toBe('lookup');
   });
 });

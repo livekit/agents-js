@@ -57,8 +57,9 @@ class SchedulingAgent extends voice.Agent {
 
     super({
       instructions,
-      tools: {
-        bookAppointment: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'bookAppointment',
           description: 'Book an appointment.',
           parameters: z.object({
             date: z.string().describe('The date of the appointment in the format YYYY-MM-DD'),
@@ -69,7 +70,7 @@ class SchedulingAgent extends voice.Agent {
             return `Appointment booked for ${date} at ${time}`;
           },
         }),
-      },
+      ],
     });
   }
 
