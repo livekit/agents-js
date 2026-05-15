@@ -1252,11 +1252,7 @@ export class AgentActivity implements RecognitionHooks {
         }
         const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
 
-        if (
-          this.isInterruptionDetectionEnabled &&
-          this.audioRecognition &&
-          wasAgentSpeaking
-        ) {
+        if (this.isInterruptionDetectionEnabled && this.audioRecognition && wasAgentSpeaking) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
