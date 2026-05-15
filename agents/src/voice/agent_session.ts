@@ -18,7 +18,6 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
@@ -1050,9 +1049,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _onError(
-    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
-  ): void {
+  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (this.closingTask || error.recoverable) {
       return;
     }
@@ -1068,9 +1065,6 @@ export class AgentSession<
       if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
       }
-    } else if (error.type === 'interruption_detection_error') {
-      this.logger.error(error.toString());
-      return;
     }
 
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
@@ -1264,13 +1258,7 @@ export class AgentSession<
 
   private async closeImpl(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (this.rootSpanContext) {
@@ -1284,13 +1272,7 @@ export class AgentSession<
 
   private async closeImplInner(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {
