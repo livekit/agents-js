@@ -15,6 +15,9 @@
       "default": "./dist/index.cjs"
     }
   },
+  "bin": {
+    "livekit-agents-download-files": "./dist/bin/download-files.js"
+  },
   "author": "LiveKit",
   "type": "module",
   "repository": "git@github.com:livekit/agents-js.git",
