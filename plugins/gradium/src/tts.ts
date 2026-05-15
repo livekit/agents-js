@@ -34,6 +34,12 @@ const GRADIUM_SAMPLE_RATE = 48000;
 const GRADIUM_CHANNELS = 1;
 const BUFFERED_WORDS_COUNT = 8;
 
+const sampleRateFromFormat = (format: TTSOutputFormat): number => {
+  if (format === 'pcm') return GRADIUM_SAMPLE_RATE;
+  const m = /^pcm_(\d+)$/.exec(format);
+  return m ? parseInt(m[1]!, 10) : GRADIUM_SAMPLE_RATE;
+};
+
 /** Advanced voice generation settings */
 export interface JsonConfig {
   /** Sampling temperature (0.0–1.4, default 0.7). Higher values produce more varied output. */
@@ -108,7 +114,7 @@ export class TTS extends tts.TTS {
    */
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolvedOpts = { ...defaultTTSOptions, ...opts };
-    super(GRADIUM_SAMPLE_RATE, GRADIUM_CHANNELS, {
+    super(sampleRateFromFormat(resolvedOpts.outputFormat), GRADIUM_CHANNELS, {
       streaming: true,
       alignedTranscript: resolvedOpts.wordTimestamps,
     });
@@ -156,7 +162,8 @@ export class ChunkedStream extends tts.ChunkedStream {
 
   protected async run(): Promise<void> {
     const requestId = shortuuid();
-    const bstream = new AudioByteStream(GRADIUM_SAMPLE_RATE, GRADIUM_CHANNELS);
+    const sampleRate = sampleRateFromFormat(this.#opts.outputFormat);
+    const bstream = new AudioByteStream(sampleRate, GRADIUM_CHANNELS);
 
     const body: Record<string, unknown> = {
       text: this.#text,
@@ -168,15 +175,22 @@ export class ChunkedStream extends tts.ChunkedStream {
     if (this.#opts.pronunciationId) body.pronunciation_id = this.#opts.pronunciationId;
     if (this.#opts.jsonConfig) body.json_config = this.#opts.jsonConfig;
 
-    const response = await fetch(`${this.#opts.baseUrl}/post/speech/tts`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [GRADIUM_API_KEY_HEADER]: this.#opts.apiKey!,
-      },
-      body: JSON.stringify(body),
-      signal: this.abortSignal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.#opts.baseUrl}/post/speech/tts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [GRADIUM_API_KEY_HEADER]: this.#opts.apiKey!,
+        },
+        body: JSON.stringify(body),
+        signal: this.abortSignal,
+      });
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      this.queue.close();
+      throw toRetryableConnectionError(e);
+    }
 
     if (!response.ok) {
       throw new APIConnectionError({
@@ -267,7 +281,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const recvTask = async (ws: WebSocket) => {
-      const bstream = new AudioByteStream(GRADIUM_SAMPLE_RATE, GRADIUM_CHANNELS);
+      const bstream = new AudioByteStream(
+        sampleRateFromFormat(this.#opts.outputFormat),
+        GRADIUM_CHANNELS,
+      );
       const eventChannel = stream.createStreamChannel<RawData>();
 
       let lastFrame: AudioFrame | undefined;
