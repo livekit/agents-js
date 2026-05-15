@@ -9,6 +9,7 @@ import {
   ChatContext,
   FunctionCall,
   FunctionCallOutput,
+  Instructions,
 } from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx, toResponsesChatCtx } from './openai.js';
@@ -52,6 +53,23 @@ describe('toChatCtx', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
     expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
+  });
+
+  it('should render Instructions as their resolved value', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const result = await toChatCtx(ctx);
+
+    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
   });
 
   it('should handle multi-line text content', async () => {
@@ -705,6 +723,23 @@ describe('toResponsesChatCtx', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ role: 'system', content: 'You are a helpful assistant' });
     expect(result[1]).toEqual({ role: 'user', content: 'Hello' });
+  });
+
+  it('should render Instructions as their resolved value', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
   });
 
   it('should handle multi-line text content', async () => {

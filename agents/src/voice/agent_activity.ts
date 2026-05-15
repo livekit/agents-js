@@ -17,7 +17,11 @@ import {
   AgentConfigUpdate,
   type ChatContext,
   ChatMessage,
+  type Instructions,
   type MetricsReport,
+  concatInstructions,
+  instructionsEqual,
+  renderInstructions,
 } from '../llm/chat_context.js';
 import {
   type ChatItem,
@@ -94,6 +98,7 @@ import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './gene
 import {
   type _AudioOut,
   type _TextOut,
+  applyInstructionsModality,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -103,7 +108,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { TimedString } from './io.js';
-import { SpeechHandle } from './speech_handle.js';
+import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
@@ -447,10 +452,12 @@ export class AgentActivity implements RecognitionHooks {
       // this means the content is the same as the previous session
       const capabilities = this.llm.capabilities;
       try {
-        await this.realtimeSession!._updateSession(
+        const realtimeInstructions =
           !rtReused || capabilities.midSessionInstructionsUpdate
-            ? this.agent.instructions
-            : undefined,
+            ? renderInstructions(this.agent.instructions)
+            : undefined;
+        await this.realtimeSession!._updateSession(
+          realtimeInstructions,
           !rtReused || capabilities.midSessionChatCtxUpdate ? this.agent.chatCtx : undefined,
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
@@ -597,7 +604,7 @@ export class AgentActivity implements RecognitionHooks {
         reusable =
           reusable &&
           (capabilities.midSessionInstructionsUpdate ||
-            this.agent.instructions === newActivity.agent.instructions);
+            instructionsEqual(this.agent.instructions, newActivity.agent.instructions));
 
         // tools update is supported or tools are the same
         reusable =
@@ -1406,6 +1413,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       chatCtx,
       scheduleSpeech: false,
+      inputDetails: { modality: 'audio' },
     });
 
     this._preemptiveGeneration = {
@@ -1630,10 +1638,11 @@ export class AgentActivity implements RecognitionHooks {
   generateReply(options: {
     userMessage?: ChatMessage;
     chatCtx?: ChatContext;
-    instructions?: string;
+    instructions?: string | Instructions;
     toolChoice?: ToolChoice | null;
     allowInterruptions?: boolean;
     scheduleSpeech?: boolean;
+    inputDetails?: InputDetails;
   }): SpeechHandle {
     const {
       userMessage,
@@ -1642,9 +1651,10 @@ export class AgentActivity implements RecognitionHooks {
       toolChoice: defaultToolChoice,
       allowInterruptions: defaultAllowInterruptions,
       scheduleSpeech = true,
+      inputDetails,
     } = options;
 
-    let instructions = defaultInstructions;
+    let instructions: string | Instructions | undefined = defaultInstructions;
     let toolChoice = defaultToolChoice;
     let allowInterruptions = defaultAllowInterruptions;
 
@@ -1672,6 +1682,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+      inputDetails,
     });
 
     this.agentSession.emit(
@@ -1706,7 +1717,7 @@ export class AgentActivity implements RecognitionHooks {
       // this matches the behavior of the Realtime API:
       // https://platform.openai.com/docs/api-reference/realtime-client-events/response/create
       if (instructions) {
-        instructions = `${this.agent.instructions}\n${instructions}`;
+        instructions = concatInstructions(this.agent.instructions, '\n', instructions);
       }
 
       // Filter out tools with IGNORE_ON_ENTER flag when generateReply is called inside onEnter
@@ -1933,7 +1944,11 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle === undefined) {
       // Ensure the new message is passed to generateReply
       // This preserves the original message id, making it easier for users to track responses
-      speechHandle = this.generateReply({ userMessage, chatCtx });
+      speechHandle = this.generateReply({
+        userMessage,
+        chatCtx,
+        inputDetails: { modality: 'audio' },
+      });
     }
 
     const eouMetrics: EOUMetrics = {
@@ -2140,7 +2155,7 @@ export class AgentActivity implements RecognitionHooks {
     toolCtx: ToolContext;
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
-    instructions?: string;
+    instructions?: string | Instructions;
     newMessage?: ChatMessage;
     toolsMessages?: ChatItem[];
     span: Span;
@@ -2150,7 +2165,7 @@ export class AgentActivity implements RecognitionHooks {
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
-      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, instructions);
+      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
     if (newMessage) {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
@@ -2188,6 +2203,9 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.error({ error: e }, 'error occurred during updateInstructions');
       }
     }
+
+    // apply the correct variant of the instructions for the turn's input modality
+    applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
 
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
@@ -2628,7 +2646,7 @@ export class AgentActivity implements RecognitionHooks {
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
-    instructions?: string,
+    instructions?: string | Instructions,
     newMessage?: ChatMessage,
     toolsMessages?: ChatItem[],
     _previousUserMetrics?: MetricsReport,
@@ -3234,7 +3252,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings;
     abortController: AbortController;
     userInput?: string;
-    instructions?: string;
+    instructions?: string | Instructions;
   }): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
 
@@ -3261,7 +3279,11 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     try {
-      const generationEvent = await this.realtimeSession.generateReply(instructions);
+      const generationEvent = await this.realtimeSession.generateReply(
+        instructions !== undefined
+          ? renderInstructions(instructions, speechHandle.inputDetails.modality)
+          : undefined,
+      );
       await this.realtimeGenerationTask(
         speechHandle,
         generationEvent,
