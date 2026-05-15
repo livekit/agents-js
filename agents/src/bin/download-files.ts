@@ -6,4 +6,7 @@ import { main } from '../download.js';
 
 main().then((code) => {
   process.exit(code);
+}).catch((error) => {
+  console.error(`Fatal error: ${error}`);
+  process.exit(1);
 });
