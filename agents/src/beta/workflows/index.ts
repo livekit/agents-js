@@ -7,3 +7,4 @@ export {
   type TaskGroupOptions,
   type TaskGroupResult,
 } from './task_group.js';
+export type { InstructionParts } from './utils.js';

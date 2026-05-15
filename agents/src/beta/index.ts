@@ -6,4 +6,6 @@ export {
   type TaskCompletedEvent,
   type TaskGroupOptions,
   type TaskGroupResult,
+  type InstructionParts,
 } from './workflows/index.js';
+export { Instructions } from '../llm/index.js';
