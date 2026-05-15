@@ -179,11 +179,13 @@ export class ChunkedStream extends tts.ChunkedStream {
     });
 
     if (!response.ok) {
-      throw new Error(`Gradium TTS request failed: ${response.status} ${response.statusText}`);
+      throw new APIConnectionError({
+        message: `Gradium TTS request failed: ${response.status} ${response.statusText}`,
+      });
     }
 
     if (!response.body) {
-      throw new Error('Gradium TTS response body is empty');
+      throw new APIConnectionError({ message: 'Gradium TTS response body is empty' });
     }
 
     let lastFrame: AudioFrame | undefined;
@@ -317,9 +319,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         void eventChannel.close();
       };
 
+      const onAbort = () => {
+        if (!readyFuture.done) readyFuture.reject(new Error('aborted'));
+        void eventChannel.close();
+      };
+
       ws.on('message', onMessage);
       ws.on('close', onClose);
       ws.on('error', onError);
+      this.abortController.signal.addEventListener('abort', onAbort, { once: true });
 
       try {
         const reader = eventChannel.stream().getReader();
@@ -406,6 +414,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         ws.off('message', onMessage);
         ws.off('close', onClose);
         ws.off('error', onError);
+        this.abortController.signal.removeEventListener('abort', onAbort);
         clearChunkTimeout();
       }
     };
