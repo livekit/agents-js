@@ -461,8 +461,10 @@ export class AudioRecognition {
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
     this.cancelBackchannelBoundary();
 
+    const now = Date.now();
+
     if (this.isAgentSpeaking) {
-      this.endpointing.onEndOfAgentSpeech(Date.now());
+      this.endpointing.onEndOfAgentSpeech(now);
     }
 
     if (!this.isInterruptionEnabled) {

@@ -375,6 +375,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   private audioSource: AudioSource;
   private publication?: LocalTrackPublication;
   private flushTask?: Task<void>;
+  private flushPushedDuration?: number;
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
@@ -465,11 +466,24 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     if (this.flushTask && !this.flushTask.done) {
+      if (this.flushPushedDuration === this.pushedDuration) {
+        return;
+      }
+
       this.logger.error('flush called while playback is in progress');
       this.flushTask.cancel();
     }
 
-    this.flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    this.flushPushedDuration = this.pushedDuration;
+    const flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    this.flushTask = flushTask;
+    void flushTask.result
+      .finally(() => {
+        if (this.flushTask === flushTask) {
+          this.flushPushedDuration = undefined;
+        }
+      })
+      .catch(() => {});
   }
 
   clearBuffer(): void {

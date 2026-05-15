@@ -1191,19 +1191,19 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
+  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): boolean {
     if (!this.isInterruptionByAudioActivityEnabled) {
-      return;
+      return false;
     }
 
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
-      return;
+      return false;
     }
 
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
-      return;
+      return false;
     }
 
     // Refactored interruption word count check:
@@ -1225,7 +1225,7 @@ export class AgentActivity implements RecognitionHooks {
       // Only allow interruption if word count meets or exceeds minInterruptionWords
       // This applies to all cases: empty strings, partial speech, and full speech
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
-        return;
+        return false;
       }
     }
 
@@ -1246,11 +1246,16 @@ export class AgentActivity implements RecognitionHooks {
         const timeout =
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
+        if (this.pausedSpeech?.handle === this._currentSpeech) {
+          this.updatePausedSpeech(this._currentSpeech, timeout);
+          return false;
+        }
+        const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
 
         if (
           this.isInterruptionDetectionEnabled &&
           this.audioRecognition &&
-          this.agentSession.agentState === 'speaking'
+          wasAgentSpeaking
         ) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
@@ -1261,14 +1266,17 @@ export class AgentActivity implements RecognitionHooks {
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
-        this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(
-            options?.ignoreUserTranscriptUntil ?? Date.now(),
-          );
-        }
-        if (this.isInterruptionDetectionEnabled) {
-          this.restoreInterruptionByAudioActivity();
+        if (wasAgentSpeaking) {
+          this.agentSession._updateAgentState('listening');
+          if (this.audioRecognition) {
+            this.audioRecognition.onEndOfAgentSpeech(
+              options?.ignoreUserTranscriptUntil ?? Date.now(),
+            );
+          }
+          if (this.isInterruptionDetectionEnabled) {
+            this.restoreInterruptionByAudioActivity();
+          }
+          return true;
         }
       } else {
         this.logger.info(
@@ -1279,14 +1287,15 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech.interrupt();
       }
     }
+    return false;
   }
 
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
-    this.interruptByAudioActivity({
+    const endedAgentSpeech = this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
-    if (this.audioRecognition) {
+    if (!endedAgentSpeech && this.audioRecognition && this.agentSession.agentState === 'speaking') {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
@@ -2560,6 +2569,10 @@ export class AgentActivity implements RecognitionHooks {
       await executeToolsTask.result;
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
+    }
+
+    if (speechHandle.interrupted) {
+      return;
     }
 
     if (toolOutput.output.length === 0) return;
