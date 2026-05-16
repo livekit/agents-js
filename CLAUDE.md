@@ -50,12 +50,12 @@ Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus 
 
 ### Pre-downloading plugin assets (for Docker builds)
 
-`@livekit/agents` ships a `livekit-agents-download-files` bin that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
+`@livekit/agents` ships a `livekit-agents` bin with a `download-files` subcommand that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
 
 ```dockerfile
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
-RUN npx livekit-agents-download-files
+RUN npx livekit-agents download-files
 COPY src/ ./src
 RUN pnpm build
 ```

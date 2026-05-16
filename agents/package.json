@@ -16,7 +16,7 @@
     }
   },
   "bin": {
-    "livekit-agents-download-files": "./dist/bin/download-files.js"
+    "livekit-agents": "./dist/bin/livekit-agents.js"
   },
   "author": "LiveKit",
   "type": "module",

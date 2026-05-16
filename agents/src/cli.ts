@@ -205,7 +205,7 @@ export const runApp = (opts: ServerOptions) => {
 
       logger.warn(
         '`download-files` via cli.runApp() is deprecated. ' +
-          'Use `npx livekit-agents-download-files` instead — it discovers installed ' +
+          'Use `npx livekit-agents download-files` instead — it discovers installed ' +
           'plugins without loading your agent code, enabling better Docker layer caching.',
       );
 
