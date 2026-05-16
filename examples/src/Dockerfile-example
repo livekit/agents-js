@@ -60,7 +60,7 @@ USER appuser
 # Pre-download any ML models or files the agent needs
 # This ensures the container is ready to run immediately without downloading
 # dependencies at runtime, which improves startup time and reliability
-RUN pnpm exec node dist/agent.js download-files
+RUN pnpm exec livekit-agents download-files
 
 # Switch back to root to remove dev dependencies and finalize setup
 USER root

@@ -4,7 +4,7 @@
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
 import { initializeLogger, log } from './log.js';
-import { Plugin } from './plugin.js';
+import { downloadRegisteredPluginFiles } from './plugin_download.js';
 import { version } from './version.js';
 import { AgentServer, ServerOptions } from './worker.js';
 
@@ -17,26 +17,7 @@ type CliArgs = {
   participantIdentity?: string;
 };
 
-type PluginDownloadFailure = {
-  plugin: Plugin;
-  error: unknown;
-};
-
-const formatErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
-/** @internal */
-export const formatDownloadFailureMessage = (failures: PluginDownloadFailure[]): string => {
-  const pluginLabel = failures.length === 1 ? 'plugin' : 'plugins';
-  const details = failures
-    .map(
-      ({ plugin, error }) =>
-        `- ${plugin.title} (${plugin.package}@${plugin.version}): ${formatErrorMessage(error)}`,
-    )
-    .join('\n');
-
-  return `Failed to download files for ${failures.length} ${pluginLabel}:\n${details}`;
-};
+export { formatDownloadFailureMessage } from './plugin_download.js';
 
 const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
@@ -218,28 +199,11 @@ export const runApp = (opts: ServerOptions) => {
       initializeLogger({ pretty: true, level: commandOptions.logLevel });
       const logger = log();
 
-      const downloadFiles = async () => {
-        const failures: PluginDownloadFailure[] = [];
+      logger.warn(
+        '`download-files` via the agent CLI is deprecated. Use `livekit-agents download-files` instead; it discovers installed plugins without loading your agent code.',
+      );
 
-        for (const plugin of Plugin.registeredPlugins) {
-          logger.info(`Downloading files for ${plugin.title}`);
-          try {
-            await plugin.downloadFiles();
-            logger.info(`Finished downloading files for ${plugin.title}`);
-          } catch (error) {
-            failures.push({ plugin, error });
-            logger.error(
-              `Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`,
-            );
-          }
-        }
-
-        if (failures.length > 0) {
-          throw new Error(formatDownloadFailureMessage(failures));
-        }
-      };
-
-      downloadFiles()
+      downloadRegisteredPluginFiles()
         .then(() => {
           process.exit(0);
         })

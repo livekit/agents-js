@@ -72,10 +72,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
         throw new Error(
           `agents-plugins-livekit failed to initialize ${this.modelType} EOU turn detector: Required model files not found locally.\n\n` +
             `This usually means you need to download the model files first. Please run one of these commands:\n\n` +
-            `  If using Node.js starter template:\n` +
-            `    pnpm download-files\n\n` +
-            `  If using the agent directly:\n` +
-            `    node ./your_agent.ts download-files\n\n` +
+            `    pnpm exec livekit-agents download-files\n\n` +
             `Then try running your application again.\n\n` +
             `Original error: ${e}`,
         );
