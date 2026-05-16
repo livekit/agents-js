@@ -462,6 +462,10 @@ export class AudioRecognition {
 
     const now = Date.now();
     const wasAgentSpeaking = this.isAgentSpeaking;
+    // Snapshot the prior value BEFORE we mutate `this.ignoreUserTranscriptUntil` below.
+    // The gate around `onEndOfOverlapSpeech` depends on whether overlap had been registered
+    // during this agent speech (i.e. the field was undefined at entry).
+    const priorIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
     if (wasAgentSpeaking) {
       this.endpointing.onEndOfAgentSpeech(now);
     }
@@ -473,10 +477,6 @@ export class AudioRecognition {
 
     let endCooldown = 0;
     if (wasAgentSpeaking) {
-      if (this.ignoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech(Date.now());
-      }
-
       endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
       const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
@@ -486,6 +486,8 @@ export class AudioRecognition {
       // before the agent finished speaking (premature corrections) are surfaced.
       this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
     }
+    // Set isAgentSpeaking = false BEFORE awaiting the sentinel so STT events
+    // arriving while the sentinel is in flight are not buffered (STT-deaf fix).
     this.isAgentSpeaking = false;
 
     const inputOpen = await this.trySendInterruptionSentinel(
@@ -496,7 +498,12 @@ export class AudioRecognition {
     }
 
     if (wasAgentSpeaking) {
-      // flush held transcripts if possible
+      // Notify overlap end AFTER the agent-speech-ended sentinel resets the inference
+      // stream, so it does not emit a synthetic isInterruption:false event after the
+      // confirmed interruption.
+      if (priorIgnoreUserTranscriptUntil === undefined) {
+        this.onEndOfOverlapSpeech(Date.now());
+      }
       await this.flushHeldTranscripts(endCooldown);
     }
   }

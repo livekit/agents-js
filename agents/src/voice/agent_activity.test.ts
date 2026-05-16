@@ -537,5 +537,4 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
   });
-
 });
