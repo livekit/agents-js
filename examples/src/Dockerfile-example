@@ -38,8 +38,6 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-USER appuser
-
 # Copy just the dependency files first, for more efficient layer caching
 COPY package.json pnpm-lock.yaml ./
 
