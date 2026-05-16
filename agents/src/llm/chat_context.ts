@@ -835,11 +835,7 @@ export class ChatContext {
         continue;
       }
 
-      if (
-        toolCtx !== undefined &&
-        isToolCallOrOutput(item) &&
-        toolCtx.getFunctionTool(item.name) === undefined
-      ) {
+      if (toolCtx !== undefined && isToolCallOrOutput(item) && !toolCtx.hasTool(item.name)) {
         continue;
       }
 

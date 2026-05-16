@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
 import type { LLM } from '../../llm/llm.js';
-import { ToolContext, tool } from '../../llm/tool_context.js';
+import { tool } from '../../llm/tool_context.js';
 import type { Task } from '../../utils.js';
 import { Future } from '../../utils.js';
 import type { Agent } from '../agent.js';
@@ -854,7 +854,7 @@ export class MessageAssert extends EventAssert {
 
     const stream = llm.chat({
       chatCtx,
-      toolCtx: new ToolContext([checkIntentTool]),
+      toolCtx: [checkIntentTool],
       toolChoice: { type: 'function', function: { name: 'check_intent' } },
       extraKwargs: { temperature: 0 },
     });

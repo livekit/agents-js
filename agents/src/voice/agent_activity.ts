@@ -485,7 +485,12 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    const initialTools = Object.keys(this.tools.functionTools);
+    // Surface every tool the agent advertises at start — function tools by name and provider
+    // tools by id. Toolsets are flattened into these collections so they're included too.
+    const initialTools = [
+      ...Object.keys(this.tools.functionTools),
+      ...this.tools.providerTools.map((t) => t.id),
+    ];
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
         instructions: this.agent.instructions,

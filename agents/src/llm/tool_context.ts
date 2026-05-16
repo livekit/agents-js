@@ -197,6 +197,27 @@ export interface FunctionTool<
 }
 
 /**
+ * Convenience input shape accepted by APIs that want to take a list of tools directly without
+ * forcing callers to wrap them in `new ToolContext(...)`.
+ */
+export type ToolCtxInput<UserData = UnknownUserData> =
+  | ToolContext<UserData>
+  | readonly ToolContextEntry<UserData>[];
+
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolCtxInput<UserData>,
+): ToolContext<UserData>;
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolCtxInput<UserData> | undefined,
+): ToolContext<UserData> | undefined;
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolCtxInput<UserData> | undefined,
+): ToolContext<UserData> | undefined {
+  if (input === undefined) return undefined;
+  return input instanceof ToolContext ? input : new ToolContext(input);
+}
+
+/**
  * A flat, addressable view over a heterogeneous list of `FunctionTool` and `ProviderDefinedTool`
  * entries.
  *
@@ -249,6 +270,18 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._functionToolsMap.get(name);
   }
 
+  /**
+   * Returns true when the context contains any function or provider tool whose identifier
+   * matches `name` (function tools matched on `tool.name`, provider tools on `tool.id`). Used
+   * by chat-context filtering so future provider-tool call items are recognized too.
+   */
+  hasTool(name: string): boolean {
+    if (this._functionToolsMap.has(name)) {
+      return true;
+    }
+    return this._providerTools.some((tool) => tool.id === name);
+  }
+
   updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
@@ -260,10 +293,8 @@ export class ToolContext<UserData = UnknownUserData> {
         continue;
       }
       if (isFunctionTool(tool)) {
-        if (!tool.name) {
-          throw new Error('FunctionTool is missing a name');
-        }
-        // Later tool wins on duplicate names.
+        // Later tool wins on duplicate names. `tool()` enforces a non-empty name at
+        // construction so we don't re-check here.
         this._functionToolsMap.set(tool.name, tool);
         continue;
       }
