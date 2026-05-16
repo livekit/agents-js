@@ -12,9 +12,8 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
-import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
@@ -462,8 +461,8 @@ export class AudioRecognition {
     this.cancelBackchannelBoundary();
 
     const now = Date.now();
-
-    if (this.isAgentSpeaking) {
+    const wasAgentSpeaking = this.isAgentSpeaking;
+    if (wasAgentSpeaking) {
       this.endpointing.onEndOfAgentSpeech(now);
     }
 
@@ -472,20 +471,13 @@ export class AudioRecognition {
       return;
     }
 
-    const inputOpen = await this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.agentSpeechEnded(),
-    );
-    if (!inputOpen) {
-      this.isAgentSpeaking = false;
-      return;
-    }
-
-    if (this.isAgentSpeaking) {
+    let endCooldown = 0;
+    if (wasAgentSpeaking) {
       if (this.ignoreUserTranscriptUntil === undefined) {
         this.onEndOfOverlapSpeech(Date.now());
       }
 
-      const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+      endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
       const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
         : ignoreUserTranscriptUntil;
@@ -493,11 +485,20 @@ export class AudioRecognition {
       // Subtracting `endCooldown` widens the release window so transcripts that ended just
       // before the agent finished speaking (premature corrections) are surfaced.
       this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
+    }
+    this.isAgentSpeaking = false;
 
+    const inputOpen = await this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.agentSpeechEnded(),
+    );
+    if (!inputOpen) {
+      return;
+    }
+
+    if (wasAgentSpeaking) {
       // flush held transcripts if possible
       await this.flushHeldTranscripts(endCooldown);
     }
-    this.isAgentSpeaking = false;
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */

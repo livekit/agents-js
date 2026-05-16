@@ -1288,10 +1288,17 @@ export class AgentActivity implements RecognitionHooks {
 
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
+
     const endedAgentSpeech = this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
-    if (!endedAgentSpeech && this.audioRecognition && this.agentSession.agentState === 'speaking') {
+    const interruptedPausedSpeech = endedAgentSpeech ? undefined : this.interruptPausedSpeech();
+
+    if (
+      !endedAgentSpeech &&
+      this.audioRecognition &&
+      (this.agentSession.agentState === 'speaking' || interruptedPausedSpeech !== undefined)
+    ) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
@@ -1379,6 +1386,7 @@ export class AgentActivity implements RecognitionHooks {
     if (
       !preemptiveOpts.enabled ||
       this.schedulingPaused ||
+      (this.pausedSpeech !== undefined && !this.pausedSpeech.handle.interrupted) ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
     ) {
@@ -1812,7 +1820,11 @@ export class AgentActivity implements RecognitionHooks {
 
   private onPipelineReplyDone(): void {
     if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
+      const wasSpeaking = this.agentSession.agentState === 'speaking';
       this.agentSession._updateAgentState('listening');
+      if (wasSpeaking && this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
     }
   }
 
@@ -3593,6 +3605,25 @@ export class AgentActivity implements RecognitionHooks {
       this.pausedSpeech = undefined;
       this.falseInterruptionTimer = undefined;
     }, timeout);
+  }
+
+  private interruptPausedSpeech(): SpeechHandle | undefined {
+    if (this.falseInterruptionTimer !== undefined) {
+      clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
+    }
+
+    if (!this.pausedSpeech) {
+      return undefined;
+    }
+
+    const speechHandle = this.pausedSpeech.handle;
+    if (!speechHandle.interrupted && speechHandle.allowInterruptions) {
+      speechHandle.interrupt();
+    }
+    this.pausedSpeech = undefined;
+
+    return speechHandle;
   }
 
   private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {

@@ -16,7 +16,7 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatContext } from '../llm/chat_context.js';
+import { ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { Future } from '../utils.js';
 import { type VADEvent, VADEventType } from '../vad.js';
@@ -307,6 +307,79 @@ describe('AgentActivity - VAD interruption', () => {
   });
 });
 
+describe('AgentActivity - speech completion', () => {
+  it('ends audio recognition speech when pipeline completion moves session out of speaking', () => {
+    const audioRecognition = {
+      onEndOfAgentSpeech: vi.fn(),
+    };
+    const fakeActivity = {
+      speechQueue: {
+        peek: () => undefined,
+      },
+      _currentSpeech: {
+        done: () => true,
+      },
+      audioRecognition,
+      agentSession: {
+        agentState: 'speaking',
+        _updateAgentState: vi.fn((state: string) => {
+          fakeActivity.agentSession.agentState = state;
+        }),
+      },
+    };
+
+    const onPipelineReplyDone = (AgentActivity.prototype as Record<string, unknown>)
+      .onPipelineReplyDone as (this: typeof fakeActivity) => void;
+
+    onPipelineReplyDone.call(fakeActivity);
+
+    expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
+    expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AgentActivity - confirmed interruptions', () => {
+  it('ends audio recognition when confirmed interruption only has paused speech', () => {
+    const pausedSpeech = SpeechHandle.create({ allowInterruptions: true });
+
+    const fakeActivity: Record<string, unknown> = {
+      restoreInterruptionByAudioActivity: vi.fn(),
+      interruptByAudioActivity: vi.fn(() => false),
+      _currentSpeech: undefined,
+      pausedSpeech: { handle: pausedSpeech },
+      falseInterruptionTimer: undefined,
+      audioRecognition: {
+        onEndOfAgentSpeech: vi.fn(),
+      },
+      agentSession: {
+        agentState: 'listening',
+      },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const onInterruption = (AgentActivity.prototype as Record<string, unknown>).onInterruption as (
+      this: typeof fakeActivity,
+      ev: Parameters<AgentActivity['onInterruption']>[0],
+    ) => void;
+
+    onInterruption.call(fakeActivity, {
+      type: 'overlapping_speech',
+      detectedAt: Date.now(),
+      isInterruption: true,
+    });
+
+    expect(pausedSpeech.interrupted).toBe(true);
+    expect(fakeActivity.pausedSpeech).toBeUndefined();
+    expect(
+      (
+        fakeActivity.audioRecognition as {
+          onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
+        }
+      ).onEndOfAgentSpeech,
+    ).toHaveBeenCalledTimes(1);
+  });
+});
+
 /**
  * Unit tests for the preemptive-generation guards in AgentActivity.
  *
@@ -345,7 +418,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
   );
   const cancelPreemptiveGeneration = vi.fn();
 
-  const fakeChatCtx = { copy: () => fakeChatCtx } as unknown as ChatContext;
+  const fakeChatCtx = new ChatContext();
 
   const fakeActivity = {
     _preemptiveGenerationCount: 0,
@@ -370,6 +443,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
     generateReply,
     cancelPreemptiveGeneration,
   };
+  Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
   const onPreemptiveGeneration = (AgentActivity.prototype as Record<string, unknown>)
     .onPreemptiveGeneration as (this: unknown, info: PreemptiveGenerationInfo) => void;
@@ -451,4 +525,17 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
+
+  it('skips preemption while a paused speech is still active', () => {
+    const { fakeActivity, generateReply, call } = buildPreemptiveRunner();
+    const pausedSpeech = SpeechHandle.create({ allowInterruptions: true });
+
+    fakeActivity.pausedSpeech = { handle: pausedSpeech };
+
+    call();
+
+    expect(fakeActivity._preemptiveGenerationCount).toBe(0);
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
 });
