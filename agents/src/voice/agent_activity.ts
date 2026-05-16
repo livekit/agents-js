@@ -1172,7 +1172,18 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
+  private interruptByAudioActivity(options?: {
+    ignoreUserTranscriptUntil?: number;
+    /**
+     * When true, bypasses the `pauseEnabled()` soft-pause path and routes
+     * directly to the hard-interrupt branch. Set by callers whose signal is
+     * already a confirmed non-backchannel — e.g. the ML overlap detector via
+     * {@link onInterruption}. Soft pause is only appropriate for less-confident
+     * signals (raw VAD, partial transcripts) where false-interruption recovery
+     * is still desirable.
+     */
+    confirmed?: boolean;
+  }): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
       return;
     }
@@ -1223,7 +1234,7 @@ export class AgentActivity implements RecognitionHooks {
         this.falseInterruptionTimer = undefined;
       }
 
-      if (this.pauseEnabled()) {
+      if (this.pauseEnabled() && !options?.confirmed) {
         const timeout =
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
@@ -1266,6 +1277,12 @@ export class AgentActivity implements RecognitionHooks {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
+      // The ML overlap detector already classified this as a non-backchannel
+      // interruption (otherwise onOverlapSpeechEvent would not have routed
+      // here). Skip the soft-pause/wait-for-STT path and commit to the
+      // interrupt immediately, so the audio queue is dropped via the existing
+      // speechHandle.interrupt() → pipeline-reply abort → clearBuffer chain.
+      confirmed: true,
     });
     if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
