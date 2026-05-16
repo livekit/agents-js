@@ -95,7 +95,11 @@ class ResponsesHttpLLM extends llm.LLM {
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -182,7 +186,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       )) as OpenAI.Responses.ResponseInputItem[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? Object.entries(this.toolCtx.functionTools).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               name: name,

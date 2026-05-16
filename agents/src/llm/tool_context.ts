@@ -197,51 +197,23 @@ export interface FunctionTool<
 }
 
 /**
- * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
- * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
- * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
- */
-export class Toolset {
-  readonly #id: string;
-  readonly #tools: Tool[];
-
-  constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
-    this.#id = id;
-    this.#tools = [...tools];
-  }
-
-  get id(): string {
-    return this.#id;
-  }
-
-  get tools(): readonly Tool[] {
-    return this.#tools;
-  }
-
-  async setup(): Promise<void> {}
-
-  async aclose(): Promise<void> {}
-}
-
-/**
- * A flat, addressable view over a heterogeneous list of `Tool` and `Toolset` entries.
+ * A flat, addressable view over a heterogeneous list of `FunctionTool` and `ProviderDefinedTool`
+ * entries.
  *
  * Mirrors the Python `ToolContext`: the original input list is preserved on `_tools`, while
- * `_functionToolsMap`, `_providerTools`, and `_toolsets` denormalize it for cheap access.
- * Tools contributed by a `Toolset` are recursively flattened into the function and provider
- * collections; duplicate function names referencing different instances throw.
+ * `_functionToolsMap` and `_providerTools` denormalize it for cheap access. When two function
+ * tools share the same name the later entry overwrites the earlier one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
 export type ToolContextEntry<UserData = UnknownUserData> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  FunctionTool<any, UserData, any> | ProviderDefinedTool | Toolset;
+  FunctionTool<any, UserData, any> | ProviderDefinedTool;
 
 export class ToolContext<UserData = UnknownUserData> {
   private _tools: ToolContextEntry<UserData>[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
   private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
   private _providerTools: ProviderDefinedTool[] = [];
-  private _toolsets: Toolset[] = [];
 
   constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
     this.updateTools(tools);
@@ -251,23 +223,18 @@ export class ToolContext<UserData = UnknownUserData> {
     return new ToolContext([]);
   }
 
-  /** A copy of all function tools in the context, including tools contributed by toolsets. */
+  /** A copy of all function tools in the context. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
   get functionTools(): Record<string, FunctionTool<any, UserData, any>> {
     return Object.fromEntries(this._functionToolsMap);
   }
 
-  /** A copy of all provider tools in the context, including provider tools from toolsets. */
+  /** A copy of all provider tools in the context. */
   get providerTools(): readonly ProviderDefinedTool[] {
     return [...this._providerTools];
   }
 
-  /** A copy of the toolsets registered in the context. */
-  get toolsets(): readonly Toolset[] {
-    return [...this._toolsets];
-  }
-
-  /** A copy of the raw tool/toolset list this context was constructed with. */
+  /** A copy of the raw tool list this context was constructed with. */
   get tools(): readonly ToolContextEntry<UserData>[] {
     return [...this._tools];
   }
@@ -286,39 +253,21 @@ export class ToolContext<UserData = UnknownUserData> {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
     this._providerTools = [];
-    this._toolsets = [];
 
-    const addTool = (tool: ToolContextEntry<UserData> | Tool): void => {
-      if (tool instanceof Toolset) {
-        for (const inner of tool.tools) {
-          addTool(inner);
-        }
-        this._toolsets.push(tool);
-        return;
-      }
+    for (const tool of tools) {
       if (isProviderDefinedTool(tool)) {
         this._providerTools.push(tool);
-        return;
+        continue;
       }
       if (isFunctionTool(tool)) {
         if (!tool.name) {
           throw new Error('FunctionTool is missing a name');
         }
-        const existing = this._functionToolsMap.get(tool.name);
-        if (existing) {
-          if (existing !== tool) {
-            throw new Error(`duplicate function name: ${tool.name}`);
-          }
-          return;
-        }
+        // Later tool wins on duplicate names.
         this._functionToolsMap.set(tool.name, tool);
-        return;
+        continue;
       }
       throw new Error(`unknown tool type: ${typeof tool}`);
-    };
-
-    for (const tool of tools) {
-      addTool(tool);
     }
   }
 

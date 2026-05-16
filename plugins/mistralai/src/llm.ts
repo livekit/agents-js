@@ -211,8 +211,8 @@ export class LLMStream extends llm.LLMStream {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
-      if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
-        for (const [name, func] of Object.entries(this.toolCtx)) {
+      if (this.toolCtx && Object.keys(this.toolCtx.functionTools).length > 0) {
+        for (const [name, func] of Object.entries(this.toolCtx.functionTools)) {
           toolsList.push({
             type: 'function' as const,
             function: {

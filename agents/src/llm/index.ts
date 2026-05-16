@@ -10,7 +10,6 @@ export {
   ToolContext,
   ToolError,
   ToolFlag,
-  Toolset,
   toolListFromRecord,
   type AgentHandoff,
   type FunctionTool,

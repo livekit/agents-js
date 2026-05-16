@@ -273,7 +273,11 @@ export class LLM extends llm.LLM {
         ? parallelToolCalls
         : this.opts.modelOptions.parallel_tool_calls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -379,7 +383,7 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? Object.entries(this.toolCtx.functionTools).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               function: {

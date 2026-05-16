@@ -5,13 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import {
-  ToolContext,
-  type ToolOptions,
-  Toolset,
-  tool,
-  toolListFromRecord,
-} from './tool_context.js';
+import { ToolContext, type ToolOptions, tool, toolListFromRecord } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -456,40 +450,6 @@ describe('tool() name requirement', () => {
   });
 });
 
-describe('Toolset', () => {
-  it('exposes its id and the tools it was constructed with', () => {
-    const a = tool({ name: 'a', description: 'a', execute: async () => 'a' });
-    const b = tool({ name: 'b', description: 'b', execute: async () => 'b' });
-    const ts = new Toolset({ id: 'set1', tools: [a, b] });
-
-    expect(ts.id).toBe('set1');
-    expect(ts.tools).toEqual([a, b]);
-  });
-
-  it('default setup and aclose are no-ops', async () => {
-    const ts = new Toolset({ id: 'noop', tools: [] });
-    await expect(ts.setup()).resolves.toBeUndefined();
-    await expect(ts.aclose()).resolves.toBeUndefined();
-  });
-
-  it('lets subclasses override lifecycle hooks', async () => {
-    const events: string[] = [];
-    class Recording extends Toolset {
-      override async setup(): Promise<void> {
-        events.push(`setup:${this.id}`);
-      }
-      override async aclose(): Promise<void> {
-        events.push(`close:${this.id}`);
-      }
-    }
-
-    const ts = new Recording({ id: 'rec', tools: [] });
-    await ts.setup();
-    await ts.aclose();
-    expect(events).toEqual(['setup:rec', 'close:rec']);
-  });
-});
-
 describe('ToolContext', () => {
   const makeFn = (name: string) =>
     tool({
@@ -502,7 +462,6 @@ describe('ToolContext', () => {
     const ctx = ToolContext.empty();
     expect(ctx.functionTools).toEqual({});
     expect(ctx.providerTools).toEqual([]);
-    expect(ctx.toolsets).toEqual([]);
     expect(ctx.flatten()).toEqual([]);
   });
 
@@ -517,28 +476,11 @@ describe('ToolContext', () => {
     expect(ctx.getFunctionTool('missing')).toBeUndefined();
   });
 
-  it('throws on duplicate function names referencing different instances', () => {
+  it('later tool with the same name overrides the earlier one', () => {
     const a1 = makeFn('a');
     const a2 = makeFn('a');
-    expect(() => new ToolContext([a1, a2])).toThrow('duplicate function name: a');
-  });
-
-  it('skips duplicate names when the same instance is added twice', () => {
-    const a = makeFn('a');
-    const ctx = new ToolContext([a, a]);
-    expect(ctx.getFunctionTool('a')).toBe(a);
-  });
-
-  it('flattens function tools out of a Toolset and tracks the toolset itself', () => {
-    const a = makeFn('a');
-    const b = makeFn('b');
-    const ts = new Toolset({ id: 'set', tools: [a, b] });
-    const direct = makeFn('direct');
-
-    const ctx = new ToolContext([direct, ts]);
-
-    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b', 'direct']);
-    expect(ctx.toolsets).toEqual([ts]);
+    const ctx = new ToolContext([a1, a2]);
+    expect(ctx.getFunctionTool('a')).toBe(a2);
   });
 
   it('separates provider tools from function tools', () => {

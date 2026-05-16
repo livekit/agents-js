@@ -39,7 +39,6 @@ import {
   ToolContext,
   type ToolContextEntry,
   ToolFlag,
-  Toolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';
@@ -486,7 +485,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    const initialTools = Object.keys(this.tools);
+    const initialTools = Object.keys(this.tools.functionTools);
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
         instructions: this.agent.instructions,
@@ -1730,7 +1729,6 @@ export class AgentActivity implements RecognitionHooks {
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
             this.agent.toolCtx.tools.filter((t) => {
-              if (t instanceof Toolset) return true;
               if (t.type === 'function') {
                 return !((t as unknown as { flags: number }).flags & ToolFlag.IGNORE_ON_ENTER);
               }
