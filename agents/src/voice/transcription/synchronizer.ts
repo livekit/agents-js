@@ -521,6 +521,13 @@ export class TranscriptionSynchronizer {
   // number of rotations queued behind the currently-running one; used to warn only
   // when the backlog grows beyond a single expected overlap
   private queuedRotations: number = 0;
+  // The constructor schedules an initial rotation task. During session startup the room
+  // connection + agent handoff can fire two more rotateSegment calls before that initial
+  // task drains, producing a benign depth=2 chain that does not affect the caller (the
+  // chain settles before any audio is produced). Suppress the backlog warn until the
+  // initial task has resolved at least once so it only fires on real mid-conversation
+  // backlogs.
+  private initialRotationDone: boolean = false;
   private _outputsAttached: boolean = true;
   private closed: boolean = false;
 
@@ -555,9 +562,11 @@ export class TranscriptionSynchronizer {
 
     // initial segment/first segment, recreated for each new segment
     this._impl = new SegmentSynchronizerImpl(this.options, nextInChainText);
-    this.rotateSegmentTask = Task.from((controller) =>
-      this.rotateSegmentTaskImpl(controller.signal),
-    );
+    const initialTask = Task.from((controller) => this.rotateSegmentTaskImpl(controller.signal));
+    initialTask.addDoneCallback(() => {
+      this.initialRotationDone = true;
+    });
+    this.rotateSegmentTask = initialTask;
   }
 
   get outputsAttached(): boolean {
@@ -604,9 +613,10 @@ export class TranscriptionSynchronizer {
       // The new task chains on the old one via `oldTask.result`, so rotations are
       // serialized and no transcript data is lost. A single overlap is expected when
       // turn-boundary events (playback finished, attach/detach, new utterance) fire
-      // back-to-back; only warn once the backlog grows beyond one queued rotation.
+      // back-to-back; only warn once the backlog grows beyond one queued rotation, and
+      // skip the warn during the synchronizer's startup window (see initialRotationDone).
       this.queuedRotations++;
-      if (this.queuedRotations > 1) {
+      if (this.queuedRotations > 1 && this.initialRotationDone) {
         this.logger.warn(
           `rotateSegment backlog: ${this.queuedRotations} rotations queued behind the in-flight one`,
         );
