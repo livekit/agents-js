@@ -258,16 +258,9 @@ export class AgentActivity implements RecognitionHooks {
   };
 
   private readonly onInterruptionError = (ev: InterruptionDetectionError): void => {
-    const errorEvent = createErrorEvent(ev, this.interruptionDetector);
-    this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
-
     if (!ev.recoverable) {
-      this.agentSession._onError(ev);
-      this.fallbackToVadInterruption();
-      return;
+      this.fallbackToVadInterruption(ev);
     }
-
-    this.agentSession._onError(ev);
   };
 
   /** @internal */
@@ -3656,7 +3649,7 @@ export class AgentActivity implements RecognitionHooks {
     this.isInterruptionByAudioActivityEnabled = this.isDefaultInterruptionByAudioActivityEnabled;
   }
 
-  private fallbackToVadInterruption(): void {
+  private fallbackToVadInterruption(error?: InterruptionDetectionError): void {
     if (!this.isInterruptionDetectionEnabled) return;
 
     this.isInterruptionDetectionEnabled = false;
@@ -3675,7 +3668,11 @@ export class AgentActivity implements RecognitionHooks {
       });
     }
 
-    this.logger.warn(
+    this.logger.info(
+      {
+        error: error?.message,
+        label: error?.label,
+      },
       'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
     );
   }
