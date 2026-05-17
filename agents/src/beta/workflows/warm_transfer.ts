@@ -5,11 +5,15 @@ import type { SIPOutboundConfig } from '@livekit/protocol';
 import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
+import type { LLMModels, STTModelString, TTSModelString } from '../../inference/index.js';
 import { getJobContext } from '../../job.js';
-import type { ChatContext, ToolContext } from '../../llm/index.js';
+import type { ChatContext, LLM, RealtimeModel, ToolContext } from '../../llm/index.js';
 import { ToolError, ToolFlag, tool } from '../../llm/index.js';
 import { log } from '../../log.js';
-import { Agent, type AgentOptions, AgentTask } from '../../voice/agent.js';
+import type { STT } from '../../stt/index.js';
+import type { TTS } from '../../tts/index.js';
+import type { VAD } from '../../vad.js';
+import { Agent, AgentTask } from '../../voice/agent.js';
 import { AgentSession, type TurnDetectionMode } from '../../voice/agent_session.js';
 import {
   type AudioConfig,
@@ -51,10 +55,10 @@ export interface WarmTransferTaskOptions {
   chatCtx?: ChatContext;
   turnDetection?: TurnDetectionMode | null;
   tools?: ToolContext;
-  stt?: AgentOptions<unknown>['stt'] | null;
-  vad?: AgentOptions<unknown>['vad'] | null;
-  llm?: AgentOptions<unknown>['llm'] | null;
-  tts?: AgentOptions<unknown>['tts'] | null;
+  stt?: STT | STTModelString | null;
+  vad?: VAD | null;
+  llm?: LLM | RealtimeModel | LLMModels | null;
+  tts?: TTS | TTSModelString | null;
   allowInterruptions?: boolean;
   /** @deprecated use `sipCallTo` instead. */
   targetPhoneNumber?: string;
@@ -209,11 +213,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     this.setIoEnabled(false);
 
     const dialAbortController = new AbortController();
-    let dialCompleted = false;
-    const dialHumanAgent = this.dialHumanAgent(dialAbortController.signal).then((session) => {
-      dialCompleted = true;
-      return session;
-    });
+    const dialHumanAgent = this.dialHumanAgent(dialAbortController.signal);
     try {
       const result = await Promise.race([
         dialHumanAgent.then((session) => ({ session })),
@@ -229,9 +229,13 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       this._logger.error({ error }, 'could not dial human agent');
       this.setResult(new ToolError('could not dial human agent'));
     } finally {
-      if (!dialCompleted) {
-        dialAbortController.abort();
-        await dialHumanAgent.catch(() => undefined);
+      dialAbortController.abort();
+      const session = await dialHumanAgent.catch(() => null);
+      if (session && this._humanAgentSession !== session) {
+        await this.cleanupHumanAgentDial(session, this._humanAgentRoom);
+        if (this._humanAgentRoom) {
+          this._humanAgentRoom = null;
+        }
       }
     }
   }
@@ -430,12 +434,21 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     } finally {
       if (!completed) {
         room.off(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
-        humanAgentSession?.shutdown();
-        await room.disconnect().catch((error) => {
-          this._logger.warn({ error }, 'failed to disconnect human agent room');
-        });
+        await this.cleanupHumanAgentDial(humanAgentSession, room);
       }
     }
+  }
+
+  private async cleanupHumanAgentDial(
+    humanAgentSession: AgentSession | null,
+    room: Room | null,
+  ): Promise<void> {
+    await room?.disconnect().catch((error) => {
+      this._logger.warn({ error }, 'failed to disconnect human agent room');
+    });
+    await humanAgentSession?.close().catch((error) => {
+      this._logger.warn({ error }, 'failed to close human agent session');
+    });
   }
 
   private async abortable<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
@@ -443,6 +456,9 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       throw new Error('dial cancelled');
     }
 
+    // The underlying room/SIP SDK calls are not AbortSignal-aware. The race only
+    // unblocks this task; cleanup disconnects the room so wait-until-answered SIP
+    // requests resolve promptly against a closed room.
     let onAbort!: () => void;
     const abortPromise = new Promise<never>((_, reject) => {
       onAbort = () => reject(new Error('dial cancelled'));
