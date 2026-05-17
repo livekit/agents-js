@@ -18,8 +18,6 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
-const logger = log().child({ example: 'warm-transfer' });
-
 const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
 const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
 const SIP_NUMBER = process.env.LIVEKIT_SIP_NUMBER;
@@ -42,6 +40,7 @@ Examples on when the tool should be called:
 - User: Yes please.
 ----`,
           execute: async (_, { ctx }) => {
+            const logger = log().child({ example: 'warm-transfer' });
             logger.info('tool called to transfer to human');
             const holdSpeech = ctx.session.say(
               'Please hold while I connect you to a human agent.',
