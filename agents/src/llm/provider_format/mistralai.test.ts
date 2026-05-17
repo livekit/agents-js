@@ -8,6 +8,7 @@ import {
   ChatContext,
   FunctionCall,
   FunctionCallOutput,
+  Instructions,
 } from '../chat_context.js';
 import { toChatCtx } from './mistralai.js';
 
@@ -37,6 +38,23 @@ describe('Mistral Provider Format - toChatCtx', () => {
 
     expect(entries).toEqual([{ type: 'message.input', role: 'user', content: 'Hello' }]);
     expect(formatData.instructions).toBe('You are a helpful assistant');
+  });
+
+  it('should render Instructions as their resolved value', () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const [, formatData] = toChatCtx(ctx);
+
+    expect(formatData.instructions).toBe('text instructions');
   });
 
   it('should extract developer messages as instructions', () => {

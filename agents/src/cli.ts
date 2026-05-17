@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
+import { type PluginDownloadFailure, formatDownloadFailureMessage } from './download.js';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
 import { AgentServer, ServerOptions } from './worker.js';
+
+export { formatDownloadFailureMessage };
 
 type CliArgs = {
   opts: ServerOptions;
@@ -16,6 +19,9 @@ type CliArgs = {
   room?: string;
   participantIdentity?: string;
 };
+
+const formatErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
@@ -197,25 +203,40 @@ export const runApp = (opts: ServerOptions) => {
       initializeLogger({ pretty: true, level: commandOptions.logLevel });
       const logger = log();
 
+      logger.warn(
+        '`download-files` via cli.runApp() is deprecated. ' +
+          'Use `npx livekit-agents download-files` instead — it discovers installed ' +
+          'plugins without loading your agent code, enabling better Docker layer caching.',
+      );
+
       const downloadFiles = async () => {
+        const failures: PluginDownloadFailure[] = [];
+
         for (const plugin of Plugin.registeredPlugins) {
           logger.info(`Downloading files for ${plugin.title}`);
           try {
             await plugin.downloadFiles();
             logger.info(`Finished downloading files for ${plugin.title}`);
           } catch (error) {
-            logger.error(`Failed to download files for ${plugin.title}: ${error}`);
+            failures.push({ plugin, error });
+            logger.error(
+              `Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`,
+            );
           }
+        }
+
+        if (failures.length > 0) {
+          throw new Error(formatDownloadFailureMessage(failures));
         }
       };
 
       downloadFiles()
+        .then(() => {
+          process.exit(0);
+        })
         .catch((error) => {
           logger.fatal(`Error during file downloads: ${error}`);
           process.exit(1);
-        })
-        .finally(() => {
-          process.exit(0);
         });
     });
 

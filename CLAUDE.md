@@ -48,6 +48,20 @@ pnpm build && node ./examples/src/basic_agent.ts dev --log-level=debug
 
 Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus provider keys (e.g. `OPENAI_API_KEY`).
 
+### Pre-downloading plugin assets (for Docker builds)
+
+`@livekit/agents` ships a `livekit-agents` bin with a `download-files` subcommand that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
+
+```dockerfile
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+RUN npx livekit-agents download-files
+COPY src/ ./src
+RUN pnpm build
+```
+
+The `download-files` subcommand on `cli.runApp()` is deprecated for this purpose since it requires loading the agent file first.
+
 ### Debugging individual plugins
 
 Create a test file prefixed with `test_` in `examples/src/`. No `defineAgent` wrapper needed — just import the plugin directly and run:

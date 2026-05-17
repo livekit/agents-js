@@ -73,7 +73,10 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
-    return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
+    const signal = abortSignal
+      ? AbortSignal.any([abortSignal, this.abortController.signal])
+      : this.abortController.signal;
+    return new ChunkedStream(this, text, this.opts, connOptions, signal);
   }
 
   stream(): tts.SynthesizeStream {

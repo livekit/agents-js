@@ -9,7 +9,7 @@ export {
 } from './task_group.js';
 export {
   WarmTransferTask,
-  type InstructionParts,
   type WarmTransferResult,
   type WarmTransferTaskOptions,
 } from './warm_transfer.js';
+export type { InstructionParts } from './utils.js';

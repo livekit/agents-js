@@ -1,5 +1,23 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.4.2
+
+### Patch Changes
+
+- Updated dependencies [[`1ad05ff49c223ef90ac7b5c325d184e9ff1138d2`](https://github.com/livekit/agents-js/commit/1ad05ff49c223ef90ac7b5c325d184e9ff1138d2), [`c049c9349682dec5c09f054ee6fe7c6a4644c201`](https://github.com/livekit/agents-js/commit/c049c9349682dec5c09f054ee6fe7c6a4644c201), [`67018d5730e2a63b304f39a04a3fc1fa79b02dce`](https://github.com/livekit/agents-js/commit/67018d5730e2a63b304f39a04a3fc1fa79b02dce), [`d40997c7af65fd9f9b92b8b6de671c568a60bded`](https://github.com/livekit/agents-js/commit/d40997c7af65fd9f9b92b8b6de671c568a60bded), [`2a31b8d7db220dc156ed200148032b771cf18b85`](https://github.com/livekit/agents-js/commit/2a31b8d7db220dc156ed200148032b771cf18b85), [`15fccea771304a7cc7326ba4e4b30524e0dbf843`](https://github.com/livekit/agents-js/commit/15fccea771304a7cc7326ba4e4b30524e0dbf843)]:
+  - @livekit/agents@1.4.2
+
+## 1.4.1
+
+### Patch Changes
+
+- feat(deepgram): add `redact` option to STT - [#1442](https://github.com/livekit/agents-js/pull/1442) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: remove double URL-encoding in Deepgram STT plugin - [#1391](https://github.com/livekit/agents-js/pull/1391) ([@haroldfabla2-hue](https://github.com/haroldfabla2-hue))
+
+- Updated dependencies [[`0c038ff92902f42023a73cbae67046fa9406bcd9`](https://github.com/livekit/agents-js/commit/0c038ff92902f42023a73cbae67046fa9406bcd9), [`8e986d3508995598f9b06069bc2c1eb8abd14782`](https://github.com/livekit/agents-js/commit/8e986d3508995598f9b06069bc2c1eb8abd14782), [`90ae41698b20a900e698db7dc683b98c5be0366d`](https://github.com/livekit/agents-js/commit/90ae41698b20a900e698db7dc683b98c5be0366d), [`e449263c2678c9e956c4654d83cedd3da907e9cd`](https://github.com/livekit/agents-js/commit/e449263c2678c9e956c4654d83cedd3da907e9cd), [`f4b0a9e46f44fcf35fd8db2c325653fd38753be4`](https://github.com/livekit/agents-js/commit/f4b0a9e46f44fcf35fd8db2c325653fd38753be4), [`872ebcc838c74486af17c2c9fb782e2a87a4f419`](https://github.com/livekit/agents-js/commit/872ebcc838c74486af17c2c9fb782e2a87a4f419), [`405e376571968398e24ef9fbf318275e6f2911d7`](https://github.com/livekit/agents-js/commit/405e376571968398e24ef9fbf318275e6f2911d7), [`c66c97a719e5a37574325e06ffbba80f531d57af`](https://github.com/livekit/agents-js/commit/c66c97a719e5a37574325e06ffbba80f531d57af), [`4dc2802834fcc691ed3c30075f9ce0bb0682c65f`](https://github.com/livekit/agents-js/commit/4dc2802834fcc691ed3c30075f9ce0bb0682c65f), [`a3b34f2834a56c386928869a322215460858f351`](https://github.com/livekit/agents-js/commit/a3b34f2834a56c386928869a322215460858f351), [`d9c3d8b3c070955784a55b853dd24fc62e35e4ea`](https://github.com/livekit/agents-js/commit/d9c3d8b3c070955784a55b853dd24fc62e35e4ea)]:
+  - @livekit/agents@1.4.1
+
 ## 1.4.0
 
 ### Patch Changes

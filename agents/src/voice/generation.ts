@@ -7,11 +7,13 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import type { Instructions } from '../llm/chat_context.js';
 import {
   type ChatContext,
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
+  isInstructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
@@ -54,8 +56,10 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
-const TTS_READ_IDLE_TIMEOUT_MS = 10_000;
+export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
+export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
 /** @internal */
 export class _LLMGenerationData {
@@ -378,7 +382,7 @@ export function createToolOutput(params: {
   });
 }
 
-const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
+export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
 
 /**
  * Update the instruction message in the chat context or insert a new one if missing.
@@ -393,7 +397,7 @@ const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
  */
 export function updateInstructions(options: {
   chatCtx: ChatContext;
-  instructions: string;
+  instructions: string | Instructions;
   addIfMissing: boolean;
 }) {
   const { chatCtx, instructions, addIfMissing } = options;
@@ -421,6 +425,43 @@ export function updateInstructions(options: {
       }),
     );
   }
+}
+
+/**
+ * Apply the correct {@link Instructions} variant for the turn's input modality.
+ *
+ * Locates the instructions message (by {@link INSTRUCTIONS_MESSAGE_ID}) and,
+ * if its content contains any {@link Instructions} entries, rebuilds the
+ * message so each Instructions renders as the chosen variant. No-op when no
+ * modality-aware instructions are present.
+ */
+export function applyInstructionsModality(
+  chatCtx: ChatContext,
+  options: { modality: 'audio' | 'text' },
+) {
+  const { modality } = options;
+  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+  if (idx === undefined) return;
+
+  const item = chatCtx.items[idx]!;
+  if (item.type !== 'message') return;
+
+  const hasModalitySpecific = item.content.some((c) => isInstructions(c));
+  if (!hasModalitySpecific) return;
+
+  // ChatContext.copy shadows the original item; create a new instance so the
+  // base context's content isn't mutated when the same Instructions is reused
+  // across turns.
+  chatCtx.items[idx] = ChatMessage.create({
+    id: item.id,
+    role: item.role,
+    content: item.content.map((c) => (isInstructions(c) ? c.asModality(modality) : c)),
+    interrupted: item.interrupted,
+    createdAt: item.createdAt,
+    transcriptConfidence: item.transcriptConfidence,
+    metrics: item.metrics,
+    extra: item.extra,
+  });
 }
 
 export function performLLMInference(
@@ -565,6 +606,8 @@ export function performTTSInference(
   controller: AbortController,
   model?: string,
   provider?: string,
+  readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
+  textTransforms?: readonly TextTransform[] | null,
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -620,7 +663,10 @@ export function performTTSInference(
     let firstByteReceived = false;
 
     try {
-      ttsStream = await node(textOnlyStream.readable, modelSettings);
+      const ttsInput = textTransforms
+        ? applyTextTransforms(textOnlyStream.readable, textTransforms)
+        : textOnlyStream.readable;
+      ttsStream = await node(ttsInput, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
         await outputWriter.close();
@@ -648,7 +694,7 @@ export function performTTSInference(
 
         const { done, value: frame } = await waitUntilTimeout(
           ttsStreamReader.read(),
-          TTS_READ_IDLE_TIMEOUT_MS,
+          readIdleTimeout,
         );
         if (done) {
           break;
@@ -800,13 +846,12 @@ async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   out: _AudioOut,
+  idleTimeout: number,
   signal?: AbortSignal,
 ): Promise<void> {
   const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-
-  const FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
 
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     if (!out.firstFrameFut.done) {
@@ -823,10 +868,7 @@ async function forwardAudio(
         break;
       }
 
-      const { done, value: frame } = await waitUntilTimeout(
-        reader.read(),
-        FORWARD_AUDIO_IDLE_TIMEOUT_MS,
-      );
+      const { done, value: frame } = await waitUntilTimeout(reader.read(), idleTimeout);
       if (done) break;
 
       out.audio.push(frame);
@@ -880,6 +922,7 @@ export function performAudioForwarding(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
   controller: AbortController,
+  idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
 ): [Task<void>, _AudioOut] {
   const out: _AudioOut = {
     audio: [],
@@ -888,7 +931,7 @@ export function performAudioForwarding(
 
   return [
     Task.from(
-      (controller) => forwardAudio(ttsStream, audioOutput, out, controller.signal),
+      (controller) => forwardAudio(ttsStream, audioOutput, out, idleTimeout, controller.signal),
       controller,
       'performAudioForwarding',
     ),

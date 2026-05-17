@@ -8,7 +8,6 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
-  Future,
   type TimedString,
   asError,
   createTimedString,
@@ -429,176 +428,165 @@ class Connection {
   }
 
   async #recvLoop(): Promise<void> {
-    try {
-      const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
-      const errorFuture = new Future<Error>();
+    if (!this.#ws) return;
 
-      const onMessage = (rawData: Buffer) => {
-        try {
-          const parsed = JSON.parse(rawData.toString());
-          messageChannel.write(parsed);
-        } catch (e) {
-          this.#logger.warn({ error: e }, 'failed to parse WebSocket message');
-        }
-      };
+    const messageChannel = stream.createStreamChannel<Record<string, unknown>>();
 
-      const onClose = () => {
-        if (!this.#closed && this.#contextData.size > 0) {
-          this.#logger.warn('websocket closed unexpectedly');
-        }
-        messageChannel.close();
-      };
-
-      const onError = (error: Error) => {
-        errorFuture.resolve(error);
-        messageChannel.close();
-      };
-
-      // Set up persistent listeners
-      if (!this.#ws) return;
-      this.#ws.on('message', onMessage);
-      this.#ws.on('close', onClose);
-      this.#ws.on('error', onError);
-
-      const cleanup = () => {
-        this.#ws?.off('message', onMessage);
-        this.#ws?.off('close', onClose);
-        this.#ws?.off('error', onError);
-      };
-
-      const reader = messageChannel.stream().getReader();
+    const onMessage = (rawData: Buffer) => {
       try {
-        while (!this.#closed) {
-          const result = await reader.read();
-          if (result.done || this.#closed) break;
+        const parsed = JSON.parse(rawData.toString());
+        messageChannel.write(parsed);
+      } catch (e) {
+        this.#logger.warn({ error: e }, 'failed to parse WebSocket message');
+      }
+    };
 
-          const data = result.value;
-          const contextId = data.contextId as string | undefined;
-          const ctx = contextId ? this.#contextData.get(contextId) : undefined;
+    const onClose = (code: number) => {
+      if (!this.#closed && this.#contextData.size > 0) {
+        messageChannel.abort(
+          new APIStatusError({
+            message: 'ElevenLabs websocket connection closed unexpectedly',
+            options: { statusCode: code },
+          }),
+        );
+      } else {
+        messageChannel.close();
+      }
+    };
 
-          if (data.error) {
-            this.#logger.error(
-              { context_id: contextId, error: data.error, data },
-              'elevenlabs tts returned error',
+    const onError = (error: Error) => {
+      messageChannel.abort(error);
+    };
+
+    this.#ws.on('message', onMessage);
+    this.#ws.on('close', onClose);
+    this.#ws.on('error', onError);
+
+    const reader = messageChannel.stream().getReader();
+
+    try {
+      while (!this.#closed) {
+        const result = await reader.read();
+        if (result.done || this.#closed) break;
+
+        const data = result.value;
+        const contextId = data.contextId as string | undefined;
+        const ctx = contextId ? this.#contextData.get(contextId) : undefined;
+
+        if (data.error) {
+          this.#logger.error(
+            { context_id: contextId, error: data.error, data },
+            'elevenlabs tts returned error',
+          );
+          if (contextId) {
+            if (ctx) {
+              ctx.waiter.reject(new APIError(data.error as string));
+            }
+            this.#cleanupContext(contextId);
+          }
+          continue;
+        }
+
+        if (!ctx) {
+          this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
+          continue;
+        }
+
+        const stream = ctx.stream;
+
+        // Process alignment data
+        const alignment =
+          this.#opts.preferredAlignment === 'normalized'
+            ? (data.normalizedAlignment as Record<string, unknown>)
+            : (data.alignment as Record<string, unknown>);
+
+        if (alignment && stream) {
+          const chars = alignment.chars as string[] | undefined;
+          const starts = (alignment.charStartTimesMs || alignment.charsStartTimesMs) as
+            | number[]
+            | undefined;
+          const durs = (alignment.charDurationsMs || alignment.charsDurationsMs) as
+            | number[]
+            | undefined;
+
+          if (
+            chars &&
+            starts &&
+            durs &&
+            chars.length === durs.length &&
+            starts.length === durs.length
+          ) {
+            ctx.textBuffer += chars.join('');
+
+            // Handle chars with multiple characters
+            for (let i = 0; i < chars.length; i++) {
+              const char = chars[i]!;
+              const start = starts[i]!;
+              const dur = durs[i]!;
+
+              // Capture the first word's start time for normalization
+              // This removes leading silence from timestamps
+              if (ctx.firstWordOffsetMs === null && start > 0) {
+                ctx.firstWordOffsetMs = start;
+              }
+
+              if (char.length > 1) {
+                for (let j = 0; j < char.length - 1; j++) {
+                  ctx.startTimesMs.push(start);
+                  ctx.durationsMs.push(0);
+                }
+              }
+              ctx.startTimesMs.push(start);
+              ctx.durationsMs.push(dur);
+            }
+
+            const [timedWords, remainingText] = toTimedWords(
+              ctx.textBuffer,
+              ctx.startTimesMs,
+              ctx.durationsMs,
+              false,
+              ctx.firstWordOffsetMs ?? 0,
             );
-            if (contextId) {
-              if (ctx) {
-                ctx.waiter.reject(new APIError(data.error as string));
-              }
-              this.#cleanupContext(contextId);
-            }
-            continue;
-          }
 
-          if (!ctx) {
-            this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
-            continue;
-          }
-
-          const stream = ctx.stream;
-
-          // Process alignment data
-          const alignment =
-            this.#opts.preferredAlignment === 'normalized'
-              ? (data.normalizedAlignment as Record<string, unknown>)
-              : (data.alignment as Record<string, unknown>);
-
-          if (alignment && stream) {
-            const chars = alignment.chars as string[] | undefined;
-            const starts = (alignment.charStartTimesMs || alignment.charsStartTimesMs) as
-              | number[]
-              | undefined;
-            const durs = (alignment.charDurationsMs || alignment.charsDurationsMs) as
-              | number[]
-              | undefined;
-
-            if (
-              chars &&
-              starts &&
-              durs &&
-              chars.length === durs.length &&
-              starts.length === durs.length
-            ) {
-              ctx.textBuffer += chars.join('');
-
-              // Handle chars with multiple characters
-              for (let i = 0; i < chars.length; i++) {
-                const char = chars[i]!;
-                const start = starts[i]!;
-                const dur = durs[i]!;
-
-                // Capture the first word's start time for normalization
-                // This removes leading silence from timestamps
-                if (ctx.firstWordOffsetMs === null && start > 0) {
-                  ctx.firstWordOffsetMs = start;
-                }
-
-                if (char.length > 1) {
-                  for (let j = 0; j < char.length - 1; j++) {
-                    ctx.startTimesMs.push(start);
-                    ctx.durationsMs.push(0);
-                  }
-                }
-                ctx.startTimesMs.push(start);
-                ctx.durationsMs.push(dur);
-              }
-
-              const [timedWords, remainingText] = toTimedWords(
-                ctx.textBuffer,
-                ctx.startTimesMs,
-                ctx.durationsMs,
-                false,
-                ctx.firstWordOffsetMs ?? 0,
-              );
-
-              if (timedWords.length > 0) {
-                stream.pushTimedTranscript(timedWords);
-              }
-
-              ctx.textBuffer = remainingText;
-              ctx.startTimesMs = ctx.startTimesMs.slice(-remainingText.length);
-              ctx.durationsMs = ctx.durationsMs.slice(-remainingText.length);
-            }
-          }
-
-          if (data.audio) {
-            const audioData = Buffer.from(data.audio as string, 'base64');
-            stream.pushAudio(audioData);
-          }
-
-          if (data.isFinal) {
-            // Flush remaining alignment data
-            if (ctx.textBuffer) {
-              const [timedWords] = toTimedWords(
-                ctx.textBuffer,
-                ctx.startTimesMs,
-                ctx.durationsMs,
-                true,
-                ctx.firstWordOffsetMs ?? 0,
-              );
-              if (timedWords.length > 0) {
-                stream.pushTimedTranscript(timedWords);
-              }
+            if (timedWords.length > 0) {
+              stream.pushTimedTranscript(timedWords);
             }
 
-            stream.markDone();
-            ctx.waiter.resolve();
-            this.#cleanupContext(contextId!);
-
-            if (!this.#isCurrent && this.#activeContexts.size === 0) {
-              this.#logger.debug('no active contexts, shutting down connection');
-              break;
-            }
+            ctx.textBuffer = remainingText;
+            ctx.startTimesMs = ctx.startTimesMs.slice(-remainingText.length);
+            ctx.durationsMs = ctx.durationsMs.slice(-remainingText.length);
           }
         }
 
-        // Throw any error that occurred
-        if (errorFuture.done) {
-          throw await errorFuture.await;
+        if (data.audio) {
+          const audioData = Buffer.from(data.audio as string, 'base64');
+          stream.pushAudio(audioData);
         }
-      } finally {
-        reader.releaseLock();
-        cleanup();
+
+        if (data.isFinal) {
+          // Flush remaining alignment data
+          if (ctx.textBuffer) {
+            const [timedWords] = toTimedWords(
+              ctx.textBuffer,
+              ctx.startTimesMs,
+              ctx.durationsMs,
+              true,
+              ctx.firstWordOffsetMs ?? 0,
+            );
+            if (timedWords.length > 0) {
+              stream.pushTimedTranscript(timedWords);
+            }
+          }
+
+          stream.markDone();
+          ctx.waiter.resolve();
+          this.#cleanupContext(contextId!);
+
+          if (!this.#isCurrent && this.#activeContexts.size === 0) {
+            this.#logger.debug('no active contexts, shutting down connection');
+            break;
+          }
+        }
       }
     } catch (e) {
       this.#logger.warn({ error: e }, 'recv loop error');
@@ -607,6 +595,10 @@ class Connection {
       }
       this.#contextData.clear();
     } finally {
+      reader.releaseLock();
+      this.#ws?.off('message', onMessage);
+      this.#ws?.off('close', onClose);
+      this.#ws?.off('error', onError);
       if (!this.#closed) {
         await this.close();
       }

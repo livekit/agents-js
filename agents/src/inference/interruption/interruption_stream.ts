@@ -108,6 +108,7 @@ export class InterruptionStreamBase {
     threshold: number;
     minFrames: number;
     timeout: number;
+    connectTimeout: number;
     maxRetries: number;
   };
 
@@ -130,6 +131,7 @@ export class InterruptionStreamBase {
       threshold: this.options.threshold,
       minFrames: this.options.minFrames,
       timeout: this.options.inferenceTimeout,
+      connectTimeout: this.apiOptions.timeout,
       maxRetries: this.apiOptions.maxRetries,
     };
 

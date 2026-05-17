@@ -236,7 +236,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
       processedWords.push(word);
 
       const elapsed = Date.now() - segStartTime;
-      const text = sentence.slice(0, end); // TODO: rstrip punctuations
+      const text = sentence.slice(0, end).replace(/[.,!?;:\-—]+$/, '');
 
       let speed = this.#speed;
       let delay: number;

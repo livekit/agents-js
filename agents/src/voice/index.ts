@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export { Agent, AgentTask, StopResponse, type AgentOptions, type ModelSettings } from './agent.js';
+export {
+  Agent,
+  AgentTask,
+  StopResponse,
+  type AgentOptions,
+  type ModelSettings,
+  type TTSPronunciationMap,
+} from './agent.js';
 export * from './amd.js';
 export {
   AgentSession,
@@ -32,4 +39,6 @@ export {
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
+export * from './turn_config/endpointing.js';
 export * as testing from './testing/index.js';
+export * as textTransforms from './transcription/text_transforms.js';

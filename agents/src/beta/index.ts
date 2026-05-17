@@ -11,3 +11,4 @@ export {
   type WarmTransferResult,
   type WarmTransferTaskOptions,
 } from './workflows/index.js';
+export { Instructions } from '../llm/index.js';

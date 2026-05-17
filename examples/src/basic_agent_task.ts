@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 class InfoTask extends voice.AgentTask<string> {
-  constructor(info: string) {
+  constructor(private info: string) {
     super({
       instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
       tts: 'elevenlabs/eleven_turbo_v2_5',
@@ -38,7 +38,7 @@ class InfoTask extends voice.AgentTask<string> {
 
   async onEnter() {
     this.session.generateReply({
-      userInput: 'Ask the user for their ${info}',
+      userInput: `Ask the user for their ${this.info}`,
     });
   }
 }

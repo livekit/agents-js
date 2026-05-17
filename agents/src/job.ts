@@ -11,6 +11,7 @@ import type {
 } from '@livekit/rtc-node';
 import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -29,7 +30,7 @@ const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
  * Returns the current job context.
  *
  * @param required - If true (default), throws when no context is found. If false, returns undefined.
- * @throws {Error} if no job context is found and required is true
+ * @throws Error if no job context is found and required is true
  */
 export function getJobContext<ProcessUserData = Record<string, unknown>>(
   required?: true,
@@ -84,6 +85,8 @@ export type RunningJobInfo = {
   url: string;
   token: string;
   workerId: string;
+  apiKey?: string;
+  apiSecret?: string;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -270,6 +273,23 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       });
     }
     this.connected = true;
+  }
+
+  /** Deletes the room and disconnects all participants. */
+  async deleteRoom(roomName?: string): Promise<void> {
+    const targetRoomName = roomName ?? this.#room.name;
+    if (!targetRoomName) {
+      this.#logger.warn('cannot delete room because room name is missing');
+      return;
+    }
+
+    try {
+      const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
+      await client.deleteRoom(targetRoomName);
+      this.#logger.info({ roomName: targetRoomName }, 'room deleted');
+    } catch (error) {
+      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
+    }
   }
 
   makeSessionReport(session?: AgentSession): SessionReport {

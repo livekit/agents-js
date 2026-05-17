@@ -351,31 +351,67 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 /** @internal */
 export class ExpFilter {
   #alpha: number;
+  #min?: number;
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(
+    alphaOrOpts: number | { alpha: number; initial?: number; minVal?: number; maxVal?: number },
+    max?: number,
+  ) {
+    if (typeof alphaOrOpts === 'number') {
+      this.#alpha = alphaOrOpts;
+      this.#max = max;
+      return;
+    }
+
+    this.#validateAlpha(alphaOrOpts.alpha);
+    this.#alpha = alphaOrOpts.alpha;
+    this.#filtered = alphaOrOpts.initial;
+    this.#min = alphaOrOpts.minVal;
+    this.#max = alphaOrOpts.maxVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(
+    alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
+  ) {
+    if (typeof alphaOrOpts === 'object') {
+      if (alphaOrOpts.alpha !== undefined) {
+        this.#validateAlpha(alphaOrOpts.alpha);
+        this.#alpha = alphaOrOpts.alpha;
+      }
+      if (alphaOrOpts.initial !== undefined) {
+        this.#filtered = alphaOrOpts.initial;
+      }
+      if (alphaOrOpts.minVal !== undefined) {
+        this.#min = alphaOrOpts.minVal;
+      }
+      if (alphaOrOpts.maxVal !== undefined) {
+        this.#max = alphaOrOpts.maxVal;
+      }
+      return;
     }
+
+    if (alphaOrOpts) {
+      this.#alpha = alphaOrOpts;
+    }
+
     this.#filtered = undefined;
   }
 
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+    if (this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
     } else {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -385,8 +421,18 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
   set alpha(alpha: number) {
     this.#alpha = alpha;
+  }
+
+  #validateAlpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
@@ -708,15 +754,37 @@ export function resampleStream({
   outputRate: number;
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
+  let currentInputRate = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
       if (chunk.samplesPerChannel === 0) {
         controller.enqueue(chunk);
         return;
       }
-      if (!resampler) {
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+
+      if (chunk.sampleRate === outputRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+          resampler = null;
+        }
+        controller.enqueue(chunk);
+        return;
       }
+
+      if (!resampler || currentInputRate !== chunk.sampleRate) {
+        if (resampler) {
+          for (const frame of resampler.flush()) {
+            controller.enqueue(frame);
+          }
+          resampler.close();
+        }
+        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        currentInputRate = chunk.sampleRate;
+      }
+
       for (const frame of resampler.push(chunk)) {
         controller.enqueue(frame);
       }
@@ -727,6 +795,7 @@ export function resampleStream({
           controller.enqueue(frame);
         }
         resampler.close();
+        resampler = null;
       }
     },
   });

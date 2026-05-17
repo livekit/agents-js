@@ -9,6 +9,7 @@ import {
   ChatContext,
   FunctionCall,
   FunctionCallOutput,
+  Instructions,
 } from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx } from './google.js';
@@ -60,6 +61,23 @@ describe('Google Provider Format - toChatCtx', () => {
       },
     ]);
     expect(formatData.systemMessages).toEqual(['You are a helpful assistant']);
+  });
+
+  it('should render Instructions as their resolved value', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'system',
+      content: [
+        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
+          'text',
+        ),
+      ],
+    });
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+
+    const [, formatData] = await toChatCtx(ctx, false);
+
+    expect(formatData.systemMessages).toEqual(['text instructions']);
   });
 
   it('should handle multiple system messages', async () => {

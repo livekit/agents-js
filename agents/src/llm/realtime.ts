@@ -94,6 +94,10 @@ export abstract class RealtimeModel {
     return 'unknown';
   }
 
+  label(): string {
+    return 'RealtimeModel';
+  }
+
   abstract session(): RealtimeSession;
 
   abstract close(): Promise<void>;

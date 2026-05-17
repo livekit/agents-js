@@ -499,7 +499,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async close() {
-    // TODO(AJS-106): add republish track
     await this.audioSource.close();
   }
 }

@@ -139,13 +139,14 @@ export default defineAgent({
 
       if (
         result.category === voice.AMDCategory.HUMAN ||
-        result.category === voice.AMDCategory.UNCERTAIN ||
-        result.category === voice.AMDCategory.MACHINE_IVR
+        result.category === voice.AMDCategory.UNCERTAIN
       ) {
         logger.info(
           { amd: result },
-          'human or ivr menu detected, proceeding with normal conversation',
+          'human answered the call or amd is uncertain, proceeding with normal conversation',
         );
+      } else if (result.category === voice.AMDCategory.MACHINE_IVR) {
+        logger.info({ amd: result }, 'ivr menu detected, starting navigation');
       } else if (result.category === voice.AMDCategory.MACHINE_VM) {
         logger.info({ amd: result }, 'voicemail detected, leaving a message');
         const speechHandle = session.generateReply({
