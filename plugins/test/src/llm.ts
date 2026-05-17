@@ -200,6 +200,57 @@ export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
         expect(JSON.parse(calls[0]!.args).address).toBeUndefined();
       });
     });
+
+    describe('toolset', async () => {
+      const buildToolsetContext = () => {
+        const weatherToolset = new llmlib.Toolset({
+          id: 'weather_toolset',
+          tools: [
+            llmlib.tool({
+              name: 'getWeather',
+              description: 'Get the current weather in a given location',
+              parameters: z.object({
+                location: z.string().describe('The city and state, e.g. San Francisco, CA'),
+                unit: z.enum(['celsius', 'fahrenheit']).describe('The temperature unit to use'),
+              }),
+              execute: async () => {},
+            }),
+          ],
+        });
+
+        const directTool = llmlib.tool({
+          name: 'playMusic',
+          description: 'Play music',
+          parameters: z.object({
+            name: z.string().describe('The artist and name of the song'),
+          }),
+          execute: async () => {},
+        });
+
+        return new llmlib.ToolContext([weatherToolset, directTool]);
+      };
+
+      it('should call a function tool that lives inside a Toolset', async () => {
+        const ctx = buildToolsetContext();
+        const calls = await requestFncCall(
+          llm,
+          "What's the weather in San Francisco, in Celsius?",
+          ctx,
+        );
+
+        expect(calls.length).toStrictEqual(1);
+        expect(calls[0]!.name).toStrictEqual('getWeather');
+        expect(JSON.parse(calls[0]!.args).unit).toStrictEqual('celsius');
+      });
+
+      it('should expose direct tools alongside Toolset tools', async () => {
+        const ctx = buildToolsetContext();
+        const calls = await requestFncCall(llm, 'Play the song "Bohemian Rhapsody" by Queen.', ctx);
+
+        expect(calls.length).toStrictEqual(1);
+        expect(calls[0]!.name).toStrictEqual('playMusic');
+      });
+    });
   });
 };
 

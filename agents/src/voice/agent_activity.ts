@@ -35,10 +35,12 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
+  type Tool,
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
   ToolFlag,
+  Toolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';
@@ -215,6 +217,7 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
+  private _toolsetsSetup = false;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -420,6 +423,8 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     this.agent._agentActivity = this;
+
+    await this.setupToolsets();
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
@@ -767,13 +772,29 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.agent._toolCtx.functionTools));
+    const oldToolCtx = this.agent._toolCtx;
+    const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
+    const oldToolsets = oldToolCtx.toolsets;
     const newToolCtx = new ToolContext(tools);
     const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
+    const newToolsets = newToolCtx.toolsets;
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+    const addedToolsets = newToolsets.filter((toolset) => !oldToolsets.includes(toolset));
+    const removedToolsets = oldToolsets.filter((toolset) => !newToolsets.includes(toolset));
+
+    // Run lifecycle calls in the order setup → swap toolCtx → close so a `setup()` failure leaves
+    // the agent pointing at the OLD toolCtx (whose toolsets are still tracked and will be closed
+    // by the activity's normal teardown path — no leak).
+    if (this._toolsetsSetup) {
+      await this.setupToolsets(addedToolsets, false);
+    }
 
     this.agent._toolCtx = newToolCtx;
+
+    if (this._toolsetsSetup) {
+      await this.closeToolsets(removedToolsets, false);
+    }
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -1735,11 +1756,17 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
-            this.agent.toolCtx.tools.filter((t) => {
-              if (t.type === 'function') {
-                return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
+            // Recurse into Toolsets so function tools nested inside a Toolset are also subject
+            // to IGNORE_ON_ENTER. The Toolset itself is omitted from this short-lived context
+            // because lifecycle ownership stays with the agent's persistent toolCtx.
+            this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
+              const keepFn = (fn: Tool): boolean =>
+                fn.type !== 'function' ||
+                !((fn as unknown as { flags: number }).flags & ToolFlag.IGNORE_ON_ENTER);
+              if (t instanceof Toolset) {
+                return t.tools.filter(keepFn) as ToolContextEntry[];
               }
-              return true;
+              return keepFn(t) ? [t] : [];
             }),
           )
         : this.agent.toolCtx;
@@ -3728,8 +3755,72 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSpans?.clear();
     await this.realtimeSession?.close();
     await this.audioRecognition?.close();
+    await this.closeToolsets();
     this.realtimeSession = undefined;
     this.audioRecognition = undefined;
+  }
+
+  private async setupToolsets(
+    toolsets: readonly Toolset[] = this.agent.toolCtx.toolsets,
+    updateSetupState = true,
+  ): Promise<void> {
+    if (updateSetupState && this._toolsetsSetup) {
+      return;
+    }
+
+    // Toolset.setup() failures bubble up so the activity (and its agent) fails explicitly
+    // rather than silently advertising tools whose backing resources never initialized. If any
+    // setup fails, close the ones that already succeeded to avoid leaking their backing
+    // resources — `closeToolsets()` won't run them later because `_toolsetsSetup` never flips
+    // to true.
+    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.setup()));
+
+    let firstError: unknown;
+    const succeeded: Toolset[] = [];
+    for (let i = 0; i < outputs.length; i++) {
+      const output = outputs[i]!;
+      if (output.status === 'rejected') {
+        if (firstError === undefined) firstError = output.reason;
+      } else {
+        succeeded.push(toolsets[i]!);
+      }
+    }
+
+    if (firstError !== undefined) {
+      const closeOutputs = await Promise.allSettled(succeeded.map((t) => t.aclose()));
+      for (const output of closeOutputs) {
+        if (output.status === 'rejected') {
+          this.logger.error(
+            { error: output.reason },
+            'error closing toolset during setup rollback',
+          );
+        }
+      }
+      throw firstError;
+    }
+
+    if (updateSetupState) {
+      this._toolsetsSetup = true;
+    }
+  }
+
+  private async closeToolsets(
+    toolsets: readonly Toolset[] = this.agent.toolCtx.toolsets,
+    updateSetupState = true,
+  ): Promise<void> {
+    if (updateSetupState && !this._toolsetsSetup) {
+      return;
+    }
+
+    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.aclose()));
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error closing toolset');
+      }
+    }
+    if (updateSetupState) {
+      this._toolsetsSetup = false;
+    }
   }
 }
 

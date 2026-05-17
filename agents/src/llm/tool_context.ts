@@ -196,6 +196,43 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
+export interface ToolCalledEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolCompletedEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
+}
+
+/**
+ * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
+ * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
+ * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
+ */
+export class Toolset {
+  readonly #id: string;
+  readonly #tools: Tool[];
+
+  constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
+    this.#id = id;
+    this.#tools = [...tools];
+  }
+
+  get id(): string {
+    return this.#id;
+  }
+
+  get tools(): readonly Tool[] {
+    return this.#tools;
+  }
+
+  async setup(): Promise<void> {}
+
+  async aclose(): Promise<void> {}
+}
+
 /**
  * Convenience input shape accepted by APIs that want to take a list of tools directly without
  * forcing callers to wrap them in `new ToolContext(...)`.
@@ -217,24 +254,18 @@ export function toToolContext<UserData = UnknownUserData>(
   return input instanceof ToolContext ? input : new ToolContext(input);
 }
 
-//TODO: toolset - accept stateful `Toolset` containers alongside `FunctionTool` /
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
 export type ToolContextEntry<UserData = UnknownUserData> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  FunctionTool<any, UserData, any> | ProviderDefinedTool;
+  FunctionTool<any, UserData, any> | ProviderDefinedTool | Toolset;
 
 export class ToolContext<UserData = UnknownUserData> {
-  // TODO: toolset - widen entries to `FunctionTool | ProviderDefinedTool | Toolset` once Toolset
-  // lands so this stays heterogeneous like Python's `Sequence[Tool | Toolset]`.
   private _tools: ToolContextEntry<UserData>[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
   private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
   private _providerTools: ProviderDefinedTool[] = [];
-  // TODO: toolset - populate when Toolset support is supported.
-  // so the `toolsets` getter and `equals` toolset-identity check stay byte-compatible with the
-  private _toolSets: unknown[] = [];
+  private _toolsets: Toolset[] = [];
 
-  // TODO: toolset - widen `tools` to `Sequence<Tool | Toolset>` once Toolset lands.
   constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
     this.updateTools(tools);
   }
@@ -254,13 +285,9 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools;
   }
 
-  /**
-   * A copy of all tool sets in the tool context.
-   *
-   * TODO: toolset - wire up once Toolset is ported.
-   */
-  get toolsets(): unknown[] {
-    return this._toolSets;
+  /** A copy of all toolsets registered in the context. */
+  get toolsets(): readonly Toolset[] {
+    return [...this._toolsets];
   }
 
   /**
@@ -287,16 +314,21 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools.some((tool) => tool.id === name);
   }
 
-  // TODO: toolset - widen `tools` to `Sequence<Tool | Toolset>` once Toolset lands.
   updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
     this._providerTools = [];
-    this._toolSets = [];
+    this._toolsets = [];
 
-    // Mirrors Python's recursive `add_tool` (minus Toolset flattening, which is TODO).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
-    const addTool = (tool: any): void => {
+    const addTool = (tool: ToolContextEntry<UserData>): void => {
+      if (tool instanceof Toolset) {
+        for (const inner of tool.tools) {
+          addTool(inner as ToolContextEntry<UserData>);
+        }
+        this._toolsets.push(tool);
+        return;
+      }
+
       if (isProviderDefinedTool(tool)) {
         this._providerTools.push(tool);
         return;
@@ -314,15 +346,9 @@ export class ToolContext<UserData = UnknownUserData> {
         return;
       }
 
-      // TODO: toolset - if (tool instanceof Toolset) { for (const t of tool.tools) addTool(t);
-      //                  this._toolSets.push(tool); return; }
-
       throw new Error(`unknown tool type: ${typeof tool}`);
     };
 
-    // TODO: toolset - Python also chains `find_function_tools(self)` here so subclasses can
-    // declare tools as class members. JS doesn't use that decorator pattern, so we only walk
-    // the explicit input list.
     for (const tool of tools) {
       addTool(tool);
     }
@@ -352,10 +378,16 @@ export class ToolContext<UserData = UnknownUserData> {
         return false;
       }
     }
-    // TODO: toolset - once Toolset lands, also compare `_toolSets` as identity sets per Python
-    //   self_tool_set_ids = {id(ts) for ts in self._tool_sets}
-    //   other_tool_set_ids = {id(ts) for ts in other._tool_sets}
-    //   if self_tool_set_ids != other_tool_set_ids: return False
+    if (this._toolsets.length !== other._toolsets.length) {
+      return false;
+    }
+    // Toolsets compare as identity sets, matching Python's `{id(ts) for ts in self._tool_sets}`.
+    const otherToolsetIds = new Set(other._toolsets);
+    for (const ts of this._toolsets) {
+      if (!otherToolsetIds.has(ts)) {
+        return false;
+      }
+    }
     return true;
   }
 }

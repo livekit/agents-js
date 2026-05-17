@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ToolContext, type ToolOptions, tool } from './tool_context.js';
+import { ToolContext, type ToolOptions, Toolset, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -578,5 +578,80 @@ describe('ToolContext', () => {
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);
+  });
+});
+
+describe('Toolset', () => {
+  const makeFn = (name: string) =>
+    tool({
+      name,
+      description: `${name} tool`,
+      execute: async () => name,
+    });
+
+  it('exposes its id and the tools it was constructed with', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set1', tools: [a, b] });
+
+    expect(ts.id).toBe('set1');
+    expect(ts.tools).toEqual([a, b]);
+  });
+
+  it('default setup and aclose are no-ops', async () => {
+    const ts = new Toolset({ id: 'noop', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('lets subclasses override lifecycle hooks', async () => {
+    const events: string[] = [];
+    class Recording extends Toolset {
+      override async setup(): Promise<void> {
+        events.push(`setup:${this.id}`);
+      }
+      override async aclose(): Promise<void> {
+        events.push(`close:${this.id}`);
+      }
+    }
+
+    const ts = new Recording({ id: 'rec', tools: [] });
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup:rec', 'close:rec']);
+  });
+
+  it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const direct = makeFn('direct');
+
+    const ctx = new ToolContext([direct, ts]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b', 'direct']);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('throws when a Toolset contributes a duplicate function name', () => {
+    // Mirrors Python's `add_tool`: a name collision between top-level and toolset-contributed
+    // tools is an error, not silent overwrite.
+    const a1 = makeFn('a');
+    const a2 = makeFn('a');
+    const ts = new Toolset({ id: 'collides', tools: [a2] });
+
+    expect(() => new ToolContext([a1, ts])).toThrow(/duplicate function name: a/);
+  });
+
+  it('equals() compares toolsets as identity sets, not by order', () => {
+    // Matches Python's `{id(ts) for ts in self._tool_sets}` semantics.
+    const ts1 = new Toolset({ id: 'one', tools: [] });
+    const ts2 = new Toolset({ id: 'two', tools: [] });
+
+    expect(new ToolContext([ts1, ts2]).equals(new ToolContext([ts2, ts1]))).toBe(true);
+
+    const ts3 = new Toolset({ id: 'three', tools: [] });
+    expect(new ToolContext([ts1, ts2]).equals(new ToolContext([ts1, ts3]))).toBe(false);
+    expect(new ToolContext([ts1]).equals(new ToolContext([ts1, ts2]))).toBe(false);
   });
 });
