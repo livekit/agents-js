@@ -130,9 +130,23 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     }
 
     if (typeof instructions !== 'string') {
-      instructions = INSTRUCTIONS_TEMPLATE.replace('{persona}', instructions.persona ?? PERSONA)
-        .replace('{_conversation_history}', WarmTransferTask.formatConversationHistory(chatCtx))
-        .replace('{extra}', instructions.extra ?? '');
+      // Substitute all placeholders in a single pass with function
+      // replacements. This avoids two pitfalls of chained `.replace(str, str)`:
+      // (1) special dollar-sign patterns (`$&`, `$\``, `$'`, `$N`) in the
+      // replacement string being interpreted by `replace`, which could corrupt
+      // the prompt if the conversation history contains them; and
+      // (2) earlier substitutions accidentally introducing later placeholder
+      // text (e.g. a user message containing `{extra}` consuming the real
+      // `{extra}` slot).
+      const replacements: Record<string, string> = {
+        persona: instructions.persona ?? PERSONA,
+        _conversation_history: WarmTransferTask.formatConversationHistory(chatCtx),
+        extra: instructions.extra ?? '',
+      };
+      instructions = INSTRUCTIONS_TEMPLATE.replace(
+        /\{(persona|_conversation_history|extra)\}/g,
+        (_match, key: string) => replacements[key] ?? '',
+      );
     }
 
     super({
@@ -330,6 +344,18 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     if (this._humanAgentSession) {
       this._humanAgentSession.shutdown();
       this._humanAgentSession = null;
+    }
+
+    // AgentSession.shutdown() closes RoomIO but does not disconnect the
+    // underlying Room, so the supervisor room's WebSocket would leak across
+    // every transfer. Disconnect explicitly here. The room is moved out of
+    // (mergeCalls) or torn down (failure) by the time we reach this point.
+    if (this._humanAgentRoom) {
+      const humanAgentRoom = this._humanAgentRoom;
+      this._humanAgentRoom = null;
+      void humanAgentRoom.disconnect().catch((error) => {
+        this._logger.warn({ error }, 'failed to disconnect human agent room');
+      });
     }
 
     if (this._holdAudioHandle) {
