@@ -29,6 +29,7 @@ export interface WsTransportOptions {
   threshold: number;
   minFrames: number;
   timeout: number;
+  connectTimeout: number;
   maxRetries?: number;
 }
 
@@ -92,7 +93,7 @@ async function connectWebSocket(
             options: { retryable: false },
           }),
         );
-      }, options.timeout);
+      }, options.connectTimeout);
       ws.once('open', () => {
         clearTimeout(timeout);
         resolve();
