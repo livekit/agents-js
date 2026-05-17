@@ -71,15 +71,17 @@ export class EndCallTool<UserData = UnknownUserData> extends Toolset {
     onToolCalled,
     onToolCompleted,
   }: EndCallToolOptions<UserData> = {}) {
-    let instance!: EndCallTool<UserData>;
+    const handlers: {
+      endCall?: (ctx: RunContext<UserData>) => Promise<string | undefined>;
+    } = {};
     const endCallTool = tool<UserData, string | undefined>({
       name: 'end_call',
       description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
-      execute: async (_args, { ctx }) => instance.endCall(ctx),
+      execute: async (_args, { ctx }) => handlers.endCall!(ctx),
     });
 
     super({ id: 'end_call', tools: [endCallTool] });
-    instance = this;
+    handlers.endCall = (ctx) => this.endCall(ctx);
 
     this.deleteRoom = deleteRoom;
     this.endInstructions = endInstructions;
