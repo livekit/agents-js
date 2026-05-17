@@ -70,9 +70,9 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _callerRoom: Room | null = null;
   private _humanAgentRoom: Room | null = null;
   private _humanAgentSession: AgentSession | null = null;
-  private _humanAgentFailed = new Promise<void>((resolve) => {
-    this._resolveHumanAgentFailed = resolve;
-  });
+  // Initialized in the constructor body to avoid ES2022 class-field [[Define]]
+  // semantics wiping the resolver assigned inside the Promise executor.
+  private _humanAgentFailed!: Promise<void>;
   private _resolveHumanAgentFailed!: () => void;
   private _humanAgentIdentity = 'human-agent-sip';
 
@@ -144,6 +144,10 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       llm: llm ?? undefined,
       tts: tts ?? undefined,
       allowInterruptions,
+    });
+
+    this._humanAgentFailed = new Promise<void>((resolve) => {
+      this._resolveHumanAgentFailed = resolve;
     });
 
     this._tools = {
