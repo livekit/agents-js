@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SIPOutboundConfig } from '@livekit/protocol';
-import { type DisconnectReason, ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
+import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
 import { getJobContext } from '../../job.js';
@@ -18,12 +18,7 @@ import {
   BuiltinAudioClip,
   type PlayHandle,
 } from '../../voice/background_audio.js';
-
-const DEFAULT_PARTICIPANT_KINDS = [
-  ParticipantKind.CONNECTOR,
-  ParticipantKind.SIP,
-  ParticipantKind.STANDARD,
-];
+import { DEFAULT_PARTICIPANT_KINDS } from '../../voice/room_io/index.js';
 
 export interface WarmTransferResult {
   humanAgentIdentity: string;
@@ -48,6 +43,8 @@ export interface WarmTransferTaskOptions {
   sipNumber?: string;
   /** Headers to include on the outbound SIP call. */
   sipHeaders?: Record<string, string>;
+  /** How long to wait, in milliseconds, for the human agent to answer before giving up. */
+  ringingTimeout?: number | null;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   instructions?: InstructionParts | string;
@@ -80,6 +77,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _sipConnection?: SIPOutboundConfig;
   private _sipNumber: string;
   private _sipHeaders: Record<string, string>;
+  private _ringingTimeout: number | null;
 
   private _backgroundAudio = new BackgroundAudioPlayer();
   private _holdAudioHandle: PlayHandle | null = null;
@@ -98,6 +96,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       sipConnection,
       sipNumber,
       sipHeaders,
+      ringingTimeout,
       holdAudio,
       chatCtx,
       turnDetection,
@@ -171,10 +170,9 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
     this._sipNumber = sipNumber ?? process.env.LIVEKIT_SIP_NUMBER ?? '';
     this._sipHeaders = sipHeaders ?? {};
+    this._ringingTimeout = ringingTimeout ?? null;
     this._holdAudio =
-      holdAudio === undefined
-        ? { source: BuiltinAudioClip.OFFICE_AMBIENCE, volume: 0.8 }
-        : holdAudio;
+      holdAudio === undefined ? { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 } : holdAudio;
   }
 
   private static formatConversationHistory(chatCtx?: ChatContext): string {
@@ -210,7 +208,12 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
     this.setIoEnabled(false);
 
-    const dialHumanAgent = this.dialHumanAgent();
+    const dialAbortController = new AbortController();
+    let dialCompleted = false;
+    const dialHumanAgent = this.dialHumanAgent(dialAbortController.signal).then((session) => {
+      dialCompleted = true;
+      return session;
+    });
     try {
       const result = await Promise.race([
         dialHumanAgent.then((session) => ({ session })),
@@ -225,6 +228,11 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     } catch (error) {
       this._logger.error({ error }, 'could not dial human agent');
       this.setResult(new ToolError('could not dial human agent'));
+    } finally {
+      if (!dialCompleted) {
+        dialAbortController.abort();
+        await dialHumanAgent.catch(() => undefined);
+      }
     }
   }
 
@@ -312,7 +320,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     }
 
     if (this._humanAgentSession) {
-      this._humanAgentSession.shutdown({ drain: false });
+      this._humanAgentSession.shutdown();
       this._humanAgentSession = null;
     }
 
@@ -328,7 +336,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     this.complete(result);
   }
 
-  private async dialHumanAgent(): Promise<AgentSession> {
+  private async dialHumanAgent(signal: AbortSignal): Promise<AgentSession> {
     if (!this._callerRoom?.name) {
       throw new Error('caller room is not available');
     }
@@ -340,68 +348,112 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     const jobCtx = getJobContext();
     const humanAgentRoomName = `${this._callerRoom.name}-human-agent`;
     const room = new Room();
-    const token = new AccessToken(undefined, undefined, { identity: localIdentity });
-    token.kind = 'agent';
-    token.addGrant({
-      roomJoin: true,
-      room: humanAgentRoomName,
-      canUpdateOwnMetadata: true,
-      canPublish: true,
-      canSubscribe: true,
-    } as VideoGrant);
+    let humanAgentSession: AgentSession | null = null;
+    let completed = false;
 
-    this._logger.debug(
-      { wsUrl: jobCtx.info.url, humanAgentRoomName },
-      'connecting to human agent room',
-    );
-    await room.connect(jobCtx.info.url, await token.toJwt());
-    room.on(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
+    try {
+      const token = new AccessToken(undefined, undefined, { identity: localIdentity });
+      token.kind = 'agent';
+      token.addGrant({
+        roomJoin: true,
+        room: humanAgentRoomName,
+        canUpdateOwnMetadata: true,
+        canPublish: true,
+        canSubscribe: true,
+      } as VideoGrant);
 
-    const humanAgentSession = new AgentSession({
-      vad: this.session.vad,
-      llm: this.session.llm,
-      stt: this.session.stt,
-      tts: this.session.tts,
-      turnDetection: this.session.turnDetection,
+      this._logger.debug(
+        { wsUrl: jobCtx.info.url, humanAgentRoomName },
+        'connecting to human agent room',
+      );
+      const jwt = await token.toJwt();
+      await this.abortable(() => room.connect(jobCtx.info.url, jwt), signal);
+      room.on(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
+
+      humanAgentSession = new AgentSession({
+        vad: this.session.vad,
+        llm: this.session.llm,
+        stt: this.session.stt,
+        tts: this.session.tts,
+        turnDetection: this.session.turnDetection,
+      });
+      const session = humanAgentSession;
+      const humanAgent = new Agent({
+        instructions: this.instructions,
+        stt: this.stt,
+        vad: this.vad,
+        llm: this.llm,
+        tts: this.tts,
+        tools: this.toolCtx,
+        chatCtx: this._chatCtx.copy(),
+        turnDetection: this._taskTurnDetection,
+        allowInterruptions: this._allowInterruptions,
+      });
+
+      await this.abortable(
+        () =>
+          session.start({
+            agent: humanAgent,
+            room,
+            inputOptions: {
+              closeOnDisconnect: true,
+              participantIdentity: this._humanAgentIdentity,
+            },
+            record: false,
+          }),
+        signal,
+      );
+
+      const sip = new SipClient(jobCtx.info.url);
+      await this.abortable(
+        () =>
+          sip.createSipParticipant(
+            this._sipTrunkId ?? '',
+            this._sipCallTo,
+            humanAgentRoomName,
+            {
+              participantIdentity: this._humanAgentIdentity,
+              waitUntilAnswered: true,
+              fromNumber: this._sipNumber || undefined,
+              headers: this._sipHeaders,
+              ringingTimeout:
+                this._ringingTimeout !== null ? this._ringingTimeout / 1000 : undefined,
+            },
+            this._sipConnection,
+          ),
+        signal,
+      );
+
+      this._humanAgentRoom = room;
+      completed = true;
+      return session;
+    } finally {
+      if (!completed) {
+        room.off(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
+        humanAgentSession?.shutdown();
+        await room.disconnect().catch((error) => {
+          this._logger.warn({ error }, 'failed to disconnect human agent room');
+        });
+      }
+    }
+  }
+
+  private async abortable<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) {
+      throw new Error('dial cancelled');
+    }
+
+    let onAbort!: () => void;
+    const abortPromise = new Promise<never>((_, reject) => {
+      onAbort = () => reject(new Error('dial cancelled'));
+      signal.addEventListener('abort', onAbort, { once: true });
     });
-    const humanAgent = new Agent({
-      instructions: this.instructions,
-      stt: this.stt,
-      vad: this.vad,
-      llm: this.llm,
-      tts: this.tts,
-      tools: this.toolCtx,
-      chatCtx: this._chatCtx.copy(),
-      turnDetection: this._taskTurnDetection,
-      allowInterruptions: this._allowInterruptions,
-    });
 
-    await humanAgentSession.start({
-      agent: humanAgent,
-      room,
-      inputOptions: {
-        closeOnDisconnect: true,
-        participantIdentity: this._humanAgentIdentity,
-      },
-      record: false,
-    });
-
-    const sip = new SipClient(jobCtx.info.url);
-    await sip.createSipParticipant(
-      this._sipTrunkId ?? '',
-      this._sipCallTo,
-      humanAgentRoomName,
-      {
-        participantIdentity: this._humanAgentIdentity,
-        waitUntilAnswered: true,
-        fromNumber: this._sipNumber || undefined,
-        headers: this._sipHeaders,
-      },
-      this._sipConnection,
-    );
-
-    this._humanAgentRoom = room;
-    return humanAgentSession;
+    try {
+      return await Promise.race([fn(), abortPromise]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 
   private async mergeCalls(): Promise<void> {
