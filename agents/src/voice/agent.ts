@@ -270,7 +270,7 @@ export class Agent<UserData = any> {
   }
 
   get toolCtx(): ToolContext<UserData> {
-    return this._toolCtx;
+    return this._toolCtx.copy();
   }
 
   get session(): AgentSession<UserData> {

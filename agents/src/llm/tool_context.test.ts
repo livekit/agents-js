@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ToolContext, type ToolOptions, tool, toolListFromRecord } from './tool_context.js';
+import { ToolContext, type ToolOptions, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -521,20 +521,5 @@ describe('ToolContext', () => {
     expect(new ToolContext([a, b]).equals(new ToolContext([a, b]))).toBe(true);
     expect(new ToolContext([a, b]).equals(new ToolContext([a]))).toBe(false);
     expect(new ToolContext([a, b]).equals(new ToolContext([a, c]))).toBe(false);
-  });
-});
-
-describe('toolListFromRecord', () => {
-  it('converts a map to a list and stamps the map key onto unnamed tools', () => {
-    const named = tool({ name: 'named', description: 'd', execute: async () => 'x' });
-    // Simulate a legacy unnamed tool by clearing its name.
-    const unnamed = tool({ name: 'placeholder', description: 'd', execute: async () => 'y' });
-    (unnamed as { name: string }).name = '';
-
-    const list = toolListFromRecord({ named, lookup: unnamed });
-
-    expect(list).toContain(named);
-    expect(list).toContain(unnamed);
-    expect((unnamed as { name: string }).name).toBe('lookup');
   });
 });

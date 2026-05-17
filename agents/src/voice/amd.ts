@@ -13,7 +13,7 @@ import type { LLMModels, STTModels } from '../inference/index.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { FunctionCall } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { ToolContext, isFunctionTool, tool } from '../llm/tool_context.js';
+import { ToolContext, type ToolContextEntry, isFunctionTool, tool } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { STT, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -997,7 +997,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       },
     });
 
-    const toolList: import('../llm/index.js').ToolContextEntry[] = [savePrediction];
+    const toolList: ToolContextEntry[] = [savePrediction];
     if (this.extensionCount < MAX_EXTENSIONS) {
       toolList.push(postponeTermination);
     }

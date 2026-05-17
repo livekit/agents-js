@@ -63,7 +63,7 @@ describe('Agent', () => {
     expect(agentTools.getTool2?.description).toBe('Second test tool');
   });
 
-  it('toolCtx returns the same ToolContext instance', () => {
+  it('toolCtx returns a defensive copy that exposes the same tools', () => {
     const instructions = 'You are a helpful assistant';
     const mockTool = tool({
       name: 'testTool',
@@ -74,8 +74,9 @@ describe('Agent', () => {
 
     const agent = new Agent({ instructions, tools: [mockTool] });
 
-    // toolCtx is a class instance; identity is stable until updateTools() is called.
-    expect(agent.toolCtx).toBe(agent.toolCtx);
+    // Each call returns a fresh ToolContext so external mutation can't escape into the agent's
+    // internal state.
+    expect(agent.toolCtx).not.toBe(agent.toolCtx);
     expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
   });
 

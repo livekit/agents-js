@@ -327,28 +327,6 @@ export class ToolContext<UserData = UnknownUserData> {
   }
 }
 
-/**
- * Build a list of `Tool` entries out of the legacy `Record<string, FunctionTool>` map shape.
- * The tool's own `name` is preferred; if absent, the map key is assigned onto the tool so it
- * carries the correct name forward through the list-based pipeline.
- */
-export function toolListFromRecord<UserData = UnknownUserData>(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Legacy map carries generic function tools
-  record: Record<string, FunctionTool<any, UserData, any>>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Returned list is generic over parameter/result types
-): FunctionTool<any, UserData, any>[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: FunctionTool<any, UserData, any>[] = [];
-  for (const [name, fn] of Object.entries(record)) {
-    if (!fn) continue;
-    if (!fn.name) {
-      fn.name = name;
-    }
-    tools.push(fn);
-  }
-  return tools;
-}
-
 export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
   if (choice1 === choice2) {
     return true;
