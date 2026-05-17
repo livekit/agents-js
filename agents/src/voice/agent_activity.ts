@@ -31,6 +31,7 @@ import {
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
   type InputTranscriptionCompleted,
+  isFunctionTool,
   LLM,
   RealtimeModel,
   type RealtimeModelError,
@@ -1761,8 +1762,7 @@ export class AgentActivity implements RecognitionHooks {
             // because lifecycle ownership stays with the agent's persistent toolCtx.
             this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
               const keepFn = (fn: Tool): boolean =>
-                fn.type !== 'function' ||
-                !((fn as unknown as { flags: number }).flags & ToolFlag.IGNORE_ON_ENTER);
+                !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
               if (t instanceof Toolset) {
                 return t.tools.filter(keepFn) as ToolContextEntry[];
               }
