@@ -562,11 +562,9 @@ export class TranscriptionSynchronizer {
 
     // initial segment/first segment, recreated for each new segment
     this._impl = new SegmentSynchronizerImpl(this.options, nextInChainText);
-    const initialTask = Task.from((controller) => this.rotateSegmentTaskImpl(controller.signal));
-    initialTask.addDoneCallback(() => {
-      this.initialRotationDone = true;
-    });
-    this.rotateSegmentTask = initialTask;
+    this.rotateSegmentTask = Task.from((controller) =>
+      this.rotateSegmentTaskImpl(controller.signal),
+    );
   }
 
   get outputsAttached(): boolean {
@@ -656,6 +654,11 @@ export class TranscriptionSynchronizer {
       if (this.queuedRotations > 0) {
         this.queuedRotations--;
       }
+      // Set synchronously inside the task body so that by the time `task.result`
+      // resolves, the flag is already true for any continuation (including
+      // `barrier()` callers). Using `Task.addDoneCallback` for this would be
+      // fragile against microtask reordering.
+      this.initialRotationDone = true;
     }
   }
 }
