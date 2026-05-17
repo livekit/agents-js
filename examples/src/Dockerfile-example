@@ -15,6 +15,9 @@ FROM node:${NODE_VERSION}-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 
+# Pin HOME so plugin asset caches land under /app/.cache for appuser
+ENV HOME="/app"
+
 # Install required system packages and pnpm, then clean up the apt cache for a smaller image
 # ca-certificates: enables TLS/SSL for securely fetching dependencies and calling HTTPS services
 # --no-install-recommends keeps the image minimal
