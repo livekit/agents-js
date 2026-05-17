@@ -196,6 +196,43 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
+export interface ToolCalledEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolCompletedEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
+}
+
+/**
+ * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
+ * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
+ * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
+ */
+export class Toolset {
+  readonly #id: string;
+  readonly #tools: Tool[];
+
+  constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
+    this.#id = id;
+    this.#tools = [...tools];
+  }
+
+  get id(): string {
+    return this.#id;
+  }
+
+  get tools(): readonly Tool[] {
+    return this.#tools;
+  }
+
+  async setup(): Promise<void> {}
+
+  async aclose(): Promise<void> {}
+}
+
 /**
  * Convenience input shape accepted by APIs that want to take a list of tools directly without
  * forcing callers to wrap them in `new ToolContext(...)`.
@@ -218,23 +255,25 @@ export function toToolContext<UserData = UnknownUserData>(
 }
 
 /**
- * A flat, addressable view over a heterogeneous list of `FunctionTool` and `ProviderDefinedTool`
- * entries.
+ * A flat, addressable view over a heterogeneous list of `FunctionTool`, `ProviderDefinedTool`,
+ * and `Toolset` entries.
  *
  * Mirrors the Python `ToolContext`: the original input list is preserved on `_tools`, while
- * `_functionToolsMap` and `_providerTools` denormalize it for cheap access. When two function
- * tools share the same name the later entry overwrites the earlier one.
+ * `_functionToolsMap`, `_providerTools`, and `_toolsets` denormalize it for cheap access. Tools
+ * contributed by a `Toolset` are flattened into the function and provider collections; later
+ * function tools sharing the same name as an earlier one overwrite the earlier entry.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
 export type ToolContextEntry<UserData = UnknownUserData> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  FunctionTool<any, UserData, any> | ProviderDefinedTool;
+  FunctionTool<any, UserData, any> | ProviderDefinedTool | Toolset;
 
 export class ToolContext<UserData = UnknownUserData> {
   private _tools: ToolContextEntry<UserData>[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
   private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
   private _providerTools: ProviderDefinedTool[] = [];
+  private _toolsets: Toolset[] = [];
 
   constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
     this.updateTools(tools);
@@ -244,18 +283,23 @@ export class ToolContext<UserData = UnknownUserData> {
     return new ToolContext([]);
   }
 
-  /** A copy of all function tools in the context. */
+  /** A copy of all function tools in the context, including tools contributed by toolsets. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
   get functionTools(): Record<string, FunctionTool<any, UserData, any>> {
     return Object.fromEntries(this._functionToolsMap);
   }
 
-  /** A copy of all provider tools in the context. */
+  /** A copy of all provider tools in the context, including provider tools from toolsets. */
   get providerTools(): readonly ProviderDefinedTool[] {
     return [...this._providerTools];
   }
 
-  /** A copy of the raw tool list this context was constructed with. */
+  /** A copy of the toolsets registered in the context. */
+  get toolsets(): readonly Toolset[] {
+    return [...this._toolsets];
+  }
+
+  /** A copy of the raw tool/toolset list this context was constructed with. */
   get tools(): readonly ToolContextEntry<UserData>[] {
     return [...this._tools];
   }
@@ -286,19 +330,31 @@ export class ToolContext<UserData = UnknownUserData> {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
     this._providerTools = [];
+    this._toolsets = [];
 
-    for (const tool of tools) {
+    const addTool = (tool: ToolContextEntry<UserData> | Tool): void => {
+      if (tool instanceof Toolset) {
+        for (const inner of tool.tools) {
+          addTool(inner);
+        }
+        this._toolsets.push(tool);
+        return;
+      }
       if (isProviderDefinedTool(tool)) {
         this._providerTools.push(tool);
-        continue;
+        return;
       }
       if (isFunctionTool(tool)) {
         // Later tool wins on duplicate names. `tool()` enforces a non-empty name at
         // construction so we don't re-check here.
         this._functionToolsMap.set(tool.name, tool);
-        continue;
+        return;
       }
       throw new Error(`unknown tool type: ${typeof tool}`);
+    };
+
+    for (const tool of tools) {
+      addTool(tool);
     }
   }
 
@@ -312,6 +368,14 @@ export class ToolContext<UserData = UnknownUserData> {
     }
     for (const [name, tool] of this._functionToolsMap) {
       if (other._functionToolsMap.get(name) !== tool) {
+        return false;
+      }
+    }
+    if (this._toolsets.length !== other._toolsets.length) {
+      return false;
+    }
+    for (let i = 0; i < this._toolsets.length; i++) {
+      if (this._toolsets[i] !== other._toolsets[i]) {
         return false;
       }
     }

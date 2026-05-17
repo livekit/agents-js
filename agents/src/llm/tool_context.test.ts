@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ToolContext, type ToolOptions, tool } from './tool_context.js';
+import { ToolContext, type ToolOptions, Toolset, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -521,5 +521,58 @@ describe('ToolContext', () => {
     expect(new ToolContext([a, b]).equals(new ToolContext([a, b]))).toBe(true);
     expect(new ToolContext([a, b]).equals(new ToolContext([a]))).toBe(false);
     expect(new ToolContext([a, b]).equals(new ToolContext([a, c]))).toBe(false);
+  });
+});
+
+describe('Toolset', () => {
+  const makeFn = (name: string) =>
+    tool({
+      name,
+      description: `${name} tool`,
+      execute: async () => name,
+    });
+
+  it('exposes its id and the tools it was constructed with', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set1', tools: [a, b] });
+
+    expect(ts.id).toBe('set1');
+    expect(ts.tools).toEqual([a, b]);
+  });
+
+  it('default setup and aclose are no-ops', async () => {
+    const ts = new Toolset({ id: 'noop', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('lets subclasses override lifecycle hooks', async () => {
+    const events: string[] = [];
+    class Recording extends Toolset {
+      override async setup(): Promise<void> {
+        events.push(`setup:${this.id}`);
+      }
+      override async aclose(): Promise<void> {
+        events.push(`close:${this.id}`);
+      }
+    }
+
+    const ts = new Recording({ id: 'rec', tools: [] });
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup:rec', 'close:rec']);
+  });
+
+  it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const direct = makeFn('direct');
+
+    const ctx = new ToolContext([direct, ts]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b', 'direct']);
+    expect(ctx.toolsets).toEqual([ts]);
   });
 });

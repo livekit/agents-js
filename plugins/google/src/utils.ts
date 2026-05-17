@@ -139,8 +139,13 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
 export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  for (const [name, tool] of Object.entries(toolCtx.functionTools)) {
-    const { description, parameters } = tool;
+  // flatten() yields function tools + provider tools, including any contributed by Toolsets.
+  for (const tool of toolCtx.flatten()) {
+    if (!llm.isFunctionTool(tool)) {
+      // Provider-defined tools are not wired into the Gemini schema yet.
+      continue;
+    }
+    const { name, description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 
     // Create a deep copy to prevent the Google GenAI library from mutating the schema

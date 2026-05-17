@@ -698,11 +698,16 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): these logics below are noops I think, leaving it here to keep
     // parity with the python but we should remove them later
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
-    const retainedTools = Object.entries(_tools.functionTools)
-      .filter(([name]) => retainedToolNames.has(name))
-      .map(([, tool]) => tool);
+    // Keep Toolsets and provider tools as-is; only filter out function tools the server didn't
+    // accept. This preserves toolset references so subsequent updateTools() diffs are accurate.
+    const retainedEntries = _tools.tools.filter((entry) => {
+      if (llm.isFunctionTool(entry)) {
+        return retainedToolNames.has(entry.name);
+      }
+      return true;
+    });
 
-    this._tools = new llm.ToolContext(retainedTools);
+    this._tools = new llm.ToolContext(retainedEntries);
 
     unlock();
   }
@@ -710,21 +715,28 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
-    for (const [name, tool] of Object.entries(_tools.functionTools)) {
-      const { parameters: toolParameters, description } = tool;
+    // flatten() yields function tools + provider tools, including any contributed by Toolsets.
+    for (const t of _tools.flatten()) {
+      if (!llm.isFunctionTool(t)) {
+        // Provider-defined tools aren't wired into the Realtime session-update schema yet.
+        continue;
+      }
       try {
         const parameters = llm.toJsonSchema(
-          toolParameters,
+          t.parameters,
         ) as unknown as api_proto.Tool['parameters'];
 
         oaiTools.push({
-          name,
-          description,
+          name: t.name,
+          description: t.description,
           parameters: parameters,
           type: 'function',
         });
       } catch (e) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        this.#logger.error(
+          { name: t.name, tool: t },
+          "OpenAI Realtime API doesn't support this tool type",
+        );
         continue;
       }
     }
