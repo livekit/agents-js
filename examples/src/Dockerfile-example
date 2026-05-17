@@ -38,16 +38,22 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-# Copy just the dependency files first, for more efficient layer caching
+# pnpm writes its managed-version tool cache (e.g. the version pinned in
+# `packageManager`) under $PNPM_HOME/.tools, so appuser needs to own it.
+RUN mkdir -p /pnpm && chown -R appuser:appuser /app /pnpm
+USER appuser
+
+# Copy just the dependency manifests first so the install layer is cached when only source changes.
 COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies using pnpm
 # --frozen-lockfile ensures we use exact versions from pnpm-lock.yaml for reproducible builds
 RUN pnpm install --frozen-lockfile
 
+# install plugin dependencies
 RUN npx livekit-agents download-files
 
-# Copy all remaining pplication files into the container
+# Copy all remaining application files into the container
 # This includes source code, configuration files, and dependency specifications
 # (Excludes files specified in .dockerignore)
 COPY . .
