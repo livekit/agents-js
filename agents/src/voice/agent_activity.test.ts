@@ -271,15 +271,16 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
 
   const fakeChatCtx = { copy: () => fakeChatCtx } as unknown as ChatContext;
 
+  const emptyToolCtx = ToolContext.empty();
   const fakeActivity = {
     _preemptiveGenerationCount: 0,
     _preemptiveGeneration: undefined,
     _currentSpeech: undefined as SpeechHandle | undefined,
     schedulingPaused: false,
     llm: new FakePreemptiveLLM(),
-    tools: ToolContext.empty(),
+    tools: emptyToolCtx,
     toolChoice: null,
-    agent: { chatCtx: fakeChatCtx },
+    agent: { chatCtx: fakeChatCtx, _toolCtx: emptyToolCtx },
     agentSession: {
       sessionOptions: {
         turnHandling: { preemptiveGeneration: preemptiveOpts },

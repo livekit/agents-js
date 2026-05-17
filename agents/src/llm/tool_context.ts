@@ -217,50 +217,60 @@ export function toToolContext<UserData = UnknownUserData>(
   return input instanceof ToolContext ? input : new ToolContext(input);
 }
 
-/**
- * A flat, addressable view over a heterogeneous list of `FunctionTool` and `ProviderDefinedTool`
- * entries.
- *
- * Mirrors the Python `ToolContext`: the original input list is preserved on `_tools`, while
- * `_functionToolsMap` and `_providerTools` denormalize it for cheap access. When two function
- * tools share the same name the later entry overwrites the earlier one.
- */
+//TODO: toolset - accept stateful `Toolset` containers alongside `FunctionTool` /
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
 export type ToolContextEntry<UserData = UnknownUserData> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   FunctionTool<any, UserData, any> | ProviderDefinedTool;
 
 export class ToolContext<UserData = UnknownUserData> {
+  // TODO: toolset - widen entries to `FunctionTool | ProviderDefinedTool | Toolset` once Toolset
+  // lands so this stays heterogeneous like Python's `Sequence[Tool | Toolset]`.
   private _tools: ToolContextEntry<UserData>[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
   private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
   private _providerTools: ProviderDefinedTool[] = [];
+  // TODO: toolset - populate when Toolset support is supported.
+  // so the `toolsets` getter and `equals` toolset-identity check stay byte-compatible with the
+  private _toolSets: unknown[] = [];
 
+  // TODO: toolset - widen `tools` to `Sequence<Tool | Toolset>` once Toolset lands.
   constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
     this.updateTools(tools);
   }
 
-  static empty(): ToolContext {
-    return new ToolContext([]);
+  static empty<UserData = UnknownUserData>(): ToolContext<UserData> {
+    return new ToolContext<UserData>([]);
   }
 
-  /** A copy of all function tools in the context. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
+  /** A copy of all function tools in the tool context, including those in tool sets. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   get functionTools(): Record<string, FunctionTool<any, UserData, any>> {
     return Object.fromEntries(this._functionToolsMap);
   }
 
-  /** A copy of all provider tools in the context. */
-  get providerTools(): readonly ProviderDefinedTool[] {
-    return [...this._providerTools];
+  /** A copy of all provider tools in the tool context, including those in tool sets. */
+  get providerTools(): ProviderDefinedTool[] {
+    return this._providerTools;
   }
 
-  /** A copy of the raw tool list this context was constructed with. */
+  /**
+   * A copy of all tool sets in the tool context.
+   *
+   * TODO: toolset - wire up once Toolset is ported.
+   */
+  get toolsets(): unknown[] {
+    return this._toolSets;
+  }
+
+  /**
+   * A copy of the raw tool list this context was constructed with.
+   */
   get tools(): readonly ToolContextEntry<UserData>[] {
     return [...this._tools];
   }
 
-  /** Flat list of function tools followed by provider tools. */
+  /** Flatten the tool context to a list of tools. */
   flatten(): Tool[] {
     return [...this._functionToolsMap.values(), ...this._providerTools];
   }
@@ -270,11 +280,6 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._functionToolsMap.get(name);
   }
 
-  /**
-   * Returns true when the context contains any function or provider tool whose identifier
-   * matches `name` (function tools matched on `tool.name`, provider tools on `tool.id`). Used
-   * by chat-context filtering so future provider-tool call items are recognized too.
-   */
   hasTool(name: string): boolean {
     if (this._functionToolsMap.has(name)) {
       return true;
@@ -282,23 +287,44 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools.some((tool) => tool.id === name);
   }
 
+  // TODO: toolset - widen `tools` to `Sequence<Tool | Toolset>` once Toolset lands.
   updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
     this._providerTools = [];
+    this._toolSets = [];
 
-    for (const tool of tools) {
+    // Mirrors Python's recursive `add_tool` (minus Toolset flattening, which is TODO).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
+    const addTool = (tool: any): void => {
       if (isProviderDefinedTool(tool)) {
         this._providerTools.push(tool);
-        continue;
+        return;
       }
+
       if (isFunctionTool(tool)) {
-        // Later tool wins on duplicate names. `tool()` enforces a non-empty name at
-        // construction so we don't re-check here.
+        const existing = this._functionToolsMap.get(tool.name);
+        if (existing !== undefined) {
+          if (existing !== tool) {
+            throw new Error(`duplicate function name: ${tool.name}`);
+          }
+          return; // same instance, skip
+        }
         this._functionToolsMap.set(tool.name, tool);
-        continue;
+        return;
       }
+
+      // TODO: toolset - if (tool instanceof Toolset) { for (const t of tool.tools) addTool(t);
+      //                  this._toolSets.push(tool); return; }
+
       throw new Error(`unknown tool type: ${typeof tool}`);
+    };
+
+    // TODO: toolset - Python also chains `find_function_tools(self)` here so subclasses can
+    // declare tools as class members. JS doesn't use that decorator pattern, so we only walk
+    // the explicit input list.
+    for (const tool of tools) {
+      addTool(tool);
     }
   }
 
@@ -318,11 +344,18 @@ export class ToolContext<UserData = UnknownUserData> {
     if (this._providerTools.length !== other._providerTools.length) {
       return false;
     }
-    for (let i = 0; i < this._providerTools.length; i++) {
-      if (this._providerTools[i] !== other._providerTools[i]) {
+    // Provider tools compare as identity sets to match Python's `set(id(t) for t in ...)`
+    // semantics — order is not significant.
+    const otherProviderIds = new Set(other._providerTools);
+    for (const tool of this._providerTools) {
+      if (!otherProviderIds.has(tool)) {
         return false;
       }
     }
+    // TODO: toolset - once Toolset lands, also compare `_toolSets` as identity sets per Python
+    //   self_tool_set_ids = {id(ts) for ts in self._tool_sets}
+    //   other_tool_set_ids = {id(ts) for ts in other._tool_sets}
+    //   if self_tool_set_ids != other_tool_set_ids: return False
     return true;
   }
 }

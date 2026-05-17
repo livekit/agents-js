@@ -123,7 +123,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -187,7 +187,7 @@ export class LLMStream extends llm.LLMStream {
       client: Mistral;
       opts: LLMOpts;
       chatCtx: llm.ChatContext;
-      toolCtx?: llm.ToolContext;
+      toolCtx?: llm.ToolCtxInput;
       connOptions: APIConnectOptions;
       extraKwargs: Record<string, unknown>;
     },

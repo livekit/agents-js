@@ -231,19 +231,20 @@ export class WSLLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): WSLLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const modelOptions: Record<string, unknown> = { ...(extraKwargs ?? {}) };
 
     parallelToolCalls =

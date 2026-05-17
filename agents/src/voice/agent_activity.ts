@@ -486,10 +486,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // Surface every tool the agent advertises at start — function tools by name and provider
-    // tools by id. Toolsets are flattened into these collections so they're included too.
+    // tools by id.
     const initialTools = [
-      ...Object.keys(this.tools.functionTools),
-      ...this.tools.providerTools.map((t) => t.id),
+      ...Object.keys(this.agent._toolCtx.functionTools),
+      ...this.agent._toolCtx.providerTools.map((t) => t.id),
     ];
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
@@ -614,7 +614,9 @@ export class AgentActivity implements RecognitionHooks {
 
         // tools update is supported or tools are the same
         reusable =
-          reusable && (capabilities.midSessionToolsUpdate || this.tools.equals(newActivity.tools));
+          reusable &&
+          (capabilities.midSessionToolsUpdate ||
+            this.agent._toolCtx.equals(newActivity.agent._toolCtx));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
@@ -765,7 +767,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.tools.functionTools));
+    const oldToolNames = new Set(Object.keys(this.agent._toolCtx.functionTools));
     const newToolCtx = new ToolContext(tools);
     const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
@@ -1427,7 +1429,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       info,
       chatCtx: chatCtx.copy(),
-      tools: this.tools.copy(),
+      tools: this.agent._toolCtx.copy(),
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };
@@ -1735,7 +1737,7 @@ export class AgentActivity implements RecognitionHooks {
         ? new ToolContext(
             this.agent.toolCtx.tools.filter((t) => {
               if (t.type === 'function') {
-                return !((t as unknown as { flags: number }).flags & ToolFlag.IGNORE_ON_ENTER);
+                return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
               }
               return true;
             }),
@@ -1921,7 +1923,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         preemptive.info.newTranscript === userMessage?.textContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
-        preemptive.tools.equals(this.tools) &&
+        preemptive.tools.equals(this.agent._toolCtx) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;

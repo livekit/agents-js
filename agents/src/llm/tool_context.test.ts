@@ -462,6 +462,7 @@ describe('ToolContext', () => {
     const ctx = ToolContext.empty();
     expect(ctx.functionTools).toEqual({});
     expect(ctx.providerTools).toEqual([]);
+    expect(ctx.toolsets).toEqual([]);
     expect(ctx.flatten()).toEqual([]);
   });
 
@@ -476,11 +477,22 @@ describe('ToolContext', () => {
     expect(ctx.getFunctionTool('missing')).toBeUndefined();
   });
 
-  it('later tool with the same name overrides the earlier one', () => {
+  it('throws on duplicate function names with different instances', () => {
+    // Matches Python's `if existing is not tool: raise ValueError(...)` — silently overriding
+    // a registered tool would mask a real bug at the caller (two distinct functions colliding
+    // on a single advertised name).
     const a1 = makeFn('a');
     const a2 = makeFn('a');
-    const ctx = new ToolContext([a1, a2]);
-    expect(ctx.getFunctionTool('a')).toBe(a2);
+    expect(() => new ToolContext([a1, a2])).toThrow('duplicate function name: a');
+  });
+
+  it('silently skips the same function tool instance listed multiple times', () => {
+    // Matches Python's `return  # same instance, skip` branch. Useful when a tool gets
+    // included both directly and via a future Toolset that re-exports it.
+    const a = makeFn('a');
+    const ctx = new ToolContext([a, a]);
+    expect(ctx.getFunctionTool('a')).toBe(a);
+    expect(Object.keys(ctx.functionTools)).toEqual(['a']);
   });
 
   it('separates provider tools from function tools', () => {
@@ -521,5 +533,50 @@ describe('ToolContext', () => {
     expect(new ToolContext([a, b]).equals(new ToolContext([a, b]))).toBe(true);
     expect(new ToolContext([a, b]).equals(new ToolContext([a]))).toBe(false);
     expect(new ToolContext([a, b]).equals(new ToolContext([a, c]))).toBe(false);
+  });
+
+  it('equals() is reflexive', () => {
+    const a = makeFn('a');
+    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const ctx = new ToolContext([a, provider]);
+    expect(ctx.equals(ctx)).toBe(true);
+  });
+
+  it('equals() treats provider tool order as insignificant', () => {
+    // Matches Python's `set(id(t) for t in self._provider_tools)` comparison: two contexts
+    // that hold the same provider-tool identities in different order are still equal so
+    // realtime-session / preemptive-generation reuse fast paths are not invalidated.
+    const a = makeFn('a');
+    const p1 = tool({ id: 'code', config: { language: 'python' } });
+    const p2 = tool({ id: 'browser', config: {} });
+    expect(new ToolContext([a, p1, p2]).equals(new ToolContext([a, p2, p1]))).toBe(true);
+  });
+
+  it('equals() supports contexts with only provider tools', () => {
+    const p1 = tool({ id: 'code', config: {} });
+    const p2 = tool({ id: 'browser', config: {} });
+    expect(new ToolContext([p1, p2]).equals(new ToolContext([p1, p2]))).toBe(true);
+    const p3 = tool({ id: 'code', config: {} }); // distinct identity, same id
+    expect(new ToolContext([p1]).equals(new ToolContext([p3]))).toBe(false);
+  });
+
+  it('hasTool() matches function tools by name and provider tools by id', () => {
+    const a = makeFn('a');
+    const provider = tool({ id: 'code_runner', config: {} });
+    const ctx = new ToolContext([a, provider]);
+
+    expect(ctx.hasTool('a')).toBe(true);
+    expect(ctx.hasTool('code_runner')).toBe(true);
+    expect(ctx.hasTool('missing')).toBe(false);
+  });
+
+  it('flatten() returns function tools in insertion order followed by provider tools', () => {
+    // Matches Python's `flatten()`: list(self._fnc_tools_map.values()) + self._provider_tools.
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const provider = tool({ id: 'code', config: {} });
+    const ctx = new ToolContext([b, provider, a]);
+
+    expect(ctx.flatten()).toEqual([b, a, provider]);
   });
 });

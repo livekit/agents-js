@@ -249,7 +249,7 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
@@ -258,7 +258,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -266,6 +266,7 @@ export class LLM extends llm.LLM {
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =

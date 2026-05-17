@@ -189,20 +189,21 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     toolChoice,
     extraKwargs,
     geminiTools,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
     geminiTools?: LLMTools;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
@@ -218,7 +219,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
+        const toolNames = Object.keys(toolCtx?.functionTools ?? {});
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
