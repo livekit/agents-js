@@ -326,14 +326,19 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
-    const report = this.makeSessionReport(session);
+    let report: SessionReport | undefined;
+    try {
+      report = this.makeSessionReport(session);
+    } catch (error) {
+      this.#logger.debug({ error }, 'Skipping session report generation');
+    }
 
     // TODO(brian): Implement CLI/console
 
     // Upload session report to LiveKit Cloud if enabled
     const url = new URL(this.#info.url);
 
-    if (report.enableRecording && isCloud(url)) {
+    if (report?.enableRecording && isCloud(url)) {
       try {
         await uploadSessionReport({
           agentName: this.job.agentName,
@@ -352,17 +357,19 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       }
     }
 
-    this.#logger.debug(
-      {
-        jobId: report.jobId,
-        roomId: report.roomId,
-        eventsCount: report.events.length,
-      },
-      'Session ended, report generated',
-    );
+    if (report) {
+      this.#logger.debug(
+        {
+          jobId: report.jobId,
+          roomId: report.roomId,
+          eventsCount: report.events.length,
+        },
+        'Session ended, report generated',
+      );
 
-    // Explicitly clear the recorded events to avoid leaking memory
-    session._recordedEvents = [];
+      // Explicitly clear the recorded events to avoid leaking memory
+      session._recordedEvents = [];
+    }
 
     try {
       await flushOtelLogs();
