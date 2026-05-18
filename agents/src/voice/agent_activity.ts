@@ -1625,10 +1625,11 @@ export class AgentActivity implements RecognitionHooks {
     while ((waitForAgent && agentActive) || (waitForUser && userActive)) {
       if (waitForAgent) {
         if (this.audioRecognition) {
-          await ThrowsPromise.race([
+          await this.waitForOrAbort(
             this.audioRecognition.waitForEndOfTurnTask(),
-            waitForAbort(signal),
-          ]);
+            signal,
+            'error waiting for end-of-turn task',
+          );
         }
 
         if (!this._currentSpeech && this.speechQueue.size() === 0) {
@@ -1639,7 +1640,11 @@ export class AgentActivity implements RecognitionHooks {
           if (currentUpdate.done) {
             await delay(0, { signal });
           } else {
-            await ThrowsPromise.race([currentUpdate.await, waitForAbort(signal)]);
+            await this.waitForOrAbort(
+              currentUpdate.await,
+              signal,
+              'error waiting for speech queue update',
+            );
           }
         }
       }
@@ -1649,6 +1654,20 @@ export class AgentActivity implements RecognitionHooks {
         if (userActive) {
           await delay(0, { signal });
         }
+      }
+    }
+  }
+
+  private async waitForOrAbort(
+    promise: Promise<void>,
+    signal: AbortSignal,
+    errorMessage: string,
+  ): Promise<void> {
+    try {
+      await Promise.race([promise, waitForAbort(signal)]);
+    } catch (error) {
+      if (!signal.aborted) {
+        this.logger.error({ error }, errorMessage);
       }
     }
   }
