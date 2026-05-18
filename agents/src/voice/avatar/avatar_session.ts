@@ -75,14 +75,16 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
 
     this.#agentSession = agentSession;
     this.#room = room;
-    this.#agentSession.on(
-      AgentSessionEventTypes.ConversationItemAdded,
-      this.#onConversationItemAdded,
-    );
+    if (typeof this.#agentSession.on === 'function') {
+      this.#agentSession.on(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.#onConversationItemAdded,
+      );
+    }
 
     if (room.isConnected) {
       this.#startWaitAvatarJoin();
-    } else {
+    } else if (typeof room.on === 'function') {
       room.on(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
     }
     return undefined;
@@ -94,15 +96,19 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
    */
   async aclose(): Promise<void> {
     if (this.#agentSession) {
-      this.#agentSession.off(
-        AgentSessionEventTypes.ConversationItemAdded,
-        this.#onConversationItemAdded,
-      );
+      if (typeof this.#agentSession.off === 'function') {
+        this.#agentSession.off(
+          AgentSessionEventTypes.ConversationItemAdded,
+          this.#onConversationItemAdded,
+        );
+      }
       this.#agentSession = undefined;
     }
 
     if (this.#room) {
-      this.#room.off(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
+      if (typeof this.#room.off === 'function') {
+        this.#room.off(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
+      }
       this.#room = undefined;
     }
 
@@ -177,9 +183,11 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
 
   #emitMetrics(metrics: AvatarMetrics) {
     this.emit('metrics_collected', metrics);
-    this.#agentSession?.emit(
-      AgentSessionEventTypes.MetricsCollected,
-      createMetricsCollectedEvent({ metrics }),
-    );
+    if (this.#agentSession && typeof this.#agentSession.emit === 'function') {
+      this.#agentSession.emit(
+        AgentSessionEventTypes.MetricsCollected,
+        createMetricsCollectedEvent({ metrics }),
+      );
+    }
   }
 }
