@@ -59,8 +59,8 @@ export interface AgentContext<UserData = unknown> {
   minConsecutiveSpeechDelay: number | undefined;
 }
 
-/** Return type for `Agent.create()` stream hooks. Returning `null` stops that pipeline node. */
-export type AgentHookNodeResult<T> = Promise<AsyncIterable<T> | null>;
+/** Return type for stream hooks. Returning `null` stops that pipeline node. */
+export type AgentHookNodeResult<T> = AsyncIterable<T> | Promise<AsyncIterable<T> | null> | null;
 
 export interface AgentHooks<
   UserData,

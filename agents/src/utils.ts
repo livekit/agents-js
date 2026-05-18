@@ -1125,33 +1125,26 @@ export async function* readStream<T>(
 ): AsyncGenerator<T> {
   if (signal?.aborted) return;
   const reader = stream.getReader();
-  let yieldedCount = 0;
-  let exitReason = 'unknown';
   try {
     if (signal) {
       const abortPromise = waitForAbort(signal);
       while (true) {
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
         if (!result) {
-          exitReason = 'signal-aborted';
           break;
         }
         const { done, value } = result;
         if (done) {
-          exitReason = 'source-done';
           break;
         }
-        yieldedCount += 1;
         yield value;
       }
     } else {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          exitReason = 'source-done';
           break;
         }
-        yieldedCount += 1;
         yield value;
       }
     }
@@ -1167,7 +1160,6 @@ export async function* readStream<T>(
 export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
   let iterator: AsyncIterator<T> | undefined;
   let cancelled = false;
-  let enqueuedCount = 0;
 
   return new ReadableStream<T>({
     async start(controller) {
@@ -1179,7 +1171,6 @@ export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
           if (done || cancelled) {
             break;
           }
-          enqueuedCount += 1;
           controller.enqueue(value);
         }
 

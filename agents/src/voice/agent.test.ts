@@ -179,6 +179,153 @@ describe('Agent', () => {
       await expect(collectReadableStream(result!)).resolves.toEqual(['transcript']);
     });
 
+    it('supports async generator stream node hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *sttNode(ctx, audio) {
+          expect(ctx.agent).toBe(agent);
+          const frames: AudioFrame[] = [];
+          for await (const frame of audio) {
+            frames.push(frame);
+          }
+          expect(frames).toEqual([audioFrame]);
+          yield 'transcript';
+        },
+        async *llmNode(ctx, chatCtx, toolCtx) {
+          expect(ctx.agent).toBe(agent);
+          expect(chatCtx).toBeInstanceOf(ChatContext);
+          expect(toolCtx.equals(agent.toolCtx)).toBe(true);
+          yield 'llm-output';
+        },
+        async *ttsNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          const chunks: string[] = [];
+          for await (const chunk of text) {
+            chunks.push(chunk);
+          }
+          expect(chunks).toEqual(['hello']);
+          yield outputFrame;
+        },
+        async *realtimeAudioOutputNode(ctx, audio) {
+          expect(ctx.agent).toBe(agent);
+          const frames: AudioFrame[] = [];
+          for await (const frame of audio) {
+            frames.push(frame);
+          }
+          expect(frames).toEqual([audioFrame]);
+          yield outputFrame;
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const text = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello');
+          controller.close();
+        },
+      });
+
+      const sttResult = await agent.sttNode(audio, {});
+      const llmResult = await agent.llmNode(ChatContext.empty(), agent.toolCtx, {});
+      const ttsResult = await agent.ttsNode(text, {});
+      const realtimeResult = await agent.realtimeAudioOutputNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+
+      expect(sttResult).not.toBeNull();
+      expect(llmResult).not.toBeNull();
+      expect(ttsResult).not.toBeNull();
+      expect(realtimeResult).not.toBeNull();
+      await expect(collectReadableStream(sttResult!)).resolves.toEqual(['transcript']);
+      await expect(collectReadableStream(llmResult!)).resolves.toEqual(['llm-output']);
+      await expect(collectReadableStream(ttsResult!)).resolves.toEqual([outputFrame]);
+      await expect(collectReadableStream(realtimeResult!)).resolves.toEqual([outputFrame]);
+    });
+
+    it('supports stream node hooks that return async iterables', async () => {
+      function asyncIterableOf<T>(...items: T[]): AsyncIterable<T> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const item of items) {
+              yield item;
+            }
+          },
+        };
+      }
+
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        sttNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf('transcript');
+        },
+        llmNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf('llm-output');
+        },
+        ttsNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf(outputFrame);
+        },
+        realtimeAudioOutputNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf(outputFrame);
+        },
+      });
+
+      const sttResult = await agent.sttNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+      const llmResult = await agent.llmNode(ChatContext.empty(), agent.toolCtx, {});
+      const ttsResult = await agent.ttsNode(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('hello');
+            controller.close();
+          },
+        }),
+        {},
+      );
+      const realtimeResult = await agent.realtimeAudioOutputNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+
+      expect(sttResult).not.toBeNull();
+      expect(llmResult).not.toBeNull();
+      expect(ttsResult).not.toBeNull();
+      expect(realtimeResult).not.toBeNull();
+      await expect(collectReadableStream(sttResult!)).resolves.toEqual(['transcript']);
+      await expect(collectReadableStream(llmResult!)).resolves.toEqual(['llm-output']);
+      await expect(collectReadableStream(ttsResult!)).resolves.toEqual([outputFrame]);
+      await expect(collectReadableStream(realtimeResult!)).resolves.toEqual([outputFrame]);
+    });
+
     it('falls back to existing defaults for missing hooks', async () => {
       const audioFrame = 'audio' as unknown as AudioFrame;
       const audio = new ReadableStream<AudioFrame>({
