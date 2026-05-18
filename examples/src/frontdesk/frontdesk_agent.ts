@@ -26,11 +26,9 @@ import {
   SlotUnavailableError,
   getUniqueHash,
 } from './calendar_api.js';
-import { UIView } from './ui_view.js';
 
 export interface Userdata {
   cal: Calendar;
-  ui?: UIView;
 }
 
 export class FrontDeskAgent extends voice.Agent {
@@ -108,8 +106,6 @@ export class FrontDeskAgent extends voice.Agent {
               timeZoneName: 'short',
               timeZone: this.tz,
             });
-
-            ctx.userData.ui?.appointmentBooked(slot, this.tz);
 
             return `The appointment was successfully scheduled for ${formatted}.`;
           },
@@ -189,8 +185,6 @@ You must infer the appropriate range implicitly from the conversational context 
               this._slotsMap.set(uniqueHash, slot);
             }
 
-            ctx.userData.ui?.slotsListed(slots, now, this.tz, rangeDays);
-
             return lines.join('\n') || 'No slots available at the moment.';
           },
         }),
@@ -223,7 +217,7 @@ export default defineAgent({
 
     await cal.initialize();
 
-    const userdata: Userdata = { cal, ui: new UIView(ctx) };
+    const userdata: Userdata = { cal };
 
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
