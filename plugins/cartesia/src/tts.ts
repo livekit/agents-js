@@ -35,8 +35,8 @@ import {
   cartesiaMessageSchema,
   hasWordTimestamps,
   isChunkMessage,
-  isDoneMessage,
   isErrorMessage,
+  isFlushDoneMessage,
 } from './types.js';
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
@@ -434,38 +434,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             continue;
           }
 
-          // Handle error messages: surface them to the base SynthesizeStream so
-          // tts_error is emitted and retries can run, rather than silently dropping.
-          if (isErrorMessage(serverMsg)) {
-            this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
-            throw new APIConnectionError({
-              message: `Cartesia returned error: ${serverMsg.error}`,
-              options: { retryable: true },
-            });
-          }
-
           const segmentId = serverMsg.context_id;
 
-          // Process word timestamps if present (typed via Zod schema)
-          if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
-            const wordTimestamps = serverMsg.word_timestamps;
-            for (let i = 0; i < wordTimestamps.words.length; i++) {
-              const word = wordTimestamps.words[i];
-              const startTime = wordTimestamps.start[i];
-              const endTime = wordTimestamps.end[i];
-              if (word !== undefined && startTime !== undefined && endTime !== undefined) {
-                pendingTimedTranscripts.push(
-                  createTimedString({
-                    text: word + ' ', // Add space after word for consistency
-                    startTime,
-                    endTime,
-                  }),
-                );
-              }
-            }
-          }
-
-          // Handle audio chunk messages
+          // Branch order mirrors the Python plugin: any frame with `done: true` —
+          // including the error Cartesia returns for empty/whitespace input on
+          // function-call turns — is treated as completion once the sentence
+          // stream has been closed, instead of being raised and retried. Only a
+          // "pure" error frame (no done:true) raises.
           if (isChunkMessage(serverMsg)) {
             const audioBuffer = Buffer.from(serverMsg.data, 'base64');
             // Extract ArrayBuffer from Buffer for AudioByteStream compatibility
@@ -489,7 +464,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               );
               ws.close();
             }, this.#opts.chunkTimeout);
-          } else if (isDoneMessage(serverMsg)) {
+          } else if (serverMsg.done === true) {
             // This ensures all sentences have been sent before closing
             if (sentenceStreamClosed) {
               for (const frame of bstream.flush()) {
@@ -509,6 +484,32 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
             // If sentenceStreamClosed is false, continue receiving - more done messages will come
+          } else if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
+            const wordTimestamps = serverMsg.word_timestamps;
+            for (let i = 0; i < wordTimestamps.words.length; i++) {
+              const word = wordTimestamps.words[i];
+              const startTime = wordTimestamps.start[i];
+              const endTime = wordTimestamps.end[i];
+              if (word !== undefined && startTime !== undefined && endTime !== undefined) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: word + ' ', // Add space after word for consistency
+                    startTime,
+                    endTime,
+                  }),
+                );
+              }
+            }
+          } else if (isErrorMessage(serverMsg)) {
+            this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
+            throw new APIConnectionError({
+              message: `Cartesia returned error: ${serverMsg.error}`,
+              options: { retryable: true },
+            });
+          } else if (isFlushDoneMessage(serverMsg)) {
+            // ack of a flush — nothing to do
+          } else {
+            this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
           }
         }
       } catch (err) {
