@@ -47,6 +47,7 @@ export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+export type SpeechmaticsTurnDetectionMode = 'external' | 'fixed' | 'adaptive' | 'smart_turn';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Default: not specified. */
@@ -109,6 +110,8 @@ export interface XaiOptions {
 }
 
 export interface SpeechmaticsOptions {
+  /** Endpointing mode. Default: external. */
+  turn_detection_mode?: SpeechmaticsTurnDetectionMode;
   /** Domain to use, for example "finance". */
   domain?: string;
   /** BCP-47 locale for output formatting. */
@@ -168,6 +171,22 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
     if (!value) return false;
     return !(typeof value === 'string' && value.toLowerCase() === 'none');
   });
+}
+
+function isSpeechmaticsModel(model: STTModels | undefined): boolean {
+  return typeof model === 'string' && model.startsWith('speechmatics/');
+}
+
+function applySpeechmaticsDefaults<TModel extends STTModels>(
+  model: TModel | undefined,
+  modelOptions: STTOptions<TModel>,
+): STTOptions<TModel> {
+  if (!isSpeechmaticsModel(model)) return modelOptions;
+
+  const options = modelOptions as Record<string, unknown>;
+  if (options.turn_detection_mode !== undefined) return modelOptions;
+
+  return { ...options, turn_detection_mode: 'external' } as STTOptions<TModel>;
 }
 
 type _STTModels =
@@ -321,6 +340,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       }
     }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+    const normalizedModelOptions = applySpeechmaticsDefaults(
+      nextModel as TModel | undefined,
+      modelOptions,
+    );
 
     this.opts = {
       model: nextModel as TModel,
@@ -330,7 +353,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       baseURL: lkBaseURL,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      modelOptions,
+      modelOptions: normalizedModelOptions,
       fallback: normalizedFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
@@ -363,12 +386,16 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
       : this.opts.modelOptions;
+    const normalizedModelOptions = applySpeechmaticsDefaults(
+      (opts.model ?? this.opts.model) as TModel | undefined,
+      mergedModelOptions,
+    );
 
     this.opts = {
       ...this.opts,
       ...opts,
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
-      modelOptions: mergedModelOptions,
+      modelOptions: normalizedModelOptions,
     };
 
     if (opts.modelOptions) {
