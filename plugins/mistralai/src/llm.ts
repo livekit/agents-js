@@ -212,12 +212,9 @@ export class LLMStream extends llm.LLMStream {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
       if (this.toolCtx) {
-        // flatten() yields function tools + provider tools, including any contributed by Toolsets.
         for (const t of this.toolCtx.flatten()) {
-          if (!llm.isFunctionTool(t)) {
-            // Provider-defined tools are not wired into the Mistral schema yet (AJS-112).
-            continue;
-          }
+          // TODO: support provider-defined tools in the Mistral schema.
+          if (!llm.isFunctionTool(t)) continue;
           toolsList.push({
             type: 'function' as const,
             function: {

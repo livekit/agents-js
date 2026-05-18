@@ -320,10 +320,11 @@ export class ToolContext<UserData = UnknownUserData> {
     this._providerTools = [];
     this._toolsets = [];
 
-    const addTool = (tool: ToolContextEntry<UserData>): void => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
+    const addTool = (tool: any): void => {
       if (tool instanceof Toolset) {
         for (const inner of tool.tools) {
-          addTool(inner as ToolContextEntry<UserData>);
+          addTool(inner);
         }
         this._toolsets.push(tool);
         return;
@@ -381,10 +382,9 @@ export class ToolContext<UserData = UnknownUserData> {
     if (this._toolsets.length !== other._toolsets.length) {
       return false;
     }
-    // Toolsets compare as identity sets, matching Python's `{id(ts) for ts in self._tool_sets}`.
-    const otherToolsetIds = new Set(other._toolsets);
+    const otherToolsets = new Set(other._toolsets);
     for (const ts of this._toolsets) {
-      if (!otherToolsetIds.has(ts)) {
+      if (!otherToolsets.has(ts)) {
         return false;
       }
     }

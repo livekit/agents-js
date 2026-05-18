@@ -186,30 +186,27 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
+      // TODO: support provider-defined tools in the Responses schema.
       const tools = this.toolCtx
         ? this.toolCtx
             .flatten()
+            .filter(llm.isFunctionTool)
             .map((t) => {
-              if (llm.isFunctionTool(t)) {
-                const oaiParams = {
-                  type: 'function' as const,
-                  name: t.name,
-                  description: t.description,
-                  parameters: llm.toJsonSchema(
-                    t.parameters,
-                    true,
-                    this.strictToolSchema,
-                  ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-                } as OpenAI.Responses.FunctionTool;
-                if (this.strictToolSchema) {
-                  oaiParams.strict = true;
-                }
-                return oaiParams;
+              const oaiParams = {
+                type: 'function' as const,
+                name: t.name,
+                description: t.description,
+                parameters: llm.toJsonSchema(
+                  t.parameters,
+                  true,
+                  this.strictToolSchema,
+                ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
+              } as OpenAI.Responses.FunctionTool;
+              if (this.strictToolSchema) {
+                oaiParams.strict = true;
               }
-              // Provider-defined tools are not wired up here yet; skip until AJS-112 lands.
-              return undefined;
+              return oaiParams;
             })
-            .filter((t): t is NonNullable<typeof t> => t !== undefined)
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };

@@ -368,10 +368,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = tools.copy();
-    // flatten() yields function tools + provider tools, including any contributed by Toolsets.
+    // TODO: support provider-defined tools in the Phonic schema.
     this.toolDefinitions = tools
       .flatten()
-      .filter((t): t is llm.FunctionTool<any, any, any> => llm.isFunctionTool(t))
+      .filter(llm.isFunctionTool)
       .map((t) => ({
         type: 'custom_websocket' as const,
         tool_schema: {
@@ -406,10 +406,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (tools !== undefined) {
       this._tools = tools.copy();
-      // flatten() yields function tools + provider tools, including any contributed by Toolsets.
+      // TODO: support provider-defined tools in the Phonic schema.
       this.toolDefinitions = tools
         .flatten()
-        .filter((t): t is llm.FunctionTool<any, any, any> => llm.isFunctionTool(t))
+        .filter(llm.isFunctionTool)
         .map((t) => ({
           type: 'custom_websocket' as const,
           tool_schema: {

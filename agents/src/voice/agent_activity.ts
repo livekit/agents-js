@@ -781,21 +781,12 @@ export class AgentActivity implements RecognitionHooks {
     const newToolsets = newToolCtx.toolsets;
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
-    const addedToolsets = newToolsets.filter((toolset) => !oldToolsets.includes(toolset));
-    const removedToolsets = oldToolsets.filter((toolset) => !newToolsets.includes(toolset));
+    const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
+    const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
 
-    // Run lifecycle calls in the order setup → swap toolCtx → close so a `setup()` failure leaves
-    // the agent pointing at the OLD toolCtx (whose toolsets are still tracked and will be closed
-    // by the activity's normal teardown path — no leak).
-    if (this._toolsetsSetup) {
-      await this.setupToolsets(addedToolsets, false);
-    }
-
+    await this.setupToolsetList(addedToolsets);
     this.agent._toolCtx = newToolCtx;
-
-    if (this._toolsetsSetup) {
-      await this.closeToolsets(removedToolsets, false);
-    }
+    await this.closeToolsetList(removedToolsets);
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -1757,9 +1748,6 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
-            // Recurse into Toolsets so function tools nested inside a Toolset are also subject
-            // to IGNORE_ON_ENTER. The Toolset itself is omitted from this short-lived context
-            // because lifecycle ownership stays with the agent's persistent toolCtx.
             this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
               const keepFn = (fn: Tool): boolean =>
                 !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
@@ -3760,66 +3748,35 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition = undefined;
   }
 
-  private async setupToolsets(
-    toolsets: readonly Toolset[] = this.agent.toolCtx.toolsets,
-    updateSetupState = true,
-  ): Promise<void> {
-    if (updateSetupState && this._toolsetsSetup) {
-      return;
-    }
+  private async setupToolsets(): Promise<void> {
+    // Guard against resume() re-entering _startSession on an activity whose toolsets are
+    // already initialized.
+    if (this._toolsetsSetup) return;
+    this._toolsetsSetup = true;
+    await this.setupToolsetList(this.agent.toolCtx.toolsets);
+  }
 
-    // Toolset.setup() failures bubble up so the activity (and its agent) fails explicitly
-    // rather than silently advertising tools whose backing resources never initialized. If any
-    // setup fails, close the ones that already succeeded to avoid leaking their backing
-    // resources — `closeToolsets()` won't run them later because `_toolsetsSetup` never flips
-    // to true.
-    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.setup()));
+  private async closeToolsets(): Promise<void> {
+    if (!this._toolsetsSetup) return;
+    this._toolsetsSetup = false;
+    await this.closeToolsetList(this.agent.toolCtx.toolsets);
+  }
 
-    let firstError: unknown;
-    const succeeded: Toolset[] = [];
-    for (let i = 0; i < outputs.length; i++) {
-      const output = outputs[i]!;
+  private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.setup()));
+    for (const output of outputs) {
       if (output.status === 'rejected') {
-        if (firstError === undefined) firstError = output.reason;
-      } else {
-        succeeded.push(toolsets[i]!);
+        this.logger.error({ error: output.reason }, 'error setting up toolset');
       }
-    }
-
-    if (firstError !== undefined) {
-      const closeOutputs = await Promise.allSettled(succeeded.map((t) => t.aclose()));
-      for (const output of closeOutputs) {
-        if (output.status === 'rejected') {
-          this.logger.error(
-            { error: output.reason },
-            'error closing toolset during setup rollback',
-          );
-        }
-      }
-      throw firstError;
-    }
-
-    if (updateSetupState) {
-      this._toolsetsSetup = true;
     }
   }
 
-  private async closeToolsets(
-    toolsets: readonly Toolset[] = this.agent.toolCtx.toolsets,
-    updateSetupState = true,
-  ): Promise<void> {
-    if (updateSetupState && !this._toolsetsSetup) {
-      return;
-    }
-
-    const outputs = await Promise.allSettled(toolsets.map((toolset) => toolset.aclose()));
+  private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error closing toolset');
       }
-    }
-    if (updateSetupState) {
-      this._toolsetsSetup = false;
     }
   }
 }

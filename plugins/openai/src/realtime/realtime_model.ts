@@ -698,12 +698,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): these logics below are noops I think, leaving it here to keep
     // parity with the python but we should remove them later
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
-    const retainedEntries = _tools.tools.filter((entry) => {
-      if (llm.isFunctionTool(entry)) {
-        return retainedToolNames.has(entry.name);
-      }
-      return true;
-    });
+    // Keep provider tools and Toolsets as-is; only drop function tools the server didn't accept.
+    const retainedEntries = _tools.tools.filter(
+      (entry) => !llm.isFunctionTool(entry) || retainedToolNames.has(entry.name),
+    );
 
     this._tools = new llm.ToolContext(retainedEntries);
 
@@ -713,12 +711,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
-    // flatten() yields function tools + provider tools, including any contributed by Toolsets.
     for (const t of _tools.flatten()) {
-      if (!llm.isFunctionTool(t)) {
-        // Provider-defined tools aren't wired into the Realtime session-update schema yet.
-        continue;
-      }
+      // TODO: support provider-defined tools in the Realtime session-update schema.
+      if (!llm.isFunctionTool(t)) continue;
       try {
         const parameters = llm.toJsonSchema(
           t.parameters,

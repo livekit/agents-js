@@ -139,12 +139,9 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
 export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  // flatten() yields function tools + provider tools, including any contributed by Toolsets.
   for (const tool of toolCtx.flatten()) {
-    if (!llm.isFunctionTool(tool)) {
-      // Provider-defined tools are not wired into the Gemini schema yet.
-      continue;
-    }
+    // TODO: support provider-defined tools in the Gemini schema.
+    if (!llm.isFunctionTool(tool)) continue;
     const { name, description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 
