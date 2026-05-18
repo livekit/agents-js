@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Examples metadata consumed by livekit/agents-jukebox.
+#
+# Each top-level key under `examples` is the agent name used as the dispatch
+# target in the jukebox token endpoint.
+#
+# Pixel art icons: `1` = accent color, `2` = lighter accent (highlight /
+# secondary detail), `0` = transparent.
+
+version: 1
+
+project:
+  subdomain: examples-wfxyig8v
+
+examples:
+  survey:
+    title: Survey
+    description: A structured interview agent that walks candidates through a software engineer screening flow, captures answers as they go, and writes a graded summary to disk.
+    accent: '#EF8B01'
+    entry: src/survey_agent.ts
+    github: 'https://github.com/livekit/agents-js/tree/main/examples/src/survey_agent.ts'
+    tags: [multi-agent]
+    icon:
+      size: 12
+      pixels: |
+        000000000000
+        001111111100
+        010000000010
+        010000000010
+        010222200010
+        010000000010
+        010220000010
+        010000000010
+        010111111100
+        011000000000
+        010000000000
+        000000000000
+
+  frontdesk:
+    title: Front Desk
+    description: A receptionist agent wired up to a live calendar. Answers questions about availability, books appointments in real time, and confirms back to the caller.
+    accent: '#1F44F9'
+    entry: src/frontdesk/frontdesk_agent.ts
+    github: 'https://github.com/livekit/agents-js/tree/main/examples/src/frontdesk'
+    tags: [tools, scheduling]
+    icon:
+      size: 12
+      pixels: |
+        000000000000
+        000100010000
+        001111111000
+        012222222100
+        011111111100
+        010000000100
+        010000000100
+        010000000100
+        010000000100
+        010000000100
+        001111111000
+        000000000000
+    views:
+      - rpc: set_appointment_status
+        title: "\uf073 Schedule"
+
+  drive-thru:
+    title: Drive Thru
+    description: A drive-thru ordering agent that takes the order over voice, builds a structured cart with dynamically-generated tools per menu item, and reads back the total.
+    accent: '#FA4C39'
+    entry: src/drive-thru/drivethru_agent.ts
+    github: 'https://github.com/livekit/agents-js/tree/main/examples/src/drive-thru'
+    tags: [tools]
+    icon:
+      size: 12
+      pixels: |
+        000000000000
+        000000000000
+        001111110000
+        012221221000
+        012222111110
+        100000000001
+        101110011101
+        011011110110
+        001110011100
+        000000000000
+        000000000000
+        000000000000
+    views:
+      - rpc: set_cart_content
+        title: "\uf07a Current order"
