@@ -4,6 +4,7 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APITimeoutError,
   AudioByteStream,
   Future,
@@ -433,10 +434,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             continue;
           }
 
-          // Handle error messages
+          // Handle error messages: surface them to the base SynthesizeStream so
+          // tts_error is emitted and retries can run, rather than silently dropping.
           if (isErrorMessage(serverMsg)) {
             this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
-            continue;
+            throw new APIConnectionError({
+              message: `Cartesia returned error: ${serverMsg.error}`,
+              options: { retryable: true },
+            });
           }
 
           const segmentId = serverMsg.context_id;
@@ -507,6 +512,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
       } catch (err) {
+        // Always propagate API errors so the base SynthesizeStream can retry
+        // and emit tts_error once retries are exhausted.
+        if (err instanceof APIError) throw err;
         // skip log error for normal websocket close
         if (err instanceof Error && !err.message.includes('WebSocket closed')) {
           if (
@@ -549,6 +557,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.abortSignal.aborted) {
         return;
       }
+      if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
     } finally {
       // Ensure we don't leak sockets/tasks across retry attempts.
