@@ -41,11 +41,15 @@ const WS_MAX_SESSION_DURATION = 3_600_000;
  * Realtime API. OpenAI's native endpoint accepts and ignores the
  * parameter, so this is a no-op for direct connections.
  *
+ * Maps `http://` → `ws://` and `https://` → `wss://` so plain-HTTP
+ * baseURLs (e.g. an in-cluster LiteLLM proxy) connect without a
+ * spurious TLS handshake.
+ *
  * @internal
  */
 export function buildResponsesWsUrl(baseURL: string | undefined, model: string): string {
   const base = baseURL
-    ? `${baseURL.replace(/^https?/, 'wss').replace(/\/+$/, '')}/responses`
+    ? `${baseURL.replace(/^http(s?):/, 'ws$1:').replace(/\/+$/, '')}/responses`
     : OPENAI_RESPONSES_WS_URL;
   const url = new URL(base);
   url.searchParams.set('model', model);
