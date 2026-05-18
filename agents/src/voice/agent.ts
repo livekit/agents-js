@@ -695,9 +695,6 @@ class AgentV2<UserData> extends Agent<UserData> {
     }
 
     const result = await this.hooks.sttNode(this.getContext(), readStream(audio), modelSettings);
-    // #region agent log
-    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.sttNode',message:'factory sttNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return result === null ? null : toStream(result);
   }
 
@@ -716,9 +713,6 @@ class AgentV2<UserData> extends Agent<UserData> {
       toolCtx as ToolContext<UserData>,
       modelSettings,
     );
-    // #region agent log
-    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.llmNode',message:'factory llmNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return result === null ? null : toStream(result);
   }
 
@@ -731,9 +725,6 @@ class AgentV2<UserData> extends Agent<UserData> {
     }
 
     const result = await this.hooks.ttsNode(this.getContext(), readStream(text), modelSettings);
-    // #region agent log
-    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.ttsNode',message:'factory ttsNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return result === null ? null : toStream(result);
   }
 
@@ -750,9 +741,6 @@ class AgentV2<UserData> extends Agent<UserData> {
       readStream(audio),
       modelSettings,
     );
-    // #region agent log
-    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.realtimeAudioOutputNode',message:'factory realtimeAudioOutputNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return result === null ? null : toStream(result);
   }
 }
