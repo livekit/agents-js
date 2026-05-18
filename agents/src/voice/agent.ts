@@ -30,7 +30,7 @@ import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/i
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, readStream, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
@@ -136,6 +136,83 @@ export interface AgentOptions<UserData> {
   allowInterruptions?: boolean;
 }
 
+/** Context passed to hooks created with `Agent.create()`. */
+export interface AgentContext<UserData = unknown> {
+  /** The agent instance currently running the hook. */
+  agent: Agent<UserData>;
+  /** Voice activity detector configured for the agent. */
+  vad: VAD | undefined;
+  /** Speech-to-text model configured for the agent. */
+  stt: STT | undefined;
+  /** LLM or realtime model configured for the agent. */
+  llm: LLM | RealtimeModel | undefined;
+  /** Text-to-speech model configured for the agent. */
+  tts: TTS | undefined;
+  /** Whether TTS-aligned transcripts are enabled for the agent. */
+  useTtsAlignedTranscript: boolean | undefined;
+  /** Pronunciation replacements applied before TTS synthesis. */
+  ttsPronunciationMap: TTSPronunciationMap | undefined;
+  /** Readonly view of the agent's current chat context. */
+  chatCtx: ReadonlyChatContext;
+  /** Agent identifier. */
+  id: string;
+  /** Agent instructions. */
+  instructions: string | Instructions;
+  /** Copy of the agent tool context. */
+  toolCtx: ToolContext<UserData>;
+  /** Current session for the agent. */
+  session: AgentSession<UserData>;
+  /** Agent-level turn handling configuration. */
+  turnHandling: Partial<TurnHandlingOptions> | undefined;
+  /** Minimum delay between consecutive speech. */
+  minConsecutiveSpeechDelay: number | undefined;
+}
+
+/** Return type for `Agent.create()` stream hooks. Returning `null` stops that pipeline node. */
+export type AgentHookNodeResult<T> = Promise<AsyncIterable<T> | null>;
+
+export interface AgentHooks<UserData> {
+  /** Called when the agent becomes active in a session. */
+  onEnter?: (ctx: AgentContext<UserData>) => Promise<void> | void;
+  /** Called when the agent is leaving the active session. */
+  onExit?: (ctx: AgentContext<UserData>) => Promise<void> | void;
+  /** Called after the user's turn has been committed to the chat context. */
+  onUserTurnCompleted?: (
+    ctx: AgentContext<UserData>,
+    chatCtx: ChatContext,
+    newMessage: ChatMessage,
+  ) => Promise<void> | void;
+  /** Transforms incoming audio into speech events or transcript text for the agent. */
+  sttNode?: (
+    ctx: AgentContext<UserData>,
+    audio: AsyncIterable<AudioFrame>,
+    modelSettings: ModelSettings,
+  ) => AgentHookNodeResult<SpeechEvent | string>;
+  /** Produces LLM chunks or text from the current chat and tool context. */
+  llmNode?: (
+    ctx: AgentContext<UserData>,
+    chatCtx: ChatContext,
+    toolCtx: ToolContext<UserData>,
+    modelSettings: ModelSettings,
+  ) => AgentHookNodeResult<ChatChunk | string>;
+  /** Synthesizes agent text into audio frames for playout. */
+  ttsNode?: (
+    ctx: AgentContext<UserData>,
+    text: AsyncIterable<string>,
+    modelSettings: ModelSettings,
+  ) => AgentHookNodeResult<AudioFrame>;
+  /** Processes realtime model audio before it is sent to the agent output. */
+  realtimeAudioOutputNode?: (
+    ctx: AgentContext<UserData>,
+    audio: AsyncIterable<AudioFrame>,
+    modelSettings: ModelSettings,
+  ) => AgentHookNodeResult<AudioFrame>;
+}
+
+export interface AgentCreateOptions<UserData = any>
+  extends AgentOptions<UserData>,
+    AgentHooks<UserData> {}
+
 export class Agent<UserData = any> {
   private _id: string;
   private _stt?: STT;
@@ -159,6 +236,10 @@ export class Agent<UserData = any> {
 
   /** @internal */
   _toolCtx: ToolContext<UserData>;
+
+  static create<UserData = unknown>(options: AgentCreateOptions<UserData>): Agent<UserData> {
+    return new AgentV2(options);
+  }
 
   constructor({
     id,
@@ -544,6 +625,192 @@ export class Agent<UserData = any> {
       return audio;
     },
   };
+}
+
+class AgentV2<UserData> extends Agent<UserData> {
+  private readonly hooks: AgentHooks<UserData>;
+  private readonly context: AgentContext<UserData>;
+
+  constructor({
+    onEnter,
+    onExit,
+    onUserTurnCompleted,
+    sttNode,
+    llmNode,
+    ttsNode,
+    realtimeAudioOutputNode,
+    ...agentOptions
+  }: AgentCreateOptions<UserData>) {
+    super({
+      ...agentOptions,
+      id: agentOptions.id ?? 'default_agent',
+    });
+
+    this.hooks = {
+      onEnter,
+      onExit,
+      onUserTurnCompleted,
+      sttNode,
+      llmNode,
+      ttsNode,
+      realtimeAudioOutputNode,
+    };
+    this.context = new AgentHookContext(this);
+  }
+
+  private getContext(): AgentContext<UserData> {
+    return this.context;
+  }
+
+  override async onEnter(): Promise<void> {
+    if (!this.hooks.onEnter) {
+      return super.onEnter();
+    }
+
+    return this.hooks.onEnter(this.getContext());
+  }
+
+  override async onExit(): Promise<void> {
+    if (!this.hooks.onExit) {
+      return super.onExit();
+    }
+
+    return this.hooks.onExit(this.getContext());
+  }
+
+  override async onUserTurnCompleted(chatCtx: ChatContext, newMessage: ChatMessage): Promise<void> {
+    if (!this.hooks.onUserTurnCompleted) {
+      return super.onUserTurnCompleted(chatCtx, newMessage);
+    }
+
+    return this.hooks.onUserTurnCompleted(this.getContext(), chatCtx, newMessage);
+  }
+
+  override async sttNode(
+    audio: ReadableStream<AudioFrame>,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<SpeechEvent | string> | null> {
+    if (!this.hooks.sttNode) {
+      return super.sttNode(audio, modelSettings);
+    }
+
+    const result = await this.hooks.sttNode(this.getContext(), readStream(audio), modelSettings);
+    // #region agent log
+    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.sttNode',message:'factory sttNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return result === null ? null : toStream(result);
+  }
+
+  override async llmNode(
+    chatCtx: ChatContext,
+    toolCtx: ToolContext,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<ChatChunk | string> | null> {
+    if (!this.hooks.llmNode) {
+      return super.llmNode(chatCtx, toolCtx, modelSettings);
+    }
+
+    const result = await this.hooks.llmNode(
+      this.getContext(),
+      chatCtx,
+      toolCtx as ToolContext<UserData>,
+      modelSettings,
+    );
+    // #region agent log
+    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.llmNode',message:'factory llmNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return result === null ? null : toStream(result);
+  }
+
+  override async ttsNode(
+    text: ReadableStream<string>,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    if (!this.hooks.ttsNode) {
+      return super.ttsNode(text, modelSettings);
+    }
+
+    const result = await this.hooks.ttsNode(this.getContext(), readStream(text), modelSettings);
+    // #region agent log
+    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.ttsNode',message:'factory ttsNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return result === null ? null : toStream(result);
+  }
+
+  override async realtimeAudioOutputNode(
+    audio: ReadableStream<AudioFrame>,
+    modelSettings: ModelSettings,
+  ): Promise<ReadableStream<AudioFrame> | null> {
+    if (!this.hooks.realtimeAudioOutputNode) {
+      return super.realtimeAudioOutputNode(audio, modelSettings);
+    }
+
+    const result = await this.hooks.realtimeAudioOutputNode(
+      this.getContext(),
+      readStream(audio),
+      modelSettings,
+    );
+    // #region agent log
+    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H2',location:'agents/src/voice/agent.ts:CreatedAgent.realtimeAudioOutputNode',message:'factory realtimeAudioOutputNode hook returned',data:{returnedNull:result===null,hasAsyncIterator:result!==null&&typeof result?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return result === null ? null : toStream(result);
+  }
+}
+
+class AgentHookContext<UserData> implements AgentContext<UserData> {
+  constructor(readonly agent: Agent<UserData>) {}
+
+  get vad(): VAD | undefined {
+    return this.agent.vad;
+  }
+
+  get stt(): STT | undefined {
+    return this.agent.stt;
+  }
+
+  get llm(): LLM | RealtimeModel | undefined {
+    return this.agent.llm;
+  }
+
+  get tts(): TTS | undefined {
+    return this.agent.tts;
+  }
+
+  get useTtsAlignedTranscript(): boolean | undefined {
+    return this.agent.useTtsAlignedTranscript;
+  }
+
+  get ttsPronunciationMap(): TTSPronunciationMap | undefined {
+    return this.agent.ttsPronunciationMap;
+  }
+
+  get chatCtx(): ReadonlyChatContext {
+    return this.agent.chatCtx;
+  }
+
+  get id(): string {
+    return this.agent.id;
+  }
+
+  get instructions(): string | Instructions {
+    return this.agent.instructions;
+  }
+
+  get toolCtx(): ToolContext<UserData> {
+    return this.agent.toolCtx;
+  }
+
+  get session(): AgentSession<UserData> {
+    return this.agent.session;
+  }
+
+  get turnHandling(): Partial<TurnHandlingOptions> | undefined {
+    return this.agent.turnHandling;
+  }
+
+  get minConsecutiveSpeechDelay(): number | undefined {
+    return this.agent.minConsecutiveSpeechDelay;
+  }
 }
 
 // Wrap the TTS input stream so pronunciation replacements are applied before synthesis,

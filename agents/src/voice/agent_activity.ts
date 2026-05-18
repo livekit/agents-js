@@ -31,7 +31,6 @@ import {
   type InputSpeechStartedEvent,
   type InputSpeechStoppedEvent,
   type InputTranscriptionCompleted,
-  isFunctionTool,
   LLM,
   RealtimeModel,
   type RealtimeModelError,
@@ -42,6 +41,7 @@ import {
   type ToolContextEntry,
   ToolFlag,
   Toolset,
+  isFunctionTool,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';

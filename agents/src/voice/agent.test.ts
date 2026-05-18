@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { tool } from '../llm/index.js';
+import { ChatContext, ChatMessage, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
@@ -14,6 +16,14 @@ import { defaultInterruptionOptions } from './turn_config/interruption.js';
 vi.mock('ofetch', () => ({ ofetch: vi.fn() }));
 
 initializeLogger({ pretty: false, level: 'error' });
+
+async function collectReadableStream<T>(stream: ReadableStream<T>): Promise<T[]> {
+  const chunks: T[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
 
 describe('Agent', () => {
   it('should create agent with basic instructions', () => {
@@ -78,6 +88,111 @@ describe('Agent', () => {
     // internal state.
     expect(agent.toolCtx).not.toBe(agent.toolCtx);
     expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
+  });
+
+  describe('create', () => {
+    it('preserves constructor options and base Agent default id', () => {
+      const mockTool = tool({
+        name: 'testTool',
+        description: 'Test tool',
+        parameters: z.object({}),
+        execute: async () => 'result',
+      });
+
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        tools: [mockTool],
+      });
+
+      expect(agent).toBeInstanceOf(Agent);
+      expect(agent.instructions).toBe('factory instructions');
+      expect(agent.id).toBe('default_agent');
+      expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
+    });
+
+    it('passes AgentContext to lifecycle hooks', async () => {
+      const calls: string[] = [];
+      const chatCtx = ChatContext.empty();
+      const newMessage = ChatMessage.create({ role: 'user', content: ['hello'] });
+      const agent = Agent.create({
+        id: 'factory_agent',
+        instructions: 'factory instructions',
+        minConsecutiveSpeechDelay: 12,
+        ttsPronunciationMap: { LiveKit: 'live kit' },
+        onEnter: (ctx) => {
+          expect(ctx.agent).toBe(agent);
+          expect(ctx.id).toBe(agent.id);
+          expect(ctx.instructions).toBe(agent.instructions);
+          expect(ctx.toolCtx.functionTools).toEqual(agent.toolCtx.functionTools);
+          expect(ctx.chatCtx.items).toEqual(agent.chatCtx.items);
+          expect(ctx.minConsecutiveSpeechDelay).toBe(agent.minConsecutiveSpeechDelay);
+          expect(ctx.ttsPronunciationMap).toBe(agent.ttsPronunciationMap);
+          calls.push('enter');
+        },
+        onExit: async (ctx) => {
+          expect(ctx.agent).toBe(agent);
+          calls.push('exit');
+        },
+        onUserTurnCompleted: (ctx, receivedChatCtx, receivedMessage) => {
+          expect(ctx.agent).toBe(agent);
+          expect(receivedChatCtx).toBe(chatCtx);
+          expect(receivedMessage).toBe(newMessage);
+          calls.push('turn');
+        },
+      });
+
+      await agent.onEnter();
+      await agent.onExit();
+      await agent.onUserTurnCompleted(chatCtx, newMessage);
+
+      expect(calls).toEqual(['enter', 'exit', 'turn']);
+    });
+
+    it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async sttNode(ctx, audio) {
+          async function* stream() {
+            expect(ctx.agent).toBe(agent);
+            const frames: AudioFrame[] = [];
+            for await (const frame of audio) {
+              frames.push(frame);
+            }
+            expect(frames).toEqual([audioFrame]);
+            yield 'transcript';
+          }
+
+          return stream();
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+
+      const result = await agent.sttNode(audio, {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['transcript']);
+    });
+
+    it('falls back to existing defaults for missing hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const agent = Agent.create({ instructions: 'factory instructions' });
+
+      const result = await agent.realtimeAudioOutputNode(audio, {});
+
+      expect(result).toBe(audio);
+    });
   });
 
   it('should require AgentTask to run inside task context', async () => {

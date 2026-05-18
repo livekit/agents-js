@@ -13,8 +13,11 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  TransformStream,
+  type TransformStreamDefaultController,
+} from 'node:stream/web';
 import { log } from './log.js';
 
 /**
@@ -1121,31 +1124,97 @@ export async function* readStream<T>(
   signal?: AbortSignal,
 ): AsyncGenerator<T> {
   if (signal?.aborted) return;
+  // #region agent log
+  fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H1',location:'agents/src/utils.ts:readStream:start',message:'readStream started',data:{signalProvided:signal!==undefined,signalAborted:signal?.aborted??false},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   const reader = stream.getReader();
+  let yieldedCount = 0;
+  let exitReason = 'unknown';
   try {
     if (signal) {
       const abortPromise = waitForAbort(signal);
       while (true) {
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
-        if (!result) break;
+        if (!result) {
+          exitReason = 'signal-aborted';
+          break;
+        }
         const { done, value } = result;
-        if (done) break;
+        if (done) {
+          exitReason = 'source-done';
+          break;
+        }
+        yieldedCount += 1;
         yield value;
       }
     } else {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          exitReason = 'source-done';
+          break;
+        }
+        yieldedCount += 1;
         yield value;
       }
     }
   } finally {
+    // #region agent log
+    fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H1',location:'agents/src/utils.ts:readStream:finally',message:'readStream finished',data:{yieldedCount,exitReason,signalAborted:signal?.aborted??false},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     try {
       reader.releaseLock();
     } catch {
       // stream cleanup errors are expected (releasing reader, controller closed, etc.)
     }
   }
+}
+
+export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
+  let iterator: AsyncIterator<T> | undefined;
+  let cancelled = false;
+  let enqueuedCount = 0;
+
+  return new ReadableStream<T>({
+    async start(controller) {
+      iterator = iterable[Symbol.asyncIterator]();
+      // #region agent log
+      fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H3',location:'agents/src/utils.ts:toStream:start',message:'toStream started',data:{hasAsyncIterator:typeof iterable?.[Symbol.asyncIterator]==='function'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+
+      try {
+        while (true) {
+          const { done, value } = await iterator.next();
+          if (done || cancelled) {
+            break;
+          }
+          enqueuedCount += 1;
+          controller.enqueue(value);
+        }
+
+        if (!cancelled) {
+          // #region agent log
+          fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H3',location:'agents/src/utils.ts:toStream:close',message:'toStream closing normally',data:{enqueuedCount,cancelled},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          controller.close();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          // #region agent log
+          fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H5',location:'agents/src/utils.ts:toStream:error',message:'toStream source errored',data:{enqueuedCount,errorName:error instanceof Error?error.name:typeof error,errorMessage:error instanceof Error?error.message:String(error)},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          controller.error(error);
+        }
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      // #region agent log
+      fetch('http://127.0.0.1:7706/ingest/6e7c39c9-e0d9-4b2d-a5c9-af51f52b2cfd',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'69c391'},body:JSON.stringify({sessionId:'69c391',runId:'pre-fix',hypothesisId:'H4',location:'agents/src/utils.ts:toStream:cancel',message:'toStream cancelled by consumer',data:{enqueuedCount,reasonType:typeof reason},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      void iterator?.return?.(reason).catch(() => {});
+    },
+  });
 }
 
 export async function waitForAbort(signal: AbortSignal) {

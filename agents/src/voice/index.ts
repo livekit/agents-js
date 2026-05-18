@@ -5,6 +5,10 @@ export {
   Agent,
   AgentTask,
   StopResponse,
+  type AgentContext,
+  type AgentCreateOptions,
+  type AgentHookNodeResult,
+  type AgentHooks,
   type AgentOptions,
   type ModelSettings,
   type TTSPronunciationMap,
@@ -35,6 +39,8 @@ export {
   type PlaybackFinishedEvent,
   type PlaybackStartedEvent,
   type TimedString,
+  createTimedString,
+  isTimedString,
 } from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';
