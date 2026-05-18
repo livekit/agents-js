@@ -35,6 +35,7 @@ import {
   cartesiaMessageSchema,
   hasWordTimestamps,
   isChunkMessage,
+  isDoneMessage,
   isErrorMessage,
   isFlushDoneMessage,
 } from './types.js';
@@ -317,10 +318,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let closing = false;
     // Only close WebSocket when both: 1) Cartesia returns done, AND 2) all sentences have been sent
     let sentenceStreamClosed = false;
+    // Tracks whether we sent any non-whitespace transcript content. Used to
+    // distinguish Cartesia's "transcript empty" error (benign — happens on
+    // function-call turns where the LLM emits no spoken text) from real
+    // synthesis errors that should be retried.
+    let sentNonEmptyToken = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = toCartesiaOptions(this.#opts, true);
       for await (const event of this.#tokenizer) {
+        if (event.token.trim().length > 0) sentNonEmptyToken = true;
         const msg = {
           ...packet,
           context_id: requestId,
@@ -436,11 +443,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
           const segmentId = serverMsg.context_id;
 
-          // Branch order mirrors the Python plugin: any frame with `done: true` —
-          // including the error Cartesia returns for empty/whitespace input on
-          // function-call turns — is treated as completion once the sentence
-          // stream has been closed, instead of being raised and retried. Only a
-          // "pure" error frame (no done:true) raises.
           if (isChunkMessage(serverMsg)) {
             const audioBuffer = Buffer.from(serverMsg.data, 'base64');
             // Extract ArrayBuffer from Buffer for AudioByteStream compatibility
@@ -464,7 +466,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               );
               ws.close();
             }, this.#opts.chunkTimeout);
-          } else if (serverMsg.done === true) {
+          } else if (isDoneMessage(serverMsg)) {
             // This ensures all sentences have been sent before closing
             if (sentenceStreamClosed) {
               for (const frame of bstream.flush()) {
@@ -501,6 +503,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
           } else if (isErrorMessage(serverMsg)) {
+            // Cartesia rejects empty/whitespace-only input with an error frame.
+            // That happens on function-call turns where the LLM emits no spoken
+            // text — finish cleanly instead of triggering retries.
+            if (!sentNonEmptyToken && sentenceStreamClosed) {
+              this.#logger.debug(
+                { error: serverMsg.error },
+                'Cartesia rejected empty input; treating as completion',
+              );
+              if (!this.queue.closed) {
+                this.queue.put(SynthesizeStream.END_OF_STREAM);
+              }
+              if (segmentId === requestId) {
+                closing = true;
+                clearTTSChunkTimeout();
+                ws.close();
+                break;
+              }
+              continue;
+            }
             this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
             throw new APIConnectionError({
               message: `Cartesia returned error: ${serverMsg.error}`,
