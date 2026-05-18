@@ -341,6 +341,7 @@ describe('AgentActivity - speech completion', () => {
 describe('AgentActivity - confirmed interruptions', () => {
   it('ends audio recognition when confirmed interruption only has paused speech', () => {
     const pausedSpeech = SpeechHandle.create({ allowInterruptions: true });
+    const audioRecognition = { onEndOfAgentSpeech: vi.fn() };
 
     const fakeActivity: Record<string, unknown> = {
       restoreInterruptionByAudioActivity: vi.fn(),
@@ -348,12 +349,8 @@ describe('AgentActivity - confirmed interruptions', () => {
       _currentSpeech: undefined,
       pausedSpeech: { handle: pausedSpeech },
       falseInterruptionTimer: undefined,
-      audioRecognition: {
-        onEndOfAgentSpeech: vi.fn(),
-      },
-      agentSession: {
-        agentState: 'listening',
-      },
+      audioRecognition,
+      agentSession: { agentState: 'listening' },
     };
     Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
@@ -370,13 +367,7 @@ describe('AgentActivity - confirmed interruptions', () => {
 
     expect(pausedSpeech.interrupted).toBe(true);
     expect(fakeActivity.pausedSpeech).toBeUndefined();
-    expect(
-      (
-        fakeActivity.audioRecognition as {
-          onEndOfAgentSpeech: ReturnType<typeof vi.fn>;
-        }
-      ).onEndOfAgentSpeech,
-    ).toHaveBeenCalledTimes(1);
+    expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
   });
 });
 

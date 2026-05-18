@@ -34,18 +34,24 @@ describe('AudioRecognition interruption buffering', () => {
     });
 
     await recognition.onStartOfAgentSpeech(Date.now());
-    (recognition as any).isInterruptionEnabled = true;
-    (recognition as any).trySendInterruptionSentinel = vi.fn(() => new Promise<boolean>(() => {}));
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      trySendInterruptionSentinel: () => Promise<boolean>;
+      onSTTEvent: (ev: SpeechEvent) => Promise<void>;
+      transcriptBuffer: unknown[];
+    };
+    internals.isInterruptionEnabled = true;
+    internals.trySendInterruptionSentinel = vi.fn(() => new Promise<boolean>(() => {}));
 
     void recognition.onEndOfAgentSpeech(Date.now());
     const finalTranscript: SpeechEvent = {
       type: SpeechEventType.FINAL_TRANSCRIPT,
       alternatives: [{ text: 'still listening', confidence: 0.9 }],
     };
-    await (recognition as any).onSTTEvent(finalTranscript);
+    await internals.onSTTEvent(finalTranscript);
 
     expect(hooks.onFinalTranscript).toHaveBeenCalledTimes(1);
     expect(recognition.currentTranscript).toBe('still listening');
-    expect((recognition as any).transcriptBuffer).toHaveLength(0);
+    expect(internals.transcriptBuffer).toHaveLength(0);
   });
 });
