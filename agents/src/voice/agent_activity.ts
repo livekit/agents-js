@@ -61,9 +61,11 @@ import {
   IdleTimeoutError,
   Task,
   cancelAndWait,
+  delay,
   isDevMode,
   isHosted,
   waitFor,
+  waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
@@ -83,7 +85,7 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
-import type { AgentState } from './events.js';
+import type { AgentState, AgentStateChangedEvent, UserTurnExceededEvent } from './events.js';
 import {
   AgentSessionEventTypes,
   createAgentFalseInterruptionEvent,
@@ -223,6 +225,8 @@ export class AgentActivity implements RecognitionHooks {
   private pausedSpeech?: PausedSpeechInfo;
   private falseInterruptionTimer?: NodeJS.Timeout;
   private cancelSpeechPauseTask?: Promise<void>;
+  private userTurnExceededLocked = false;
+  private userTurnExceededTask?: Task<void>;
 
   private readonly onRealtimeGenerationCreated = (ev: GenerationCreatedEvent): void =>
     this.onGenerationCreated(ev);
@@ -521,6 +525,7 @@ export class AgentActivity implements RecognitionHooks {
         ...this.agentSession.sessionOptions.turnHandling.endpointing,
         ...(this.agent.turnHandling?.endpointing ?? {}),
       }),
+      userTurnLimit: this.agentSession.sessionOptions.turnHandling.userTurnLimit,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
       sttProvider: this.getSttProvider(),
@@ -1420,6 +1425,78 @@ export class AgentActivity implements RecognitionHooks {
     };
   }
 
+  onUserTurnExceeded(ev: UserTurnExceededEvent): void {
+    if (this.userTurnExceededLocked) {
+      return;
+    }
+
+    this.userTurnExceededTask?.cancel();
+    this.userTurnExceededTask = this.createSpeechTask({
+      taskFn: (controller) => this.runUserTurnExceededTask(ev, controller.signal),
+      name: 'AgentActivity.userTurnExceeded',
+    });
+  }
+
+  private async runUserTurnExceededTask(
+    ev: UserTurnExceededEvent,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // Let the current STT event finish scheduling the regular EOU task first.
+    await delay(0, { signal });
+
+    const agentSpeaking = new Future<void, never>();
+    const onAgentStateChanged = (stateEv: AgentStateChangedEvent): void => {
+      if (stateEv.newState === 'speaking' && !agentSpeaking.done) {
+        agentSpeaking.resolve();
+      }
+    };
+
+    if (this.agentSession.agentState === 'speaking') {
+      agentSpeaking.resolve();
+    } else {
+      this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, onAgentStateChanged);
+    }
+
+    const waitInactiveTask = Task.from(
+      () => this.waitForInactive({ waitForAgent: true, waitForUser: false }, signal),
+      undefined,
+      'AgentActivity.waitForInactiveForUserTurnExceeded',
+    );
+
+    try {
+      await ThrowsPromise.race([
+        agentSpeaking.await,
+        waitInactiveTask.result,
+        waitForAbort(signal),
+      ]);
+      if (signal.aborted) {
+        return;
+      }
+      if (agentSpeaking.done) {
+        return;
+      }
+    } finally {
+      this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, onAgentStateChanged);
+      if (!waitInactiveTask.done) {
+        waitInactiveTask.cancel();
+      }
+    }
+
+    this.logger.debug(
+      { numWords: ev.accumulatedWordCount, duration: ev.duration },
+      'user turn limit exceeded',
+    );
+    this.userTurnExceededLocked = true;
+    try {
+      await this.agent.onUserTurnExceeded(ev);
+    } catch (error) {
+      this.logger.error({ error }, 'error in onUserTurnExceeded callback');
+    } finally {
+      this.userTurnExceededLocked = false;
+      this.userTurnExceededTask = undefined;
+    }
+  }
+
   private cancelPreemptiveGeneration(): void {
     if (this._preemptiveGeneration !== undefined) {
       this._preemptiveGeneration.speechHandle._cancel();
@@ -1534,6 +1611,46 @@ export class AgentActivity implements RecognitionHooks {
 
   retrieveChatCtx(): ChatContext {
     return this.agentSession.chatCtx;
+  }
+
+  private async waitForInactive(
+    options: { waitForAgent?: boolean; waitForUser?: boolean },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const waitForAgent = options.waitForAgent ?? true;
+    const waitForUser = options.waitForUser ?? true;
+    let agentActive = true;
+    let userActive = true;
+
+    while ((waitForAgent && agentActive) || (waitForUser && userActive)) {
+      if (waitForAgent) {
+        if (this.audioRecognition) {
+          await ThrowsPromise.race([
+            this.audioRecognition.waitForEndOfTurnTask(),
+            waitForAbort(signal),
+          ]);
+        }
+
+        if (!this._currentSpeech && this.speechQueue.size() === 0) {
+          agentActive = false;
+        } else {
+          agentActive = true;
+          const currentUpdate = this.q_updated;
+          if (currentUpdate.done) {
+            await delay(0, { signal });
+          } else {
+            await ThrowsPromise.race([currentUpdate.await, waitForAbort(signal)]);
+          }
+        }
+      }
+
+      if (waitForUser) {
+        userActive = this.agentSession.userState !== 'listening';
+        if (userActive) {
+          await delay(0, { signal });
+        }
+      }
+    }
   }
 
   private async mainTask(signal: AbortSignal): Promise<void> {

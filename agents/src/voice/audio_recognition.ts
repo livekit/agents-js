@@ -33,15 +33,18 @@ import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { splitWords } from '../tokenize/basic/word.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
+import { type UserTurnExceededEvent, createUserTurnExceededEvent } from './events.js';
 import type { STTNode } from './io.js';
 import {
   type BaseEndpointing,
   createEndpointing,
   defaultEndpointingOptions,
 } from './turn_config/endpointing.js';
+import type { UserTurnLimitOptions } from './turn_config/user_turn_limit.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface EndOfTurnInfo {
@@ -75,8 +78,15 @@ export interface RecognitionHooks {
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
+  onUserTurnExceeded: (ev: UserTurnExceededEvent) => void;
 
   retrieveChatCtx: () => ChatContext;
+}
+
+interface UserTurnTracker {
+  words: number;
+  transcript: string;
+  startedAt?: number;
 }
 
 export class STTPipeline {
@@ -153,6 +163,8 @@ export interface AudioRecognitionOptions {
   backchannelBoundary?: number | [number, number] | null;
   /** Endpointing delay strategy. */
   endpointing?: BaseEndpointing;
+  /** User turn limit configuration. */
+  userTurnLimit?: UserTurnLimitOptions;
   /** @deprecated Use endpointing instead. */
   minEndpointingDelay?: number;
   /** @deprecated Use endpointing instead. */
@@ -188,6 +200,7 @@ export class AudioRecognition {
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
   private endpointing: BaseEndpointing;
+  private userTurnLimit?: UserTurnLimitOptions;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
@@ -209,6 +222,7 @@ export class AudioRecognition {
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
+  private userTurnTracker: UserTurnTracker = { words: 0, transcript: '' };
   // Provider-known STT ids for the current user turn. Written to the
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
@@ -264,6 +278,7 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
+    this.userTurnLimit = opts.userTurnLimit;
     this.endpointing =
       opts.endpointing ??
       createEndpointing({
@@ -446,6 +461,7 @@ export class AudioRecognition {
   async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
+    this.userTurnTracker = { words: 0, transcript: '' };
 
     if (this.backchannelBoundary && this.backchannelBoundary[0] > 0) {
       this.cancelBackchannelBoundary();
@@ -819,6 +835,8 @@ export class AudioRecognition {
           this.lastSpeakingTime = Date.now();
         }
 
+        this.checkUserTurnLimit(transcript);
+
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
             this.logger.debug(
@@ -1165,6 +1183,52 @@ export class AudioRecognition {
         }
         this.logger.error(err, 'Error in EOU detection task:');
       });
+  }
+
+  async waitForEndOfTurnTask(): Promise<void> {
+    if (!this.bounceEOUTask || this.bounceEOUTask.done) {
+      return;
+    }
+
+    try {
+      await this.bounceEOUTask.result;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('This operation was aborted')) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private checkUserTurnLimit(transcript: string): void {
+    const maxWords = this.userTurnLimit?.maxWords ?? null;
+    const maxDuration = this.userTurnLimit?.maxDuration ?? null;
+
+    if (maxWords === null && maxDuration === null) {
+      return;
+    }
+
+    const now = Date.now();
+    this.userTurnTracker.startedAt ??= this.speechStartTime ?? now;
+    this.userTurnTracker.words += splitWords(transcript, true).length;
+    this.userTurnTracker.transcript = `${this.userTurnTracker.transcript} ${transcript}`.trim();
+
+    const duration = now - this.userTurnTracker.startedAt;
+    const timeExceeded = maxDuration !== null && duration >= maxDuration;
+    const wordsExceeded = maxWords !== null && this.userTurnTracker.words >= maxWords;
+
+    if (!timeExceeded && !wordsExceeded) {
+      return;
+    }
+
+    this.hooks.onUserTurnExceeded(
+      createUserTurnExceededEvent({
+        transcript: this.currentTranscript,
+        accumulatedTranscript: this.userTurnTracker.transcript,
+        accumulatedWordCount: this.userTurnTracker.words,
+        duration,
+      }),
+    );
   }
 
   private startSttTasks(reusePipeline?: STTPipeline) {
