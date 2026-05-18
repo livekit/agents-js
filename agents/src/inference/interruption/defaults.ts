@@ -45,7 +45,7 @@ export const interruptionOptionDefaults: Omit<InterruptionOptions, 'baseUrl' | '
   audioPrefixDurationInS: AUDIO_PREFIX_DURATION_IN_S,
   detectionIntervalInS: DETECTION_INTERVAL_IN_S,
   inferenceTimeout: REMOTE_INFERENCE_TIMEOUT_IN_S * 1_000,
-  apiKey: process.env.LIVEKIT_API_KEY || '',
-  apiSecret: process.env.LIVEKIT_API_SECRET || '',
+  apiKey:  process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || "",
+  apiSecret: process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET || "",
   minInterruptionDurationInS: MIN_INTERRUPTION_DURATION_IN_S,
 } as const;
