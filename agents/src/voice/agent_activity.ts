@@ -59,7 +59,6 @@ import {
   StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
-  functionCallStorage,
   speechHandleStorage,
 } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
@@ -1630,8 +1629,19 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate reply without an LLM model');
     }
 
-    const functionCall = functionCallStorage.getStore()?.functionCall;
-    if (toolChoice === undefined && functionCall !== undefined) {
+    // Read the owning tool call from the current Task's activity info rather than
+    // from functionCallStorage. AsyncLocalStorage propagates through `await`, so any
+    // long-lived async work spawned while a tool is executing (e.g. a new
+    // AgentActivity's audio-recognition loops started from inside `AgentTask.run()`)
+    // would otherwise inherit the parent tool's functionCall and force
+    // toolChoice='none' on every subsequent generateReply — silently dropping LLM
+    // tool calls within the sub-task and for the rest of the parent session. The
+    // per-Task info, set on the tool task by generation.ts, is bound to the tool's
+    // own asyncio-equivalent task and does not leak into sub-task turn handlers.
+    // See https://github.com/livekit/agents-js/issues/1264.
+    const currentTask = Task.current();
+    const functionCall = currentTask ? _getActivityTaskInfo(currentTask)?.functionCall : null;
+    if (toolChoice === undefined && functionCall) {
       // when generateReply is called inside a tool, set toolChoice to 'none' by default
       toolChoice = 'none';
     }
