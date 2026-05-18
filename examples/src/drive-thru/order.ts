@@ -42,9 +42,22 @@ export type OrderedItem = OrderedCombo | OrderedHappy | OrderedRegular;
 
 export class OrderState {
   items: Record<string, OrderedItem> = {};
+  onChange?: () => Promise<void>;
+
+  private async fireChange(): Promise<void> {
+    if (!this.onChange) {
+      return;
+    }
+    try {
+      await this.onChange();
+    } catch (error) {
+      console.error('OrderState.onChange failed', error);
+    }
+  }
 
   async add(item: OrderedItem): Promise<void> {
     this.items[item.orderId] = item;
+    await this.fireChange();
   }
 
   async remove(orderId: string): Promise<OrderedItem> {
@@ -53,6 +66,7 @@ export class OrderState {
       throw new Error(`Order item with ID ${orderId} not found`);
     }
     delete this.items[orderId];
+    await this.fireChange();
     return item;
   }
 

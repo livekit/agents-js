@@ -26,6 +26,9 @@ import {
 } from './database.js';
 import {
   OrderState,
+  type OrderedCombo,
+  type OrderedHappy,
+  type OrderedRegular,
   createOrderedCombo,
   createOrderedHappy,
   createOrderedRegular,
@@ -375,12 +378,120 @@ export async function newUserData(): Promise<UserData> {
   };
 }
 
+function findItem(items: MenuItem[], id: string, size?: MenuItem['size']): MenuItem | undefined {
+  return findItemsById(items, id, size)[0];
+}
+
+export function formatCart(userdata: UserData): string {
+  if (Object.keys(userdata.order.items).length === 0) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  let total = 0;
+  for (const item of Object.values(userdata.order.items)) {
+    let name: string;
+    let price: number;
+    let extras: string[];
+
+    if (item.type === 'combo_meal') {
+      const combo = item as OrderedCombo;
+      const meal = findItem(userdata.comboItems, combo.mealId);
+      const drink = findItem(userdata.drinkItems, combo.drinkId, combo.drinkSize);
+      extras = [`fries ${combo.friesSize}`];
+      if (drink) {
+        extras.push(`${drink.name} (${combo.drinkSize})`);
+      }
+      if (combo.sauceId) {
+        const sauce = findItem(userdata.sauceItems, combo.sauceId);
+        if (sauce) {
+          extras.push(sauce.name);
+        }
+      }
+      name = meal?.name ?? combo.mealId;
+      price = meal?.price ?? 0;
+    } else if (item.type === 'happy_meal') {
+      const happy = item as OrderedHappy;
+      const meal = findItem(userdata.happyItems, happy.mealId);
+      const drink = findItem(userdata.drinkItems, happy.drinkId, happy.drinkSize);
+      extras = [];
+      if (drink) {
+        extras.push(`${drink.name} (${happy.drinkSize})`);
+      }
+      if (happy.sauceId) {
+        const sauce = findItem(userdata.sauceItems, happy.sauceId);
+        if (sauce) {
+          extras.push(sauce.name);
+        }
+      }
+      name = meal?.name ?? happy.mealId;
+      price = meal?.price ?? 0;
+    } else {
+      const regular = item as OrderedRegular;
+      const reg = findItem(userdata.regularItems, regular.itemId, regular.size);
+      name = reg?.name ?? regular.itemId;
+      price = reg?.price ?? 0;
+      extras = regular.size ? [`size ${regular.size}`] : [];
+    }
+
+    total += price;
+    const extrasText = extras.length > 0 ? ` · ${extras.join(', ')}` : '';
+    lines.push(`- **${name}**${extrasText} · [[${price.toFixed(2)}]]`);
+  }
+  lines.push('', `**Total · [[${total.toFixed(2)}]]**`);
+  return lines.join('\n');
+}
+
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
     const userdata = await newUserData();
+
+    let pushPending = false;
+    let pushRunning = false;
+
+    async function pushTo(identity: string, payload: string): Promise<void> {
+      try {
+        await ctx.room.localParticipant?.performRpc({
+          destinationIdentity: identity,
+          method: 'set_cart_content',
+          payload,
+        });
+      } catch (error) {
+        console.error(`cart push to ${identity} failed`, error);
+      }
+    }
+
+    async function pushRunner(): Promise<void> {
+      pushRunning = true;
+      try {
+        while (pushPending) {
+          pushPending = false;
+          const payload = formatCart(userdata);
+          const peers = Array.from(
+            ctx.room.remoteParticipants.values() as Iterable<{ identity: string }>,
+          );
+          if (peers.length === 0) {
+            continue;
+          }
+          await Promise.allSettled(
+            peers.map((participant) => pushTo(participant.identity, payload)),
+          );
+        }
+      } finally {
+        pushRunning = false;
+      }
+    }
+
+    userdata.order.onChange = async () => {
+      pushPending = true;
+      if (pushRunning) {
+        return;
+      }
+      void pushRunner();
+    };
 
     const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
