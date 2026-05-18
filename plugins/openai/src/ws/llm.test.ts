@@ -37,11 +37,11 @@ describe('buildResponsesWsUrl', () => {
     expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
   });
 
-  it('rewrites http baseURL to ws (not wss) for plain-HTTP gateways', () => {
-    const url = new URL(buildResponsesWsUrl('http://litellm:4000/v1', 'gpt-4o-mini'));
+  it('rewrites http baseURL to ws (not wss)', () => {
+    const url = new URL(buildResponsesWsUrl('http://gateway.example.com/v1', 'gpt-4o-mini'));
 
     expect(url.protocol).toBe('ws:');
-    expect(url.host).toBe('litellm:4000');
+    expect(url.host).toBe('gateway.example.com');
     expect(url.pathname).toBe('/v1/responses');
     expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
   });

@@ -353,9 +353,8 @@ function normalizeAzureClientEvent(event: Record<string, unknown>): void {
 /**
  * Build the conversational Realtime API WebSocket URL.
  *
- * Maps `http://` → `ws://` and `https://` → `wss://` so plain-HTTP
- * baseURLs (e.g. an in-cluster LiteLLM proxy) connect without a
- * spurious TLS handshake.
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
  *
  * @internal
  */

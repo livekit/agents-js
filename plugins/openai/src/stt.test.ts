@@ -114,11 +114,13 @@ describe('buildRealtimeSttUrl', () => {
     expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
   });
 
-  it('downgrades http baseURL to ws (not wss) for plain-HTTP gateways', () => {
-    const url = new URL(buildRealtimeSttUrl('http://litellm:4000/v1', 'gpt-realtime-whisper'));
+  it('downgrades http baseURL to ws (not wss)', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('http://gateway.example.com/v1', 'gpt-realtime-whisper'),
+    );
 
     expect(url.protocol).toBe('ws:');
-    expect(url.host).toBe('litellm:4000');
+    expect(url.host).toBe('gateway.example.com');
     expect(url.pathname).toBe('/v1/realtime');
     expect(url.searchParams.get('intent')).toBe('transcription');
     expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');

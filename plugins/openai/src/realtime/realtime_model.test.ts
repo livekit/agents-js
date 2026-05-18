@@ -348,17 +348,17 @@ describe('processBaseURL', () => {
     expect(url.searchParams.get('model')).toBe('gpt-4o-realtime-preview');
   });
 
-  it('downgrades http baseURL to ws (not wss) for plain-HTTP gateways', () => {
+  it('downgrades http baseURL to ws (not wss)', () => {
     const url = new URL(
       processBaseURL({
-        baseURL: 'http://litellm:4000/v1',
+        baseURL: 'http://gateway.example.com/v1',
         model: 'gpt-4o-realtime-preview',
         isAzure: false,
       }),
     );
 
     expect(url.protocol).toBe('ws:');
-    expect(url.host).toBe('litellm:4000');
+    expect(url.host).toBe('gateway.example.com');
     expect(url.pathname).toBe('/v1/realtime');
     expect(url.searchParams.get('model')).toBe('gpt-4o-realtime-preview');
   });
@@ -379,7 +379,7 @@ describe('processBaseURL', () => {
   it('passes through an already-ws baseURL unchanged', () => {
     const url = new URL(
       processBaseURL({
-        baseURL: 'ws://litellm:4000/v1',
+        baseURL: 'ws://gateway.example.com/v1',
         model: 'gpt-4o-realtime-preview',
         isAzure: false,
       }),
