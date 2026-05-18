@@ -133,6 +133,8 @@ export interface AgentOptions<UserData> {
   turnDetection?: TurnDetectionMode;
   /** @deprecated use turnHandling.interruption.enabled instead */
   allowInterruptions?: boolean;
+  /** @deprecated Use MCPToolset instead. */
+  mcpServers?: unknown[];
 }
 
 export class Agent<UserData = any> {
@@ -170,11 +172,19 @@ export class Agent<UserData = any> {
     llm,
     tts,
     allowInterruptions,
+    mcpServers,
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
     ttsPronunciationMap,
   }: AgentOptions<UserData>) {
+    if (mcpServers !== undefined && mcpServers.length > 0) {
+      log().warn(
+        'passing MCP servers to AgentSession or Agent is deprecated and will be removed ' +
+          'in a future version. Use `MCPToolset` instead.',
+      );
+    }
+
     if (id) {
       this._id = id;
     } else {

@@ -222,6 +222,9 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /** @deprecated Use MCPToolset instead. */
+  mcpServers?: unknown[];
 };
 
 type ActivityTransitionOptions = {
@@ -330,7 +333,15 @@ export class AgentSession<
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
+    const { vad, stt, llm, tts, userData, connOptions, mcpServers, ...resolvedSessionOptions } =
+      opts;
+    if (mcpServers !== undefined && mcpServers.length > 0) {
+      this.logger.warn(
+        'passing MCP servers to AgentSession or Agent is deprecated and will be removed ' +
+          'in a future version. Use `MCPToolset` instead.',
+      );
+    }
+
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
