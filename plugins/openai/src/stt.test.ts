@@ -6,7 +6,7 @@ import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { describe, expect, it, vi } from 'vitest';
 import type { SpeechStream } from './stt.js';
-import { STT } from './stt.js';
+import { STT, buildRealtimeSttUrl } from './stt.js';
 
 const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
 
@@ -70,6 +70,48 @@ describe('OpenAI STT options', () => {
     openai.updateOptions({ vad });
 
     expect(updateOptions).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildRealtimeSttUrl', () => {
+  it('points at OpenAI realtime with intent and model when no baseURL is set', () => {
+    const url = new URL(buildRealtimeSttUrl(undefined, 'gpt-realtime-whisper'));
+
+    expect(url.protocol).toBe('wss:');
+    expect(url.host).toBe('api.openai.com');
+    expect(url.pathname).toBe('/v1/realtime');
+    expect(url.searchParams.get('intent')).toBe('transcription');
+    expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
+  });
+
+  it('upgrades https baseURL to wss and appends /realtime when path is /v1', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('https://gateway.example.com/v1', 'gpt-4o-mini-transcribe'),
+    );
+
+    expect(url.protocol).toBe('wss:');
+    expect(url.host).toBe('gateway.example.com');
+    expect(url.pathname).toBe('/v1/realtime');
+    expect(url.searchParams.get('model')).toBe('gpt-4o-mini-transcribe');
+  });
+
+  it('preserves an existing /realtime path without duplicating it', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('wss://gateway.example.com/v1/realtime', 'gpt-realtime-whisper'),
+    );
+
+    expect(url.pathname).toBe('/v1/realtime');
+    expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
+  });
+
+  it('appends /realtime to a non-/v1 path', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('https://gateway.example.com/proxy/openai', 'gpt-realtime-whisper'),
+    );
+
+    expect(url.pathname).toBe('/proxy/openai/realtime');
+    expect(url.searchParams.get('intent')).toBe('transcription');
+    expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
   });
 });
 
