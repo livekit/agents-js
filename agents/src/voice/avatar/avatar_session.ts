@@ -2,9 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Room } from '@livekit/rtc-node';
+import { RoomEvent, TrackKind } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
 import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
+import type { AvatarMetrics } from '../../metrics/base.js';
+import { waitForParticipant, waitForTrackPublication } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
+import {
+  AgentSessionEventTypes,
+  type ConversationItemAddedEvent,
+  createMetricsCollectedEvent,
+} from '../events.js';
+
+export type AvatarSessionCallbacks = {
+  metrics_collected: (metrics: AvatarMetrics) => void;
+};
 
 /**
  * Base class for avatar plugin sessions.
@@ -16,8 +30,20 @@ import type { AgentSession } from '../agent_session.js';
  * - Warns when the avatar session is started after {@link AgentSession.start} — in that
  *   case the existing audio output will be replaced by the avatar's.
  */
-export class AvatarSession {
+export class AvatarSession extends (EventEmitter as new () => TypedEmitter<AvatarSessionCallbacks>) {
   #logger = log();
+  #agentSession?: AgentSession;
+  #room?: Room;
+  #waitAvatarJoinAbort?: AbortController;
+  #waitAvatarJoinPromise?: Promise<void>;
+
+  get avatarIdentity(): string {
+    return 'unknown';
+  }
+
+  get provider(): string {
+    return 'unknown';
+  }
 
   /**
    * Start the avatar session.
@@ -26,7 +52,7 @@ export class AvatarSession {
    * top of their implementation. Subclasses may widen the return type (e.g. returning a
    * session id), matching the `# type: ignore[override]` escape hatch used in Python.
    */
-  async start(agentSession: AgentSession, _room: Room): Promise<unknown> {
+  async start(agentSession: AgentSession, room: Room): Promise<unknown> {
     const jobCtx = getJobContext(false);
     if (jobCtx !== undefined) {
       jobCtx.addShutdownCallback(() => this.aclose());
@@ -46,6 +72,19 @@ export class AvatarSession {
           'Please start the avatar session before AgentSession.start() to avoid this.',
       );
     }
+
+    this.#agentSession = agentSession;
+    this.#room = room;
+    this.#agentSession.on(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.#onConversationItemAdded,
+    );
+
+    if (room.isConnected) {
+      this.#startWaitAvatarJoin();
+    } else {
+      room.on(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
+    }
     return undefined;
   }
 
@@ -53,5 +92,94 @@ export class AvatarSession {
    * Release any resources owned by this avatar session. Default implementation is a no-op;
    * subclasses can override to perform cleanup.
    */
-  async aclose(): Promise<void> {}
+  async aclose(): Promise<void> {
+    if (this.#agentSession) {
+      this.#agentSession.off(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.#onConversationItemAdded,
+      );
+      this.#agentSession = undefined;
+    }
+
+    if (this.#room) {
+      this.#room.off(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
+      this.#room = undefined;
+    }
+
+    this.#waitAvatarJoinAbort?.abort();
+    if (this.#waitAvatarJoinPromise) {
+      await this.#waitAvatarJoinPromise;
+      this.#waitAvatarJoinPromise = undefined;
+    }
+    this.#waitAvatarJoinAbort = undefined;
+  }
+
+  #startWaitAvatarJoin() {
+    if (this.#waitAvatarJoinPromise) return;
+
+    const abortController = new AbortController();
+    this.#waitAvatarJoinAbort = abortController;
+    this.#waitAvatarJoinPromise = this.#waitAvatarJoin(abortController.signal).catch((error) => {
+      if (!abortController.signal.aborted) {
+        this.#logger.warn({ error: String(error) }, 'failed while waiting for avatar participant');
+      }
+    });
+  }
+
+  async #waitAvatarJoin(signal: AbortSignal): Promise<void> {
+    const room = this.#room;
+    if (!room) return;
+
+    const startedAt = Date.now();
+    await waitForParticipant({
+      room,
+      identity: this.avatarIdentity,
+      includeLocal: true,
+      signal,
+    });
+    await waitForTrackPublication({
+      room,
+      identity: this.avatarIdentity,
+      kind: TrackKind.KIND_VIDEO,
+      includeLocal: true,
+      signal,
+    });
+    const joinedAt = Date.now();
+    this.#emitMetrics({
+      type: 'avatar_metrics',
+      timestamp: joinedAt,
+      sessionStartedAt: startedAt,
+      avatarJoinedAt: joinedAt,
+      metadata: { modelProvider: this.provider },
+    });
+  }
+
+  #onConversationItemAdded = (ev: ConversationItemAddedEvent) => {
+    const { item } = ev;
+    if (item.type !== 'message' || item.role !== 'assistant') return;
+
+    const { playbackLatency } = item.metrics;
+    if (playbackLatency === undefined) return;
+
+    this.#emitMetrics({
+      type: 'avatar_metrics',
+      timestamp: ev.createdAt,
+      playbackLatencyMs: playbackLatency * 1000,
+      metadata: { modelProvider: this.provider },
+    });
+  };
+
+  #onConnectionStateChanged = () => {
+    if (this.#room?.isConnected) {
+      this.#startWaitAvatarJoin();
+    }
+  };
+
+  #emitMetrics(metrics: AvatarMetrics) {
+    this.emit('metrics_collected', metrics);
+    this.#agentSession?.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics }),
+    );
+  }
 }
