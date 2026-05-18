@@ -262,6 +262,94 @@ describe('Agent', () => {
     await expect(wrapper.result).resolves.toBe('ok');
   });
 
+  describe('AgentTask.create', () => {
+    it('exposes complete on hook context', async () => {
+      const task = AgentTask.create<string>({
+        instructions: 'factory task',
+        onEnter: (ctx) => {
+          expect(ctx.agent).toBe(task);
+          expect(ctx.id).toBe('default_agent');
+          expect(ctx.instructions).toBe('factory task');
+          ctx.complete('ok');
+        },
+      });
+      const oldAgent = new Agent({ instructions: 'old agent' });
+      const mockSession = {
+        currentAgent: oldAgent,
+        _globalRunState: undefined,
+        _updateActivity: async (agent: Agent) => {
+          if (agent === task) {
+            await agent.onEnter();
+          }
+        },
+      };
+      const mockActivity = {
+        agent: oldAgent,
+        agentSession: mockSession,
+        _onEnterTask: undefined,
+        llm: undefined,
+        close: async () => {},
+      };
+
+      const wrapper = Task.from(async () => {
+        const currentTask = Task.current();
+        if (!currentTask) {
+          throw new Error('expected task context');
+        }
+        _setActivityTaskInfo(currentTask, { inlineTask: true });
+        return await agentActivityStorage.run(mockActivity as any, () => task.run());
+      });
+
+      await expect(wrapper.result).resolves.toBe('ok');
+    });
+
+    it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const task = AgentTask.create<string>({
+        instructions: 'factory task',
+        async sttNode(ctx, audio) {
+          async function* stream() {
+            expect(ctx.agent).toBe(task);
+            const frames: AudioFrame[] = [];
+            for await (const frame of audio) {
+              frames.push(frame);
+            }
+            expect(frames).toEqual([audioFrame]);
+            yield 'transcript';
+          }
+
+          return stream();
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+
+      const result = await task.sttNode(audio, {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['transcript']);
+    });
+
+    it('falls back to existing defaults for missing hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const task = AgentTask.create<string>({ instructions: 'factory task' });
+
+      const result = await task.realtimeAudioOutputNode(audio, {});
+
+      expect(result).toBe(audio);
+    });
+  });
+
   it('should require AgentTask to run inside AgentActivity context', async () => {
     class TestTask extends AgentTask<string> {
       constructor() {
@@ -350,6 +438,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 999 },
           interruption: {},
+          preemptiveGeneration: {},
           turnDetection: 'vad',
         },
         allowInterruptions: false,
@@ -366,6 +455,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 999, maxDelay: 4000 },
           interruption: { enabled: true },
+          preemptiveGeneration: {},
           turnDetection: 'vad',
         },
         allowInterruptions: false,
@@ -383,6 +473,7 @@ describe('Agent', () => {
         turnHandling: {
           interruption: { mode: 'adaptive' },
           endpointing: {},
+          preemptiveGeneration: {},
           turnDetection: undefined,
         },
       });
@@ -395,6 +486,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 111, maxDelay: 222 },
           interruption: { enabled: false },
+          preemptiveGeneration: {},
           turnDetection: 'manual',
         },
       });

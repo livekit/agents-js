@@ -10,6 +10,8 @@ export {
   type AgentHookNodeResult,
   type AgentHooks,
   type AgentOptions,
+  type AgentTaskContext,
+  type AgentTaskCreateOptions,
   type ModelSettings,
   type TTSPronunciationMap,
 } from './agent.js';
