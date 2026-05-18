@@ -35,12 +35,17 @@ const DEFAULT_REALTIME_MODEL = 'gpt-realtime-whisper';
  * Realtime API. OpenAI's native endpoint accepts and ignores the
  * parameter, so this is a no-op for direct connections.
  *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
  * @internal
  */
 export function buildRealtimeSttUrl(baseURL: string | undefined, model: string): string {
   const url = new URL(baseURL || 'https://api.openai.com/v1');
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
   }
 
   const path = url.pathname.replace(/\/$/, '');

@@ -113,6 +113,27 @@ describe('buildRealtimeSttUrl', () => {
     expect(url.searchParams.get('intent')).toBe('transcription');
     expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
   });
+
+  it('downgrades http baseURL to ws (not wss)', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('http://gateway.example.com/v1', 'gpt-realtime-whisper'),
+    );
+
+    expect(url.protocol).toBe('ws:');
+    expect(url.host).toBe('gateway.example.com');
+    expect(url.pathname).toBe('/v1/realtime');
+    expect(url.searchParams.get('intent')).toBe('transcription');
+    expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
+  });
+
+  it('downgrades http baseURL with a trailing slash to ws', () => {
+    const url = new URL(
+      buildRealtimeSttUrl('http://gateway.example.com/v1/', 'gpt-realtime-whisper'),
+    );
+
+    expect(url.protocol).toBe('ws:');
+    expect(url.pathname).toBe('/v1/realtime');
+  });
 });
 
 if (hasOpenAIApiKey) {
