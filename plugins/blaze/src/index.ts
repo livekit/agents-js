@@ -50,8 +50,8 @@ class BlazePlugin extends Plugin {
   constructor() {
     super({
       title: 'Blaze',
-      version: '0.1.0',
-      package: '@livekit/agents-plugin-blaze',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
     });
   }
 }
