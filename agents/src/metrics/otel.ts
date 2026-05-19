@@ -95,7 +95,9 @@ function emitSpan(
 ): void {
   switch (m.type) {
     case 'llm_metrics': {
-      const startTime = Math.max(0, m.timestamp - m.durationMs);
+      // Wrap epoch-ms in Date so OTel's timeInputToHrTime uses millisToHrTime,
+      // not performance.now() + timeOrigin (which yields ~2x Date.now()).
+      const startTime = new Date(Math.max(0, m.timestamp - m.durationMs));
       const span = tracer.startSpan(spanNames.llm, {
         startTime,
         attributes: {
@@ -119,11 +121,11 @@ function emitSpan(
       if (m.cancelled) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: 'cancelled' });
       }
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'stt_metrics': {
-      const startTime = Math.max(0, m.timestamp - m.durationMs);
+      const startTime = new Date(Math.max(0, m.timestamp - m.durationMs));
       const span = tracer.startSpan(spanNames.stt, {
         startTime,
         attributes: {
@@ -145,11 +147,11 @@ function emitSpan(
           'lk.stt.streamed': m.streamed,
         },
       });
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'tts_metrics': {
-      const startTime = Math.max(0, m.timestamp - m.durationMs);
+      const startTime = new Date(Math.max(0, m.timestamp - m.durationMs));
       const span = tracer.startSpan(spanNames.tts, {
         startTime,
         attributes: {
@@ -178,11 +180,11 @@ function emitSpan(
       if (m.cancelled) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: 'cancelled' });
       }
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'realtime_model_metrics': {
-      const startTime = Math.max(0, m.timestamp - m.durationMs);
+      const startTime = new Date(Math.max(0, m.timestamp - m.durationMs));
       const span = tracer.startSpan(spanNames.realtime, {
         startTime,
         attributes: {
@@ -212,12 +214,12 @@ function emitSpan(
       if (m.cancelled) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: 'cancelled' });
       }
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'eou_metrics': {
       const span = tracer.startSpan(spanNames.eou, {
-        startTime: m.timestamp,
+        startTime: new Date(m.timestamp),
         attributes: {
           'lk.eou.end_of_utterance_delay_ms': m.endOfUtteranceDelayMs,
           'lk.eou.transcription_delay_ms': m.transcriptionDelayMs,
@@ -226,12 +228,12 @@ function emitSpan(
           ...(m.speechId && { [ATTR_SPEECH_ID]: m.speechId }),
         },
       });
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'interruption_metrics': {
       const span = tracer.startSpan(spanNames.interruption, {
-        startTime: m.timestamp,
+        startTime: new Date(m.timestamp),
         attributes: {
           'lk.interruption.total_duration_ms': m.totalDuration,
           'lk.interruption.prediction_duration_ms': m.predictionDuration,
@@ -241,19 +243,19 @@ function emitSpan(
           'lk.interruption.num_requests': m.numRequests,
         },
       });
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
     case 'vad_metrics': {
       const span = tracer.startSpan(spanNames.vad, {
-        startTime: m.timestamp,
+        startTime: new Date(m.timestamp),
         attributes: {
           'lk.vad.idle_time_ms': m.idleTimeMs,
           'lk.vad.inference_duration_total_ms': m.inferenceDurationTotalMs,
           'lk.vad.inference_count': m.inferenceCount,
         },
       });
-      span.end(m.timestamp);
+      span.end(new Date(m.timestamp));
       return;
     }
   }

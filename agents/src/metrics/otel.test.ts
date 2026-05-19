@@ -382,6 +382,150 @@ describe('attachOtelTracer', () => {
     expect(span!.attributes['gen_ai.response.id']).toBe('req-no-meta');
   });
 
+  it('span startTime and endTime are within +/-5s of the metric timestamp (Devin AI #1545)', () => {
+    // Regression for the ~51-year-future bug: OTel's timeInputToHrTime treats a
+    // plain number as a performance.now() value and adds timeOrigin to it. Plain
+    // Date.now() epoch ms therefore landed in year ~2075. Wrapping in new Date()
+    // routes through millisToHrTime, which is the correct path for epoch ms.
+    const session = makeFakeSession();
+    const tracer = provider.getTracer('test');
+    attachOtelTracer(session, tracer);
+
+    const now = Date.now();
+    const metrics: LLMMetrics = {
+      type: 'llm_metrics',
+      label: 'openai.LLM',
+      requestId: 'req-time',
+      timestamp: now,
+      durationMs: 250,
+      ttftMs: 80,
+      cancelled: false,
+      completionTokens: 1,
+      promptTokens: 1,
+      promptCachedTokens: 0,
+      totalTokens: 2,
+      tokensPerSecond: 10,
+      metadata: { modelProvider: 'openai', modelName: 'gpt-4o-mini' },
+    };
+    emit(session, metrics);
+
+    const [span] = exporter.getFinishedSpans();
+    expect(span).toBeDefined();
+    // hrTime is [seconds, nanoseconds]; convert to epoch ms.
+    const startMs = span!.startTime[0] * 1000 + span!.startTime[1] / 1e6;
+    const endMs = span!.endTime[0] * 1000 + span!.endTime[1] / 1e6;
+    // Without the fix, startMs/endMs land ~ Date.now() + (Date.now() - performance.now())
+    // which is roughly 2 * Date.now(), i.e. year ~2075 (>1.6e12 ms in the future).
+    expect(Math.abs(startMs - (now - metrics.durationMs))).toBeLessThan(5_000);
+    expect(Math.abs(endMs - now)).toBeLessThan(5_000);
+  });
+
+  it('captures Date instances at the OTel boundary for every metric type (regression for #1545)', () => {
+    const session = makeFakeSession();
+    const captured: { startTime?: unknown; endTime?: unknown }[] = [];
+    const fakeTracer = {
+      startSpan: (_name: string, opts?: { startTime?: unknown }) => {
+        const entry: { startTime?: unknown; endTime?: unknown } = { startTime: opts?.startTime };
+        captured.push(entry);
+        return {
+          setStatus: () => {},
+          end: (endTime?: unknown) => {
+            entry.endTime = endTime;
+          },
+        };
+      },
+    } as unknown as Parameters<typeof attachOtelTracer>[1];
+    attachOtelTracer(session, fakeTracer);
+
+    const now = Date.now();
+    const base = {
+      timestamp: now,
+      durationMs: 100,
+      ttftMs: 50,
+      cancelled: false,
+    } as const;
+    // Cover all 7 metric variants.
+    emit(session, {
+      ...base,
+      type: 'llm_metrics',
+      label: 'l',
+      requestId: 'r',
+      completionTokens: 1,
+      promptTokens: 1,
+      promptCachedTokens: 0,
+      totalTokens: 2,
+      tokensPerSecond: 10,
+    });
+    emit(session, {
+      type: 'stt_metrics',
+      label: 's',
+      requestId: 'r',
+      timestamp: now,
+      durationMs: 100,
+      audioDurationMs: 500,
+      streamed: false,
+    });
+    emit(session, {
+      type: 'tts_metrics',
+      label: 't',
+      requestId: 'r',
+      timestamp: now,
+      ttfbMs: 50,
+      durationMs: 100,
+      audioDurationMs: 500,
+      cancelled: false,
+      charactersCount: 10,
+      streamed: false,
+    });
+    emit(session, {
+      type: 'realtime_model_metrics',
+      label: 'rt',
+      requestId: 'r',
+      timestamp: now,
+      durationMs: 100,
+      ttftMs: 50,
+      cancelled: false,
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+      tokensPerSecond: 10,
+      inputTokenDetails: { audioTokens: 0, textTokens: 1, imageTokens: 0, cachedTokens: 0 },
+      outputTokenDetails: { textTokens: 1, audioTokens: 0, imageTokens: 0 },
+    });
+    emit(session, {
+      type: 'eou_metrics',
+      timestamp: now,
+      endOfUtteranceDelayMs: 1,
+      transcriptionDelayMs: 1,
+      onUserTurnCompletedDelayMs: 1,
+      lastSpeakingTimeMs: now,
+    });
+    emit(session, {
+      type: 'interruption_metrics',
+      timestamp: now,
+      totalDuration: 1,
+      predictionDuration: 1,
+      detectionDelay: 1,
+      numInterruptions: 0,
+      numBackchannels: 0,
+      numRequests: 0,
+    });
+    emit(session, {
+      type: 'vad_metrics',
+      label: 'v',
+      timestamp: now,
+      idleTimeMs: 0,
+      inferenceDurationTotalMs: 0,
+      inferenceCount: 0,
+    });
+
+    expect(captured).toHaveLength(7);
+    for (const entry of captured) {
+      expect(entry.startTime).toBeInstanceOf(Date);
+      expect(entry.endTime).toBeInstanceOf(Date);
+    }
+  });
+
   it('respects custom spanNames override', () => {
     const session = makeFakeSession();
     const tracer = provider.getTracer('test');
