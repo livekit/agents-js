@@ -36,6 +36,23 @@ describe('buildResponsesWsUrl', () => {
     expect(url.pathname).toBe('/v1/responses');
     expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
   });
+
+  it('rewrites http baseURL to ws (not wss)', () => {
+    const url = new URL(buildResponsesWsUrl('http://gateway.example.com/v1', 'gpt-4o-mini'));
+
+    expect(url.protocol).toBe('ws:');
+    expect(url.host).toBe('gateway.example.com');
+    expect(url.pathname).toBe('/v1/responses');
+    expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
+  });
+
+  it('strips a trailing slash on an http baseURL before appending /responses', () => {
+    const url = new URL(buildResponsesWsUrl('http://gateway.example.com/v1/', 'gpt-4o-mini'));
+
+    expect(url.protocol).toBe('ws:');
+    expect(url.pathname).toBe('/v1/responses');
+    expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
+  });
 });
 
 if (hasOpenAIApiKey) {

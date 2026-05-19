@@ -1,5 +1,54 @@
 # @livekit/agents
 
+## 1.4.3
+
+### Patch Changes
+
+- Improve audio discard checks - [#1504](https://github.com/livekit/agents-js/pull/1504) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add dynamic endpointing for voice turn handling. - [#1475](https://github.com/livekit/agents-js/pull/1475) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(stt): reflect active child in `FallbackAdapter` `model`/`provider` - [#1515](https://github.com/livekit/agents-js/pull/1515) ([@julien-lottie](https://github.com/julien-lottie))
+
+  `audio_recognition.refreshUserTurnSttAttributes` reads these on every
+  STT event to stamp `gen_ai.request.model` / `gen_ai.provider.name`
+  on the `user_turn` span. With static wrapper labels, every span
+  reported `FallbackAdapter` / `livekit` regardless of which provider
+  actually transcribed — so a mid-turn fallover was invisible in
+  traces. Track the elected child from both the streaming and
+  recognize paths and surface its identifiers.
+
+- Add beta workflow InstructionParts exports. - [#1500](https://github.com/livekit/agents-js/pull/1500) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `updateOptions` support to inference LLM for live model swaps. - [#1527](https://github.com/livekit/agents-js/pull/1527) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix audio resampler memory leak. - [#1453](https://github.com/livekit/agents-js/pull/1453) ([@KrishnaShuk](https://github.com/KrishnaShuk))
+
+- feat(agents): add modality-aware `Instructions` with audio/text variants - [#1484](https://github.com/livekit/agents-js/pull/1484) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Introduce a new `Instructions` class for system prompts that adapt to the
+  user's input modality. The pipeline now applies the matching variant before
+  each LLM turn based on `SpeechHandle.inputDetails.modality`, and
+  `AgentSession.generateReply()` and `AgentSession.run()` expose an
+  `inputModality` option. `Instructions.tpl` supports JS-native prompt
+  composition while preserving audio/text variants.
+
+- brianyin/agt-2866-delete-room-on-session-close - [#1501](https://github.com/livekit/agents-js/pull/1501) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(agents): await realtime auto tool replies in RunResult - [#1490](https://github.com/livekit/agents-js/pull/1490) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add support for the Rime Coda TTS model. - [#1523](https://github.com/livekit/agents-js/pull/1523) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat(agents): add Speechmatics inference STT model options. - [#1507](https://github.com/livekit/agents-js/pull/1507) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat(agents): add `livekit-agents download-files` command for Docker layer caching - [#1511](https://github.com/livekit/agents-js/pull/1511) ([@davidzhao](https://github.com/davidzhao))
+
+  Adds a standalone CLI (`npx livekit-agents download-files`) that discovers installed
+  `@livekit/agents-plugin-*` packages and downloads their asset files without loading
+  the user's agent code.
+
+- fix(barge-in): suppress session-level barge-in errors. - [#1513](https://github.com/livekit/agents-js/pull/1513) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.2
 
 ### Patch Changes
