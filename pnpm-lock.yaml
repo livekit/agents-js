@@ -12,6 +12,9 @@ catalogs:
     '@types/ws':
       specifier: ^8.5.10
       version: 8.18.1
+    ws:
+      specifier: ^8.18.0
+      version: 8.20.1
 
 patchedDependencies:
   '@changesets/assemble-release-plan':
@@ -1190,6 +1193,31 @@ importers:
       onnxruntime-common:
         specifier: 1.24.3
         version: 1.24.3
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/soniox:
+    dependencies:
+      ws:
+        specifier: 'catalog:'
+        version: 8.20.1
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
