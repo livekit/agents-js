@@ -30,7 +30,7 @@ export {
   MessageAssert,
   RunAssert,
   RunResult,
-  mockTools,
+  withMockTools,
   type MockToolFn,
   type MockToolsMap,
 } from './run_result.js';

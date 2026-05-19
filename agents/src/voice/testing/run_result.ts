@@ -965,36 +965,41 @@ export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 export const mockToolsStorage = new AsyncLocalStorage<MockToolsMap>();
 
 /**
- * Temporarily assign a set of mock tool callables to a specific Agent type within
- * the current async context. While the callback is running, tool calls for the
- * matching agent type and tool name will be routed to the supplied mock instead of
- * the real `execute` implementation.
+ * Temporarily assign a set of mock tool callables to a specific Agent type. Returns
+ * a runner that takes an async callback. While the callback is running, tool calls
+ * for the matching agent type and tool name are routed to the supplied mock instead
+ * of the real `execute` implementation.
+ *
+ * Mirrors the Python `mock_tools` context manager, adapted to JS via a curried
+ * callback form (Python uses `with`, JS uses an async callback).
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
- * @param callback - The async function executed under the mock context.
  *
  * @example
  * ```typescript
- * await mockTools(
- *   MyAgent,
- *   { orderItem: () => ({ success: true }) },
- *   async () => {
- *     const result = await session.run({ userInput: 'Order a burger' });
- *     result.expect.nextEvent().isFunctionCall({ name: 'orderItem' });
+ * await withMockTools(
+ *   DriveThruAgent,
+ *   {
+ *     orderRegularItem: () => new Error('test failure'),
+ *     getWeather: () => 'sunny',
  *   },
- * );
+ * )(async () => {
+ *   const result = await session.run({ userInput: 'Order a burger' });
+ *   result.expect.containsFunctionCall({ name: 'orderRegularItem' });
+ * });
  * ```
  */
-export async function mockTools<T>(
+export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
-  callback: () => Promise<T>,
-): Promise<T> {
-  const current = mockToolsStorage.getStore();
-  const updated: MockToolsMap = new Map(current ?? []);
-  updated.set(agent, mocks);
-  return mockToolsStorage.run(updated, callback);
+): <T>(callback: () => Promise<T>) => Promise<T> {
+  return <T>(callback: () => Promise<T>): Promise<T> => {
+    const current = mockToolsStorage.getStore();
+    const updated: MockToolsMap = new Map(current ?? []);
+    updated.set(agent, mocks);
+    return mockToolsStorage.run(updated, callback);
+  };
 }
 
 /**
