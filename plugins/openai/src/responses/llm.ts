@@ -12,8 +12,14 @@ import {
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, PerplexityChatModels } from '../models.js';
 import { WSLLM } from '../ws/llm.js';
+
+export const PERPLEXITY_RESPONSES_BASE_URL = 'https://api.perplexity.ai/v1';
+
+const PERPLEXITY_ATTRIBUTION_HEADER = {
+  'X-Pplx-Integration': `livekit-agents/${__PACKAGE_VERSION__}`,
+};
 
 export interface LLMOptions {
   model: string | ChatModels;
@@ -386,6 +392,51 @@ export class LLM extends llm.LLM {
     // wrapper instance (e.g. AgentActivity) receive them.
     this.#llm.on('metrics_collected', (metrics) => this.emit('metrics_collected', metrics));
     this.#llm.on('error', (error) => this.emit('error', error));
+  }
+
+  /**
+   * Create a new instance of Perplexity Responses LLM.
+   *
+   * @remarks
+   * `apiKey` must be set to your Perplexity API key, either using the argument or by setting the
+   * `PERPLEXITY_API_KEY` environment variable.
+   */
+  static withPerplexity(
+    opts: Partial<{
+      model: string | PerplexityChatModels;
+      apiKey?: string;
+      baseURL?: string;
+      temperature?: number;
+      parallelToolCalls?: boolean;
+      toolChoice?: llm.ToolChoice;
+      store?: boolean;
+      metadata?: Record<string, string>;
+      strictToolSchema?: boolean;
+      serviceTier?: string;
+      maxOutputTokens?: number;
+    }> = {},
+  ): LLM {
+    opts.apiKey = opts.apiKey || process.env.PERPLEXITY_API_KEY;
+    if (opts.apiKey === undefined) {
+      throw new Error(
+        'Perplexity API key is required, whether as an argument or as $PERPLEXITY_API_KEY',
+      );
+    }
+
+    const baseURL = opts.baseURL ?? PERPLEXITY_RESPONSES_BASE_URL;
+
+    return new LLM({
+      model: 'sonar-pro',
+      ...opts,
+      baseURL,
+      client: new OpenAI({
+        apiKey: opts.apiKey,
+        baseURL,
+        defaultHeaders: PERPLEXITY_ATTRIBUTION_HEADER,
+        maxRetries: 0,
+      }),
+      useWebSocket: false,
+    });
   }
 
   override label(): string {
