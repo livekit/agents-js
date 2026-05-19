@@ -156,6 +156,54 @@ describe('DriveThru Agent Tests', { timeout: 180_000 }, () => {
     });
   });
 
+  describe('test_failure', () => {
+    let session: voice.AgentSession;
+    let llmInstance: openai.LLM;
+    let judgeInstance: openai.LLM;
+    let userdata: UserData;
+
+    beforeAll(async () => {
+      userdata = await newUserData();
+      llmInstance = mainLLM();
+      judgeInstance = judgeLLM();
+      session = new voice.AgentSession({
+        llm: llmInstance,
+        userData: userdata,
+      });
+      await session.start({ agent: new DriveThruAgent(userdata) });
+    }, 30_000);
+
+    afterAll(async () => {
+      await session?.close();
+    });
+
+    it('should recover gracefully when a tool throws', async () => {
+      // Simulate a tool error via withMockTools (mirrors Python's mock_tools usage).
+      await voice.testing.withMockTools(DriveThruAgent, {
+        orderRegularItem: () => {
+          throw new Error('test failure');
+        },
+      })(async () => {
+        const result = session.run({ userInput: 'Can I get a large vanilla shake?' });
+        await result.wait();
+
+        result.expect.skipNextEventIf({ type: 'message', role: 'assistant' });
+        result.expect.nextEvent().isFunctionCall({
+          name: 'orderRegularItem',
+          args: { itemId: 'shake_vanilla', size: 'L' },
+        });
+        result.expect.nextEvent().isFunctionCallOutput();
+        await result.expect.nextEvent().isMessage({ role: 'assistant' }).judge(judgeInstance, {
+          intent:
+            "should inform the user that something went wrong, it's ok to ask them to try again",
+        });
+
+        // leaving this commented, some LLMs may occasionally try to retry.
+        // result.expect.noMoreEvents();
+      });
+    });
+  });
+
   describe('test_unavailable_item', () => {
     let session: voice.AgentSession;
     let llmInstance: openai.LLM;
