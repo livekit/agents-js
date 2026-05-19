@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-openai': patch
+'@livekit/agents-plugin-perplexity': patch
 ---
 
-Add Perplexity Agent API support through `responses.LLM.withPerplexity()`.
+Add a Perplexity plugin with Agent API support through `responses.LLM`.

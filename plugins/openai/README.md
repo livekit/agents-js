@@ -16,20 +16,3 @@ to use it, or browse the [API
 reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_openai.html).
 See the [repository](https://github.com/livekit/agents-js) for more information
 about the framework as a whole.
-
-## Perplexity Responses API
-
-Perplexity's Agent API is compatible with OpenAI's Responses API and can be used
-through the `responses` submodule:
-
-```ts
-import { responses } from '@livekit/agents-plugin-openai';
-
-const llm = responses.LLM.withPerplexity({
-  model: 'sonar-pro',
-  // apiKey is picked up from PERPLEXITY_API_KEY if omitted
-});
-```
-
-This uses `https://api.perplexity.ai/v1`, disables WebSocket transport, and sends
-Perplexity's `X-Pplx-Integration` attribution header.
