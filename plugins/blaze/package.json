@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-blaze",
-  "version": "0.1.0",
+  "version": "1.0.48",
   "description": "Blaze AI plugin for LiveKit Node Agents (STT, TTS, LLM)",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
