@@ -4,6 +4,8 @@
 import { Plugin } from '@livekit/agents';
 
 export * from './stt.js';
+export * from './models.js';
+export { ChunkedStream, SynthesizeStream, TTS, type TTSOptions } from './tts.js';
 
 class SonioxPlugin extends Plugin {
   constructor() {
