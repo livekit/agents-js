@@ -233,9 +233,7 @@ describe('Google Realtime empty turnComplete handling (#1450)', () => {
     const [errorArg, recoverableArg] = session.emitError.mock.calls[0]!;
     expect(recoverableArg).toBe(true);
     expect(errorArg).toBeInstanceOf(APIStatusError);
-    expect((errorArg as APIStatusError).message).toContain(
-      'no audio, text, or tool call output',
-    );
+    expect((errorArg as APIStatusError).message).toContain('no audio, text, or tool call output');
     expect((errorArg as APIStatusError).retryable).toBe(true);
     expect((errorArg as APIStatusError).requestId).toBe('GR_empty');
     expect(session.markCurrentGenerationDone).toHaveBeenCalledTimes(1);

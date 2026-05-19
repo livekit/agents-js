@@ -137,6 +137,13 @@ interface ResponseGeneration {
   _completedTimestamp?: number;
   /** @internal */
   _done: boolean;
+  /**
+   * Whether a tool call has been seen on this generation. Used to avoid
+   * false-positive empty-turnComplete errors on tool-call-only turns
+   * (see livekit/agents-js#1450).
+   * @internal
+   */
+  _hadToolCall?: boolean;
 }
 
 interface ToolCallStatus {
@@ -1249,6 +1256,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     try {
+      // A single LiveServerMessage can carry both serverContent.turnComplete
+      // and toolCall. Mark _hadToolCall up-front so the empty-turnComplete
+      // check inside handleServerContent (below) does not fire a false
+      // positive for tool-call-only turns. See livekit/agents-js#1450.
+      if (response.toolCall && this.currentGeneration) {
+        this.currentGeneration._hadToolCall = true;
+      }
+
       if (response.serverContent) {
         this.handleServerContent(response.serverContent);
       }
@@ -1512,6 +1527,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       outputText: '',
       _createdTimestamp: Date.now(),
       _done: false,
+      _hadToolCall: false,
     };
 
     // Close audio stream if audio output is not supported by the model
@@ -1652,6 +1668,33 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (serverContent.turnComplete && !this.earlyCompletionPending) {
+      // Gemini occasionally emits a premature turnComplete with no audio, no
+      // text, and no tool calls (upstream bug googleapis/python-genai#2117).
+      // Surface as a recoverable error so the upstream agent activity can
+      // retry, mirroring the Python sibling fix in livekit/agents#4249.
+      // The check must run against the generation that *owns* this
+      // turnComplete: when a previous gen is stashed as
+      // generationPendingTurnComplete, that stashed gen owns the turnComplete,
+      // not currentGeneration. See livekit/agents-js#1450.
+      const completingGen = this.generationPendingTurnComplete ?? this.currentGeneration;
+      if (
+        completingGen &&
+        !this.generationHasOutput(completingGen) &&
+        !completingGen._hadToolCall
+      ) {
+        this.emitError(
+          new APIStatusError({
+            message:
+              'Gemini realtime: turn completed with no audio, text, or tool call output (see livekit/agents-js#1450)',
+            options: {
+              retryable: true,
+              requestId: completingGen.responseId,
+            },
+          }),
+          true,
+        );
+      }
+
       if (this.generationPendingTurnComplete) {
         this.markCurrentGenerationDone(false, this.generationPendingTurnComplete);
         this.generationPendingTurnComplete = undefined;
@@ -1727,6 +1770,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         }),
       );
     }
+    // Track that this generation had at least one tool call so that any
+    // subsequent empty turnComplete does not surface as a recoverable error.
+    // See livekit/agents-js#1450.
+    gen._hadToolCall = true;
     // This closes message/text/audio/function streams so the consumer can continue.
     this.markCurrentGenerationDone();
   }
