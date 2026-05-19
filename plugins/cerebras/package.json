@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.0.0",
-    "openai": "^6.8.1"
+    "openai": "^6.16.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
