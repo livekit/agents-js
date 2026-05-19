@@ -19,7 +19,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { getJobContext } from '../job.js';
+import { type JobContext, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   AgentHandoffItem,
@@ -502,6 +502,9 @@ export class AgentSession<
 
       if (ctx._primaryAgentSession === undefined) {
         ctx._primaryAgentSession = this;
+        // #927: when the primary session closes because the remote participant
+        // disconnected, shut the job down so the process can drain and exit.
+        AgentSession._attachPrimarySessionShutdownHook(this, ctx);
       } else if (this._enableRecording) {
         throw new Error(
           'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
@@ -1353,5 +1356,32 @@ export class AgentSession<
     this._roomIO = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
+  }
+
+  /**
+   * Bridges the primary AgentSession's `Close` event to `JobContext.shutdown`.
+   *
+   * Without this, when a SIP/WebRTC participant disconnects, the room_io
+   * closes the AgentSession but the job process keeps running until the
+   * parent worker SIGTERMs it (~60s). Fixes #927.
+   *
+   * Only triggers on `PARTICIPANT_DISCONNECTED` so user-initiated closes
+   * (e.g. user code calling `session.close()` to start a new session)
+   * still keep the job alive.
+   *
+   * @internal
+   */
+  static _attachPrimarySessionShutdownHook(
+    session: AgentSession,
+    ctx: JobContext | undefined,
+  ): void {
+    if (!ctx) {
+      return;
+    }
+    session.once(AgentSessionEventTypes.Close, (ev: CloseEvent) => {
+      if (ev.reason === CloseReason.PARTICIPANT_DISCONNECTED) {
+        ctx.shutdown('primary_session_closed');
+      }
+    });
   }
 }
