@@ -537,8 +537,8 @@ importers:
         specifier: ^3.0.0
         version: 3.1.3
       openai:
-        specifier: ^6.16.0
-        version: 6.16.0(ws@8.20.1)(zod@4.3.6)
+        specifier: '>=6.8.1'
+        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -987,7 +987,7 @@ importers:
         version: 1.1.1
       openai:
         specifier: ^6.8.1
-        version: 6.16.0(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
       ws:
         specifier: 'catalog:'
         version: 8.20.1
@@ -4416,18 +4416,6 @@ packages:
 
   onnxruntime-web@1.26.0-dev.20260416-b7804b056c:
     resolution: {integrity: sha512-MD6Ss4GSpQBo6zqoJzyT9LRbKYs7x/JVN23FT24EcEvlqF4VuzPOeH6X38orZPKHQDbprn7K+SBpu0/mj2CQiw==}
-
-  openai@6.16.0:
-    resolution: {integrity: sha512-fZ1uBqjFUjXzbGc35fFtYKEOxd20kd9fDpFeqWtsOZWiubY8CZ1NAlXHW3iathaFvqmNtCWMIsosCuyeI7Joxg==}
-    hasBin: true
-    peerDependencies:
-      ws: ^8.18.0
-      zod: ^3.25 || ^4.0
-    peerDependenciesMeta:
-      ws:
-        optional: true
-      zod:
-        optional: true
 
   openai@6.8.1:
     resolution: {integrity: sha512-ACifslrVgf+maMz9vqwMP4+v9qvx5Yzssydizks8n+YUJ6YwUoxj51sKRQ8HYMfR6wgKLSIlaI108ZwCk+8yig==}
@@ -8800,11 +8788,6 @@ snapshots:
       onnxruntime-common: 1.24.0-dev.20251116-b39e144322
       platform: 1.3.6
       protobufjs: 7.5.6
-
-  openai@6.16.0(ws@8.20.1)(zod@4.3.6):
-    optionalDependencies:
-      ws: 8.20.1
-      zod: 4.3.6
 
   openai@6.8.1(ws@8.20.1)(zod@3.25.76):
     optionalDependencies:
