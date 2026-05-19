@@ -6,8 +6,9 @@ import { APIStatusError } from '@livekit/agents';
 import { MAX_RETRY_COUNT } from './config.js';
 import { STT } from './stt.js';
 
-type AnyFn = (...args: unknown[]) => unknown;
-type STTWithRecognize = STT & { _recognize: AnyFn };
+type STTWithRecognize = STT & {
+  _recognize: (...args: unknown[]) => Promise<unknown>;
+};
 
 /** Create a minimal PCM frame mock. */
 function makePcmFrame(samples = 160, sampleRate = 16000, channels = 1) {
@@ -163,7 +164,9 @@ describe('STT', () => {
       }) as STTWithRecognize;
       const frame = makePcmFrame();
 
-      const error = await sttInstance._recognize([frame]).catch((err: unknown) => err);
+      const error = (await sttInstance
+        ._recognize([frame])
+        .catch((err: unknown) => err)) as APIStatusError;
 
       expect(error).toBeInstanceOf(APIStatusError);
       expect(error).toMatchObject({
@@ -192,12 +195,14 @@ describe('STT', () => {
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(
         ((callback: TimerHandler) => {
           if (typeof callback === 'function') callback();
-          return 0 as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout,
+          return {} as ReturnType<typeof setTimeout>;
+        }) as unknown as typeof setTimeout,
       );
 
       try {
-        const error = await sttInstance._recognize([frame]).catch((err: unknown) => err);
+        const error = (await sttInstance
+          ._recognize([frame])
+          .catch((err: unknown) => err)) as APIStatusError;
 
         expect(error).toBeInstanceOf(APIStatusError);
         expect(error).toMatchObject({
