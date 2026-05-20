@@ -245,6 +245,40 @@ export const createSpeechCreatedEvent = ({
   createdAt,
 });
 
+export type UserTurnExceededEvent = {
+  type: 'user_turn_exceeded';
+  /** Transcript from the current uncommitted user turn only. */
+  transcript: string;
+  /** Full transcript since the start of user speaking in the accumulation window. */
+  accumulatedTranscript: string;
+  /** Total word count since the start of user speaking in the accumulation window. */
+  accumulatedWordCount: number;
+  /** Duration of the user turn accumulation window in milliseconds. */
+  duration: number;
+  createdAt: number;
+};
+
+export const createUserTurnExceededEvent = ({
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
+  createdAt = Date.now(),
+}: {
+  transcript: string;
+  accumulatedTranscript: string;
+  accumulatedWordCount: number;
+  duration: number;
+  createdAt?: number;
+}): UserTurnExceededEvent => ({
+  type: 'user_turn_exceeded',
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
+  createdAt,
+});
+
 export type ErrorEvent = {
   type: 'error';
   error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown;

@@ -302,6 +302,9 @@ importers:
       '@livekit/agents-plugin-silero':
         specifier: workspace:*
         version: link:../plugins/silero
+      '@livekit/agents-plugin-tavus':
+        specifier: workspace:*
+        version: link:../plugins/tavus
       '@livekit/agents-plugin-trugen':
         specifier: workspace:*
         version: link:../plugins/trugen
@@ -1020,6 +1023,34 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/perplexity:
+    dependencies:
+      openai:
+        specifier: ^6.8.1
+        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/phonic:
     dependencies:
       phonic:
@@ -1190,6 +1221,31 @@ importers:
       onnxruntime-common:
         specifier: 1.24.3
         version: 1.24.3
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  plugins/tavus:
+    dependencies:
+      livekit-server-sdk:
+        specifier: ^2.13.3
+        version: 2.14.1
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.27
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      pino:
+        specifier: ^8.19.0
+        version: 8.21.0
       tsup:
         specifier: ^8.3.5
         version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)

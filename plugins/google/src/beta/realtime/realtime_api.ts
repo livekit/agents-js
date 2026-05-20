@@ -819,7 +819,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.messageChannel.put(event);
   }
 
-  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(
+    instructions?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<llm.GenerationCreatedEvent> {
     if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
       this.#logger.warn(
         `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
@@ -831,11 +834,31 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.#logger.warn(
         'generateReply called while another generation is pending, cancelling previous.',
       );
-      this.pendingGenerationFut.reject(new Error('Superseded by new generate_reply call'));
+      const oldFut = this.pendingGenerationFut;
+      this.pendingGenerationFut = undefined;
+      oldFut.reject(new Error('Superseded by new generate_reply call'));
     }
 
     const fut = new Future<llm.GenerationCreatedEvent>();
     this.pendingGenerationFut = fut;
+
+    const onAbort = () => {
+      if (this.pendingGenerationFut !== fut) {
+        return;
+      }
+      this.pendingGenerationFut = undefined;
+      void this.interrupt();
+      if (!fut.done) {
+        fut.reject(new Error('generateReply aborted'));
+      }
+    };
+
+    if (options.signal?.aborted) {
+      onAbort();
+      return fut.await;
+    }
+
+    options.signal?.addEventListener('abort', onAbort, { once: true });
 
     if (this.inUserActivity) {
       this.sendClientEvent({
@@ -878,7 +901,12 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }, 5000);
 
-    fut.await.finally(() => clearTimeout(timeoutHandle));
+    void fut.await
+      .finally(() => {
+        clearTimeout(timeoutHandle);
+        options.signal?.removeEventListener('abort', onAbort);
+      })
+      .catch(() => undefined);
 
     return fut.await;
   }

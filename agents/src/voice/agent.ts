@@ -33,6 +33,7 @@ import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -296,6 +297,18 @@ export class Agent<UserData = any> {
   }
 
   async onUserTurnCompleted(_chatCtx: ChatContext, _newMessage: ChatMessage): Promise<void> {}
+
+  async onUserTurnExceeded(ev: UserTurnExceededEvent): Promise<void> {
+    await this.session.generateReply({
+      userInput: ev.transcript,
+      instructions:
+        'The user has been speaking too long without giving a chance to reply. ' +
+        'Politely cut in with a short reply or notice. Keep it short since the user cannot interrupt it.',
+      allowInterruptions: false,
+      toolChoice: 'none',
+      inputModality: 'audio',
+    });
+  }
 
   async sttNode(
     audio: ReadableStream<AudioFrame>,

@@ -8,6 +8,7 @@ import {
   type PreemptiveGenerationOptions,
   defaultPreemptiveGenerationOptions,
 } from './preemptive_generation.js';
+import { type UserTurnLimitOptions, defaultUserTurnLimitOptions } from './user_turn_limit.js';
 
 /**
  * Configuration for the turn handling system. Used to configure the turn taking behavior of the
@@ -52,12 +53,17 @@ export interface TurnHandlingOptions {
    * Preemptive generation configuration. Use `{ enabled: false }` to disable.
    */
   preemptiveGeneration: Partial<PreemptiveGenerationOptions>;
+  /**
+   * User turn limit configuration. Use `{ maxWords: 50 }` to enable.
+   */
+  userTurnLimit?: Partial<UserTurnLimitOptions>;
 }
 
 export interface InternalTurnHandlingOptions extends TurnHandlingOptions {
   endpointing: EndpointingOptions;
   interruption: InterruptionOptions;
   preemptiveGeneration: PreemptiveGenerationOptions;
+  userTurnLimit: UserTurnLimitOptions;
 }
 
 export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
@@ -65,4 +71,5 @@ export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
   interruption: defaultInterruptionOptions,
   endpointing: defaultEndpointingOptions,
   preemptiveGeneration: defaultPreemptiveGenerationOptions,
+  userTurnLimit: defaultUserTurnLimitOptions,
 };

@@ -6,6 +6,7 @@ import {
   APIConnectionError,
   APIError,
   APIStatusError,
+  APITimeoutError,
   AudioByteStream,
   log,
   shortuuid,
@@ -87,8 +88,8 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.opts);
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    return new SynthesizeStream(this, this.opts, options?.connOptions);
   }
 }
 
@@ -215,8 +216,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   private static readonly FLUSH_MSG = JSON.stringify({ type: 'Flush' });
   private static readonly CLOSE_MSG = JSON.stringify({ type: 'Close' });
 
-  constructor(tts: TTS, opts: TTSOptions) {
-    super(tts);
+  constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.opts = opts;
     this.tokenizer = opts.sentenceTokenizer.stream();
   }
@@ -302,25 +303,36 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.tokenizer.close();
     };
 
-    const sendTask = async () => {
-      for await (const event of this.tokenizer) {
-        if (this.abortController.signal.aborted) break;
+    let markInputSent: () => void = () => {};
+    const inputSent = new Promise<void>((resolve) => {
+      markInputSent = resolve;
+    });
 
-        let text = event.token;
-        if (!text.endsWith(' ')) {
-          text += ' ';
+    const sendTask = async () => {
+      try {
+        for await (const event of this.tokenizer) {
+          if (this.abortController.signal.aborted) break;
+
+          let text = event.token;
+          if (!text.endsWith(' ')) {
+            text += ' ';
+          }
+
+          const message = JSON.stringify({
+            type: 'Speak',
+            text: text,
+          });
+
+          ws.send(message);
+          markInputSent();
         }
 
-        const message = JSON.stringify({
-          type: 'Speak',
-          text: text,
-        });
-
-        ws.send(message);
-      }
-
-      if (!this.abortController.signal.aborted) {
-        ws.send(SynthesizeStream.FLUSH_MSG);
+        if (!this.abortController.signal.aborted) {
+          ws.send(SynthesizeStream.FLUSH_MSG);
+          markInputSent();
+        }
+      } finally {
+        markInputSent();
       }
     };
 
@@ -344,7 +356,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
+      const resetMessageTimeout = (reject: (reason?: unknown) => void) => {
+        clearMessageTimeout();
+        timeout = setTimeout(() => {
+          reject(new APITimeoutError({ message: 'Deepgram TTS recv idle timeout' }));
+        }, this.connOptions.timeoutMs);
+      };
+
+      await inputSent;
+      if (this.abortController.signal.aborted) return;
+
       return new Promise<void>((resolve, reject) => {
+        resetMessageTimeout(reject);
+
         ws.on('message', (data: RawData, isBinary: boolean) => {
           clearMessageTimeout();
 
@@ -352,7 +376,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const message = JSON.parse(data.toString());
             if (message.type === 'Flushed') {
               finalReceived = true;
-              clearMessageTimeout();
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -363,14 +386,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               resolve();
+              return;
             } else if (message.type === 'Warning') {
               this.#logger.warn(`Deepgram warning: ${message.warn_msg}`);
             } else if (message.type === 'Error' || message.type === 'error') {
               reject(new APIError('Deepgram TTS returned error', { body: message }));
+              return;
             } else if (message.type !== 'Metadata') {
               this.#logger.warn({ message }, 'Unknown Deepgram message type');
             }
 
+            resetMessageTimeout(reject);
             return;
           }
 
@@ -382,9 +408,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             sendLastFrame(segmentId, false);
             lastFrame = frame;
           }
+          resetMessageTimeout(reject);
         });
 
         ws.on('close', (code, reason) => {
+          clearMessageTimeout();
           if (!finalReceived) {
             reject(
               new APIStatusError({

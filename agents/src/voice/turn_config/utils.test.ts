@@ -8,6 +8,7 @@ import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { defaultTurnHandlingOptions } from './turn_handling.js';
+import { defaultUserTurnLimitOptions } from './user_turn_limit.js';
 import { migrateLegacyOptions, migrateTurnHandling } from './utils.js';
 
 beforeAll(() => {
@@ -23,6 +24,7 @@ describe('migrateLegacyOptions', () => {
       endpointing: defaultEndpointingOptions,
       interruption: defaultInterruptionOptions,
       preemptiveGeneration: defaultPreemptiveGenerationOptions,
+      userTurnLimit: defaultUserTurnLimitOptions,
     });
     expect(result.maxToolSteps).toBe(defaultAgentSessionOptions.maxToolSteps);
     expect(result.userAwayTimeout).toBe(defaultAgentSessionOptions.userAwayTimeout);

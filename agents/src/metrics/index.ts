@@ -4,6 +4,7 @@
 
 export type {
   AgentMetrics,
+  AvatarMetrics,
   EOUMetrics,
   InterruptionMetrics,
   LLMMetrics,
