@@ -55,7 +55,7 @@ export type InworldModels =
   | 'inworld/inworld-tts-1-max'
   | 'inworld/inworld-tts-1';
 
-export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2';
+export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3';
 
 export interface CartesiaOptions {
   emotion?: string;
@@ -101,6 +101,8 @@ export interface DeepgramTTSOptions {
 export interface RimeOptions {
   /** Maximum number of tokens to generate. */
   max_tokens?: number;
+  /** Values above 1 slow down audio; values below 1 speed it up. */
+  time_scale_factor?: number;
   /** Default 1.0, <1 = faster, >1 = slower. */
   speed_alpha?: number;
   /** Default false. */
