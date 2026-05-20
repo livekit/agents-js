@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import {
@@ -31,6 +32,27 @@ function createRecognition(overrides: Partial<AudioRecognitionOptions> = {}): Au
     maxEndpointingDelay: 0,
     ...overrides,
   });
+}
+
+function emitOverlapSpeechEvent(ar: AudioRecognition, ev: OverlappingSpeechEvent) {
+  (
+    ar as unknown as {
+      onOverlapSpeechEvent(ev: OverlappingSpeechEvent): void;
+    }
+  ).onOverlapSpeechEvent(ev);
+}
+
+function overlapSpeechEvent(isInterruption: boolean): OverlappingSpeechEvent {
+  return {
+    type: 'overlapping_speech',
+    detectedAt: Date.now(),
+    isInterruption,
+    totalDurationInS: 0,
+    predictionDurationInS: 0,
+    detectionDelayInS: 0,
+    probability: isInterruption ? 1 : 0,
+    numRequests: 1,
+  };
 }
 
 describe('AudioRecognition backchannel boundary', () => {
@@ -221,6 +243,32 @@ describe('AudioRecognition backchannel boundary', () => {
 
       vi.advanceTimersByTime(2000);
       expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('overlap events', () => {
+    it('suppresses backchannels during the boundary without blocking interruptions', async () => {
+      const hooks = createHooks();
+      const ar = new AudioRecognition({
+        recognitionHooks: hooks,
+        minEndpointingDelay: 0,
+        maxEndpointingDelay: 0,
+        backchannelBoundary: [50, 0],
+      });
+
+      await ar.onStartOfAgentSpeech(Date.now());
+      emitOverlapSpeechEvent(ar, overlapSpeechEvent(false));
+      expect(hooks.onInterruption).not.toHaveBeenCalled();
+
+      emitOverlapSpeechEvent(ar, overlapSpeechEvent(true));
+      expect(hooks.onInterruption).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(50);
+      emitOverlapSpeechEvent(ar, overlapSpeechEvent(false));
+      emitOverlapSpeechEvent(ar, overlapSpeechEvent(true));
+      expect(hooks.onInterruption).toHaveBeenCalledTimes(2);
+
+      await ar.close();
     });
   });
 });
