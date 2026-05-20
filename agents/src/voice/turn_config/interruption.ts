@@ -44,8 +44,9 @@ export interface InterruptionOptions {
    */
   resumeFalseInterruption: boolean;
   /**
-   * Milliseconds to suppress adaptive interruption handling when the agent starts or stops
-   * speaking each turn to allow for easier turn correction.
+   * Milliseconds near the start/end of each agent turn during which overlapping speech classified
+   * as a backchannel by the adaptive detector is suppressed. Events flagged as interruptions still
+   * pass through.
    *
    * Pass a single number to use the same value for both the start and end boundaries, or a
    * `[start, end]` tuple to configure them separately. The end value should be higher than the

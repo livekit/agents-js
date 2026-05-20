@@ -1010,8 +1010,10 @@ export class AudioRecognition {
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
-    if (this.backchannelBoundaryActive) {
-      this.logger.trace('ignoring overlap speech event during backchannel boundary cooldown');
+    if (this.backchannelBoundaryActive && !ev.isInterruption) {
+      this.logger.trace(
+        'ignoring backchannel event during backchannel boundary cooldown, falling back to vad',
+      );
       return;
     }
 
