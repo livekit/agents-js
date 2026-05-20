@@ -333,3 +333,94 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(adapter.status[1]?.available).toBe(true);
   });
 });
+
+describe('FallbackAdapter dynamic model/provider getters', () => {
+  // The OTel `gen_ai.request.model` / `gen_ai.provider.name` attributes on
+  // the `user_turn` span are refreshed on every STT event by
+  // `audio_recognition.refreshUserTurnSttAttributes`. Without dynamic
+  // getters that reflect the active child, those attributes are frozen at
+  // the static wrapper labels (`FallbackAdapter` / `livekit`) regardless
+  // of which provider actually transcribed, so a mid-turn fallover is
+  // invisible in traces.
+
+  class IdentifiedFakeSTT extends FakeSTT {
+    private readonly _model: string;
+    private readonly _provider: string;
+    constructor(opts: { label: string; model: string; provider: string; fakeTranscript?: string }) {
+      super({ label: opts.label, fakeTranscript: opts.fakeTranscript });
+      this._model = opts.model;
+      this._provider = opts.provider;
+    }
+    override get model(): string {
+      return this._model;
+    }
+    override get provider(): string {
+      return this._provider;
+    }
+  }
+
+  it('returns wrapper defaults before any STT is active', () => {
+    const a = new IdentifiedFakeSTT({ label: 'a', model: 'a-model', provider: 'a-provider' });
+    const adapter = new FallbackAdapter({ sttInstances: [a] });
+    expect(adapter.model).toBe('FallbackAdapter');
+    expect(adapter.provider).toBe('livekit');
+  });
+
+  it('reflects the active child after a successful recognize()', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary] });
+
+    await adapter.recognize(emptyAudioFrame());
+
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary-provider');
+  });
+
+  it('reflects the fallback child after recognize() falls through', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+    });
+    // Force primary to throw without touching the IdentifiedFakeSTT constructor
+    // surface — updateOptions is the documented runtime knob on FakeSTT.
+    primary.updateOptions({ fakeException: new APIConnectionError({ message: 'down' }) });
+    const fallback = new IdentifiedFakeSTT({
+      label: 'fallback',
+      model: 'fallback-model',
+      provider: 'fallback-provider',
+      fakeTranscript: 'hello',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
+
+    await adapter.recognize(emptyAudioFrame());
+
+    expect(adapter.model).toBe('fallback-model');
+    expect(adapter.provider).toBe('fallback-provider');
+  });
+
+  it('reflects the active child once streaming events flow', async () => {
+    const primary = new IdentifiedFakeSTT({
+      label: 'primary',
+      model: 'primary-model',
+      provider: 'primary-provider',
+      fakeTranscript: 'hello world',
+    });
+    const adapter = new FallbackAdapter({ sttInstances: [primary] });
+
+    const stream = adapter.stream();
+    stream.endInput();
+
+    const events: SpeechEvent[] = [];
+    for await (const ev of stream) events.push(ev);
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(adapter.model).toBe('primary-model');
+    expect(adapter.provider).toBe('primary-provider');
+  });
+});

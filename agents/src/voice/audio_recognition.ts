@@ -410,6 +410,7 @@ export class AudioRecognition {
     await this.interruptionStreamChannel?.close();
     this.interruptionStreamChannel = undefined;
     this.cancelBackchannelBoundary();
+    await this.flushHeldTranscripts(0, true);
   }
 
   /**
@@ -536,22 +537,32 @@ export class AudioRecognition {
   }
 
   /**
-   * Flush held transcripts whose *end time* is after the
-   * `ignoreUserTranscriptUntil - cooldown` timestamp. If the event has no timestamps, we
-   * assume it is the same as the next valid event.
+   * Flush held transcripts. When `force` is true, all buffered events are emitted during
+   * interruption-detector teardown because ignore-window gating can no longer be trusted.
+   * Otherwise, only transcripts whose end time is after `ignoreUserTranscriptUntil - cooldown`
+   * are emitted. Events without timestamps are treated as the next valid event.
    */
-  private async flushHeldTranscripts(cooldown: number = 0) {
-    if (
-      !this.isInterruptionEnabled ||
-      this.ignoreUserTranscriptUntil === undefined ||
-      this.transcriptBuffer.length === 0
-    ) {
+  private async flushHeldTranscripts(cooldown: number = 0, force = false) {
+    if (this.transcriptBuffer.length === 0) {
+      this.resetInterruptionDetection();
       return;
     }
 
-    if (!this._inputStartedAt) {
-      this.transcriptBuffer = [];
-      this.ignoreUserTranscriptUntil = undefined;
+    if (force) {
+      const eventsToEmit = [...this.transcriptBuffer];
+      this.resetInterruptionDetection();
+      for (const event of eventsToEmit) {
+        await this.onSTTEvent(event);
+      }
+      return;
+    }
+
+    if (
+      !this.isInterruptionEnabled ||
+      this.ignoreUserTranscriptUntil === undefined ||
+      this._inputStartedAt === undefined
+    ) {
+      this.resetInterruptionDetection();
       return;
     }
 
@@ -569,8 +580,7 @@ export class AudioRecognition {
         firstAlternative.startTime === firstAlternative.endTime &&
         firstAlternative.startTime === 0
       ) {
-        this.transcriptBuffer = [];
-        this.ignoreUserTranscriptUntil = undefined;
+        this.resetInterruptionDetection();
         return;
       }
 
@@ -590,8 +600,7 @@ export class AudioRecognition {
     // the value the holding decision was made against.
     const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
     const prevInputStartedAt = this._inputStartedAt;
-    this.transcriptBuffer = [];
-    this.ignoreUserTranscriptUntil = undefined;
+    this.resetInterruptionDetection();
 
     for (const event of eventsToEmit) {
       let addedDelay = 0;
@@ -614,8 +623,13 @@ export class AudioRecognition {
         { event: event.type, cooldown, addedDelay },
         're-emitting held user transcript',
       );
-      this.onSTTEvent(event);
+      await this.onSTTEvent(event);
     }
+  }
+
+  private resetInterruptionDetection(): void {
+    this.transcriptBuffer = [];
+    this.ignoreUserTranscriptUntil = undefined;
   }
 
   #alternativeEndsBeforeIgnoreWindow(
@@ -624,14 +638,14 @@ export class AudioRecognition {
     if (
       this.ignoreUserTranscriptUntil === undefined ||
       !this._inputStartedAt ||
-      alternative.startTime <= 0
+      alternative.endTime <= 0
     ) {
       return false;
     }
 
-    // `SpeechData.startTime` is in seconds relative to audio start, while `inputStartedAt` and
+    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
     // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.startTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
+    return alternative.endTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {

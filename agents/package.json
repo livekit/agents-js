@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "LiveKit Agents - Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -14,6 +14,9 @@
       "types": "./dist/index.d.cts",
       "default": "./dist/index.cjs"
     }
+  },
+  "bin": {
+    "livekit-agents": "./dist/bin/livekit-agents.js"
   },
   "author": "LiveKit",
   "type": "module",

@@ -350,7 +350,15 @@ function normalizeAzureClientEvent(event: Record<string, unknown>): void {
   }
 }
 
-function processBaseURL({
+/**
+ * Build the conversational Realtime API WebSocket URL.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function processBaseURL({
   baseURL,
   model,
   isAzure = false,
@@ -369,6 +377,8 @@ function processBaseURL({
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
   }
 
   // ensure "/realtime" is added if the path is empty OR "/v1"

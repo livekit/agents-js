@@ -247,6 +247,27 @@ export class LLM extends llm.LLM {
     return new LLM({ model: modelString });
   }
 
+  /**
+   * Update LLM configuration options used by the next chat call.
+   *
+   * `modelOptions` replaces the persistent options object instead of merging;
+   * pass `{}` to clear it.
+   */
+  updateOptions({
+    model,
+    modelOptions,
+  }: {
+    model?: LLMModels;
+    modelOptions?: ChatCompletionOptions;
+  }): void {
+    if (model !== undefined) {
+      this.opts.model = model;
+    }
+    if (modelOptions !== undefined) {
+      this.opts.modelOptions = { ...modelOptions };
+    }
+  }
+
   chat({
     chatCtx,
     toolCtx,

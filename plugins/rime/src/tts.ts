@@ -41,6 +41,7 @@ function getSampleRate(opts?: Partial<TTSOptions>): number {
   }
   switch (opts?.modelId) {
     case 'arcana':
+    case 'coda':
       return 24000;
     case 'mistv2':
       return 16000;
@@ -92,6 +93,8 @@ function modelParams(opts: TTSOptions): Record<string, string | number | boolean
     if (opts.repetition_penalty !== undefined) params.repetition_penalty = opts.repetition_penalty;
     if (opts.temperature !== undefined) params.temperature = opts.temperature;
     if (opts.top_p !== undefined) params.top_p = opts.top_p;
+    if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+  } else if (opts.modelId === 'coda') {
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
   } else if (opts.modelId.includes('mist')) {
     if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
@@ -173,12 +176,18 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
   const useWebsocket = Boolean(
     opts.useWebsocket || opts.baseURL?.startsWith('ws://') || opts.baseURL?.startsWith('wss://'),
   );
-  return {
+  const resolved = {
     ...defaultTTSOptions,
     ...opts,
     useWebsocket,
     baseURL: opts.baseURL ?? (useWebsocket ? RIME_WS_BASE_URL : RIME_BASE_URL),
   };
+
+  if (opts.speaker === undefined && opts.modelId === 'coda') {
+    resolved.speaker = 'lyra';
+  }
+
+  return resolved;
 }
 
 export class TTS extends tts.TTS {
