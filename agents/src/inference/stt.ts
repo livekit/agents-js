@@ -436,7 +436,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     for (const stream of this.streams) {
-      stream.updateOptions(nextOpts);
+      stream.updateOptions(nextOpts, nextOpts.model !== undefined ? this.vad : undefined);
     }
   }
 
@@ -515,7 +515,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
-  private vadSource: VADSource;
+  private vadPromise: Promise<VAD | null>;
 
   #logger = log();
 
@@ -529,7 +529,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     this.opts = opts;
     this.stt = sttImpl;
     this.connOptions = connOptions;
-    this.vadSource = vadSource;
+    this.vadPromise = typeof vadSource === 'function' ? vadSource() : Promise.resolve(vadSource);
   }
 
   get label(): string {
@@ -538,6 +538,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
+    vadSource?: VADSource,
   ): void {
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
@@ -549,13 +550,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
+    if (vadSource !== undefined) {
+      this.vadPromise = typeof vadSource === 'function' ? vadSource() : Promise.resolve(vadSource);
+    }
     this.reconnectEvent.set();
   }
 
   protected async run(): Promise<void> {
-    const vad = typeof this.vadSource === 'function' ? await this.vadSource() : this.vadSource;
-
     while (true) {
+      const vad = await this.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let closing = false;
