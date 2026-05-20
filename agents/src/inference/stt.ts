@@ -297,6 +297,19 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VADSource;
+  private _vadPromise?: Promise<VAD | undefined>;
+
+  /**
+   * Resolves to the VAD instance for the current model, or `undefined` if the model
+   * handles endpointing server-side. Lazily computed on first read so callers that
+   * never need VAD don't pay the cost of loading Silero.
+   */
+  get vadPromise(): Promise<VAD | undefined> {
+    if (this._vadPromise === undefined) {
+      this._vadPromise = typeof this.vad === 'function' ? this.vad() : Promise.resolve(this.vad);
+    }
+    return this._vadPromise;
+  }
 
   #logger = log();
 
@@ -430,6 +443,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         nextOpts.model,
         this.vad && typeof this.vad !== 'function' ? this.vad : undefined,
       );
+      this._vadPromise = undefined;
     }
 
     if (nextOpts.modelOptions) {
@@ -439,7 +453,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     for (const stream of this.streams) {
-      stream.updateOptions(nextOpts, nextOpts.model !== undefined ? this.vad : undefined);
+      stream.updateOptions(nextOpts);
     }
   }
 
@@ -454,7 +468,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       language: language !== undefined ? normalizeLanguage(language) : this.opts.language,
     } as InferenceSTTOptions<TModel>;
 
-    const stream = new SpeechStream(this, streamOpts, connOptions, this.vad);
+    const stream = new SpeechStream(this, streamOpts, connOptions);
     this.streams.add(stream);
 
     return stream;
@@ -518,7 +532,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
-  private vadPromise: Promise<VAD | undefined>;
 
   #logger = log();
 
@@ -526,13 +539,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     sttImpl: STT<TModel>,
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
-    vadSource: VADSource | undefined,
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
     this.stt = sttImpl;
     this.connOptions = connOptions;
-    this.vadPromise = typeof vadSource === 'function' ? vadSource() : Promise.resolve(vadSource);
   }
 
   get label(): string {
@@ -541,7 +552,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
-    vadSource?: VADSource,
   ): void {
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
@@ -553,15 +563,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
-    if (vadSource !== undefined) {
-      this.vadPromise = typeof vadSource === 'function' ? vadSource() : Promise.resolve(vadSource);
-    }
     this.reconnectEvent.set();
   }
 
   protected async run(): Promise<void> {
     while (true) {
-      const vad = await this.vadPromise;
+      const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let closing = false;
