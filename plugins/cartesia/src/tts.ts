@@ -318,16 +318,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let closing = false;
     // Only close WebSocket when both: 1) Cartesia returns done, AND 2) all sentences have been sent
     let sentenceStreamClosed = false;
-    // Tracks whether we sent any non-whitespace transcript content. Used to
-    // distinguish Cartesia's "transcript empty" error (benign — happens on
-    // function-call turns where the LLM emits no spoken text) from real
-    // synthesis errors that should be retried.
-    let sentNonEmptyToken = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = toCartesiaOptions(this.#opts, true);
       for await (const event of this.#tokenizer) {
-        if (event.token.trim().length > 0) sentNonEmptyToken = true;
         const msg = {
           ...packet,
           context_id: requestId,
@@ -503,22 +497,24 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
           } else if (isErrorMessage(serverMsg)) {
-            // Cartesia rejects empty/whitespace-only input with an error frame.
-            // That happens on function-call turns where the LLM emits no spoken
-            // text — finish cleanly instead of triggering retries.
-            if (!sentNonEmptyToken && sentenceStreamClosed) {
+            // 4xx errors (e.g. empty-transcript on function-call turns) are not
+            // recoverable by retrying — log and finish cleanly. 5xx errors are
+            // transient and bubble up so the base SynthesizeStream can retry.
+            if (serverMsg.status_code >= 400 && serverMsg.status_code < 500) {
               this.#logger.debug(
                 { error: serverMsg.error },
-                'Cartesia rejected empty input; treating as completion',
+                'Cartesia sent a non-fatal error',
               );
-              if (!this.queue.closed) {
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-              }
-              if (segmentId === requestId) {
-                closing = true;
-                clearTTSChunkTimeout();
-                ws.close();
-                break;
+              if (sentenceStreamClosed) {
+                if (!this.queue.closed) {
+                  this.queue.put(SynthesizeStream.END_OF_STREAM);
+                }
+                if (segmentId === requestId) {
+                  closing = true;
+                  clearTTSChunkTimeout();
+                  ws.close();
+                  break;
+                }
               }
               continue;
             }
