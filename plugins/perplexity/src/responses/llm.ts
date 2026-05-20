@@ -47,7 +47,7 @@ export class LLM extends responses.LLM {
     const merged = { ...defaultLLMOptions, ...opts };
 
     merged.apiKey = merged.apiKey || process.env.PERPLEXITY_API_KEY;
-    if (merged.apiKey === undefined) {
+    if (merged.apiKey === undefined && !merged.client) {
       throw new Error(
         'Perplexity API key is required, either as an argument or as $PERPLEXITY_API_KEY',
       );
