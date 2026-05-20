@@ -5,7 +5,7 @@ import { Plugin } from '@livekit/agents';
 import * as responses from './responses/index.js';
 
 export { LLM, PERPLEXITY_BASE_URL, type LLMOptions } from './llm.js';
-export type { PerplexityChatModels } from './models.js';
+export type { PerplexityChatModels, PerplexityResponsesModels } from './models.js';
 export { responses };
 
 class PerplexityPlugin extends Plugin {

@@ -4,7 +4,7 @@
 import type { llm } from '@livekit/agents';
 import { responses } from '@livekit/agents-plugin-openai';
 import OpenAI from 'openai';
-import type { PerplexityChatModels } from '../models.js';
+import type { PerplexityResponsesModels } from '../models.js';
 
 /** @public */
 export const PERPLEXITY_RESPONSES_BASE_URL = 'https://api.perplexity.ai/v1';
@@ -15,7 +15,7 @@ const ATTRIBUTION_HEADER = {
 
 /** @public */
 export interface LLMOptions {
-  model: string | PerplexityChatModels;
+  model: string | PerplexityResponsesModels;
   apiKey?: string;
   baseURL?: string;
   client?: OpenAI;
@@ -30,7 +30,7 @@ export interface LLMOptions {
 }
 
 const defaultLLMOptions: LLMOptions = {
-  model: 'sonar-pro',
+  model: 'perplexity/sonar',
   baseURL: PERPLEXITY_RESPONSES_BASE_URL,
 };
 
