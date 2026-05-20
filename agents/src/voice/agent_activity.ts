@@ -1458,17 +1458,23 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const waitInactiveTask = Task.from(
-      () => this.waitForInactive({ waitForAgent: true, waitForUser: false }, signal),
+      (controller) =>
+        this.waitForInactive({ waitForAgent: true, waitForUser: false }, controller.signal),
       undefined,
       'AgentActivity.waitForInactiveForUserTurnExceeded',
     );
+    const onAbort = () => waitInactiveTask.cancel();
+    signal.addEventListener('abort', onAbort, { once: true });
+    const waitInactiveResult = waitInactiveTask.result.catch((error) => {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      throw error;
+    });
+    void waitInactiveResult.catch(() => undefined);
 
     try {
-      await ThrowsPromise.race([
-        agentSpeaking.await,
-        waitInactiveTask.result,
-        waitForAbort(signal),
-      ]);
+      await ThrowsPromise.race([agentSpeaking.await, waitInactiveResult, waitForAbort(signal)]);
       if (signal.aborted) {
         return;
       }
@@ -1476,6 +1482,7 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
     } finally {
+      signal.removeEventListener('abort', onAbort);
       this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, onAgentStateChanged);
       if (!waitInactiveTask.done) {
         waitInactiveTask.cancel();

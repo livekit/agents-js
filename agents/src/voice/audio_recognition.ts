@@ -1177,7 +1177,7 @@ export class AudioRecognition {
         this.logger.debug('EOU detection task completed');
       })
       .catch((err: unknown) => {
-        if (err instanceof Error && err.message.includes('This operation was aborted')) {
+        if (err instanceof Error && err.name === 'AbortError') {
           // ignore aborted errors
           return;
         }
@@ -1193,7 +1193,7 @@ export class AudioRecognition {
     try {
       await this.bounceEOUTask.result;
     } catch (error) {
-      if (error instanceof Error && error.message.includes('This operation was aborted')) {
+      if (error instanceof Error && error.name === 'AbortError') {
         return;
       }
       throw error;
