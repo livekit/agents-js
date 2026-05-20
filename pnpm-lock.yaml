@@ -90,7 +90,7 @@ importers:
         version: 0.3.21
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       turbo:
         specifier: ^2.9.14
         version: 2.9.14
@@ -100,6 +100,9 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      unrun:
+        specifier: ^0.3.0
+        version: 0.3.0
       vite:
         specifier: ^7.3.1
         version: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
@@ -229,7 +232,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -405,7 +408,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -436,7 +439,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -501,7 +504,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -535,7 +538,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -566,7 +569,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -603,7 +606,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -637,7 +640,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -671,7 +674,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -708,7 +711,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -733,7 +736,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -757,7 +760,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -788,7 +791,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -813,7 +816,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -844,7 +847,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -872,7 +875,7 @@ importers:
         version: 1.24.3
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -900,7 +903,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -922,7 +925,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -950,7 +953,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -984,7 +987,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1024,7 +1027,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1052,7 +1055,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1074,7 +1077,7 @@ importers:
         version: 7.43.7(@types/node@25.6.0)
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1105,7 +1108,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1139,7 +1142,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1164,7 +1167,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1198,7 +1201,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1229,7 +1232,7 @@ importers:
         version: 1.24.3
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1254,7 +1257,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1279,7 +1282,7 @@ importers:
         version: 22.19.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1307,7 +1310,7 @@ importers:
         version: 8.21.0
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1344,7 +1347,7 @@ importers:
         version: 8.18.1
       tsdown:
         specifier: ^0.22.0
-        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)
+        version: 0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -5265,6 +5268,16 @@ packages:
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
     engines: {node: '>= 4.0.0'}
+
+  unrun@0.3.0:
+    resolution: {integrity: sha512-5xw2AIVS2WR9Lqhz76qDIQLxipKRidf7Nq+Iz5SZ8shk1OmRlxnc6FyI/1Q2m99WLj6cbqaKFdESfWE99KPzlA==}
+    engines: {node: ^22.13.0 || >=24.0.0}
+    hasBin: true
+    peerDependencies:
+      synckit: ^0.11.11
+    peerDependenciesMeta:
+      synckit:
+        optional: true
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
@@ -9619,7 +9632,7 @@ snapshots:
       minimist: 1.2.8
       strip-bom: 3.0.0
 
-  tsdown@0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3):
+  tsdown@0.22.0(publint@0.3.21)(tsx@4.21.0)(typescript@5.9.3)(unrun@0.3.0):
     dependencies:
       ansis: 4.3.0
       cac: 7.0.0
@@ -9640,6 +9653,7 @@ snapshots:
       publint: 0.3.21
       tsx: 4.21.0
       typescript: 5.9.3
+      unrun: 0.3.0
     transitivePeerDependencies:
       - '@ts-macro/tsc'
       - '@typescript/native-preview'
@@ -9740,6 +9754,10 @@ snapshots:
     optional: true
 
   universalify@0.1.2: {}
+
+  unrun@0.3.0:
+    dependencies:
+      rolldown: 1.0.1
 
   uri-js@4.4.1:
     dependencies:
