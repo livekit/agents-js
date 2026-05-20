@@ -406,5 +406,4 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
-
 });
