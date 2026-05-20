@@ -25,8 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"pnpm build:types\"",
-    "build:types": "tsc --declaration --emitDeclarationOnly && node ../../scripts/copyDeclarationOutput.js",
+    "build": "tsdown",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.{ts,js}\"",
@@ -39,7 +38,7 @@
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
-    "tsup": "^8.3.5",
+    "tsdown": "^0.22.0",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {

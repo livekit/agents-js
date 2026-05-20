@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": "git@github.com:livekit/agents-js.git",
   "scripts": {
-    "build": "tsc",
+    "build": "tsdown",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",

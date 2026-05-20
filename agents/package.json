@@ -29,8 +29,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --onSuccess \"pnpm build:types\"",
-    "build:types": "tsc --declaration --emitDeclarationOnly && node ../scripts/copyDeclarationOutput.js",
+    "build": "tsdown",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
@@ -45,7 +44,7 @@
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.5.5",
     "@types/ws": "catalog:",
-    "tsup": "^8.4.0",
+    "tsdown": "^0.22.0",
     "typescript": "^5.0.0",
     "zod": "^3.25.76"
   },
