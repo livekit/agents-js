@@ -66,7 +66,10 @@ const DEFAULT_REALTIME_TURN_DETECTION: api_proto.TurnDetectionType = {
   prefix_padding_ms: 600,
   silence_duration_ms: 350,
 };
-const REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION = new Set([DEFAULT_REALTIME_MODEL]);
+
+function isRealtimeWhisper(model: string): boolean {
+  return model.startsWith('gpt-realtime-whisper');
+}
 
 const realtimeTranscriptionSpeechStartedEventSchema = z.object({
   type: z.literal('input_audio_buffer.speech_started'),
@@ -159,24 +162,32 @@ function parseRealtimeTranscriptionServerEvent(data: string): RealtimeTranscript
 export async function _loadRealtimeVad(vad?: VAD): Promise<VAD> {
   if (vad) return vad;
 
-  throw new Error(
-    'OpenAI realtime STT models without server-side endpointing must provide a VAD via the ' +
-      '`vad` option.',
-  );
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const silero = (await import('@livekit/agents-plugin-silero' as any)) as {
+      VAD: { load: () => Promise<VAD> };
+    };
+    return await silero.VAD.load();
+  } catch {
+    throw new Error(
+      '@livekit/agents-plugin-silero is required for OpenAI realtime STT models without ' +
+        'server-side endpointing. Install it or pass a VAD via the `vad` option.',
+    );
+  }
 }
 
 export function _requiresRealtimeVad(
   model: string,
   turnDetection: api_proto.TurnDetectionType | null | undefined,
 ): boolean {
-  return turnDetection === null || REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model);
+  return turnDetection === null || isRealtimeWhisper(model);
 }
 
 export function _normalizeRealtimeTurnDetection(
   model: string,
   turnDetection: api_proto.TurnDetectionType | null | undefined,
 ): api_proto.TurnDetectionType | null | undefined {
-  if (turnDetection !== null && REALTIME_MODELS_WITHOUT_SERVER_TURN_DETECTION.has(model)) {
+  if (turnDetection !== null && isRealtimeWhisper(model)) {
     console.warn(
       `Turn detection is not supported for ${model}; ignoring the provided turnDetection and ` +
         'using plugin-side VAD commits instead.',
@@ -184,19 +195,6 @@ export function _normalizeRealtimeTurnDetection(
     return null;
   }
   return turnDetection;
-}
-
-export function _validateRealtimeVad(
-  model: string,
-  turnDetection: api_proto.TurnDetectionType | null | undefined,
-  vad: VAD | undefined,
-): void {
-  if (_requiresRealtimeVad(model, turnDetection) && !vad) {
-    throw new Error(
-      `A VAD instance is required for ${model}. Pass a VAD via the \`vad\` option so the ` +
-        'plugin can commit audio at end-of-speech.',
-    );
-  }
 }
 
 export interface STTOptions {
@@ -275,10 +273,6 @@ export class STT extends stt.STT {
           ? null
           : DEFAULT_REALTIME_TURN_DETECTION,
     );
-    if (useRealtime) {
-      _validateRealtimeVad(model, turnDetection, opts.vad);
-    }
-
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
@@ -433,9 +427,6 @@ export class STT extends stt.STT {
           ? null
           : this.#opts.turnDetection,
     );
-    if (useRealtime) {
-      _validateRealtimeVad(model, turnDetection, opts.vad ?? this.#opts.vad);
-    }
     this.#opts = {
       ...this.#opts,
       ...opts,
@@ -515,7 +506,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run(): Promise<void> {
-    _validateRealtimeVad(this.#options.model, this.#options.turnDetection, this.#options.vad);
     const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
       ? await _loadRealtimeVad(this.#options.vad)
       : undefined;
@@ -589,7 +579,9 @@ export class SpeechStream extends stt.SpeechStream {
               rate: REALTIME_SAMPLE_RATE,
             },
             transcription,
-            turn_detection: this.#options.turnDetection,
+            ...(isRealtimeWhisper(this.#options.model)
+              ? {}
+              : { turn_detection: this.#options.turnDetection }),
             ...(this.#options.noiseReductionType
               ? { noise_reduction: { type: this.#options.noiseReductionType } }
               : {}),

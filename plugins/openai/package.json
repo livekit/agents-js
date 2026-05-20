@@ -50,7 +50,13 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "zod": "^3.25.76 || ^4.1.8"
+  },
+  "peerDependenciesMeta": {
+    "@livekit/agents-plugin-silero": {
+      "optional": true
+    }
   }
 }
