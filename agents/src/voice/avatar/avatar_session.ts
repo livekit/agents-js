@@ -75,16 +75,14 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
 
     this.#agentSession = agentSession;
     this.#room = room;
-    if (typeof this.#agentSession.on === 'function') {
-      this.#agentSession.on(
-        AgentSessionEventTypes.ConversationItemAdded,
-        this.#onConversationItemAdded,
-      );
-    }
+    this.#agentSession.on(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.#onConversationItemAdded,
+    );
 
     if (room.isConnected) {
       this.#startWaitAvatarJoin();
-    } else if (typeof room.on === 'function') {
+    } else {
       room.on(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
     }
     return undefined;
@@ -96,19 +94,15 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
    */
   async aclose(): Promise<void> {
     if (this.#agentSession) {
-      if (typeof this.#agentSession.off === 'function') {
-        this.#agentSession.off(
-          AgentSessionEventTypes.ConversationItemAdded,
-          this.#onConversationItemAdded,
-        );
-      }
+      this.#agentSession.off(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.#onConversationItemAdded,
+      );
       this.#agentSession = undefined;
     }
 
     if (this.#room) {
-      if (typeof this.#room.off === 'function') {
-        this.#room.off(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
-      }
+      this.#room.off(RoomEvent.ConnectionStateChanged, this.#onConnectionStateChanged);
       this.#room = undefined;
     }
 
@@ -122,6 +116,10 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
 
   #startWaitAvatarJoin() {
     if (this.#waitAvatarJoinPromise) return;
+    if (this.avatarIdentity === 'unknown') {
+      this.#logger.warn('cannot wait for avatar join; avatar identity is unknown');
+      return;
+    }
 
     const abortController = new AbortController();
     this.#waitAvatarJoinAbort = abortController;
@@ -183,11 +181,9 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
 
   #emitMetrics(metrics: AvatarMetrics) {
     this.emit('metrics_collected', metrics);
-    if (this.#agentSession && typeof this.#agentSession.emit === 'function') {
-      this.#agentSession.emit(
-        AgentSessionEventTypes.MetricsCollected,
-        createMetricsCollectedEvent({ metrics }),
-      );
-    }
+    this.#agentSession?.emit(
+      AgentSessionEventTypes.MetricsCollected,
+      createMetricsCollectedEvent({ metrics }),
+    );
   }
 }

@@ -1098,7 +1098,7 @@ export async function waitForTrackPublication({
    * publication leak listeners until the room disconnects.
    */
   signal?: AbortSignal;
-  includeLocal?: boolean;
+  includeLocal?: false;
 }): Promise<RemoteTrackPublication>;
 export async function waitForTrackPublication({
   room,

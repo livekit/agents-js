@@ -11,6 +11,21 @@ describe('AvatarSession base', () => {
     vi.restoreAllMocks();
   });
 
+  const mockAgentSession = (overrides: Record<string, unknown> = {}) => ({
+    _started: false,
+    output: { audio: null },
+    on: vi.fn(),
+    off: vi.fn(),
+    emit: vi.fn(),
+    ...overrides,
+  });
+
+  const mockRoom = () => ({
+    isConnected: false,
+    on: vi.fn(),
+    off: vi.fn(),
+  });
+
   it('registers aclose with job shutdown callback', async () => {
     let shutdownCallback: (() => Promise<void>) | undefined;
     const addShutdownCallback = vi.fn((cb: () => Promise<void>) => {
@@ -23,7 +38,7 @@ describe('AvatarSession base', () => {
     const session = new AvatarSession();
     const acloseSpy = vi.spyOn(session, 'aclose').mockResolvedValue();
 
-    await session.start({ _started: false, output: { audio: null } } as any, {} as any);
+    await session.start(mockAgentSession() as any, mockRoom() as any);
 
     expect(addShutdownCallback).toHaveBeenCalledTimes(1);
     expect(shutdownCallback).toBeTypeOf('function');
@@ -44,10 +59,12 @@ describe('AvatarSession base', () => {
 
     await session.start(
       {
-        _started: true,
-        output: { audio: { constructor: { name: 'MockAudioOutput' } } },
+        ...mockAgentSession({
+          _started: true,
+          output: { audio: { constructor: { name: 'MockAudioOutput' } } },
+        }),
       } as any,
-      {} as any,
+      mockRoom() as any,
     );
 
     expect(warn).toHaveBeenCalledWith(
