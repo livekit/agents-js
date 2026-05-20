@@ -1229,11 +1229,12 @@ export class AgentActivity implements RecognitionHooks {
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
 
-        if (
-          this.isInterruptionDetectionEnabled &&
-          this.audioRecognition &&
-          this.agentSession.agentState === 'speaking'
-        ) {
+        // Gate the pause-side effects on the actual `speaking → listening` transition;
+        // otherwise each VAD frame during user speech re-fires onEndOfAgentSpeech and
+        // spams the interruption stream with duplicate `agent-speech-ended` sentinels.
+        const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
+
+        if (wasAgentSpeaking && this.isInterruptionDetectionEnabled && this.audioRecognition) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
@@ -1243,14 +1244,16 @@ export class AgentActivity implements RecognitionHooks {
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
-        this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(
-            options?.ignoreUserTranscriptUntil ?? Date.now(),
-          );
-        }
-        if (this.isInterruptionDetectionEnabled) {
-          this.restoreInterruptionByAudioActivity();
+        if (wasAgentSpeaking) {
+          this.agentSession._updateAgentState('listening');
+          if (this.audioRecognition) {
+            this.audioRecognition.onEndOfAgentSpeech(
+              options?.ignoreUserTranscriptUntil ?? Date.now(),
+            );
+          }
+          if (this.isInterruptionDetectionEnabled) {
+            this.restoreInterruptionByAudioActivity();
+          }
         }
       } else {
         this.logger.info(
@@ -1788,8 +1791,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    const fires = !this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done());
-    if (fires) {
+    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
       if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
@@ -2538,7 +2540,6 @@ export class AgentActivity implements RecognitionHooks {
       if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
-    } else {
     }
 
     // mark the playout done before waiting for the tool execution
