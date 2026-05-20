@@ -40,13 +40,23 @@ export const log = () => {
   return logger;
 };
 
+const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
+  const logLevel = level || 'info';
+  const streams: { stream: DestinationStream; level: string }[] = [
+    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    { stream: new OtelDestination(), level: 'debug' },
+  ];
+
+  return pino(
+    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
+    multistream(streams),
+  );
+};
+
 /** @internal */
 export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
   globals[LOGGER_OPTIONS_KEY] = { pretty, level };
-  globals[LOGGER_KEY] = pino(
-    { level: level || 'info', serializers: { error: pino.stdSerializers.err } },
-    pretty ? pinoPretty({ colorize: true }) : process.stdout,
-  );
+  globals[LOGGER_KEY] = createLogger({ pretty, level });
 };
 
 /**
@@ -56,6 +66,11 @@ export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
 class OtelDestination extends Writable {
   _write(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void): void {
     try {
+      if (!globals[OTEL_ENABLED_KEY]) {
+        callback();
+        return;
+      }
+
       const line = chunk.toString().trim();
       if (line) {
         const logObj = JSON.parse(line) as PinoLogObject;
@@ -69,8 +84,7 @@ class OtelDestination extends Writable {
 }
 
 /**
- * Enable OTEL logging by reconfiguring the logger with multistream.
- * Uses a custom destination that receives full JSON logs (with msg, level, time).
+ * Enable OTEL logging for the existing logger streams.
  *
  * @internal
  */
@@ -80,18 +94,4 @@ export const enableOtelLogging = () => {
     return;
   }
   globals[OTEL_ENABLED_KEY] = true;
-
-  const opts = globals[LOGGER_OPTIONS_KEY]!;
-  const { pretty, level } = opts;
-
-  const logLevel = level || 'info';
-  const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
-    { stream: new OtelDestination(), level: 'debug' },
-  ];
-
-  globals[LOGGER_KEY] = pino(
-    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
-    multistream(streams),
-  );
 };
