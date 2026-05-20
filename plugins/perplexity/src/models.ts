@@ -4,6 +4,3 @@
 
 /** @public */
 export type PerplexityChatModels = 'sonar-pro';
-
-/** @public */
-export type PerplexityResponsesModels = 'perplexity/sonar';

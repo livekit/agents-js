@@ -58,7 +58,7 @@ interface LLMOptions_2 {
     // (undocumented)
     metadata?: Record<string, string>;
     // (undocumented)
-    model: string | PerplexityResponsesModels;
+    model: string | PerplexityChatModels;
     // (undocumented)
     parallelToolCalls?: boolean;
     // (undocumented)
@@ -81,9 +81,6 @@ const PERPLEXITY_RESPONSES_BASE_URL = "https://api.perplexity.ai/v1";
 
 // @public (undocumented)
 export type PerplexityChatModels = 'sonar-pro';
-
-// @public (undocumented)
-export type PerplexityResponsesModels = 'perplexity/sonar';
 
 declare namespace responses {
     export {

@@ -30,13 +30,13 @@ afterEach(() => {
 });
 
 describe('Perplexity Responses LLM', () => {
-  it('defaults to perplexity/sonar, Perplexity Responses base URL, and HTTP transport', () => {
+  it('defaults to sonar-pro, Perplexity Responses base URL, and HTTP transport', () => {
     process.env.PERPLEXITY_API_KEY = 'test-key';
 
     const llm = new LLM();
     const internals = llm as unknown as LLMInternals;
 
-    expect(llm.model).toBe('perplexity/sonar');
+    expect(llm.model).toBe('sonar-pro');
     expect(internals._opts.useWebSocket).toBe(false);
     expect(PERPLEXITY_RESPONSES_BASE_URL).toBe('https://api.perplexity.ai/v1');
     expect(internals._client.baseURL).toBe('https://api.perplexity.ai/v1');

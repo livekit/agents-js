@@ -4,7 +4,7 @@
 import type { llm } from '@livekit/agents';
 import { responses } from '@livekit/agents-plugin-openai';
 import OpenAI from 'openai';
-import type { PerplexityResponsesModels } from '../models.js';
+import type { PerplexityChatModels } from '../models.js';
 
 /** @public */
 export const PERPLEXITY_RESPONSES_BASE_URL = 'https://api.perplexity.ai/v1';
@@ -15,7 +15,7 @@ const ATTRIBUTION_HEADER = {
 
 /** @public */
 export interface LLMOptions {
-  model: string | PerplexityResponsesModels;
+  model: string | PerplexityChatModels;
   apiKey?: string;
   baseURL?: string;
   client?: OpenAI;
