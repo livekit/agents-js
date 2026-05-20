@@ -232,7 +232,7 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-type VADSource = VAD | (() => Promise<VAD>) | null;
+type VADSource = VAD | (() => Promise<VAD>);
 
 function isSpeechmaticsModel(model: string | undefined): boolean {
   return model?.startsWith('speechmatics/') ?? false;
@@ -256,16 +256,19 @@ function loadSileroVAD(model: string): () => Promise<VAD> {
   };
 }
 
-function resolveVADForModel(model: string | undefined, vad: VAD | null | undefined): VADSource {
+function resolveVADForModel(
+  model: string | undefined,
+  vad: VAD | undefined,
+): VADSource | undefined {
   const speechmatics = isSpeechmaticsModel(model);
   if (vad && !speechmatics) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
-    return null;
+    return undefined;
   }
   if (speechmatics && vad === undefined) {
     return loadSileroVAD(model!);
   }
-  return vad ?? null;
+  return vad;
 }
 
 export type STTEncoding = 'pcm_s16le';
@@ -293,7 +296,7 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
-  private vad: VADSource = null;
+  private vad?: VADSource;
 
   #logger = log();
 
@@ -308,7 +311,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     modelOptions?: STTOptions<TModel>;
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
-    vad?: VAD | null;
+    vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     super({
@@ -515,7 +518,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
-  private vadPromise: Promise<VAD | null>;
+  private vadPromise: Promise<VAD | undefined>;
 
   #logger = log();
 
@@ -523,7 +526,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     sttImpl: STT<TModel>,
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
-    vadSource: VADSource,
+    vadSource: VADSource | undefined,
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
