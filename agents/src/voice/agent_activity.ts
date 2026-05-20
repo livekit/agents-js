@@ -1630,6 +1630,10 @@ export class AgentActivity implements RecognitionHooks {
     let userActive = true;
 
     while ((waitForAgent && agentActive) || (waitForUser && userActive)) {
+      if (signal.aborted) {
+        return;
+      }
+
       if (waitForAgent) {
         if (this.audioRecognition) {
           await this.waitForOrAbort(
