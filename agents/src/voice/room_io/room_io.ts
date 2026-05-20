@@ -18,10 +18,12 @@ import {
 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
+import { type JobContext, getJobContext } from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
-import { Future, Task, waitForAbort } from '../../utils.js';
+import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import { Future, IdleTimeoutError, Task, waitForAbort, waitUntilTimeout } from '../../utils.js';
 import { type AgentSession } from '../agent_session.js';
 import {
   AgentSessionEventTypes,
@@ -84,6 +86,8 @@ export interface RoomInputOptions {
     CLIENT_INITIATED, ROOM_DELETED, or USER_REJECTED.
   */
   closeOnDisconnect: boolean;
+  /** Delete the room when the AgentSession is closed. Default to false. */
+  deleteRoomOnClose: boolean;
 }
 
 export interface RoomOutputOptions {
@@ -122,6 +126,7 @@ const DEFAULT_ROOM_INPUT_OPTIONS: RoomInputOptions = {
   videoEnabled: false,
   textInputCallback: DEFAULT_TEXT_INPUT_CALLBACK,
   closeOnDisconnect: true,
+  deleteRoomOnClose: false,
 };
 
 const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
@@ -156,6 +161,8 @@ export class RoomIO {
   private userTranscriptWriter: WritableStreamDefaultWriter<UserInputTranscribedEvent>;
   private forwardUserTranscriptTask?: Task<void>;
   private initTask?: Task<void>;
+  private deleteRoomTask?: Task<void>;
+  private jobContext?: JobContext;
 
   private logger = log();
 
@@ -177,6 +184,7 @@ export class RoomIO {
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
     this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
+    this.jobContext = getJobContext(false);
 
     this.participantIdentity = participant
       ? typeof participant === 'string'
@@ -290,6 +298,36 @@ export class RoomIO {
     const nativeTranscriptSync =
       sessionLlm instanceof RealtimeModel && !!sessionLlm.capabilities.nativeTranscriptSync;
     this.transcriptionSynchronizer.enabled = !nativeTranscriptSync;
+  };
+
+  private onAgentSessionClose = () => {
+    if (!this.inputOptions.deleteRoomOnClose || this.deleteRoomTask) {
+      return;
+    }
+
+    let jobContext = this.jobContext;
+    if (!jobContext) {
+      jobContext = getJobContext(false);
+    }
+    if (!jobContext) {
+      return;
+    }
+    this.logger.info(
+      { room: this.room.name },
+      'deleting room on agent session close ' +
+        '(disable via `RoomInputOptions.deleteRoomOnClose=false`)',
+    );
+
+    const deleteRoomTask = Task.from(async () => {
+      await jobContext.deleteRoom(this.room.name);
+    });
+
+    this.deleteRoomTask = deleteRoomTask;
+    deleteRoomTask.addDoneCallback(() => {
+      if (this.deleteRoomTask === deleteRoomTask) {
+        this.deleteRoomTask = undefined;
+      }
+    });
   };
 
   private onAgentStateChanged = async (ev: AgentStateChangedEvent) => {
@@ -546,6 +584,7 @@ export class RoomIO {
 
     this.agentSession.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
     this.agentSession.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.agentSession.on(AgentSessionEventTypes.Close, this.onAgentSessionClose);
     this.agentSession.on(
       AgentSessionEventTypes.ConversationItemAdded,
       this.onConversationItemAdded,
@@ -558,6 +597,7 @@ export class RoomIO {
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.agentSession.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
     this.agentSession.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    this.agentSession.off(AgentSessionEventTypes.Close, this.onAgentSessionClose);
     this.agentSession.off(
       AgentSessionEventTypes.ConversationItemAdded,
       this.onConversationItemAdded,
@@ -583,5 +623,16 @@ export class RoomIO {
     await this.audioInput?.close();
     await this.participantAudioOutput?.close();
     await this.transcriptionSynchronizer?.close();
+
+    if (this.deleteRoomTask) {
+      try {
+        await waitUntilTimeout(this.deleteRoomTask.result, DEFAULT_API_CONNECT_OPTIONS.timeoutMs);
+      } catch (error) {
+        if (!(error instanceof IdleTimeoutError)) {
+          throw error;
+        }
+        this.logger.warn({ room: this.room.name }, 'automatic room deletion timed out');
+      }
+    }
   }
 }

@@ -18,11 +18,15 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
-import { AgentHandoffItem, ChatContext, ChatMessage } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  type Instructions,
+} from '../llm/chat_context.js';
 import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
@@ -752,9 +756,11 @@ export class AgentSession<
   generateReply(options?: {
     userInput?: string | ChatMessage;
     chatCtx?: ChatContext;
-    instructions?: string;
+    instructions?: string | Instructions;
     toolChoice?: ToolChoice;
     allowInterruptions?: boolean;
+    /** The input modality used for generating the reply. Defaults to `"text"`. */
+    inputModality?: 'audio' | 'text';
   }): SpeechHandle {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
@@ -770,18 +776,20 @@ export class AgentSession<
             })
           : undefined;
 
+    const inputDetails = { modality: options?.inputModality ?? 'text' } as const;
+
     const doGenerateReply = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
         if (!nextActivity) {
           throw new Error('AgentSession is closing, cannot use generateReply()');
         }
-        return nextActivity.generateReply({ userMessage, ...options });
+        return nextActivity.generateReply({ userMessage, ...options, inputDetails });
       }
 
       // Handoff can race with scheduling pause between the check above and generateReply().
       // If that happens, retry on the next activity instead of surfacing an avoidable error.
       try {
-        return activity.generateReply({ userMessage, ...options });
+        return activity.generateReply({ userMessage, ...options, inputDetails });
       } catch (error) {
         const canFallback = nextActivity !== undefined && isSchedulingPausedError(error);
         if (!canFallback) {
@@ -791,7 +799,7 @@ export class AgentSession<
           { error },
           'generateReply scheduling raced with handoff drain; retrying on next activity',
         );
-        return nextActivity.generateReply({ userMessage, ...options });
+        return nextActivity.generateReply({ userMessage, ...options, inputDetails });
       }
     };
 
@@ -831,9 +839,11 @@ export class AgentSession<
    */
   run<T = unknown>({
     userInput,
+    inputModality,
     outputType,
   }: {
     userInput: string;
+    inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
@@ -857,7 +867,7 @@ export class AgentSession<
       try {
         const unlock = await this.activityLock.lock();
         unlock();
-        this.generateReply({ userInput });
+        this.generateReply({ userInput, inputModality });
       } catch (e) {
         runState._reject(asError(e));
       }
@@ -1039,9 +1049,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _onError(
-    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
-  ): void {
+  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (this.closingTask || error.recoverable) {
       return;
     }
@@ -1057,9 +1065,6 @@ export class AgentSession<
       if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
       }
-    } else if (error.type === 'interruption_detection_error') {
-      this.logger.error(error.toString());
-      return;
     }
 
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
@@ -1253,13 +1258,7 @@ export class AgentSession<
 
   private async closeImpl(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (this.rootSpanContext) {
@@ -1273,13 +1272,7 @@ export class AgentSession<
 
   private async closeImplInner(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {
@@ -1325,12 +1318,6 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.sessionHost?.close();
-    this.sessionHost = undefined;
-
-    await this._roomIO?.close();
-    this._roomIO = undefined;
-
     await this.activity?.close();
     this.activity = undefined;
 
@@ -1358,6 +1345,12 @@ export class AgentSession<
     this.rootSpanContext = undefined;
     this.llmErrorCounts = 0;
     this.ttsErrorCounts = 0;
+
+    await this.sessionHost?.close();
+    this.sessionHost = undefined;
+
+    await this._roomIO?.close();
+    this._roomIO = undefined;
 
     this.logger.info({ reason, error }, 'AgentSession closed');
   }

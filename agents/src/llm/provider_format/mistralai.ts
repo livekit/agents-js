@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../chat_context.js';
+import { isInstructions } from '../chat_context.js';
 
 export interface MistralFormatData {
   instructions: string;
@@ -27,7 +28,10 @@ export function toChatCtx(
 
   for (const item of chatCtx.items) {
     if (item.type === 'message') {
-      const text = item.content.filter((c): c is string => typeof c === 'string').join('\n');
+      const text = item.content
+        .filter((c) => typeof c === 'string' || isInstructions(c))
+        .map((c) => (typeof c === 'string' ? c : c.value))
+        .join('\n');
 
       if (item.role === 'system' || item.role === 'developer') {
         instructionParts.push(text);

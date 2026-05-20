@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  LocalTrackPublication,
+  Participant,
   ParticipantKind,
   RemoteParticipant,
   RemoteTrackPublication,
@@ -351,31 +353,67 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
 /** @internal */
 export class ExpFilter {
   #alpha: number;
+  #min?: number;
   #max?: number;
   #filtered?: number = undefined;
 
-  constructor(alpha: number, max?: number) {
-    this.#alpha = alpha;
-    this.#max = max;
+  constructor(
+    alphaOrOpts: number | { alpha: number; initial?: number; minVal?: number; maxVal?: number },
+    max?: number,
+  ) {
+    if (typeof alphaOrOpts === 'number') {
+      this.#alpha = alphaOrOpts;
+      this.#max = max;
+      return;
+    }
+
+    this.#validateAlpha(alphaOrOpts.alpha);
+    this.#alpha = alphaOrOpts.alpha;
+    this.#filtered = alphaOrOpts.initial;
+    this.#min = alphaOrOpts.minVal;
+    this.#max = alphaOrOpts.maxVal;
   }
 
-  reset(alpha?: number) {
-    if (alpha) {
-      this.#alpha = alpha;
+  reset(
+    alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
+  ) {
+    if (typeof alphaOrOpts === 'object') {
+      if (alphaOrOpts.alpha !== undefined) {
+        this.#validateAlpha(alphaOrOpts.alpha);
+        this.#alpha = alphaOrOpts.alpha;
+      }
+      if (alphaOrOpts.initial !== undefined) {
+        this.#filtered = alphaOrOpts.initial;
+      }
+      if (alphaOrOpts.minVal !== undefined) {
+        this.#min = alphaOrOpts.minVal;
+      }
+      if (alphaOrOpts.maxVal !== undefined) {
+        this.#max = alphaOrOpts.maxVal;
+      }
+      return;
     }
+
+    if (alphaOrOpts) {
+      this.#alpha = alphaOrOpts;
+    }
+
     this.#filtered = undefined;
   }
 
   apply(exp: number, sample: number): number {
-    if (this.#filtered) {
+    if (this.#filtered !== undefined) {
       const a = this.#alpha ** exp;
       this.#filtered = a * this.#filtered + (1 - a) * sample;
     } else {
       this.#filtered = sample;
     }
 
-    if (this.#max && this.#filtered > this.#max) {
+    if (this.#max !== undefined && this.#filtered > this.#max) {
       this.#filtered = this.#max;
+    }
+    if (this.#min !== undefined && this.#filtered < this.#min) {
+      this.#filtered = this.#min;
     }
 
     return this.#filtered;
@@ -385,8 +423,18 @@ export class ExpFilter {
     return this.#filtered;
   }
 
+  get value(): number | undefined {
+    return this.#filtered;
+  }
+
   set alpha(alpha: number) {
     this.#alpha = alpha;
+  }
+
+  #validateAlpha(alpha: number) {
+    if (alpha <= 0 || alpha > 1) {
+      throw new Error('alpha must be in (0, 1].');
+    }
   }
 }
 
@@ -905,18 +953,51 @@ export async function waitForParticipant({
   room,
   identity,
   kind,
+  includeLocal,
+  signal,
 }: {
   room: Room;
   identity?: string;
   kind?: ParticipantKind | ParticipantKind[];
-}): Promise<RemoteParticipant> {
+  includeLocal: true;
+  signal?: AbortSignal;
+}): Promise<Participant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: false;
+  signal?: AbortSignal;
+}): Promise<RemoteParticipant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal = false,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: boolean;
+  signal?: AbortSignal;
+}): Promise<Participant> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipant aborted');
+  }
 
-  const fut = new Future<RemoteParticipant>();
+  const fut = new Future<Participant>();
 
-  const kindMatch = (participant: RemoteParticipant) => {
+  const kindMatch = (participant: Participant) => {
     if (kind === undefined) return true;
 
     if (Array.isArray(kind)) {
@@ -938,10 +1019,27 @@ export async function waitForParticipant({
     fut.reject(new Error('Got disconnected from room while waiting for participant'));
   };
 
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipant aborted'));
+    }
+  };
+
   room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity) &&
+      kindMatch(localParticipant)
+    ) {
+      return localParticipant;
+    }
+
     for (const p of room.remoteParticipants.values()) {
       onParticipantConnected(p);
       if (fut.done) {
@@ -953,6 +1051,7 @@ export async function waitForParticipant({
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
     room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -960,8 +1059,24 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
-  waitForSubscription = false,
+  waitForSubscription,
   signal,
+  includeLocal,
+}: {
+  room: Room;
+  identity?: string;
+  kind: TrackKind;
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal: true;
+}): Promise<RemoteTrackPublication | LocalTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription,
+  signal,
+  includeLocal,
 }: {
   room: Room;
   /**
@@ -983,7 +1098,23 @@ export async function waitForTrackPublication({
    * publication leak listeners until the room disconnects.
    */
   signal?: AbortSignal;
-}): Promise<RemoteTrackPublication> {
+  includeLocal?: false;
+}): Promise<RemoteTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription = false,
+  signal,
+  includeLocal = false,
+}: {
+  room: Room;
+  identity?: string;
+  kind: TrackKind;
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal?: boolean;
+}): Promise<RemoteTrackPublication | LocalTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
@@ -991,7 +1122,7 @@ export async function waitForTrackPublication({
     throw new Error('waitForTrackPublication aborted');
   }
 
-  const fut = new Future<RemoteTrackPublication>();
+  const fut = new Future<RemoteTrackPublication | LocalTrackPublication>();
 
   const kindMatch = (k: TrackKind | undefined) => {
     if (kind === undefined || kind === null) {
@@ -1031,10 +1162,23 @@ export async function waitForTrackPublication({
     }
   };
 
+  const onLocalTrackPublished = (publication: LocalTrackPublication | undefined) => {
+    if (fut.done || !publication) return;
+    const localParticipant = room.localParticipant;
+    if (localParticipant && (identity === undefined || localParticipant.identity === identity)) {
+      if (kindMatch(publication.kind)) {
+        fut.resolve(publication);
+      }
+    }
+  };
+
   if (waitForSubscription) {
     room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
   } else {
     room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
+  if (includeLocal) {
+    room.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
   }
 
   const onAbort = () => {
@@ -1045,6 +1189,20 @@ export async function waitForTrackPublication({
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity)
+    ) {
+      for (const publication of localParticipant.trackPublications.values()) {
+        if (kindMatch(publication.kind)) {
+          fut.resolve(publication);
+          break;
+        }
+      }
+    }
+
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
         if (matches(publication, p)) {
@@ -1061,6 +1219,9 @@ export async function waitForTrackPublication({
       room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
     } else {
       room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
+    if (includeLocal) {
+      room.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
     }
     signal?.removeEventListener('abort', onAbort);
   }

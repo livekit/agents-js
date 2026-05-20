@@ -22,6 +22,8 @@ export {
   AgentConfigUpdate,
   ChatContext,
   ChatMessage,
+  Instructions,
+  concatInstructions,
   createAudioContent,
   createImageContent,
   FunctionCall,

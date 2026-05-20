@@ -506,8 +506,12 @@ For more information, read the example agent file under the `examples` directory
 
 ### Run an example agent under the `examples` directory
 
-`pnpm build && node ./examples/src/my_agent.ts dev|download-files --log-level=debug|info(default)`
-
+```shell
+cd examples
+pnpm install
+npx livekit-agents download-files
+pnpm build && node ./examples/src/my_agent.ts dev
+```
 
 ## License
 

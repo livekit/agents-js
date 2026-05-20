@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
   AudioByteStream,
   log,
   shortuuid,
@@ -206,6 +209,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: TTSOptions;
   private tokenizer: tokenize.SentenceStream;
+  #logger = log();
   label = 'deepgram.SynthesizeStream';
 
   private static readonly FLUSH_MSG = JSON.stringify({ type: 'Flush' });
@@ -359,6 +363,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               resolve();
+            } else if (message.type === 'Warning') {
+              this.#logger.warn(`Deepgram warning: ${message.warn_msg}`);
+            } else if (message.type === 'Error' || message.type === 'error') {
+              reject(new APIError('Deepgram TTS returned error', { body: message }));
+            } else if (message.type !== 'Metadata') {
+              this.#logger.warn({ message }, 'Unknown Deepgram message type');
             }
 
             return;
@@ -374,17 +384,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         });
 
-        ws.on('close', (_code, _reason) => {
+        ws.on('close', (code, reason) => {
           if (!finalReceived) {
-            for (const frame of bstream.flush()) {
-              sendLastFrame(segmentId, false);
-              lastFrame = frame;
-            }
-            sendLastFrame(segmentId, true);
-
-            if (!this.queue.closed) {
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-            }
+            reject(
+              new APIStatusError({
+                message: 'Deepgram websocket connection closed unexpectedly',
+                options: {
+                  statusCode: code || -1,
+                  body: { reason: reason.toString() },
+                },
+              }),
+            );
+            return;
           }
           resolve();
         });
@@ -399,7 +410,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     try {
       await Promise.all([inputTask(), sendTask(), recvTask()]);
     } catch (e) {
-      throw new Error(`failed in main task: ${e}`);
+      if (this.abortController.signal.aborted) return;
+      if (e instanceof APIError) throw e;
+      throw new APIConnectionError({
+        message: `Deepgram TTS WebSocket failed: ${(e as Error).message ?? 'unknown error'}`,
+      });
     } finally {
       await this.closeWebSocket(ws);
     }

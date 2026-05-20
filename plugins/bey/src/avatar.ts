@@ -130,6 +130,14 @@ export class AvatarSession extends voice.AvatarSession {
     this.connOptions = options.connOptions || DEFAULT_API_CONNECT_OPTIONS;
   }
 
+  override get avatarIdentity(): string {
+    return this.avatarParticipantIdentity;
+  }
+
+  override get provider(): string {
+    return 'bey';
+  }
+
   /**
    * Starts the avatar session and connects it to the agent.
    *
@@ -198,7 +206,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
-      destinationIdentity: this.avatarParticipantIdentity,
+      destinationIdentity: this.avatarIdentity,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
   }

@@ -55,6 +55,17 @@ export class SpeechHandleCircularWaitError extends Error {
   }
 }
 
+/**
+ * Describes how the user provided input that triggered the current turn.
+ * Used by modality-aware Instructions to pick the correct variant.
+ */
+export interface InputDetails {
+  modality: 'audio' | 'text';
+}
+
+/** Default {@link InputDetails} used when no explicit value is provided. */
+export const DEFAULT_INPUT_DETAILS: InputDetails = { modality: 'audio' };
+
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
   static SPEECH_PRIORITY_LOW = 0;
@@ -93,6 +104,7 @@ export class SpeechHandle {
     private _allowInterruptions: boolean,
     /** @internal */
     public _stepIndex: number,
+    private _inputDetails: InputDetails = DEFAULT_INPUT_DETAILS,
     readonly parent?: SpeechHandle,
   ) {
     this.doneFut.await.finally(() => {
@@ -105,11 +117,27 @@ export class SpeechHandle {
   static create(options?: {
     allowInterruptions?: boolean;
     stepIndex?: number;
+    inputDetails?: InputDetails;
     parent?: SpeechHandle;
   }) {
-    const { allowInterruptions = true, stepIndex = 0, parent } = options ?? {};
+    const {
+      allowInterruptions = true,
+      stepIndex = 0,
+      inputDetails = DEFAULT_INPUT_DETAILS,
+      parent,
+    } = options ?? {};
 
-    return new SpeechHandle(shortuuid('speech_'), allowInterruptions, stepIndex, parent);
+    return new SpeechHandle(
+      shortuuid('speech_'),
+      allowInterruptions,
+      stepIndex,
+      inputDetails,
+      parent,
+    );
+  }
+
+  get inputDetails(): InputDetails {
+    return this._inputDetails;
   }
 
   get interrupted(): boolean {

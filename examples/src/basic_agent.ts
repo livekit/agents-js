@@ -76,6 +76,13 @@ export default defineAgent({
           falseInterruptionTimeout: 1000,
           mode: 'adaptive',
         },
+        // Dynamic endpointing learns the user's pause rhythm and adapts the short/long waits
+        // used before committing a user turn.
+        endpointing: {
+          mode: 'dynamic',
+          minDelay: 300,
+          maxDelay: 3000,
+        },
         // Preemptive generation speculatively starts LLM inference while the user is still
         // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
         // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
@@ -118,6 +125,7 @@ export default defineAgent({
       agent,
       room: ctx.room,
       inputOptions: {
+        deleteRoomOnClose: true,
         noiseCancellation: BackgroundVoiceCancellation(),
       },
     });

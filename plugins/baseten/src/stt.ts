@@ -118,7 +118,7 @@ export class SpeechStream extends stt.SpeechStream {
         Authorization: `Api-Key ${this.#opts.apiKey}`,
       };
 
-      const ws = new WebSocket(url, { headers, rejectUnauthorized: false });
+      const ws = new WebSocket(url, { headers });
 
       try {
         await new Promise((resolve, reject) => {
