@@ -61,8 +61,6 @@ export interface StartOptions {
  * @public
  */
 export class AvatarSession extends voice.AvatarSession {
-  readonly provider = 'tavus';
-
   private replicaId?: string;
   private personaId?: string;
   private avatarParticipantIdentity: string;
@@ -88,6 +86,10 @@ export class AvatarSession extends voice.AvatarSession {
 
   get avatarIdentity(): string {
     return this.avatarParticipantIdentity;
+  }
+
+  override get provider(): string {
+    return 'tavus';
   }
 
   async start(
@@ -126,7 +128,7 @@ export class AvatarSession extends voice.AvatarSession {
     }
 
     const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarParticipantIdentity,
+      identity: this.avatarIdentity,
       name: this.avatarParticipantName,
     });
     at.kind = 'agent';
@@ -149,7 +151,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
-      destinationIdentity: this.avatarParticipantIdentity,
+      destinationIdentity: this.avatarIdentity,
       sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
