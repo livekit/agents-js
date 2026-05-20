@@ -89,7 +89,7 @@
     "MISTRAL_API_KEY",
     "VITEST"
   ],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]

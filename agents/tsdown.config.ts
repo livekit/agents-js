@@ -3,5 +3,5 @@ import defaults from '../tsdown.config.ts';
 
 export default defineConfig({
   ...defaults,
-  entry: ['src/index.ts', 'src/cli.ts'],
+  entry: ['src/index.ts', 'src/bin/*.ts'],
 });
