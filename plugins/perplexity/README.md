@@ -40,7 +40,7 @@ through the `responses` submodule.
 import { responses } from '@livekit/agents-plugin-perplexity';
 
 const llm = new responses.LLM({
-  model: 'sonar-pro',
+  model: 'perplexity/sonar',
   // apiKey is picked up from PERPLEXITY_API_KEY if omitted
 });
 ```
