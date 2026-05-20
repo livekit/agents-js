@@ -66,6 +66,9 @@ export interface InputDetails {
 /** Default {@link InputDetails} used when no explicit value is provided. */
 export const DEFAULT_INPUT_DETAILS: InputDetails = { modality: 'audio' };
 
+/** How a {@link SpeechHandle} was created. */
+export type SpeechHandleSource = 'say' | 'generate_reply' | 'tool_response';
+
 export class SpeechHandle {
   /** Priority for messages that should be played after all other messages in the queue */
   static SPEECH_PRIORITY_LOW = 0;
@@ -106,6 +109,7 @@ export class SpeechHandle {
     public _stepIndex: number,
     private _inputDetails: InputDetails = DEFAULT_INPUT_DETAILS,
     readonly parent?: SpeechHandle,
+    private _source: SpeechHandleSource = 'generate_reply',
   ) {
     this.doneFut.await.finally(() => {
       for (const callback of this.doneCallbacks) {
@@ -119,12 +123,14 @@ export class SpeechHandle {
     stepIndex?: number;
     inputDetails?: InputDetails;
     parent?: SpeechHandle;
+    source?: SpeechHandleSource;
   }) {
     const {
       allowInterruptions = true,
       stepIndex = 0,
       inputDetails = DEFAULT_INPUT_DETAILS,
       parent,
+      source = 'generate_reply',
     } = options ?? {};
 
     return new SpeechHandle(
@@ -133,6 +139,7 @@ export class SpeechHandle {
       stepIndex,
       inputDetails,
       parent,
+      source,
     );
   }
 
@@ -158,6 +165,10 @@ export class SpeechHandle {
 
   get allowInterruptions(): boolean {
     return this._allowInterruptions;
+  }
+
+  get source(): SpeechHandleSource {
+    return this._source;
   }
 
   /**
