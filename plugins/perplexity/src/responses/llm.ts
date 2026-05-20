@@ -71,4 +71,12 @@ export class LLM extends responses.LLM {
     this._client = client;
     this._opts = { ...merged, useWebSocket: false };
   }
+
+  override label(): string {
+    return 'perplexity.responses.LLM';
+  }
+
+  override get provider(): string {
+    return 'Perplexity';
+  }
 }

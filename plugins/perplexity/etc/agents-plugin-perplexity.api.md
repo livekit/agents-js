@@ -21,6 +21,10 @@ export class LLM extends LLM_2 {
 // @public
 class LLM_3 extends responses_2.LLM {
     constructor(opts?: Partial<LLMOptions_2>);
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get provider(): string;
 }
 
 // @public (undocumented)
