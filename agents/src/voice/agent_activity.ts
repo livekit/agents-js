@@ -1191,25 +1191,21 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): boolean {
+  private interruptByAudioActivity(options?: { ignoreUserTranscriptUntil?: number }): void {
     if (!this.isInterruptionByAudioActivityEnabled) {
-      return false;
+      return;
     }
 
     if (this.agentSession._aecWarmupRemaining > 0) {
       // Disable interruption from audio activity while AEC warmup is active.
-      return false;
+      return;
     }
 
     if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
       // skip speech handle interruption if server side turn detection is enabled
-      return false;
+      return;
     }
 
-    // Refactored interruption word count check:
-    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
-    // - Apply check to all STT results: empty string, undefined, or any length
-    // - This ensures consistent behavior across all interruption scenarios
     if (
       this.stt &&
       this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
@@ -1217,15 +1213,9 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       const text = this.audioRecognition.currentTranscript;
       // TODO(shubhra): better word splitting for multi-language
-
-      // Normalize text: convert undefined/null to empty string for consistent word counting
-      const normalizedText = text ?? '';
-      const wordCount = splitWords(normalizedText, true).length;
-
-      // Only allow interruption if word count meets or exceeds minInterruptionWords
-      // This applies to all cases: empty strings, partial speech, and full speech
+      const wordCount = splitWords(text ?? '', true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
-        return false;
+        return;
       }
     }
 
@@ -1236,7 +1226,6 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      // reset the false interruption timer
       if (this.falseInterruptionTimer) {
         clearTimeout(this.falseInterruptionTimer);
         this.falseInterruptionTimer = undefined;
@@ -1246,13 +1235,12 @@ export class AgentActivity implements RecognitionHooks {
         const timeout =
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
-        if (this.pausedSpeech?.handle === this._currentSpeech) {
-          this.updatePausedSpeech(this._currentSpeech, timeout);
-          return false;
-        }
-        const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
 
-        if (this.isInterruptionDetectionEnabled && this.audioRecognition && wasAgentSpeaking) {
+        if (
+          this.isInterruptionDetectionEnabled &&
+          this.audioRecognition &&
+          this.agentSession.agentState === 'speaking'
+        ) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
@@ -1262,17 +1250,14 @@ export class AgentActivity implements RecognitionHooks {
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
-        if (wasAgentSpeaking) {
-          this.agentSession._updateAgentState('listening');
-          if (this.audioRecognition) {
-            this.audioRecognition.onEndOfAgentSpeech(
-              options?.ignoreUserTranscriptUntil ?? Date.now(),
-            );
-          }
-          if (this.isInterruptionDetectionEnabled) {
-            this.restoreInterruptionByAudioActivity();
-          }
-          return true;
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(
+            options?.ignoreUserTranscriptUntil ?? Date.now(),
+          );
+        }
+        if (this.isInterruptionDetectionEnabled) {
+          this.restoreInterruptionByAudioActivity();
         }
       } else {
         this.logger.info(
@@ -1283,22 +1268,14 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech.interrupt();
       }
     }
-    return false;
   }
 
   onInterruption(ev: OverlappingSpeechEvent) {
     this.restoreInterruptionByAudioActivity();
-
-    const endedAgentSpeech = this.interruptByAudioActivity({
+    this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
-    const interruptedPausedSpeech = endedAgentSpeech ? undefined : this.interruptPausedSpeech();
-
-    if (
-      !endedAgentSpeech &&
-      this.audioRecognition &&
-      (this.agentSession.agentState === 'speaking' || interruptedPausedSpeech !== undefined)
-    ) {
+    if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
   }
@@ -1386,7 +1363,6 @@ export class AgentActivity implements RecognitionHooks {
     if (
       !preemptiveOpts.enabled ||
       this.schedulingPaused ||
-      (this.pausedSpeech !== undefined && !this.pausedSpeech.handle.interrupted) ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
     ) {
@@ -1819,11 +1795,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private onPipelineReplyDone(): void {
-    if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
-      const wasSpeaking = this.agentSession.agentState === 'speaking';
+    const fires = !this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done());
+    if (fires) {
       this.agentSession._updateAgentState('listening');
-      if (wasSpeaking && this.audioRecognition) {
+      if (this.audioRecognition) {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
       }
     }
   }
@@ -2556,7 +2535,7 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    if (toolOutput.output.length > 0) {
+    if (!speechHandle.interrupted && toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
@@ -2566,21 +2545,24 @@ export class AgentActivity implements RecognitionHooks {
       if (this.isInterruptionDetectionEnabled) {
         this.restoreInterruptionByAudioActivity();
       }
+    } else {
     }
 
     // mark the playout done before waiting for the tool execution
     if (speechHandle._hasGenerations) {
       speechHandle._markGenerationDone();
     }
+
+    if (speechHandle.interrupted) {
+      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      return;
+    }
+
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
-    }
-
-    if (speechHandle.interrupted) {
-      return;
     }
 
     if (toolOutput.output.length === 0) return;
@@ -3605,25 +3587,6 @@ export class AgentActivity implements RecognitionHooks {
       this.pausedSpeech = undefined;
       this.falseInterruptionTimer = undefined;
     }, timeout);
-  }
-
-  private interruptPausedSpeech(): SpeechHandle | undefined {
-    if (this.falseInterruptionTimer !== undefined) {
-      clearTimeout(this.falseInterruptionTimer);
-      this.falseInterruptionTimer = undefined;
-    }
-
-    if (!this.pausedSpeech) {
-      return undefined;
-    }
-
-    const speechHandle = this.pausedSpeech.handle;
-    if (!speechHandle.interrupted && speechHandle.allowInterruptions) {
-      speechHandle.interrupt();
-    }
-    this.pausedSpeech = undefined;
-
-    return speechHandle;
   }
 
   private async cancelSpeechPause(options?: { interrupt?: boolean }): Promise<void> {

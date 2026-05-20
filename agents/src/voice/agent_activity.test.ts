@@ -19,7 +19,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { Future } from '../utils.js';
-import { type VADEvent, VADEventType } from '../vad.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -96,69 +95,6 @@ function buildMainTaskRunner() {
     speechQueue,
     q_updated,
   };
-}
-
-function buildVadInterruptionRunner() {
-  const audioOutput = {
-    canPause: true,
-    pause: vi.fn(),
-    resume: vi.fn(),
-  };
-  const audioRecognition = {
-    onEndOfAgentSpeech: vi.fn(),
-    cancelBackchannelBoundary: vi.fn(),
-  };
-  const speechHandle = SpeechHandle.create({ allowInterruptions: true });
-
-  const fakeActivity: Record<string, unknown> = {
-    turnDetection: 'vad',
-    isInterruptionByAudioActivityEnabled: true,
-    isDefaultInterruptionByAudioActivityEnabled: true,
-    isInterruptionDetectionEnabled: false,
-    _currentSpeech: speechHandle,
-    stt: undefined,
-    llm: undefined,
-    realtimeSession: undefined,
-    audioRecognition,
-    falseInterruptionTimer: undefined,
-    pausedSpeech: undefined,
-    agentSession: {
-      agentState: 'speaking',
-      _aecWarmupRemaining: 0,
-      _userSpeakingSpan: undefined,
-      output: { audio: audioOutput },
-      sessionOptions: {
-        turnHandling: {
-          interruption: {
-            minDuration: 0,
-            minWords: 0,
-            resumeFalseInterruption: true,
-            falseInterruptionTimeout: 500,
-          },
-        },
-      },
-      _updateAgentState: vi.fn((state: string) => {
-        (fakeActivity.agentSession as { agentState: string }).agentState = state;
-      }),
-    },
-  };
-  Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
-
-  const vadEvent: VADEvent = {
-    type: VADEventType.INFERENCE_DONE,
-    samplesIndex: 0,
-    timestamp: Date.now(),
-    speechDuration: 1,
-    silenceDuration: 0,
-    frames: [],
-    probability: 1,
-    inferenceDuration: 0,
-    speaking: true,
-    rawAccumulatedSilence: 0,
-    rawAccumulatedSpeech: 1,
-  };
-
-  return { fakeActivity, audioOutput, audioRecognition, vadEvent };
 }
 
 describe('AgentActivity - mainTask', () => {
@@ -294,19 +230,6 @@ describe('AgentActivity - mainTask', () => {
   });
 });
 
-describe('AgentActivity - VAD interruption', () => {
-  it('ends agent speech once when repeated VAD inference pauses the same speech', () => {
-    const { fakeActivity, audioOutput, audioRecognition, vadEvent } = buildVadInterruptionRunner();
-
-    fakeActivity.onVADInferenceDone(vadEvent);
-    fakeActivity.onVADInferenceDone(vadEvent);
-
-    expect(audioOutput.pause).toHaveBeenCalledTimes(1);
-    expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
-    expect((fakeActivity.agentSession as { agentState: string }).agentState).toBe('listening');
-  });
-});
-
 describe('AgentActivity - speech completion', () => {
   it('ends audio recognition speech when pipeline completion moves session out of speaking', () => {
     const audioRecognition = {
@@ -334,39 +257,6 @@ describe('AgentActivity - speech completion', () => {
     onPipelineReplyDone.call(fakeActivity);
 
     expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
-    expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('AgentActivity - confirmed interruptions', () => {
-  it('ends audio recognition when confirmed interruption only has paused speech', () => {
-    const pausedSpeech = SpeechHandle.create({ allowInterruptions: true });
-    const audioRecognition = { onEndOfAgentSpeech: vi.fn() };
-
-    const fakeActivity: Record<string, unknown> = {
-      restoreInterruptionByAudioActivity: vi.fn(),
-      interruptByAudioActivity: vi.fn(() => false),
-      _currentSpeech: undefined,
-      pausedSpeech: { handle: pausedSpeech },
-      falseInterruptionTimer: undefined,
-      audioRecognition,
-      agentSession: { agentState: 'listening' },
-    };
-    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
-
-    const onInterruption = (AgentActivity.prototype as Record<string, unknown>).onInterruption as (
-      this: typeof fakeActivity,
-      ev: Parameters<AgentActivity['onInterruption']>[0],
-    ) => void;
-
-    onInterruption.call(fakeActivity, {
-      type: 'overlapping_speech',
-      detectedAt: Date.now(),
-      isInterruption: true,
-    });
-
-    expect(pausedSpeech.interrupted).toBe(true);
-    expect(fakeActivity.pausedSpeech).toBeUndefined();
     expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
   });
 });
@@ -517,15 +407,4 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
   });
 
-  it('skips preemption while a paused speech is still active', () => {
-    const { fakeActivity, generateReply, call } = buildPreemptiveRunner();
-    const pausedSpeech = SpeechHandle.create({ allowInterruptions: true });
-
-    fakeActivity.pausedSpeech = { handle: pausedSpeech };
-
-    call();
-
-    expect(fakeActivity._preemptiveGenerationCount).toBe(0);
-    expect(generateReply).not.toHaveBeenCalled();
-  });
 });
