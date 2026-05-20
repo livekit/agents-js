@@ -827,10 +827,39 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pushedDurationMs = 0;
   }
 
-  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(
+    instructions?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<llm.GenerationCreatedEvent> {
     const handle = this.createResponse({ instructions, userInitiated: true });
     this.textModeRecoveryRetries = 0;
-    return handle.doneFut.await;
+
+    const onAbort = () => {
+      const eventId = Object.entries(this.responseCreatedFutures).find(
+        ([, pendingHandle]) => pendingHandle === handle,
+      )?.[0];
+      if (eventId) {
+        delete this.responseCreatedFutures[eventId];
+      }
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error('generateReply aborted'));
+        this.sendEvent({
+          type: 'response.cancel',
+        } as api_proto.ResponseCancelEvent);
+      }
+    };
+
+    if (options.signal?.aborted) {
+      onAbort();
+    } else {
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      return await handle.doneFut.await;
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   async interrupt(): Promise<void> {
