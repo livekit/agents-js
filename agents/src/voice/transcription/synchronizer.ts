@@ -158,19 +158,11 @@ class SegmentSynchronizerImpl {
   private playbackCompleted: boolean = false;
   private interrupted: boolean = false;
 
-  // Tracks accumulated pause time so wall-clock-based elapsed calculations don't
-  // advance the transcript during pauses. Mirrors Python's
-  // `_paused_wall_time` / `_paused_duration` in `_SegmentSynchronizerImpl`.
   private pausedWallTime?: number;
-  /** Accumulated paused time in milliseconds (subtracted from elapsed). */
+  /** Accumulated paused time in milliseconds; subtracted from wall-clock elapsed. */
   private pausedDuration: number = 0;
-  // Gate that holds the main task between words while paused. Mirrors
-  // Python's `_output_enabled_ev` event.
-  private outputEnabledFuture: Future<void> = (() => {
-    const f = new Future<void>();
-    f.resolve();
-    return f;
-  })();
+  /** Gate held closed while paused; the main task awaits it between words. */
+  private outputEnabledFuture: Future<void> = new Future();
 
   private logger = log();
 
@@ -205,6 +197,7 @@ class SegmentSynchronizerImpl {
     };
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
+    this.outputEnabledFuture.resolve();
 
     if (this.enabled) {
       this.mainTask()
@@ -322,8 +315,6 @@ class SegmentSynchronizerImpl {
     }
   }
 
-  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-  // `_SegmentSynchronizerImpl.pause`
   pause(): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pause called after close');
@@ -337,8 +328,6 @@ class SegmentSynchronizerImpl {
     }
   }
 
-  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-  // `_SegmentSynchronizerImpl.resume`
   resume(): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.resume called after close');
@@ -346,9 +335,8 @@ class SegmentSynchronizerImpl {
     }
     if (this.pausedWallTime !== undefined) {
       if (this.startWallTime !== undefined) {
-        // max() handles the case where pause() was called before the first audio
-        // frame was pushed (i.e., before startWallTime was set). This can happen when
-        // a new impl is created while the synchronizer is already paused.
+        // max() guards the case where pause() ran before startWallTime was set
+        // (e.g. a new impl is created while the synchronizer is already paused).
         this.pausedDuration += Date.now() - Math.max(this.startWallTime, this.pausedWallTime);
       }
       this.pausedWallTime = undefined;
@@ -421,9 +409,6 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
-      // Gate the per-word forwarding while paused. Ref:
-      // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-      // `_SegmentSynchronizerImpl._main_task` `_output_enabled_ev` check.
       if (!this.outputEnabledFuture.done) {
         await this.outputEnabledFuture.await;
         if (this.interrupted) {
@@ -467,8 +452,7 @@ class SegmentSynchronizerImpl {
       const cleanWords = this.options.splitWords(word);
       const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
       const wordHyphens = this.options.hyphenateWord(cleanWord).length;
-      // Subtract accumulated paused time so the transcript doesn't race ahead
-      // of the audio after a pause/resume cycle.
+      // Subtract paused time so the transcript doesn't race ahead of the audio after resume.
       const elapsedSeconds = (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
 
       let dHyphens = 0;
@@ -551,8 +535,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
-    // Release the pause gate so mainTask can observe `closed` and exit instead of
-    // hanging forever if close() is called while paused.
+    // Release the pause gate so mainTask can observe `closed` and exit if close() ran while paused.
     if (!this.outputEnabledFuture.done) {
       this.outputEnabledFuture.resolve();
     }
@@ -602,11 +585,8 @@ export class TranscriptionSynchronizer {
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
 
-  // Track pause state at the synchronizer level so it can be reapplied to new
-  // impls after segment rotation. Ref:
-  // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-  // `TranscriptSynchronizer._paused`.
-  /** @internal */
+  /** Pause state tracked at the synchronizer level so it can be reapplied across segment rotations.
+   * @internal */
   _paused: boolean = false;
 
   private logger = log();
@@ -706,9 +686,6 @@ export class TranscriptionSynchronizer {
     await this._impl.close();
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
 
-    // Re-apply the current pause state to the new impl. Ref:
-    // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-    // `TranscriptSynchronizer._rotate_segment_task`.
     if (this._paused) {
       this._impl.pause();
     }
@@ -725,19 +702,14 @@ class SyncedAudioOutput extends AudioOutput {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
   }
 
-  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-  // `_SyncedAudioOutput.pause`.
   pause(): void {
-    super.pause(); // forwards to nextInChainAudio (e.g. ParticipantAudioOutput)
-    // Track pause state at the synchronizer level so it persists across segment rotations
+    super.pause();
     this.synchronizer._paused = true;
     if (!this.synchronizer._impl.closed) {
       this.synchronizer._impl.pause();
     }
   }
 
-  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
-  // `_SyncedAudioOutput.resume`.
   resume(): void {
     super.resume();
     this.synchronizer._paused = false;
