@@ -382,6 +382,13 @@ export class ParticipantAudioOutput extends AudioOutput {
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
   private firstFrameEmitted: boolean = false;
+  // Gates audio frame forwarding while the output is paused.
+  // Ref: livekit-agents/livekit/agents/voice/room_io/_output.py `_playback_enabled`
+  private playbackEnabledFuture: Future<void> = (() => {
+    const f = new Future<void>();
+    f.resolve();
+    return f;
+  })();
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -392,6 +399,26 @@ export class ParticipantAudioOutput extends AudioOutput {
       options.numChannels,
       options.queueSizeMs,
     );
+  }
+
+  // Ref: livekit-agents/livekit/agents/voice/room_io/_output.py `ParticipantAudioOutput.pause`
+  pause(): void {
+    if (this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture = new Future();
+    }
+    // Drop any audio already buffered in the WebRTC source so playback stops
+    // promptly instead of draining the prebuffer.
+    this.audioSource.clearQueue();
+    super.pause();
+  }
+
+  // Ref: livekit-agents/livekit/agents/voice/room_io/_output.py `ParticipantAudioOutput.resume`
+  resume(): void {
+    if (!this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture.resolve();
+    }
+    this.firstFrameEmitted = false;
+    super.resume();
   }
 
   get subscribed(): boolean {
@@ -406,6 +433,19 @@ export class ParticipantAudioOutput extends AudioOutput {
     await this.startedFuture.await;
 
     super.captureFrame(frame);
+
+    // Gate the forwarded frame on the pause state. Ref:
+    // livekit-agents/livekit/agents/voice/room_io/_output.py `_forward_audio`
+    if (!this.playbackEnabledFuture.done) {
+      this.audioSource.clearQueue();
+      // Race the gate against interruption so a cancel-while-paused can't deadlock
+      // an in-flight frame (`cancelSpeechPause` calls `resume()` after interrupt,
+      // but we still want a clean bail-out if the speech was already interrupted).
+      await Promise.race([this.playbackEnabledFuture.await, this.interruptedFuture.await]);
+      if (this.interruptedFuture.done) {
+        return;
+      }
+    }
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;

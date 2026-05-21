@@ -156,6 +156,21 @@ class SegmentSynchronizerImpl {
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
+  private interrupted: boolean = false;
+
+  // Tracks accumulated pause time so wall-clock-based elapsed calculations don't
+  // advance the transcript during pauses. Mirrors Python's
+  // `_paused_wall_time` / `_paused_duration` in `_SegmentSynchronizerImpl`.
+  private pausedWallTime?: number;
+  /** Accumulated paused time in milliseconds (subtracted from elapsed). */
+  private pausedDuration: number = 0;
+  // Gate that holds the main task between words while paused. Mirrors
+  // Python's `_output_enabled_ev` event.
+  private outputEnabledFuture: Future<void> = (() => {
+    const f = new Future<void>();
+    f.resolve();
+    return f;
+  })();
 
   private logger = log();
 
@@ -307,12 +322,49 @@ class SegmentSynchronizerImpl {
     }
   }
 
+  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+  // `_SegmentSynchronizerImpl.pause`
+  pause(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.pause called after close');
+      return;
+    }
+    if (this.pausedWallTime === undefined) {
+      this.pausedWallTime = Date.now();
+    }
+    if (this.outputEnabledFuture.done) {
+      this.outputEnabledFuture = new Future();
+    }
+  }
+
+  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+  // `_SegmentSynchronizerImpl.resume`
+  resume(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.resume called after close');
+      return;
+    }
+    if (this.pausedWallTime !== undefined) {
+      if (this.startWallTime !== undefined) {
+        // max() handles the case where pause() was called before the first audio
+        // frame was pushed (i.e., before startWallTime was set). This can happen when
+        // a new impl is created while the synchronizer is already paused.
+        this.pausedDuration += Date.now() - Math.max(this.startWallTime, this.pausedWallTime);
+      }
+      this.pausedWallTime = undefined;
+    }
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
+  }
+
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.markPlaybackFinished called after close');
       return;
     }
 
+    this.interrupted = interrupted;
     if (!this.textData.done || !this.audioData.done) {
       this.logger.warn(
         { textDone: this.textData.done, audioDone: this.audioData.done },
@@ -369,6 +421,16 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
+      // Gate the per-word forwarding while paused. Ref:
+      // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+      // `_SegmentSynchronizerImpl._main_task` `_output_enabled_ev` check.
+      if (!this.outputEnabledFuture.done) {
+        await this.outputEnabledFuture.await;
+        if (this.interrupted) {
+          return;
+        }
+      }
+
       if (this.closed && !this.playbackCompleted) {
         return;
       }
@@ -405,7 +467,9 @@ class SegmentSynchronizerImpl {
       const cleanWords = this.options.splitWords(word);
       const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
       const wordHyphens = this.options.hyphenateWord(cleanWord).length;
-      const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
+      // Subtract accumulated paused time so the transcript doesn't race ahead
+      // of the audio after a pause/resume cycle.
+      const elapsedSeconds = (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
 
       let dHyphens = 0;
       const annotated = this.audioData.annotatedRate;
@@ -487,6 +551,11 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
+    // Release the pause gate so mainTask can observe `closed` and exit instead of
+    // hanging forever if close() is called while paused.
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
     // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
     if (!this.enabled && !this.textData.done) {
       this.outputStreamWriter.close();
@@ -532,6 +601,13 @@ export class TranscriptionSynchronizer {
   // the synchronizer transitions back to enabled
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
+
+  // Track pause state at the synchronizer level so it can be reapplied to new
+  // impls after segment rotation. Ref:
+  // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+  // `TranscriptSynchronizer._paused`.
+  /** @internal */
+  _paused: boolean = false;
 
   private logger = log();
 
@@ -629,6 +705,13 @@ export class TranscriptionSynchronizer {
 
     await this._impl.close();
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+
+    // Re-apply the current pause state to the new impl. Ref:
+    // livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+    // `TranscriptSynchronizer._rotate_segment_task`.
+    if (this._paused) {
+      this._impl.pause();
+    }
   }
 }
 
@@ -640,6 +723,27 @@ class SyncedAudioOutput extends AudioOutput {
     private nextInChainAudio: AudioOutput,
   ) {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
+  }
+
+  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+  // `_SyncedAudioOutput.pause`.
+  pause(): void {
+    super.pause(); // forwards to nextInChainAudio (e.g. ParticipantAudioOutput)
+    // Track pause state at the synchronizer level so it persists across segment rotations
+    this.synchronizer._paused = true;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.pause();
+    }
+  }
+
+  // Ref: livekit-agents/livekit/agents/voice/transcription/synchronizer.py
+  // `_SyncedAudioOutput.resume`.
+  resume(): void {
+    super.resume();
+    this.synchronizer._paused = false;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.resume();
+    }
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
