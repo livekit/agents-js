@@ -57,6 +57,13 @@ export type TTSVoices =
 
 export type DalleModels = 'dall-e-2' | 'dall-e-3';
 
+export type RealtimeModels =
+  | 'gpt-realtime'
+  | 'gpt-realtime-1.5'
+  | 'gpt-realtime-2'
+  | 'gpt-realtime-2025-08-28'
+  | 'gpt-4o-realtime-preview';
+
 export type EmbeddingModels =
   | 'text-embedding-ada-002'
   | 'text-embedding-3-small'

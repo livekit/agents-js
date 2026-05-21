@@ -25,6 +25,7 @@ import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { type MessageEvent, WebSocket } from 'ws';
+import type { RealtimeModels } from '../models.js';
 import * as api_proto from './api_proto.js';
 
 // if LK_OPENAI_DEBUG convert it to a number, otherwise set it to 0
@@ -159,7 +160,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   constructor(
     options: {
-      model?: string;
+      model?: RealtimeModels | string;
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
