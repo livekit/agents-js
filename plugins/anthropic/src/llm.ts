@@ -212,7 +212,9 @@ export class LLM extends llm.LLM {
         anthropicTools.push({
           name: name,
           description: tool.description || '',
-          input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+          input_schema: (tool.parameters
+            ? llm.toJsonSchema(tool.parameters, false)
+            : { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema,
         });
       }
     }
