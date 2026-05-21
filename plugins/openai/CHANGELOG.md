@@ -1,5 +1,25 @@
 # @livekit/agents-plugin-openai
 
+## 1.4.4
+
+### Patch Changes
+
+- fix(openai): respect `baseURL` scheme when building WebSocket URLs - [#1540](https://github.com/livekit/agents-js/pull/1540) ([@enriqueespaillat-gyde](https://github.com/enriqueespaillat-gyde))
+
+  The Responses-API LLM (`ws/llm.ts`), realtime STT (`stt.ts`), and
+  conversational Realtime endpoint (`realtime/realtime_model.ts`) all
+  build their upgrade URL from `baseURL` but either force-mapped
+  `http://` to `wss://` (LLM) or left `http://` unchanged (STT, Realtime),
+  producing an invalid WebSocket URL or a spurious TLS handshake against
+  a plain-HTTP listener. The scheme of `baseURL` is now respected:
+  `http://` maps to `ws://` and `https://` maps to `wss://`. OpenAI's
+  native endpoint is HTTPS, so this is a no-op for direct connections.
+
+- fix(voice): cancel realtime generation when speech is interrupted - [#1503](https://github.com/livekit/agents-js/pull/1503) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`cb180deca230980b4e110ce41f7af8bfc15b4a26`](https://github.com/livekit/agents-js/commit/cb180deca230980b4e110ce41f7af8bfc15b4a26), [`8db7f95640ee7c81f30ed75b3b0ef48fc476a0eb`](https://github.com/livekit/agents-js/commit/8db7f95640ee7c81f30ed75b3b0ef48fc476a0eb), [`208c211a7ceeac9d6fa21c2c04326520e56a0609`](https://github.com/livekit/agents-js/commit/208c211a7ceeac9d6fa21c2c04326520e56a0609), [`ec592ce9276759e8df778ca37869b484044d929f`](https://github.com/livekit/agents-js/commit/ec592ce9276759e8df778ca37869b484044d929f), [`d05fe6331985bc994a74d79eeceaf46cb1e2fbe2`](https://github.com/livekit/agents-js/commit/d05fe6331985bc994a74d79eeceaf46cb1e2fbe2), [`33bda3eb9f6a33d637850657d2cf827bac309114`](https://github.com/livekit/agents-js/commit/33bda3eb9f6a33d637850657d2cf827bac309114), [`3546a497ab63de7d49afb100f33b4c4b426f62b6`](https://github.com/livekit/agents-js/commit/3546a497ab63de7d49afb100f33b4c4b426f62b6), [`3d589f909661ebdc2527b1f4713159bdf320f7ba`](https://github.com/livekit/agents-js/commit/3d589f909661ebdc2527b1f4713159bdf320f7ba), [`35856dc3ae00de7b8308ff6f0ab45d959274180c`](https://github.com/livekit/agents-js/commit/35856dc3ae00de7b8308ff6f0ab45d959274180c)]:
+  - @livekit/agents@1.4.4
+
 ## 1.4.3
 
 ### Patch Changes

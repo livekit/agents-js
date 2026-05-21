@@ -1,5 +1,27 @@
 # @livekit/agents
 
+## 1.4.4
+
+### Patch Changes
+
+- Add avatar join and playback latency metrics. - [#1537](https://github.com/livekit/agents-js/pull/1537) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(generation): preserve LLM-supplied call_id instead of overwriting with item id - [#1524](https://github.com/livekit/agents-js/pull/1524) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add support for Rime time scale factor options on arcana, coda, and mistv3. - [#1557](https://github.com/livekit/agents-js/pull/1557) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): cancel realtime generation when speech is interrupted - [#1503](https://github.com/livekit/agents-js/pull/1503) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix playback flush and speech interruption races - [#1518](https://github.com/livekit/agents-js/pull/1518) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(telemetry): export observability logs from logger instances captured before OTEL setup. - [#1562](https://github.com/livekit/agents-js/pull/1562) ([@Cay-Zhang](https://github.com/Cay-Zhang))
+
+- Add VAD-driven finalization for Speechmatics inference STT. - [#1526](https://github.com/livekit/agents-js/pull/1526) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): allow true interruptions during backchannel boundary cooldown - [#1565](https://github.com/livekit/agents-js/pull/1565) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add user turn limit options for interrupting long user speech. - [#1535](https://github.com/livekit/agents-js/pull/1535) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.3
 
 ### Patch Changes

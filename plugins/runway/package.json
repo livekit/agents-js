@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-runway",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Runway plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
