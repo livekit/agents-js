@@ -252,20 +252,17 @@ export class LLM extends llm.LLM {
       }
     }
 
-    const streamPromise = this.#client.messages.create(
-      {
-        model: this.#opts.model,
-        messages: messages,
-        system: system.length > 0 ? system : undefined,
-        tools: anthropicTools.length > 0 ? anthropicTools : undefined,
-        stream: true,
-        max_tokens: this.#opts.maxTokens || 4096,
-        ...extras,
-      },
-      { timeout: connOptions.timeoutMs },
-    );
+    const requestParams: Anthropic.MessageCreateParamsStreaming = {
+      model: this.#opts.model,
+      messages: messages,
+      system: system.length > 0 ? system : undefined,
+      tools: anthropicTools.length > 0 ? anthropicTools : undefined,
+      stream: true,
+      max_tokens: this.#opts.maxTokens || 4096,
+      ...extras,
+    };
 
-    return new LLMStream(this, streamPromise, chatCtx, toolCtx, connOptions);
+    return new LLMStream(this, this.#client, requestParams, chatCtx, toolCtx, connOptions);
   }
 }
 
@@ -279,7 +276,8 @@ export class LLM extends llm.LLM {
  * - Chain-of-thought `<thinking>` block filtering when tools are active
  */
 export class LLMStream extends llm.LLMStream {
-  #streamPromise: Promise<AsyncIterable<Anthropic.MessageStreamEvent>>;
+  #client: Anthropic;
+  #requestParams: Anthropic.MessageCreateParamsStreaming;
   #toolCallId?: string;
   #fncName?: string;
   #fncRawArgs?: string;
@@ -291,20 +289,24 @@ export class LLMStream extends llm.LLMStream {
 
   constructor(
     llmInst: LLM,
-    streamPromise: Promise<AsyncIterable<Anthropic.MessageStreamEvent>>,
+    client: Anthropic,
+    requestParams: Anthropic.MessageCreateParamsStreaming,
     chatCtx: llm.ChatContext,
     toolCtx: llm.ToolContext | undefined,
     connOptions: APIConnectOptions,
   ) {
     super(llmInst, { chatCtx, toolCtx, connOptions });
-    this.#streamPromise = streamPromise;
+    this.#client = client;
+    this.#requestParams = requestParams;
     this.#toolCtx = toolCtx;
   }
 
   protected async run(): Promise<void> {
     let retryable = true;
     try {
-      const stream = await this.#streamPromise;
+      const stream = await this.#client.messages.create(this.#requestParams, {
+        timeout: this.connOptions.timeoutMs,
+      });
       for await (const event of stream) {
         if (event.type === 'message_start') {
           this.#requestId = event.message.id;
