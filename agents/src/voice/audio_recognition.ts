@@ -12,9 +12,8 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
-import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
@@ -478,8 +477,13 @@ export class AudioRecognition {
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
     this.cancelBackchannelBoundary();
 
-    if (this.isAgentSpeaking) {
-      this.endpointing.onEndOfAgentSpeech(Date.now());
+    const now = Date.now();
+    const wasAgentSpeaking = this.isAgentSpeaking;
+    // Capture before the assignment below; the overlap-end notification only fires when no
+    // overlap had been registered during this agent speech.
+    const priorIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
+    if (wasAgentSpeaking) {
+      this.endpointing.onEndOfAgentSpeech(now);
     }
 
     if (!this.isInterruptionEnabled) {
@@ -487,20 +491,9 @@ export class AudioRecognition {
       return;
     }
 
-    const inputOpen = await this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.agentSpeechEnded(),
-    );
-    if (!inputOpen) {
-      this.isAgentSpeaking = false;
-      return;
-    }
-
-    if (this.isAgentSpeaking) {
-      if (this.ignoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech(Date.now());
-      }
-
-      const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+    let endCooldown = 0;
+    if (wasAgentSpeaking) {
+      endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
       const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
         : ignoreUserTranscriptUntil;
@@ -508,11 +501,27 @@ export class AudioRecognition {
       // Subtracting `endCooldown` widens the release window so transcripts that ended just
       // before the agent finished speaking (premature corrections) are surfaced.
       this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
+    }
+    // Clear before awaiting the sentinel so STT events arriving while the sentinel is in
+    // flight are not buffered.
+    this.isAgentSpeaking = false;
 
-      // flush held transcripts if possible
+    const inputOpen = await this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.agentSpeechEnded(),
+    );
+    if (!inputOpen) {
+      return;
+    }
+
+    if (wasAgentSpeaking) {
+      // Notify overlap end after the agent-speech-ended sentinel resets the inference stream
+      // so it does not emit a synthetic `isInterruption: false` event following a real
+      // interruption.
+      if (priorIgnoreUserTranscriptUntil === undefined) {
+        this.onEndOfOverlapSpeech(Date.now());
+      }
       await this.flushHeldTranscripts(endCooldown);
     }
-    this.isAgentSpeaking = false;
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */

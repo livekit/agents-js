@@ -1204,10 +1204,6 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Refactored interruption word count check:
-    // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
-    // - Apply check to all STT results: empty string, undefined, or any length
-    // - This ensures consistent behavior across all interruption scenarios
     if (
       this.stt &&
       this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0 &&
@@ -1215,13 +1211,7 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       const text = this.audioRecognition.currentTranscript;
       // TODO(shubhra): better word splitting for multi-language
-
-      // Normalize text: convert undefined/null to empty string for consistent word counting
-      const normalizedText = text ?? '';
-      const wordCount = splitWords(normalizedText, true).length;
-
-      // Only allow interruption if word count meets or exceeds minInterruptionWords
-      // This applies to all cases: empty strings, partial speech, and full speech
+      const wordCount = splitWords(text ?? '', true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
@@ -1234,7 +1224,6 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      // reset the false interruption timer
       if (this.falseInterruptionTimer) {
         clearTimeout(this.falseInterruptionTimer);
         this.falseInterruptionTimer = undefined;
@@ -1245,11 +1234,12 @@ export class AgentActivity implements RecognitionHooks {
           this.agentSession.sessionOptions.turnHandling.interruption.falseInterruptionTimeout;
         const audioOutput = this.agentSession.output.audio;
 
-        if (
-          this.isInterruptionDetectionEnabled &&
-          this.audioRecognition &&
-          this.agentSession.agentState === 'speaking'
-        ) {
+        // Gate the pause-side effects on the actual `speaking → listening` transition;
+        // otherwise each VAD frame during user speech re-fires onEndOfAgentSpeech and
+        // spams the interruption stream with duplicate `agent-speech-ended` sentinels.
+        const wasAgentSpeaking = this.agentSession.agentState === 'speaking';
+
+        if (wasAgentSpeaking && this.isInterruptionDetectionEnabled && this.audioRecognition) {
           this.audioRecognition.onStartOfOverlapSpeech(
             0,
             Date.now(),
@@ -1259,14 +1249,16 @@ export class AgentActivity implements RecognitionHooks {
 
         this.updatePausedSpeech(this._currentSpeech, timeout);
         audioOutput!.pause();
-        this.agentSession._updateAgentState('listening');
-        if (this.audioRecognition) {
-          this.audioRecognition.onEndOfAgentSpeech(
-            options?.ignoreUserTranscriptUntil ?? Date.now(),
-          );
-        }
-        if (this.isInterruptionDetectionEnabled) {
-          this.restoreInterruptionByAudioActivity();
+        if (wasAgentSpeaking) {
+          this.agentSession._updateAgentState('listening');
+          if (this.audioRecognition) {
+            this.audioRecognition.onEndOfAgentSpeech(
+              options?.ignoreUserTranscriptUntil ?? Date.now(),
+            );
+          }
+          if (this.isInterruptionDetectionEnabled) {
+            this.restoreInterruptionByAudioActivity();
+          }
         }
       } else {
         this.logger.info(
@@ -1948,6 +1940,12 @@ export class AgentActivity implements RecognitionHooks {
   private onPipelineReplyDone(): void {
     if (!this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done())) {
       this.agentSession._updateAgentState('listening');
+      if (this.audioRecognition) {
+        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      }
+      if (this.isInterruptionDetectionEnabled) {
+        this.restoreInterruptionByAudioActivity();
+      }
     }
   }
 
@@ -2679,7 +2677,7 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    if (toolOutput.output.length > 0) {
+    if (!speechHandle.interrupted && toolOutput.output.length > 0) {
       this.agentSession._updateAgentState('thinking');
     } else if (this.agentSession.agentState === 'speaking') {
       this.agentSession._updateAgentState('listening');
@@ -2695,6 +2693,12 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle._hasGenerations) {
       speechHandle._markGenerationDone();
     }
+
+    if (speechHandle.interrupted) {
+      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      return;
+    }
+
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;

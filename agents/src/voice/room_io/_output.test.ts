@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { Future } from '../../utils.js';
 import { ParticipantAudioOutput } from './_output.js';
 
+const nextTick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 describe('ParticipantAudioOutput waitForPlayoutTask', () => {
   it('resets tracked duration after non-interrupted playout', async () => {
     let resolvePlayout!: () => void;
@@ -94,5 +96,59 @@ describe('ParticipantAudioOutput waitForPlayoutTask', () => {
       playbackPosition: 0.5,
       interrupted: true,
     });
+  });
+
+  it('does not finish one segment twice when flush is called again before playout drains', async () => {
+    let resolvePlayout!: () => void;
+    const waitForPlayout = new Promise<void>((resolve) => {
+      resolvePlayout = resolve;
+    });
+
+    const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
+      pushedDuration: number;
+      flushTask?: { done: boolean };
+      flushPushedDuration?: number;
+      interruptedFuture: Future<void>;
+      firstFrameEmitted: boolean;
+      audioSource: {
+        waitForPlayout: () => Promise<void>;
+        queuedDuration: number;
+        clearQueue: () => void;
+      };
+      onPlaybackFinished: (event: { playbackPosition: number; interrupted: boolean }) => void;
+      logger: {
+        error: () => void;
+      };
+    };
+
+    const onPlaybackFinished = vi.fn();
+    output.pushedDuration = 1.0;
+    output.interruptedFuture = new Future<void>();
+    output.firstFrameEmitted = true;
+    output.onPlaybackFinished = onPlaybackFinished;
+    output.logger = {
+      error: vi.fn(),
+    };
+    output.audioSource = {
+      waitForPlayout: () => waitForPlayout,
+      queuedDuration: 0,
+      clearQueue: vi.fn(),
+    };
+
+    output.flush();
+    await nextTick();
+
+    output.flush();
+    await nextTick();
+
+    resolvePlayout();
+    await nextTick();
+
+    expect(onPlaybackFinished).toHaveBeenCalledTimes(1);
+    expect(onPlaybackFinished).toHaveBeenCalledWith({
+      playbackPosition: 1.0,
+      interrupted: false,
+    });
+    expect(output.logger.error).not.toHaveBeenCalled();
   });
 });
