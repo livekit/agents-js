@@ -450,6 +450,8 @@ export class ParticipantAudioOutput extends AudioOutput {
     // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
     const accountedDuration = this.pushedDuration;
     const abortFuture = new Future<boolean>();
+    // Reset before the race so a stale clearBuffer() from before this segment doesn't fire it.
+    this.interruptedFuture = new Future();
 
     const resolveAbort = () => {
       if (!abortFuture.done) abortFuture.resolve(true);
@@ -475,7 +477,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     this.pushedDuration = 0;
-    this.interruptedFuture = new Future();
     this.firstFrameEmitted = false;
 
     this.onPlaybackFinished({
@@ -516,11 +517,10 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {
-    if (!this.pushedDuration) {
-      return;
+    // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
+    if (!this.interruptedFuture.done) {
+      this.interruptedFuture.resolve();
     }
-
-    this.interruptedFuture.resolve();
   }
 
   private async publishTrack(signal: AbortSignal) {

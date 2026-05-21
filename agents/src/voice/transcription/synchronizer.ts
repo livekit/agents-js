@@ -439,7 +439,7 @@ class SegmentSynchronizerImpl {
         this.outputStreamWriter.write(
           createTimedString({
             text: forwardedWord,
-            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+            endTime: this.synchronizedElapsedSeconds(),
           }),
         );
         const cleanWords = this.options.splitWords(word);
@@ -452,8 +452,7 @@ class SegmentSynchronizerImpl {
       const cleanWords = this.options.splitWords(word);
       const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
       const wordHyphens = this.options.hyphenateWord(cleanWord).length;
-      // Subtract paused time so the transcript doesn't race ahead of the audio after resume.
-      const elapsedSeconds = (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
+      const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
       const annotated = this.audioData.annotatedRate;
@@ -486,7 +485,7 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: forwardedWord,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       await this.sleepIfNotClosed(delayTime / 2);
@@ -500,11 +499,19 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: remaining,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       this.textData.forwardedText += remaining;
     }
+  }
+
+  /** Elapsed audio-playback time in seconds — wall-clock minus paused time. */
+  private synchronizedElapsedSeconds(): number | undefined {
+    if (this.startWallTime === undefined) {
+      return undefined;
+    }
+    return (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
   }
 
   private calcHyphens(text: string): string[] {
