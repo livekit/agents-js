@@ -66,6 +66,7 @@ export {
   LLMStream,
   type ChatChunk,
   type ChoiceDelta,
+  type CollectedResponse,
   type CompletionUsage,
   type LLMCallbacks,
 } from './llm.js';
