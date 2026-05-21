@@ -48,6 +48,7 @@ interface RealtimeOptions {
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
   tracing?: api_proto.TracingConfig | null;
+  reasoning?: api_proto.Reasoning;
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
@@ -158,8 +159,10 @@ export class RealtimeModel extends llm.RealtimeModel {
   }
 
   constructor(
-    options: {
-      model?: string;
+    options: (
+      | { model: api_proto.ReasoningCapableModel; reasoning?: api_proto.Reasoning }
+      | { model?: string; reasoning?: never }
+    ) & {
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
@@ -514,6 +517,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // GA format (OpenAI or Azure GA)
     const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
     const modality: Modality = opts.modalities.includes('audio') ? 'audio' : 'text';
+    const includeReasoning = opts.reasoning && opts.model.startsWith('gpt-realtime-2');
     return {
       type: 'session.update',
       session: {
@@ -537,6 +541,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         tool_choice: toOaiToolChoice(opts.toolChoice),
         tracing: opts.tracing,
         instructions: this.instructions,
+        ...(includeReasoning ? { reasoning: opts.reasoning } : {}),
       },
     };
   }
