@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@huggingface/hub": "2.4.1",
-    "@huggingface/transformers": "3.7.2",
+    "@huggingface/transformers": "3.8.1",
     "onnxruntime-node": "1.21.0"
   }
 }
