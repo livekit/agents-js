@@ -2,3 +2,6 @@ packages:
   - "agents"
   - "plugins/*"
   - "examples"
+
+catalog:
+  "zod": "^3.25.56"
