@@ -219,9 +219,11 @@ export class LLM extends llm.LLM {
       }
     }
 
-    // Map toolChoice to Anthropic format
+    // Map toolChoice and parallelToolCalls to Anthropic format
     const resolvedToolChoice = toolChoice ?? this.#opts.toolChoice;
-    if (resolvedToolChoice && anthropicTools.length > 0) {
+    const resolvedParallel = parallelToolCalls ?? this.#opts.parallelToolCalls;
+
+    if ((resolvedToolChoice || resolvedParallel !== undefined) && anthropicTools.length > 0) {
       let anthropicToolChoice: Record<string, unknown> | undefined = { type: 'auto' };
 
       if (typeof resolvedToolChoice === 'string') {
@@ -243,7 +245,6 @@ export class LLM extends llm.LLM {
 
       if (anthropicToolChoice) {
         // Map parallelToolCalls
-        const resolvedParallel = parallelToolCalls ?? this.#opts.parallelToolCalls;
         if (resolvedParallel !== undefined) {
           anthropicToolChoice.disable_parallel_tool_use = !resolvedParallel;
         }
@@ -310,7 +311,7 @@ export class LLMStream extends llm.LLMStream {
           this.#inputTokens = event.message.usage.input_tokens;
           this.#outputTokens = event.message.usage.output_tokens;
         } else if (event.type === 'message_delta') {
-          this.#outputTokens += event.usage.output_tokens;
+          this.#outputTokens = event.usage.output_tokens;
         } else if (
           event.type === 'content_block_start' &&
           event.content_block.type === 'tool_use'
