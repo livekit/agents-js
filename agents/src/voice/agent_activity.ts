@@ -3092,60 +3092,17 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const processMessages = async (abortController: AbortController) => {
-      replyAbortController.signal.addEventListener(
-        'abort',
-        () => {
-          this.logger.info(
-            {
-              speech_id: speechHandle.id,
-              stack: new Error('abort source').stack,
-            },
-            'realtime processMessages: replyAbortController aborted',
-          );
-          abortController.abort();
-        },
-        { once: true },
-      );
+      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
+        once: true,
+      });
       const reader = ev.messageStream.getReader();
       try {
-        let messageIndex = 0;
         while (true) {
-          if (speechHandle.interrupted || abortController.signal.aborted) {
-            this.logger.info(
-              {
-                speech_id: speechHandle.id,
-                interrupted: speechHandle.interrupted,
-                aborted: abortController.signal.aborted,
-                processed: messageIndex,
-              },
-              'realtime processMessages: stopping before next read',
-            );
-            break;
-          }
+          if (speechHandle.interrupted || abortController.signal.aborted) break;
           const { done, value: msg } = await reader.read();
-          if (done) {
-            this.logger.info(
-              { speech_id: speechHandle.id, processed: messageIndex },
-              'realtime processMessages: messageStream done',
-            );
-            break;
-          }
-          messageIndex++;
-          this.logger.info(
-            { speech_id: speechHandle.id, message_id: msg.messageId, index: messageIndex },
-            'realtime processMessages: processing message',
-          );
+          if (done) break;
           const entry = await processOneMessage(msg, abortController);
           messageOutputs.push(entry);
-          this.logger.info(
-            {
-              speech_id: speechHandle.id,
-              message_id: msg.messageId,
-              index: messageIndex,
-              played: entry.played,
-            },
-            'realtime processMessages: message processed',
-          );
           // If this message was interrupted, stop pulling further messages —
           // remaining items are intentionally omitted so updateChatCtx below
           // removes them server-side.
