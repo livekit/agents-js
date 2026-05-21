@@ -3193,10 +3193,8 @@ export class AgentActivity implements RecognitionHooks {
 
     // Emit a ChatMessage per generated message, truncating partial messages
     // server-side and dropping skipped ones.
-    let anySkipped = false;
     for (const entry of messageOutputs) {
       if (entry.played === 'skipped') {
-        anySkipped = true;
         continue;
       }
 
@@ -3242,13 +3240,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // Sync local chat ctx to the realtime server to remove any items the model
-    // added but the user never heard (interrupted before first frame, or any
-    // remaining messages we stopped pulling after a partial).
-    if (
-      speechHandle.interrupted &&
-      anySkipped &&
-      this.llm.capabilities.midSessionChatCtxUpdate
-    ) {
+    // added but the user never heard — entries left as 'skipped' (interrupted
+    // before first frame), AND messages still buffered in messageStream that
+    // we never pulled because the loop broke early on a 'partial'. The
+    // 'partial'-break case isn't reflected in messageOutputs, so we can't gate
+    // on a per-entry flag; just always sync on interrupt when supported.
+    if (speechHandle.interrupted && this.llm.capabilities.midSessionChatCtxUpdate) {
       try {
         await this.realtimeSession.updateChatCtx(this.agent._chatCtx);
       } catch (error) {
