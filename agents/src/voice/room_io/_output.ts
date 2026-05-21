@@ -433,10 +433,11 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (!abortFuture.done) abortFuture.resolve(false);
     });
 
-    const interrupted = await Promise.race([
+    const aborted = await Promise.race([
       abortFuture.await,
       this.interruptedFuture.await.then(() => true),
     ]);
+    const interrupted = this.interruptedFuture.done || aborted;
 
     let pushedDuration = accountedDuration;
 
