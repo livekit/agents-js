@@ -429,7 +429,7 @@ export class WSLLMStream extends llm.LLMStream {
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    // TODO: support provider-defined tools in the Responses schema.
+    // TODO: support provider tools in the Responses schema.
     const tools = this.toolCtx
       ? this.toolCtx
           .flatten()

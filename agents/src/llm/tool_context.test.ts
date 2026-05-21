@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ToolContext, type ToolOptions, Toolset, tool } from './tool_context.js';
+import { ProviderTool, ToolContext, type ToolOptions, Toolset, tool } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -448,7 +448,19 @@ describe('tool() name requirement', () => {
     });
     expect(t.name).toBe('doStuff');
   });
+
+  it('exposes id mirroring the function tool name', () => {
+    const t = tool({
+      name: 'doStuff',
+      description: 'd',
+      execute: async () => 'x',
+    });
+    expect(t.id).toBe('doStuff');
+    expect(t.id).toBe(t.name);
+  });
 });
+
+class TestProviderTool extends ProviderTool {}
 
 describe('ToolContext', () => {
   const makeFn = (name: string) =>
@@ -497,7 +509,7 @@ describe('ToolContext', () => {
 
   it('separates provider tools from function tools', () => {
     const fnA = makeFn('a');
-    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([fnA, provider]);
 
     expect(ctx.functionTools).toEqual({ a: fnA });
@@ -537,7 +549,7 @@ describe('ToolContext', () => {
 
   it('equals() is reflexive', () => {
     const a = makeFn('a');
-    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([a, provider]);
     expect(ctx.equals(ctx)).toBe(true);
   });
@@ -547,22 +559,22 @@ describe('ToolContext', () => {
     // that hold the same provider-tool identities in different order are still equal so
     // realtime-session / preemptive-generation reuse fast paths are not invalidated.
     const a = makeFn('a');
-    const p1 = tool({ id: 'code', config: { language: 'python' } });
-    const p2 = tool({ id: 'browser', config: {} });
+    const p1 = new TestProviderTool({ id: 'code' });
+    const p2 = new TestProviderTool({ id: 'browser' });
     expect(new ToolContext([a, p1, p2]).equals(new ToolContext([a, p2, p1]))).toBe(true);
   });
 
   it('equals() supports contexts with only provider tools', () => {
-    const p1 = tool({ id: 'code', config: {} });
-    const p2 = tool({ id: 'browser', config: {} });
+    const p1 = new TestProviderTool({ id: 'code' });
+    const p2 = new TestProviderTool({ id: 'browser' });
     expect(new ToolContext([p1, p2]).equals(new ToolContext([p1, p2]))).toBe(true);
-    const p3 = tool({ id: 'code', config: {} }); // distinct identity, same id
+    const p3 = new TestProviderTool({ id: 'code' }); // distinct identity, same id
     expect(new ToolContext([p1]).equals(new ToolContext([p3]))).toBe(false);
   });
 
   it('hasTool() matches function tools by name and provider tools by id', () => {
     const a = makeFn('a');
-    const provider = tool({ id: 'code_runner', config: {} });
+    const provider = new TestProviderTool({ id: 'code_runner' });
     const ctx = new ToolContext([a, provider]);
 
     expect(ctx.hasTool('a')).toBe(true);
@@ -574,7 +586,7 @@ describe('ToolContext', () => {
     // Matches Python's `flatten()`: list(self._fnc_tools_map.values()) + self._provider_tools.
     const a = makeFn('a');
     const b = makeFn('b');
-    const provider = tool({ id: 'code', config: {} });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);

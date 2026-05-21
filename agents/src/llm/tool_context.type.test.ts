@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
-import { type FunctionTool, type ProviderDefinedTool, type ToolOptions, tool } from './index.js';
+import { type FunctionTool, ProviderTool, type ToolOptions, tool } from './index.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -17,15 +17,15 @@ describe('tool type inference', () => {
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
   });
 
-  it('should infer provider defined tool type', () => {
-    const toolType = tool({
-      id: 'code-interpreter',
-      config: {
-        language: 'python',
-      },
-    });
+  it('rejects direct instantiation of the abstract ProviderTool base', () => {
+    // @ts-expect-error - ProviderTool is abstract; plugins must subclass it.
+    new ProviderTool({ id: 'code-interpreter' });
 
-    expectTypeOf(toolType).toEqualTypeOf<ProviderDefinedTool>();
+    class CodeInterpreter extends ProviderTool {}
+    const providerTool = new CodeInterpreter({ id: 'code-interpreter' });
+    expectTypeOf(providerTool).toMatchTypeOf<ProviderTool>();
+    expect(providerTool.id).toBe('code-interpreter');
+    expect(providerTool.type).toBe('provider');
   });
 
   it('should infer run context type', () => {
@@ -45,7 +45,6 @@ describe('tool type inference', () => {
 
   it('should not accept primitive zod schemas', () => {
     expect(() => {
-      // @ts-expect-error - Testing that non-object schemas are rejected
       tool({
         name: 'test',
         description: 'test',
@@ -57,7 +56,6 @@ describe('tool type inference', () => {
 
   it('should not accept array schemas', () => {
     expect(() => {
-      // @ts-expect-error - Testing that array schemas are rejected
       tool({
         name: 'test',
         description: 'test',
@@ -69,7 +67,6 @@ describe('tool type inference', () => {
 
   it('should not accept union schemas', () => {
     expect(() => {
-      // @ts-expect-error - Testing that union schemas are rejected
       tool({
         name: 'test',
         description: 'test',

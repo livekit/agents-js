@@ -140,7 +140,7 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
   const functionDeclarations: FunctionDeclaration[] = [];
 
   for (const tool of toolCtx.flatten()) {
-    // TODO: support provider-defined tools in the Gemini schema.
+    // TODO: support provider tools in the Gemini schema.
     if (!llm.isFunctionTool(tool)) continue;
     const { name, description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);

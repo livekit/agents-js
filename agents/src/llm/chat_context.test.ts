@@ -19,7 +19,7 @@ import {
   isInstructions,
   renderInstructions,
 } from './chat_context.js';
-import { ToolContext, tool } from './tool_context.js';
+import { ProviderTool, ToolContext, tool } from './tool_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -1498,7 +1498,8 @@ describe('ChatContext.copy with toolCtx filter', () => {
   });
 
   it('keeps provider-tool calls when the ToolContext holds a matching provider tool id', () => {
-    const provider = tool({ id: 'code_runner', config: {} });
+    class CodeRunner extends ProviderTool {}
+    const provider = new CodeRunner({ id: 'code_runner' });
     const ctx = new ChatContext([
       FunctionCall.create({ callId: 'p1', name: 'code_runner', args: '{}' }),
       FunctionCall.create({ callId: 'p2', name: 'other', args: '{}' }),

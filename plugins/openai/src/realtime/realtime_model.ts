@@ -712,8 +712,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     const oaiTools: api_proto.Tool[] = [];
 
     for (const t of _tools.flatten()) {
-      // TODO: support provider-defined tools in the Realtime session-update schema.
+      // TODO: support provider tools in the Realtime session-update schema.
       if (!llm.isFunctionTool(t)) continue;
+
       try {
         const parameters = llm.toJsonSchema(
           t.parameters,
