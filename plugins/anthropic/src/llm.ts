@@ -201,7 +201,7 @@ export class LLM extends llm.LLM {
   }): LLMStream {
     const extras: Record<string, unknown> = { ...extraKwargs };
 
-    if (this.#opts.temperature) extras.temperature = this.#opts.temperature;
+    if (this.#opts.temperature !== undefined) extras.temperature = this.#opts.temperature;
 
     const { system, messages } = this._buildAnthropicContext(chatCtx);
 
@@ -293,7 +293,7 @@ export class LLMStream extends llm.LLMStream {
     toolCtx: llm.ToolContext | undefined,
     connOptions: APIConnectOptions,
   ) {
-    super(llmInst, { chatCtx, connOptions });
+    super(llmInst, { chatCtx, toolCtx, connOptions });
     this.#streamPromise = streamPromise;
     this.#toolCtx = toolCtx;
   }
