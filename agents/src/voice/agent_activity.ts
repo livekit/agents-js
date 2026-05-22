@@ -923,6 +923,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
+      source: 'say',
     });
 
     this.agentSession.emit(
@@ -1983,15 +1984,22 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      await this.cancelSpeechPause();
+      if (this._currentSpeech.source === 'say') {
+        this.logger.debug(
+          { 'speech id': this._currentSpeech.id },
+          'preserving externally queued speech from auto-interrupt on user turn',
+        );
+      } else {
+        await this.cancelSpeechPause();
 
-      this.logger.info(
-        { 'speech id': this._currentSpeech.id },
-        'speech interrupted, new user turn detected',
-      );
+        this.logger.info(
+          { 'speech id': this._currentSpeech.id },
+          'speech interrupted, new user turn detected',
+        );
 
-      this._currentSpeech.interrupt();
-      this.realtimeSession?.interrupt();
+        this._currentSpeech.interrupt();
+        this.realtimeSession?.interrupt();
+      }
     }
 
     let userMessage: ChatMessage | undefined = ChatMessage.create({
@@ -3313,6 +3321,7 @@ export class AgentActivity implements RecognitionHooks {
       allowInterruptions: speechHandle.allowInterruptions,
       stepIndex: speechHandle.numSteps + 1,
       parent: speechHandle,
+      source: 'tool_response',
     });
     this.agentSession.emit(
       AgentSessionEventTypes.SpeechCreated,
