@@ -5,6 +5,7 @@ import type { JSONSchema7 } from 'json-schema';
 import { z } from 'zod';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
+import { type ToolsetCreateOptions, createToolsetFactory } from './toolset_factory.js';
 import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
@@ -226,6 +227,23 @@ export class Toolset {
   constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
     this.#id = id;
     this.#tools = [...tools];
+  }
+
+  /**
+   * Compose a `Toolset` from a flat options object with inline lifecycle hooks.
+   *
+   * @example
+   * ```ts
+   * const mcpToolset = Toolset.create({
+   *   id: 'mcp_filesystem',
+   *   tools: [readFile, writeFile],
+   *   setup: async () => { await mcpClient.connect(); },
+   *   aclose: async () => { await mcpClient.disconnect(); },
+   * });
+   * ```
+   */
+  static create(options: ToolsetCreateOptions): Toolset {
+    return createToolsetFactory(Toolset, options);
   }
 
   get id(): string {

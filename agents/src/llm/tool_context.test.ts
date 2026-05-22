@@ -633,6 +633,35 @@ describe('Toolset', () => {
     expect(events).toEqual(['setup:rec', 'close:rec']);
   });
 
+  it('Toolset.create() composes lifecycle callbacks without subclassing', async () => {
+    const a = makeFn('a');
+    const events: string[] = [];
+    const ts = Toolset.create({
+      id: 'composed',
+      tools: [a],
+      setup: async () => {
+        events.push('setup');
+      },
+      aclose: async () => {
+        events.push('close');
+      },
+    });
+
+    expect(ts).toBeInstanceOf(Toolset);
+    expect(ts.id).toBe('composed');
+    expect(ts.tools).toEqual([a]);
+
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup', 'close']);
+  });
+
+  it('Toolset.create() defaults setup and aclose to no-ops when callbacks are omitted', async () => {
+    const ts = Toolset.create({ id: 'bare', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {
     const a = makeFn('a');
     const b = makeFn('b');

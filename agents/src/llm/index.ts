@@ -26,6 +26,8 @@ export {
   type ToolType,
 } from './tool_context.js';
 
+export { type ToolsetCreateOptions } from './toolset_factory.js';
+
 export {
   AgentHandoffItem,
   AgentConfigUpdate,
