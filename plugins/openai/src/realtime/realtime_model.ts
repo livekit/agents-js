@@ -697,7 +697,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // TODO(brian): these logics below are noops I think, leaving it here to keep
     // parity with the python but we should remove them later
-    const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
+    const retainedToolNames = new Set(
+      ev.session.tools.filter((tool) => tool.type === 'function').map((tool) => tool.name),
+    );
     // Keep provider tools and Toolsets as-is; only drop function tools the server didn't accept.
     const retainedEntries = _tools.tools.filter(
       (entry) => !llm.isFunctionTool(entry) || retainedToolNames.has(entry.name),
@@ -708,7 +710,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     unlock();
   }
 
-  private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+  protected createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
     for (const t of _tools.flatten()) {
@@ -1636,6 +1638,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       const item = event.item;
       if (!item.call_id || !item.name || !item.arguments) {
         throw new Error('item is not a function call');
+      }
+      if (!this._tools.getFunctionTool(item.name)) {
+        this.#logger.warn({ name: item.name }, 'unknown function tool, ignoring');
+        return;
       }
       this.currentGeneration.functionChannel.write(
         llm.FunctionCall.create({

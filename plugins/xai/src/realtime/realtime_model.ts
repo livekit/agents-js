@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { llm } from '@livekit/agents';
 import { realtime } from '@livekit/agents-plugin-openai';
+import { XAITool } from '../tools.js';
 
-const { RealtimeModel: OpenAIRealtimeModel } = realtime;
+const { RealtimeModel: OpenAIRealtimeModel, RealtimeSession: OpenAIRealtimeSession } = realtime;
 type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeModel>[0];
 
 const XAI_BASE_URL = 'wss://api.x.ai/v1';
@@ -46,5 +48,23 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });
+    this.capabilities.perResponseToolChoice = false;
+  }
+
+  override session() {
+    return new RealtimeSession(this);
+  }
+}
+
+export class RealtimeSession extends OpenAIRealtimeSession {
+  protected override createToolsUpdateEvent(tools: llm.ToolContext): realtime.SessionUpdateEvent {
+    const event = super.createToolsUpdateEvent(tools);
+    const xaiTools = tools
+      .flatten()
+      .filter((tool): tool is XAITool => tool instanceof XAITool)
+      .map((tool) => tool.toToolConfig());
+
+    event.session.tools = [...(event.session.tools ?? []), ...xaiTools] as realtime.Tool[];
+    return event;
   }
 }
