@@ -3094,8 +3094,6 @@ export class AgentActivity implements RecognitionHooks {
         let forwardedText = output.textOut?.text || '';
         if (interrupted && output.audioOut) {
           forwardedText = output.synchronizedTranscript ?? '';
-        } else if (interrupted && output.synchronizedTranscript !== undefined) {
-          forwardedText = output.synchronizedTranscript;
         }
 
         if (interrupted && realtimeModel.capabilities.messageTruncation) {
@@ -3192,7 +3190,8 @@ export class AgentActivity implements RecognitionHooks {
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       addRealtimeMessageOutputs(messageOutputs);
 
-      if (realtimeModel.capabilities.midSessionChatCtxUpdate) {
+      const anySkipped = messageOutputs.some((output) => output.played === 'skipped');
+      if (anySkipped && realtimeModel.capabilities.midSessionChatCtxUpdate) {
         try {
           await realtimeSession.updateChatCtx(this.agent._chatCtx);
         } catch (error) {
