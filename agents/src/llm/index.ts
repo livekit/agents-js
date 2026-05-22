@@ -23,10 +23,9 @@ export {
   type ToolContextEntry,
   type ToolCtxInput,
   type ToolOptions,
+  type ToolsetCreateOptions,
   type ToolType,
 } from './tool_context.js';
-
-export { type ToolsetCreateOptions } from './toolset_factory.js';
 
 export {
   AgentHandoffItem,
