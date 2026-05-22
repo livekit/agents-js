@@ -43,6 +43,248 @@ describe('RealtimeSession.generateReply', () => {
   });
 });
 
+describe('RealtimeSession input_audio_transcription delta handling', () => {
+  type TranscriptionInternals = {
+    handleConversationItemInputAudioTranscriptionDelta: (
+      ev: api_proto.ConversationItemInputAudioTranscriptionDeltaEvent,
+    ) => void;
+    handleConversationItemInputAudioTranscriptionCompleted: (
+      ev: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+    ) => void;
+    finalizePartialOnTranscriptionFailure: (itemId: string, contentIndex: number) => void;
+    handleConversationItemDeleted: (ev: api_proto.ConversationItemDeletedEvent) => void;
+    inputTranscriptAccumulators: Map<string, Map<number, string>>;
+    audioCapableItemIds: Set<string>;
+    itemDeleteFutures: Record<string, never>;
+    remoteChatCtx: {
+      get: (id: string) => { item: llm.ChatMessage } | undefined;
+      delete: (id: string) => void;
+    };
+    on: (event: string, listener: (payload: llm.InputTranscriptionCompleted) => void) => void;
+  };
+
+  function createTranscriptSession(opts?: {
+    chatItems?: Record<string, llm.ChatMessage>;
+  }): TranscriptionInternals {
+    const session = Object.create(RealtimeSession.prototype) as TranscriptionInternals;
+    session.inputTranscriptAccumulators = new Map<string, Map<number, string>>();
+    session.audioCapableItemIds = new Set<string>();
+    session.itemDeleteFutures = {};
+    const chatItems = new Map<string, llm.ChatMessage>(Object.entries(opts?.chatItems ?? {}));
+    session.remoteChatCtx = {
+      get: (id) => {
+        const item = chatItems.get(id);
+        return item ? { item } : undefined;
+      },
+      delete: (id) => {
+        chatItems.delete(id);
+      },
+    };
+    return session;
+  }
+
+  function delta(
+    item_id: string,
+    delta: string,
+    content_index = 0,
+  ): api_proto.ConversationItemInputAudioTranscriptionDeltaEvent {
+    return {
+      type: 'conversation.item.input_audio_transcription.delta',
+      event_id: `evt_${item_id}_${delta}_${content_index}`,
+      item_id,
+      content_index,
+      delta,
+    };
+  }
+
+  function completed(
+    item_id: string,
+    transcript: string,
+    content_index = 0,
+  ): api_proto.ConversationItemInputAudioTranscriptionCompletedEvent {
+    return {
+      type: 'conversation.item.input_audio_transcription.completed',
+      event_id: `evt_${item_id}_done`,
+      item_id,
+      content_index,
+      transcript,
+    };
+  }
+
+  it('accumulates partial transcripts across delta events for the same item_id', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'Hello'));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', ', world'));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', '!'));
+
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'Hello', isFinal: false },
+      { itemId: 'item_a', transcript: 'Hello, world', isFinal: false },
+      { itemId: 'item_a', transcript: 'Hello, world!', isFinal: false },
+    ]);
+  });
+
+  it('keeps accumulators isolated across concurrent item_ids', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'Aaa'));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_b', 'Bbb'));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'Aaa'));
+
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'Aaa', isFinal: false },
+      { itemId: 'item_b', transcript: 'Bbb', isFinal: false },
+      { itemId: 'item_a', transcript: 'AaaAaa', isFinal: false },
+    ]);
+  });
+
+  it('keeps accumulators isolated across content_index within the same item_id', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'idx0-', 0));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'idx1-', 1));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'more0', 0));
+
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'idx0-', isFinal: false },
+      { itemId: 'item_a', transcript: 'idx1-', isFinal: false },
+      { itemId: 'item_a', transcript: 'idx0-more0', isFinal: false },
+    ]);
+  });
+
+  it('clears the accumulator on .completed so a subsequent delta does not inherit prior state', () => {
+    const session = createTranscriptSession({
+      chatItems: { item_a: new llm.ChatMessage({ role: 'user', content: '', id: 'item_a' }) },
+    });
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'first turn '));
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'first turn complete.'),
+    );
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'second'));
+
+    expect(session.inputTranscriptAccumulators.get('item_a')?.get(0)).toBe('second');
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'first turn ', isFinal: false },
+      { itemId: 'item_a', transcript: 'first turn complete.', isFinal: true },
+      { itemId: 'item_a', transcript: 'second', isFinal: false },
+    ]);
+  });
+
+  it('pushes the final transcript onto the matching ChatMessage exactly once on .completed', () => {
+    const chatMessage = new llm.ChatMessage({ role: 'user', content: '', id: 'item_a' });
+    const session = createTranscriptSession({ chatItems: { item_a: chatMessage } });
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'partial-only'));
+    expect(chatMessage.content).toEqual(['']);
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(completed('item_a', 'final.'));
+    expect(chatMessage.content).toEqual(['', 'final.']);
+  });
+
+  it('emits isFinal:true on .completed even when remoteChatCtx has no matching item', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'partial'));
+    session.handleConversationItemInputAudioTranscriptionCompleted(completed('item_a', 'final.'));
+
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'partial', isFinal: false },
+      { itemId: 'item_a', transcript: 'final.', isFinal: true },
+    ]);
+    expect(session.inputTranscriptAccumulators.size).toBe(0);
+  });
+
+  it('treats .completed as a no-op cleanup when no deltas preceded it (non-streaming STT model)', () => {
+    const session = createTranscriptSession({
+      chatItems: { item_a: new llm.ChatMessage({ role: 'user', content: '', id: 'item_a' }) },
+    });
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'one-shot whisper-1 transcript'),
+    );
+
+    expect(session.inputTranscriptAccumulators.size).toBe(0);
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'one-shot whisper-1 transcript', isFinal: true },
+    ]);
+  });
+
+  it('skips emission for empty or missing deltas and does not create an accumulator', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', ''));
+    session.handleConversationItemInputAudioTranscriptionDelta({
+      type: 'conversation.item.input_audio_transcription.delta',
+      event_id: 'evt_no_delta',
+      item_id: 'item_a',
+    });
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'real'));
+
+    expect(session.inputTranscriptAccumulators.get('item_a')?.get(0)).toBe('real');
+    expect(emissions).toEqual([{ itemId: 'item_a', transcript: 'real', isFinal: false }]);
+  });
+
+  it('clears the accumulator and emits a closing isFinal:true on transcription failure when partials had streamed', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'partial '));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'text'));
+    session.finalizePartialOnTranscriptionFailure('item_a', 0);
+
+    expect(session.inputTranscriptAccumulators.size).toBe(0);
+    expect(emissions).toEqual([
+      { itemId: 'item_a', transcript: 'partial ', isFinal: false },
+      { itemId: 'item_a', transcript: 'partial text', isFinal: false },
+      { itemId: 'item_a', transcript: 'partial text', isFinal: true },
+    ]);
+  });
+
+  it('emits nothing on transcription failure when no partials had streamed for that item', () => {
+    const session = createTranscriptSession();
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.finalizePartialOnTranscriptionFailure('item_a', 0);
+
+    expect(emissions).toEqual([]);
+    expect(session.inputTranscriptAccumulators.size).toBe(0);
+  });
+
+  it('clears the accumulator when the conversation item is deleted', () => {
+    const session = createTranscriptSession();
+
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'partial '));
+    session.handleConversationItemInputAudioTranscriptionDelta(delta('item_a', 'more', 1));
+    expect(session.inputTranscriptAccumulators.get('item_a')?.size).toBe(2);
+
+    session.handleConversationItemDeleted({
+      type: 'conversation.item.deleted',
+      event_id: 'evt_del',
+      item_id: 'item_a',
+    });
+
+    expect(session.inputTranscriptAccumulators.has('item_a')).toBe(false);
+  });
+});
+
 describe('livekitItemToOpenAIItem', () => {
   describe('message items', () => {
     it('should use output_text type for assistant messages', async () => {
