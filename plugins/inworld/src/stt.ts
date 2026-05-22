@@ -114,7 +114,7 @@ const defaultSTTOptions: STTOptions = {
  * Inworld STT — supports both streaming (bidirectional WebSocket) and batch (REST) modes.
  *
  * When `enableVoiceProfile` is `true` (the default), each recognized transcript includes an
- * acoustic {@link VoiceProfile} in `SpeechData.metadata.voice_profile`.
+ * acoustic {@link VoiceProfile} in `SpeechData.metadata.voiceProfile`.
  *
  * @example
  * ```ts
@@ -199,7 +199,7 @@ export class STT extends stt.STT {
     };
 
     const { transcript, wordTimestamps, voiceProfile } = result.transcription;
-    const metadata = voiceProfile ? { voice_profile: voiceProfile } : undefined;
+    const metadata = voiceProfile ? { voiceProfile: voiceProfile } : undefined;
 
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -408,7 +408,7 @@ export class SpeechStream extends stt.SpeechStream {
 
             if (result.transcription) {
               const { transcript, isFinal, wordTimestamps, voiceProfile } = result.transcription;
-              const metadata = voiceProfile ? { voice_profile: voiceProfile } : undefined;
+              const metadata = voiceProfile ? { voiceProfile: voiceProfile } : undefined;
 
               if (!this.#speaking && transcript) {
                 this.#speaking = true;
@@ -476,7 +476,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     await Promise.race([
       this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
+      Promise.all([sendTask(), listenTask.result, wsMonitor.result]),
     ]);
     closing = true;
     ws.close();

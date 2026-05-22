@@ -48,8 +48,6 @@ export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
 
-export type InworldSTTModels = 'inworld/inworld-stt-1';
-
 export interface CartesiaOptions {
   /** Minimum volume threshold. Default: not specified. */
   min_volume?: number;
@@ -178,8 +176,7 @@ type _STTModels =
   | AssemblyaiModels
   | ElevenlabsSTTModels
   | XaiSTTModels
-  | SpeechmaticsModels
-  | InworldSTTModels;
+  | SpeechmaticsModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
