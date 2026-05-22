@@ -518,6 +518,16 @@ export class TranscriptionSynchronizer {
 
   private options: TextSyncOptions;
   private rotateSegmentTask: Task<void>;
+  // number of rotations queued behind the currently-running one; used to warn only
+  // when the backlog grows beyond a single expected overlap
+  private queuedRotations: number = 0;
+  // The constructor schedules an initial rotation task. During session startup the room
+  // connection + agent handoff can fire two more rotateSegment calls before that initial
+  // task drains, producing a benign depth=2 chain that does not affect the caller (the
+  // chain settles before any audio is produced). Suppress the backlog warn until the
+  // initial task has resolved at least once so it only fires on real mid-conversation
+  // backlogs.
+  private initialRotationDone: boolean = false;
   private _outputsAttached: boolean = true;
   private closed: boolean = false;
 
@@ -598,7 +608,17 @@ export class TranscriptionSynchronizer {
     }
 
     if (!this.rotateSegmentTask.done) {
-      this.logger.warn('rotateSegment called while previous segment is still being rotated');
+      // The new task chains on the old one via `oldTask.result`, so rotations are
+      // serialized and no transcript data is lost. A single overlap is expected when
+      // turn-boundary events (playback finished, attach/detach, new utterance) fire
+      // back-to-back; only warn once the backlog grows beyond one queued rotation, and
+      // skip the warn during the synchronizer's startup window (see initialRotationDone).
+      this.queuedRotations++;
+      if (this.queuedRotations > 1 && this.initialRotationDone) {
+        this.logger.warn(
+          `rotateSegment backlog: ${this.queuedRotations} rotations queued behind the in-flight one`,
+        );
+      }
     }
     this.rotateSegmentTask = Task.from((controller) =>
       this.rotateSegmentTaskImpl(controller.signal, this.rotateSegmentTask),
@@ -619,16 +639,27 @@ export class TranscriptionSynchronizer {
   }
 
   private async rotateSegmentTaskImpl(abort: AbortSignal, oldTask?: Task<void>) {
-    if (oldTask) {
-      await oldTask.result;
-    }
+    try {
+      if (oldTask) {
+        await oldTask.result;
+      }
 
-    if (abort.aborted) {
-      return;
-    }
+      if (abort.aborted) {
+        return;
+      }
 
-    await this._impl.close();
-    this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+      await this._impl.close();
+      this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+    } finally {
+      if (this.queuedRotations > 0) {
+        this.queuedRotations--;
+      }
+      // Set synchronously inside the task body so that by the time `task.result`
+      // resolves, the flag is already true for any continuation (including
+      // `barrier()` callers). Using `Task.addDoneCallback` for this would be
+      // fragile against microtask reordering.
+      this.initialRotationDone = true;
+    }
   }
 }
 

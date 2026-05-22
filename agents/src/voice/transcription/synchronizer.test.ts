@@ -293,3 +293,62 @@ describe('TranscriptionSynchronizer attachment warnings', () => {
     await synchronizer.close();
   });
 });
+
+describe('TranscriptionSynchronizer rotateSegment backlog warn', () => {
+  const backlogWarnPrefix = 'rotateSegment backlog:';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not warn while the initial constructor-scheduled rotation is in flight', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+    // Force two extra rotateSegment calls synchronously, before the initial task can settle.
+    // This reproduces the production startup race (room connection + handoff stacking
+    // rotations onto the initial constructor-scheduled task).
+    synchronizer.audioOutput.onDetached();
+    synchronizer.textOutput.onDetached();
+
+    expect(
+      warn.mock.calls.filter((c) => typeof c[0] === 'string' && c[0].startsWith(backlogWarnPrefix)),
+    ).toHaveLength(0);
+
+    await synchronizer.close();
+  });
+
+  it('warns when the chain stacks beyond depth 1 after the initial rotation has settled', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+
+    // Let the initial constructor-scheduled task drain so we leave the startup window.
+    await synchronizer.barrier();
+
+    // Now simulate a real mid-conversation backlog: three rotateSegment calls back to back
+    // so two end up queued behind the in-flight one.
+    synchronizer.audioOutput.onDetached();
+    synchronizer.audioOutput.onAttached();
+    synchronizer.audioOutput.onDetached();
+
+    const backlogWarns = warn.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].startsWith(backlogWarnPrefix),
+    );
+    expect(backlogWarns.length).toBeGreaterThanOrEqual(1);
+
+    await synchronizer.close();
+  });
+});
