@@ -172,6 +172,7 @@ export function toToolsConfig({
   onlySingleType?: boolean;
 }): types.Tool[] | undefined {
   const tools: types.Tool[] = [];
+  const providerTools: types.Tool[] = [];
 
   if (toolCtx) {
     const functionDeclarations = toFunctionDeclarations(toolCtx);
@@ -188,21 +189,27 @@ export function toToolsConfig({
     }
   }
 
-  if (onlySingleType && tools.length > 0) {
-    return tools;
-  }
-
   if (geminiTools !== undefined) {
-    tools.push(geminiTools);
+    providerTools.push(geminiTools);
   }
 
   if (toolCtx) {
     for (const tool of toolCtx.providerTools) {
       if (tool instanceof GeminiTool) {
-        tools.push(tool.toToolConfig());
+        providerTools.push(tool.toToolConfig());
       }
     }
   }
+
+  if (tools.length > 0 && providerTools.length > 0) {
+    throw new Error('Gemini does not support mixing function tools and provider tools');
+  }
+
+  if (onlySingleType && tools.length > 0) {
+    return tools;
+  }
+
+  tools.push(...providerTools);
 
   return tools.length > 0 ? tools : undefined;
 }
