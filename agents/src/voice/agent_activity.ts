@@ -1974,8 +1974,11 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession?.commitAudio();
     }
 
-    if (this._currentSpeech) {
-      if (!this._currentSpeech.allowInterruptions) {
+    // Capture into a local before awaiting cancelSpeechPause: the main scheduling
+    // loop can reset this._currentSpeech = undefined during the await (#1430).
+    const currentSpeech = this._currentSpeech;
+    if (currentSpeech) {
+      if (!currentSpeech.allowInterruptions) {
         this.logger.warn(
           { user_input: info.newTranscript },
           'skipping user input, current speech generation cannot be interrupted',
@@ -1986,11 +1989,11 @@ export class AgentActivity implements RecognitionHooks {
       await this.cancelSpeechPause();
 
       this.logger.info(
-        { 'speech id': this._currentSpeech.id },
+        { 'speech id': currentSpeech.id },
         'speech interrupted, new user turn detected',
       );
 
-      this._currentSpeech.interrupt();
+      currentSpeech.interrupt();
       this.realtimeSession?.interrupt();
     }
 
