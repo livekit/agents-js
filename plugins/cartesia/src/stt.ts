@@ -404,7 +404,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.#logger.error('Cartesia sent an error', msg);
 
             // do not close the websocket on bad requests since that may be caused by invalid messages
-            if (msg.status_code !== undefined && msg.status_code >= 500) {
+            if (msg.status_code === undefined || msg.status_code >= 500) {
               // Defer until the WS is fully closed so we don't race the `close`
               // handler with a rejected `recvTask`. Close the socket explicitly
               // in case the server doesn't, otherwise recv would hang.
