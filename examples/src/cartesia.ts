@@ -7,14 +7,12 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  inference,
   log,
   metrics,
   voice,
 } from '@livekit/agents';
 import * as cartesia from '@livekit/agents-plugin-cartesia';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -30,16 +28,17 @@ export default defineAgent({
     });
 
     const logger = log();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
+    const vad =
+      ctx.proc.userData.vad instanceof silero.VAD ? ctx.proc.userData.vad : await silero.VAD.load();
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      tts: new cartesia.TTS(),
-      llm: new openai.LLM(),
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+      stt: new cartesia.STT({ model: 'ink-2' }),
+      llm: new inference.LLM({ model: 'google/gemini-3-flash' }),
+      tts: new cartesia.TTS({ model: 'sonic-3.5' }),
+      turnHandling: {
+        turnDetection: 'stt',
+      },
     });
 
     // Log metrics as they are emitted (session.usage is automatically collected)
