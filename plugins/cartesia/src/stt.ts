@@ -288,7 +288,7 @@ export class SpeechStream extends stt.SpeechStream {
         };
         const onError = (err: Error) => {
           ws.off('open', onOpen);
-          reject(err);
+          reject(new APIConnectionError({ message: err.message, options: { retryable: true } }));
         };
 
         ws.once('open', onOpen);
@@ -402,19 +402,27 @@ export class SpeechStream extends stt.SpeechStream {
         try {
           if (msg.type === 'error') {
             this.#logger.error('Cartesia sent an error', msg);
-            // Defer until the WS is fully closed so we don't race the `close`
-            // handler with a rejected `recvTask`. Close the socket explicitly
-            // in case the server doesn't, otherwise recv would hang.
-            pendingError = new APIConnectionError({
-              message: msg.message || msg.title,
-              options: {
-                retryable: msg.status_code !== undefined && msg.status_code >= 500,
-              },
-            });
-            ws.close();
-            return;
+
+            // do not close the websocket on bad requests since that may be caused by invalid messages
+            if (
+              msg.status_code !== undefined &&
+              (msg.status_code < 400 || msg.status_code >= 500)
+            ) {
+              // Defer until the WS is fully closed so we don't race the `close`
+              // handler with a rejected `recvTask`. Close the socket explicitly
+              // in case the server doesn't, otherwise recv would hang.
+              pendingError = new APIConnectionError({
+                message: msg.message || msg.title,
+                options: {
+                  retryable: true,
+                },
+              });
+              ws.close();
+              return;
+            }
+          } else {
+            this.#processStreamEvent(msg);
           }
-          this.#processStreamEvent(msg);
         } catch (error) {
           this.#logger.error('Failed to process Cartesia STT message', { error });
         }
@@ -461,6 +469,7 @@ export class SpeechStream extends stt.SpeechStream {
         settle(
           new APIConnectionError({
             message: `Cartesia STT connection closed unexpectedly (code=${code})`,
+            options: { retryable: true },
           }),
         );
       });
@@ -470,7 +479,7 @@ export class SpeechStream extends stt.SpeechStream {
           settle();
           return;
         }
-        settle(err);
+        settle(new APIConnectionError({ message: err.message, options: { retryable: true } }));
       });
     });
   }
