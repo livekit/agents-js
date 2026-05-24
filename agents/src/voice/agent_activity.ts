@@ -32,6 +32,7 @@ import {
   type InputSpeechStoppedEvent,
   type InputTranscriptionCompleted,
   LLM,
+  type MessageGeneration,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -64,7 +65,6 @@ import {
   delay,
   isDevMode,
   isHosted,
-  waitFor,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -109,7 +109,7 @@ import {
   removeInstructions,
   updateInstructions,
 } from './generation.js';
-import type { TimedString } from './io.js';
+import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { createEndpointing } from './turn_config/endpointing.js';
 import { setParticipantSpanAttributes } from './utils.js';
@@ -2901,133 +2901,228 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const onFirstFrame = (startedSpeakingAt: number = Date.now()) => {
+    // only the first message's first frame should trigger state transitions
+    let startedSpeakingAt: number | undefined;
+    const onFirstFrame = (ts: number = Date.now()) => {
+      if (startedSpeakingAt !== undefined) return;
+      startedSpeakingAt = ts;
       this.agentSession._updateAgentState('speaking', {
-        startTime: startedSpeakingAt,
+        startTime: ts,
         otelContext: speechHandle._agentTurnContext,
       });
       if (this.audioRecognition) {
-        this.audioRecognition.onStartOfAgentSpeech(startedSpeakingAt);
+        this.audioRecognition.onStartOfAgentSpeech(ts);
       }
     };
 
-    const readMessages = async (
-      abortController: AbortController,
-      outputs: Array<[string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]>,
-    ) => {
-      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
-        once: true,
-      });
+    // Multiple message items may be produced for a single realtime response
+    // (e.g. GPT-Realtime-2.0 preambles). Each one is processed serially: push
+    // frames, flush, waitForPlayout. Per-msg state lets us truncate / drop
+    // messages individually on interrupt.
+    interface MessageOutput {
+      msg: MessageGeneration;
+      textOut: _TextOut | null;
+      audioOut: _AudioOut | null;
+      played: 'full' | 'partial' | 'skipped';
+      playbackPositionInS: number;
+      synchronizedTranscript: string | null;
+      modalities: ('text' | 'audio')[] | undefined;
+    }
+
+    const messageOutputs: MessageOutput[] = [];
+
+    const processOneMessage = async (
+      msg: MessageGeneration,
+      parentController: AbortController,
+    ): Promise<MessageOutput> => {
+      // performAudioForwarding/performTextForwarding/performTTSInference all pass the
+      // parent controller into Task.from as the task's OWN controller (not a parent).
+      // That means cancelAndWait(forwardTasks, ...) below would call task.cancel()
+      // → controller.abort() on the shared parent controller, killing
+      // processMessages's loop before it ever reads msg2. Use a per-message child
+      // controller so per-message cleanup doesn't propagate up.
+      const localController = new AbortController();
+      const propagateAbort = () => {
+        if (!localController.signal.aborted) localController.abort();
+      };
+      if (parentController.signal.aborted) {
+        localController.abort();
+      } else {
+        parentController.signal.addEventListener('abort', propagateAbort, { once: true });
+      }
+
+      const msgModalities = msg.modalities ? await msg.modalities : undefined;
+      const entry: MessageOutput = {
+        msg,
+        textOut: null,
+        audioOut: null,
+        played: 'skipped',
+        playbackPositionInS: 0,
+        synchronizedTranscript: null,
+        modalities: msgModalities,
+      };
+
+      let ttsTextInput: ReadableStream<string | TimedString> | null = null;
+      let trTextInput: ReadableStream<string | TimedString>;
+
+      if (msgModalities && !msgModalities.includes('audio') && this.tts) {
+        if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+          this.logger.warn(
+            'text response received from realtime API, falling back to use a TTS model.',
+          );
+        }
+        const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
+        ttsTextInput = _ttsTextInput;
+        trTextInput = _trTextInput;
+      } else {
+        trTextInput = msg.textStream;
+      }
 
       const forwardTasks: Array<Task<void>> = [];
+      let audioOut: _AudioOut | null = null;
+      let textOut: _TextOut | null = null;
+
       try {
-        for await (const msg of ev.messageStream) {
-          if (forwardTasks.length > 0) {
-            this.logger.warn(
-              'expected to receive only one message generation from the realtime API',
+        if (audioOutput) {
+          let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
+
+          if (ttsTextInput) {
+            const [ttsTask, ttsGenData] = performTTSInference(
+              (...args) => this.agent.ttsNode(...args),
+              ttsTextInput,
+              modelSettings,
+              localController,
+              this.tts?.model,
+              this.tts?.provider,
+              this.agentSession.sessionOptions.ttsReadIdleTimeout,
+              this.agentSession.sessionOptions.ttsTextTransforms,
             );
-            break;
-          }
-
-          const msgModalities = msg.modalities ? await msg.modalities : undefined;
-          let ttsTextInput: ReadableStream<string | TimedString> | null = null;
-          let trTextInput: ReadableStream<string | TimedString>;
-
-          if (msgModalities && !msgModalities.includes('audio') && this.tts) {
-            if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
-              this.logger.warn(
-                'text response received from realtime API, falling back to use a TTS model.',
-              );
-            }
-            const [_ttsTextInput, _trTextInput] = msg.textStream.tee();
-            ttsTextInput = _ttsTextInput;
-            trTextInput = _trTextInput;
+            tasks.push(ttsTask);
+            realtimeAudioResult = ttsGenData.audioStream;
+          } else if (msgModalities && msgModalities.includes('audio')) {
+            realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
+              msg.audioStream,
+              modelSettings,
+            );
+          } else if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
+            this.logger.error(
+              'Text message received from Realtime API with audio modality. ' +
+                'This usually happens when text chat context is synced to the API. ' +
+                'Try to add a TTS model as fallback or use text modality with TTS instead.',
+            );
           } else {
-            trTextInput = msg.textStream;
-          }
-
-          const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
-          let textOut: _TextOut | null = null;
-          if (trNodeResult) {
-            const [textForwardTask, _textOut] = performTextForwarding(
-              trNodeResult,
-              abortController,
-              textOutput,
+            this.logger.warn(
+              'audio output is enabled but neither tts nor realtime audio is available',
             );
-            forwardTasks.push(textForwardTask);
-            textOut = _textOut;
           }
 
-          let audioOut: _AudioOut | null = null;
-          if (audioOutput) {
-            let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
-
-            if (ttsTextInput) {
-              const [ttsTask, ttsGenData] = performTTSInference(
-                (...args) => this.agent.ttsNode(...args),
-                ttsTextInput,
-                modelSettings,
-                abortController,
-                this.tts?.model,
-                this.tts?.provider,
-                this.agentSession.sessionOptions.ttsReadIdleTimeout,
-                this.agentSession.sessionOptions.ttsTextTransforms,
-              );
-              tasks.push(ttsTask);
-              realtimeAudioResult = ttsGenData.audioStream;
-            } else if (msgModalities && msgModalities.includes('audio')) {
-              realtimeAudioResult = await this.agent.realtimeAudioOutputNode(
-                msg.audioStream,
-                modelSettings,
-              );
-            } else if (this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput) {
-              this.logger.error(
-                'Text message received from Realtime API with audio modality. ' +
-                  'This usually happens when text chat context is synced to the API. ' +
-                  'Try to add a TTS model as fallback or use text modality with TTS instead.',
-              );
-            } else {
-              this.logger.warn(
-                'audio output is enabled but neither tts nor realtime audio is available',
-              );
-            }
-
-            if (realtimeAudioResult) {
-              const [forwardTask, _audioOut] = performAudioForwarding(
-                realtimeAudioResult,
-                audioOutput,
-                abortController,
-                this.agentSession.sessionOptions.forwardAudioIdleTimeout,
-              );
-              forwardTasks.push(forwardTask);
-              audioOut = _audioOut;
-              audioOut.firstFrameFut.await
-                .then((ts) => onFirstFrame(ts))
-                .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
-            }
-          } else if (textOut) {
-            textOut.firstTextFut.await
-              .then(() => onFirstFrame())
-              .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+          if (realtimeAudioResult) {
+            const [forwardTask, _audioOut] = performAudioForwarding(
+              realtimeAudioResult,
+              audioOutput,
+              localController,
+              this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+            );
+            forwardTasks.push(forwardTask);
+            audioOut = _audioOut;
+            entry.audioOut = audioOut;
+            audioOut.firstFrameFut.await
+              .then((ts) => onFirstFrame(ts))
+              .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
           }
-          outputs.push([msg.messageId, textOut, audioOut, msgModalities]);
         }
-        await waitFor(forwardTasks);
-      } catch (error) {
-        this.logger.error(error, 'error reading messages from the realtime API');
+
+        const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
+        if (trNodeResult) {
+          const [textForwardTask, _textOut] = performTextForwarding(
+            trNodeResult,
+            localController,
+            textOutput,
+          );
+          forwardTasks.push(textForwardTask);
+          textOut = _textOut;
+          entry.textOut = textOut;
+        }
+
+        if (!audioOut && textOut) {
+          textOut.firstTextFut.await
+            .then(() => onFirstFrame())
+            .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+        }
+
+        await speechHandle.waitIfNotInterrupted(forwardTasks.map((t) => t.result));
+
+        let playoutEv: PlaybackFinishedEvent | undefined;
+        if (!speechHandle.interrupted && audioOutput) {
+          const playoutPromise = audioOutput.waitForPlayout();
+          await speechHandle.waitIfNotInterrupted([playoutPromise]);
+          if (!speechHandle.interrupted) {
+            playoutEv = await playoutPromise;
+          }
+        }
+
+        if (speechHandle.interrupted) {
+          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          if (audioOutput) {
+            audioOutput.clearBuffer();
+            const playbackEv = await audioOutput.waitForPlayout();
+            if (audioOut && audioOut.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
+              entry.played = 'partial';
+              entry.playbackPositionInS = playbackEv.playbackPosition;
+              entry.synchronizedTranscript = playbackEv.synchronizedTranscript ?? null;
+            }
+            // else: audio never reached the speakers, stays "skipped"
+          } else if (textOut && textOut.text) {
+            entry.played = 'partial';
+          }
+          return entry;
+        }
+
+        if (audioOutput) {
+          if (playoutEv) {
+            entry.played = 'full';
+            entry.playbackPositionInS = playoutEv.playbackPosition;
+            entry.synchronizedTranscript = playoutEv.synchronizedTranscript ?? null;
+          }
+        } else if (textOut && textOut.text) {
+          entry.played = 'full';
+        }
+        return entry;
       } finally {
+        parentController.signal.removeEventListener('abort', propagateAbort);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       }
     };
 
-    const messageOutputs: Array<
-      [string, _TextOut | null, _AudioOut | null, ('text' | 'audio')[] | undefined]
-    > = [];
+    const processMessages = async (abortController: AbortController) => {
+      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
+        once: true,
+      });
+      const reader = ev.messageStream.getReader();
+      try {
+        while (true) {
+          if (speechHandle.interrupted || abortController.signal.aborted) break;
+          const { done, value: msg } = await reader.read();
+          if (done) break;
+          const entry = await processOneMessage(msg, abortController);
+          messageOutputs.push(entry);
+          // If this message was interrupted, stop pulling further messages —
+          // remaining items are intentionally omitted so updateChatCtx below
+          // removes them server-side.
+          if (entry.played === 'partial') break;
+        }
+      } catch (error) {
+        this.logger.error(error, 'error reading messages from the realtime API');
+      } finally {
+        reader.releaseLock();
+      }
+    };
+
     const tasks = [
       Task.from(
-        (controller) => readMessages(controller, messageOutputs),
+        (controller) => processMessages(controller),
         undefined,
-        'AgentActivity.realtime_generation.read_messages',
+        'AgentActivity.realtime_generation.process_messages',
       ),
     ];
 
@@ -3084,13 +3179,11 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionCompleted,
     });
 
+    // processMessages handles its own per-message playout waits and interrupt
+    // cleanup, so no global audioOutput.waitForPlayout() is needed here.
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
     // TODO(brian): add tracing span
-
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
 
     if (speechHandle.interrupted) {
       this.logger.debug(
@@ -3099,59 +3192,74 @@ export class AgentActivity implements RecognitionHooks {
       );
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+    }
 
-      if (messageOutputs.length > 0) {
-        // there should be only one message
-        const [msgId, textOut, audioOut, msgModalities] = messageOutputs[0]!;
-        let forwardedText = textOut?.text || '';
+    // Emit a ChatMessage per generated message, truncating partial messages
+    // server-side and dropping skipped ones.
+    for (const entry of messageOutputs) {
+      if (entry.played === 'skipped') {
+        continue;
+      }
 
-        if (audioOutput) {
-          audioOutput.clearBuffer();
-          const playbackEv = await audioOutput.waitForPlayout();
-          let playbackPositionInS = playbackEv.playbackPosition;
-          if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
-            // playback EV is valid only if the first frame was already played
-            this.logger.info(
-              { speech_id: speechHandle.id, playbackPositionInS },
-              'playout interrupted',
-            );
-            if (playbackEv.synchronizedTranscript) {
-              forwardedText = playbackEv.synchronizedTranscript;
-            } else {
-              forwardedText = '';
-            }
-          } else {
-            forwardedText = '';
-            playbackPositionInS = 0;
-          }
+      const msgInterrupted = entry.played === 'partial';
+      let forwardedText = entry.textOut?.text || '';
+      if (msgInterrupted && entry.synchronizedTranscript !== null) {
+        forwardedText = entry.synchronizedTranscript;
+      }
 
-          // truncate server-side message
-          this.realtimeSession.truncate({
-            messageId: msgId,
-            audioEndMs: Math.floor(playbackPositionInS * 1000),
-            modalities: msgModalities,
-            audioTranscript: forwardedText,
-          });
-        }
+      if (msgInterrupted && this.llm.capabilities.messageTruncation) {
+        this.realtimeSession.truncate({
+          messageId: entry.msg.messageId,
+          audioEndMs: Math.floor(entry.playbackPositionInS * 1000),
+          modalities: entry.modalities,
+          audioTranscript: forwardedText,
+        });
+      }
 
-        if (forwardedText && addToChatCtx) {
-          const message = ChatMessage.create({
-            role: 'assistant',
-            content: forwardedText,
-            id: msgId,
-            interrupted: true,
-          });
-          this.agent._chatCtx.insert(message);
-          speechHandle._itemAdded([message]);
-          this.agentSession._conversationItemAdded(message);
-
-          // TODO(brian): add tracing span
-        }
+      if (msgInterrupted) {
         this.logger.info(
-          { speech_id: speechHandle.id, message: forwardedText },
+          {
+            speech_id: speechHandle.id,
+            message_id: entry.msg.messageId,
+            playbackPositionInS: entry.playbackPositionInS,
+            message: forwardedText,
+          },
           'playout completed with interrupt',
         );
       }
+
+      if (!forwardedText || !addToChatCtx) continue;
+
+      const message = ChatMessage.create({
+        role: 'assistant',
+        content: forwardedText,
+        id: entry.msg.messageId,
+        interrupted: msgInterrupted,
+      });
+      this.agent._chatCtx.insert(message);
+      speechHandle._itemAdded([message]);
+      this.agentSession._conversationItemAdded(message);
+      // TODO(brian): add tracing span
+    }
+
+    // Sync local chat ctx to the realtime server to remove any items the model
+    // added but the user never heard — entries left as 'skipped' (interrupted
+    // before first frame), AND messages still buffered in messageStream that
+    // we never pulled because the loop broke early on a 'partial'. The
+    // 'partial'-break case isn't reflected in messageOutputs, so we can't gate
+    // on a per-entry flag; just always sync on interrupt when supported.
+    if (speechHandle.interrupted && this.llm.capabilities.midSessionChatCtxUpdate) {
+      try {
+        await this.realtimeSession.updateChatCtx(this.agent._chatCtx);
+      } catch (error) {
+        this.logger.warn(
+          { error },
+          'failed to sync chat context to remove never-played messages',
+        );
+      }
+    }
+
+    if (speechHandle.interrupted) {
       if (this.agentSession.agentState === 'speaking') {
         this.agentSession._updateAgentState('listening');
         if (this.audioRecognition) {
@@ -3163,21 +3271,6 @@ export class AgentActivity implements RecognitionHooks {
 
       // TODO(brian): close tees
       return;
-    }
-
-    if (messageOutputs.length > 0 && addToChatCtx) {
-      // there should be only one message
-      const [msgId, textOut, _, __] = messageOutputs[0]!;
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        id: msgId,
-        interrupted: false,
-      });
-      this.agent._chatCtx.insert(message);
-      speechHandle._itemAdded([message]);
-      this.agentSession._conversationItemAdded(message); // mark the playout done before waiting for the tool execution\
-      // TODO(brian): add tracing span
     }
 
     // mark the playout done before waiting for the tool execution
