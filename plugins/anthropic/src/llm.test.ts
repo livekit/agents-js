@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type Anthropic from '@anthropic-ai/sdk';
 import { llm } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import { LLM } from './llm.js';
@@ -105,5 +106,45 @@ describe('Anthropic LLM', () => {
     expect(messages[2].role).toBe('user');
     expect(Array.isArray(messages[2].content)).toBe(true);
     expect(messages[2].content[0].type).toBe('tool_result');
+  });
+
+  it('creates a fresh stream on retry', async () => {
+    let calls = 0;
+    const client = {
+      messages: {
+        create: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new Error('transient connect failure');
+          }
+          return (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {})();
+        },
+      },
+    } as unknown as Anthropic;
+    const anthropicLlm = new LLM({
+      apiKey: 'dummy',
+      client,
+      model: 'claude-3-5-sonnet-20241022',
+    });
+    anthropicLlm.on('error', () => {});
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Hello, world!' });
+
+    const stream = anthropicLlm.chat({
+      chatCtx,
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const chunks: llm.ChatChunk[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    expect(calls).toBe(2);
+    expect(chunks.at(-1)?.usage).toEqual({
+      completionTokens: 0,
+      promptTokens: 0,
+      promptCachedTokens: 0,
+      totalTokens: 0,
+    });
   });
 });
