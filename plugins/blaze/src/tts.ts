@@ -22,7 +22,13 @@
  *   Input: FormData (query, language, audio_format, speaker_id, normalization, model)
  *   Output: Streaming raw PCM audio
  */
-import { AudioByteStream, tts, APIStatusError, APIConnectionError, APITimeoutError } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  APITimeoutError,
+  AudioByteStream,
+  tts,
+} from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import WebSocket from 'ws';
@@ -39,45 +45,6 @@ import type { BlazeAudioFormat } from './models.js';
 // ────────────────────────────────────────────────
 
 const SENTENCE_END_RE = /(?:\n\n+|\n|[.!?;:。！？；：](?:\s|$))/g;
-
-// ────────────────────────────────────────────────
-// Audio helpers
-// ────────────────────────────────────────────────
-
-/**
- * Apply linear fade-in and/or fade-out to PCM16-LE audio.
- */
-function applyPcm16Fade(
-  pcm: Buffer,
-  fadeSamples: number,
-  fadeIn: boolean,
-  fadeOut: boolean,
-): Buffer {
-  if (!pcm.length || (!fadeIn && !fadeOut)) return pcm;
-  const sampleCount = Math.floor(pcm.length / 2);
-  if (sampleCount <= 0) return pcm;
-  const usable = Math.min(fadeSamples, Math.floor(sampleCount / 2));
-  if (usable <= 0) return pcm;
-
-  const result = Buffer.from(pcm);
-  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
-
-  if (fadeIn) {
-    for (let i = 0; i < usable; i++) {
-      const offset = i * 2;
-      const sample = view.getInt16(offset, true);
-      view.setInt16(offset, Math.round(sample * (i / usable)), true);
-    }
-  }
-  if (fadeOut) {
-    for (let i = 0; i < usable; i++) {
-      const offset = (sampleCount - usable + i) * 2;
-      const sample = view.getInt16(offset, true);
-      view.setInt16(offset, Math.round(sample * ((usable - i) / usable)), true);
-    }
-  }
-  return result;
-}
 
 /**
  * Generate silence buffer (PCM16 zeros).
@@ -595,7 +562,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const opts = this.#opts;
     const requestId = crypto.randomUUID();
     const segmentId = requestId;
-    const fadeSamples = Math.max(1, Math.floor(opts.sampleRate * 0.008));
     const silenceBuf = generateSilence(opts.sampleRate, opts.interSentenceSilenceMs);
 
     // --- Open WebSocket and perform handshake ---
@@ -667,6 +633,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let pendingFrame: AudioFrame | undefined;
       let hasPrevSegment = false;
       let speechEnded = false;
+      let inputConsumed = false;
 
       let audioReaderResolve!: () => void;
       let audioReaderReject!: (err: Error) => void;
@@ -676,6 +643,35 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
       // Prevent transient unhandledRejection before we await audioReaderDone later.
       audioReaderDone.catch(() => {});
+
+      const streamConnectionError = (message: string) =>
+        new APIConnectionError({
+          message,
+          options: { retryable: !inputConsumed },
+        });
+
+      const rejectStreamError = (err: unknown) => {
+        if (err instanceof APIConnectionError) {
+          if (!inputConsumed || !err.retryable) {
+            audioReaderReject(err);
+            return;
+          }
+
+          audioReaderReject(
+            new APIConnectionError({
+              message: err.message,
+              options: { retryable: false },
+            }),
+          );
+          return;
+        }
+
+        audioReaderReject(
+          streamConnectionError(
+            `Blaze TTS stream error: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+      };
 
       const emitFrame = (frame: AudioFrame, isFinal: boolean) => {
         this.queue.put({ requestId, segmentId, frame, final: isFinal });
@@ -730,25 +726,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
               audioReaderResolve();
             } else if (status === 'failed-request' || status === 'error') {
-              audioReaderReject(new APIConnectionError({
-                message: `Blaze TTS error: ${msg.message ?? status}`,
-              }));
+              rejectStreamError(streamConnectionError(`Blaze TTS error: ${msg.message ?? status}`));
             }
           }
         } catch (err) {
-          audioReaderReject(err instanceof APIConnectionError ? err : new APIConnectionError({
-            message: `Blaze TTS stream error: ${err instanceof Error ? err.message : String(err)}`,
-          }));
+          rejectStreamError(err);
         }
       });
 
       ws.on('error', (err: Error) => {
         if (!speechEnded) {
-          audioReaderReject(
-            new APIConnectionError({
-              message: `Blaze TTS WebSocket error: ${err.message}`,
-            }),
-          );
+          rejectStreamError(streamConnectionError(`Blaze TTS WebSocket error: ${err.message}`));
         }
       });
 
@@ -833,7 +821,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           batchTimeoutId = setTimeout(() => resolve(TIMEOUT_SENTINEL), opts.batchMaxWaitMs);
         });
 
-        let result: IteratorResult<string | typeof tts.SynthesizeStream.FLUSH_SENTINEL> | typeof TIMEOUT_SENTINEL;
+        let result:
+          | IteratorResult<string | typeof tts.SynthesizeStream.FLUSH_SENTINEL>
+          | typeof TIMEOUT_SENTINEL;
         try {
           result = await Promise.race([
             pendingNext.then(
@@ -865,6 +855,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           break;
         }
 
+        inputConsumed = true;
         const item = result.value;
         if (item === tts.SynthesizeStream.FLUSH_SENTINEL) {
           drainBatches(true);
@@ -943,7 +934,8 @@ export class TTS extends tts.TTS {
     if (opts.speakerId !== undefined) this.#opts.speakerId = opts.speakerId;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
     if (opts.model !== undefined) this.#opts.model = opts.model;
-    if (opts.audioFormat !== undefined) this.#opts.audioFormat = normalizeAudioFormat(opts.audioFormat);
+    if (opts.audioFormat !== undefined)
+      this.#opts.audioFormat = normalizeAudioFormat(opts.audioFormat);
     if (opts.audioSpeed !== undefined) this.#opts.audioSpeed = opts.audioSpeed;
     if (opts.audioQuality !== undefined) this.#opts.audioQuality = opts.audioQuality;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
