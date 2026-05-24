@@ -112,7 +112,7 @@ export class LLM extends llm.LLM {
     for (const msg of chatCtx.items) {
       if (msg.type === 'message') {
         const textContent = msg.textContent || '';
-        if (msg.role === 'system') {
+        if (msg.role === 'system' || msg.role === 'developer') {
           system.push({ type: 'text', text: textContent });
         } else if (msg.role === 'user' || msg.role === 'assistant') {
           rawMessages.push({
@@ -303,6 +303,14 @@ export class LLMStream extends llm.LLMStream {
 
   protected async run(): Promise<void> {
     let retryable = true;
+    this.#toolCallId = undefined;
+    this.#fncName = undefined;
+    this.#fncRawArgs = undefined;
+    this.#requestId = '';
+    this.#ignoringCoT = false;
+    this.#inputTokens = 0;
+    this.#outputTokens = 0;
+
     try {
       const stream = await this.#client.messages.create(this.#requestParams, {
         timeout: this.connOptions.timeoutMs,
