@@ -9,6 +9,7 @@ import {
   calculateAudioDurationSeconds,
   log,
   stt,
+  waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { IncomingMessage } from 'node:http';
@@ -256,6 +257,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.#closingWs = false;
 
     let keepaliveInterval: NodeJS.Timeout | undefined;
+    const abortController = new AbortController();
 
     try {
       const url = this.#getCartesiaUrl();
@@ -295,8 +297,20 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('error', onError);
       });
 
-      const sendPromise = this.#sendTask(ws);
-      const recvPromise = this.#recvTask(ws);
+      // If one task fails, abort its peer and close the WS so the peer can
+      // exit before we re-throw. Otherwise a dangling task would survive
+      // into the next retry attempt (sendTask blocked on input.next() would
+      // steal frames; recvTask's close handler could still push events to
+      // the queue and surface an unhandled rejection).
+      let firstError: unknown;
+      const stopPeer = (err: unknown) => {
+        if (firstError === undefined) firstError = err;
+        abortController.abort();
+        if (ws.readyState === WebSocket.OPEN) ws.close();
+      };
+      const sendPromise = this.#sendTask(ws, abortController.signal).catch(stopPeer);
+      const recvPromise = this.#recvTask(ws).catch(stopPeer);
+
       keepaliveInterval = setInterval(() => {
         try {
           if (ws.readyState === WebSocket.OPEN) {
@@ -307,10 +321,12 @@ export class SpeechStream extends stt.SpeechStream {
         }
       }, KEEPALIVE_INTERVAL_MS);
       await Promise.all([sendPromise, recvPromise]);
+      if (firstError !== undefined) throw firstError;
     } catch (error) {
       this.#logger.error('Cartesia STT stream error', { error });
       throw error;
     } finally {
+      abortController.abort();
       if (keepaliveInterval) clearInterval(keepaliveInterval);
       if (this.#ws?.readyState === WebSocket.OPEN) {
         this.#ws.close();
@@ -320,7 +336,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.close();
   }
 
-  async #sendTask(ws: WebSocket) {
+  async #sendTask(ws: WebSocket, abortSignal: AbortSignal) {
     const samplesPerChunk = Math.floor(
       (this.#opts.sampleRate * this.#opts.audioChunkDurationMS) / 1000,
     );
@@ -328,9 +344,12 @@ export class SpeechStream extends stt.SpeechStream {
 
     let hasEnded = false;
     const iterator = this.input[Symbol.asyncIterator]();
+    const abortPromise = waitForAbort(abortSignal);
 
     while (true) {
-      const result = await iterator.next();
+      const result = await Promise.race([iterator.next(), abortPromise]);
+
+      if (result === undefined) return; // aborted
 
       if (result.done) {
         hasEnded = true;
