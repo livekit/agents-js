@@ -12,6 +12,9 @@ catalogs:
     '@types/ws':
       specifier: ^8.5.10
       version: 8.18.1
+    ws:
+      specifier: ^8.18.0
+      version: 8.20.1
 
 patchedDependencies:
   '@changesets/assemble-release-plan':
@@ -515,6 +518,9 @@ importers:
       '@livekit/agents-plugin-openai':
         specifier: workspace:*
         version: link:../openai
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../silero
       '@livekit/agents-plugins-test':
         specifier: workspace:*
         version: link:../test

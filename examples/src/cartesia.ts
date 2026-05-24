@@ -7,13 +7,14 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  inference,
+  llm as llmModule,
   log,
   metrics,
   voice,
 } from '@livekit/agents';
 import * as cartesia from '@livekit/agents-plugin-cartesia';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as livekit from '@livekit/agents-plugin-livekit';
+import * as google from '@livekit/agents-plugin-google';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
@@ -30,16 +31,49 @@ export default defineAgent({
     });
 
     const logger = log();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
+    const vad =
+      ctx.proc.userData.vad instanceof silero.VAD ? ctx.proc.userData.vad : await silero.VAD.load();
+
+    const apiKey = process.env.CARTESIA_API_KEY;
+
+    const llmFactories: Array<() => llmModule.LLM> = [
+      () => new inference.LLM({ model: 'google/gemini-3-flash' }),
+      () => new google.LLM({ model: 'gemini-3.5-flash' }),
+      () => new openai.LLM({ model: 'gpt-5.4-mini' }),
+    ];
+
+    let llm: llmModule.LLM | null = null;
+    for (const factory of llmFactories) {
+      try {
+        llm = factory();
+        break;
+      } catch {
+        continue;
+      }
+    }
+
+    if (!apiKey || llm === null) {
+      const parts: string[] = [];
+      if (!apiKey) {
+        parts.push('CARTESIA_API_KEY is required');
+      }
+      if (llm === null) {
+        parts.push(
+          'No LLM keys were provided (e.g. LIVEKIT_INFERENCE_API_KEY + LIVEKIT_INFERENCE_API_SECRET,' +
+            ' GOOGLE_API_KEY, or OPENAI_API_KEY)',
+        );
+      }
+      throw new Error(parts.join('. '));
+    }
 
     const session = new voice.AgentSession({
       vad,
-      stt: new deepgram.STT(),
-      tts: new cartesia.TTS(),
-      llm: new openai.LLM(),
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+      stt: new cartesia.STT({ model: 'ink-2', apiKey }),
+      llm,
+      tts: new cartesia.TTS({ model: 'sonic-3.5', apiKey }),
+      turnHandling: {
+        turnDetection: 'stt',
+      },
     });
 
     // Log metrics as they are emitted (session.usage is automatically collected)
