@@ -4,6 +4,7 @@
 import { stt } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import {
+  type LangSegment,
   type SonioxMessage,
   type SonioxToken,
   TokenAccumulator,
@@ -78,6 +79,14 @@ describe('mergeLangSegments', () => {
       ['en', 'Hello'],
       ['es', ' hola'],
     ]);
+  });
+
+  it('does not mutate the input segments when extending a trailing run', () => {
+    const a: LangSegment[] = [['en' as stt.SpeechData['language'], 'Hello']];
+    const b: LangSegment[] = [['en' as stt.SpeechData['language'], ' world']];
+    mergeLangSegments(a, b);
+    expect(a).toEqual([['en', 'Hello']]);
+    expect(b).toEqual([['en', ' world']]);
   });
 });
 

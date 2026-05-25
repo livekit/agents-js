@@ -35,7 +35,7 @@ export const isEndToken = (token: SonioxToken): boolean =>
   token.text === END_TOKEN || token.text === FINALIZED_TOKEN;
 
 export const mergeLangSegments = (a: LangSegment[], b: LangSegment[]): LangSegment[] => {
-  const result = [...a];
+  const result: LangSegment[] = a.map(([lang, text]) => [lang, text]);
   for (const [lang, text] of b) {
     const last = result[result.length - 1];
     if (last && last[0] === lang) {
