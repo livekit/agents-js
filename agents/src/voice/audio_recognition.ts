@@ -806,6 +806,16 @@ export class AudioRecognition {
       }
     }
 
+    const firstAlternative = ev.alternatives?.[0];
+    const inputStartedAt = this._inputStartedAt;
+    const hasSTTEndTime =
+      firstAlternative !== undefined &&
+      firstAlternative.endTime > 0 &&
+      inputStartedAt !== undefined;
+    const sttLastSpeakingTime = hasSTTEndTime
+      ? firstAlternative.endTime * 1000 + inputStartedAt
+      : Date.now();
+
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
         const transcript = ev.alternatives?.[0]?.text;
@@ -839,12 +849,8 @@ export class AudioRecognition {
         this.audioPreflightTranscript = '';
 
         if (!this.vad || this.lastSpeakingTime === undefined) {
-          // vad disabled, use stt timestamp
-          // TODO: this would screw up transcription latency metrics
-          // but we'll live with it for now.
-          // the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
-          // and using that timestamp for lastSpeakingTime
-          this.lastSpeakingTime = Date.now();
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
         this.checkUserTurnLimit(transcript);
@@ -910,8 +916,8 @@ export class AudioRecognition {
         this.audioInterimTranscript = preflightTranscript;
 
         if (!this.vad || this.lastSpeakingTime === undefined) {
-          // vad disabled, use stt timestamp
-          this.lastSpeakingTime = Date.now();
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
         if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
@@ -968,7 +974,7 @@ export class AudioRecognition {
           });
         }
         this.speaking = true;
-        this.lastSpeakingTime = Date.now();
+        this.lastSpeakingTime = sttLastSpeakingTime;
 
         this.bounceEOUTask?.cancel();
         break;
@@ -1011,7 +1017,10 @@ export class AudioRecognition {
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        this.lastSpeakingTime = Date.now();
+        if (!this.vad || this.lastSpeakingTime === undefined) {
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
+        }
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
