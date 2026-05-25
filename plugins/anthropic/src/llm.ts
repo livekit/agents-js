@@ -334,9 +334,10 @@ export class LLMStream extends llm.LLMStream {
 
           // Filter chain-of-thought <thinking> blocks when tools are active
           if (this.#toolCtx) {
-            if (text.startsWith('<thinking>')) {
+            if (text.includes('<thinking>')) {
               this.#ignoringCoT = true;
-            } else if (this.#ignoringCoT && text.includes('</thinking>')) {
+            }
+            if (this.#ignoringCoT && text.includes('</thinking>')) {
               text = text.split('</thinking>').pop() || '';
               this.#ignoringCoT = false;
             }
@@ -362,16 +363,11 @@ export class LLMStream extends llm.LLMStream {
             delta: {
               role: 'assistant',
               toolCalls: [
-                {
-                  id: '',
-                  type: 'function_call',
+                llm.FunctionCall.create({
                   callId: this.#toolCallId,
                   name: this.#fncName || '',
                   args: this.#fncRawArgs || '',
-                  createdAt: Date.now(),
-                  extra: {},
-                  toJSON: () => ({}),
-                },
+                }),
               ],
             },
           });
@@ -394,10 +390,20 @@ export class LLMStream extends llm.LLMStream {
       });
     } catch (e: unknown) {
       if (e instanceof Anthropic.APIError) {
-        if (e.status === 408 || e.status === 409) {
+        if (e.status === 408) {
           throw new APITimeoutError({
             message: e.message,
             options: { retryable },
+          });
+        }
+        if (e.status === 409) {
+          throw new APIStatusError({
+            message: e.message,
+            options: {
+              statusCode: e.status,
+              body: e.error as object,
+              retryable,
+            },
           });
         }
         throw new APIStatusError({
