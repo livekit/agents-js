@@ -915,6 +915,9 @@ async function forwardAudio(
 
     reader?.releaseLock();
     audioOutput.flush();
+    if (signal?.aborted) {
+      audioOutput.clearBuffer();
+    }
     resampler?.close();
   }
 }
