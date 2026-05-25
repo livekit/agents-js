@@ -112,7 +112,7 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { createEndpointing } from './turn_config/endpointing.js';
-import { setParticipantSpanAttributes } from './utils.js';
+import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
 export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
@@ -824,11 +824,9 @@ export class AgentActivity implements RecognitionHooks {
     // than on the source audioStream via pipeThrough. pipeThrough locks its source stream, so
     // if it were applied directly on audioStream, that lock would survive MultiInputStream.close()
     // and make audioStream permanently locked for subsequent attachAudioInput calls (e.g. handoff).
-    const discardAudioFilter = new TransformStream<AudioFrame, AudioFrame>({
+    const silenceDiscardedAudio = new TransformStream<AudioFrame, AudioFrame>({
       transform: (frame, controller) => {
-        if (!this.shouldDiscardInputAudio()) {
-          controller.enqueue(frame);
-        }
+        controller.enqueue(this.shouldDiscardInputAudio() ? createSilenceFrameLike(frame) : frame);
       },
     });
 
@@ -836,11 +834,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.realtimeSession && this.audioRecognition) {
       const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
-      this.realtimeSession.setInputAudioStream(realtimeAudioStream.pipeThrough(discardAudioFilter));
+      this.realtimeSession.setInputAudioStream(
+        realtimeAudioStream.pipeThrough(silenceDiscardedAudio),
+      );
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
       this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(discardAudioFilter),
+        this.audioStream.stream.pipeThrough(silenceDiscardedAudio),
       );
     } else if (this.audioRecognition) {
       this.audioRecognition.setInputAudioStream(this.audioStream.stream);
