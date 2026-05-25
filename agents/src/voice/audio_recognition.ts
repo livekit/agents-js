@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import type { ParticipantKind } from '@livekit/rtc-node';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
@@ -44,7 +43,11 @@ import {
   defaultEndpointingOptions,
 } from './turn_config/endpointing.js';
 import type { UserTurnLimitOptions } from './turn_config/user_turn_limit.js';
-import { setParticipantSpanAttributes } from './utils.js';
+import {
+  createSilenceFrame,
+  createSilenceFrameLike,
+  setParticipantSpanAttributes,
+} from './utils.js';
 
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
@@ -176,7 +179,7 @@ export interface AudioRecognitionOptions {
   sttProvider?: string;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
-  /** Predicate used to skip frames for STT while still forwarding them to VAD/interruption. */
+  /** Predicate used to substitute silence for STT while still forwarding real audio elsewhere. */
   shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
 }
 
@@ -337,7 +340,7 @@ export class AudioRecognition {
     );
     const primaryInputStream = this.deferredInputStream.stream.pipeThrough(broadcast);
 
-    const filterSttInput = (stream: ReadableStream<AudioFrame>) => {
+    const replaceSttInputWithSilence = (stream: ReadableStream<AudioFrame>) => {
       if (!opts.shouldDiscardAudioForStt) {
         return stream;
       }
@@ -345,9 +348,9 @@ export class AudioRecognition {
       return stream.pipeThrough(
         new TransformStream<AudioFrame, AudioFrame>({
           transform: (frame, controller) => {
-            if (!opts.shouldDiscardAudioForStt!(frame)) {
-              controller.enqueue(frame);
-            }
+            controller.enqueue(
+              opts.shouldDiscardAudioForStt!(frame) ? createSilenceFrameLike(frame) : frame,
+            );
           },
         }),
       );
@@ -358,7 +361,7 @@ export class AudioRecognition {
       const [inputStream, sttInputStream] = teedInput.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        filterSttInput(sttInputStream),
+        replaceSttInputWithSilence(sttInputStream),
         this.silenceAudioTransform.readable,
       );
       this.interruptionStreamChannel = createStreamChannel();
@@ -367,7 +370,7 @@ export class AudioRecognition {
       const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        filterSttInput(sttInputStream),
+        replaceSttInputWithSilence(sttInputStream),
         this.silenceAudioTransform.readable,
       );
     }
@@ -1622,9 +1625,7 @@ export class AudioRecognition {
         if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
           // flush the stt by pushing silence
           if (audioDetached && this.sampleRate !== undefined) {
-            const numSamples = Math.floor(this.sampleRate * 0.5);
-            const silence = new Int16Array(numSamples * 2);
-            const silenceFrame = new AudioFrame(silence, this.sampleRate, 1, numSamples);
+            const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
             this.silenceAudioWriter.write(silenceFrame);
           }
 
