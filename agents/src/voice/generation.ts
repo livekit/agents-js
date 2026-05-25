@@ -23,6 +23,7 @@ import {
   isFunctionTool,
   isToolError,
 } from '../llm/tool_context.js';
+import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -1023,7 +1024,12 @@ export function performToolExecutions({
 
       // Ensure valid arguments
       try {
-        const jsonArgs = JSON.parse(toolCall.args);
+        const rawArgs = toolCall.args || '{}';
+        const jsonArgs = parseFunctionArguments(rawArgs);
+        const canonicalArgs = JSON.stringify(jsonArgs);
+        if (canonicalArgs !== rawArgs) {
+          toolCall.args = canonicalArgs;
+        }
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1037,19 +1043,21 @@ export function performToolExecutions({
         }
       } catch (rawError) {
         const error = toError(rawError);
-        logger.error(
+        logger.warn(
           {
             function: toolCall.name,
             arguments: toolCall.args,
             speech_id: speechHandle.id,
             error: error.message,
           },
-          `tried to call AI function ${toolCall.name} with invalid arguments`,
+          `tried to call AI function ${toolCall.name} with invalid arguments; stripping the call from chat history`,
         );
         toolCompleted(
-          createToolOutput({
-            toolCall,
-            exception: error,
+          ToolExecutionOutput.create({
+            toolCall: FunctionCall.create({ ...toolCall }),
+            rawOutput: undefined,
+            rawException: error,
+            replyRequired: false,
           }),
         );
         continue;

@@ -178,6 +178,9 @@ importers:
       json-schema:
         specifier: ^0.4.0
         version: 0.4.0
+      jsonrepair:
+        specifier: ^3.14.0
+        version: 3.14.0
       livekit-server-sdk:
         specifier: ^2.14.1
         version: 2.14.1
@@ -4187,6 +4190,10 @@ packages:
   jsonpath-plus@4.0.0:
     resolution: {integrity: sha512-e0Jtg4KAzDJKKwzbLaUtinCn0RZseWBVRTRGihSpvFlM3wTR7ExSp+PTdeTsDrLNJUe7L7JYJe8mblHX5SCT6A==}
     engines: {node: '>=10.0'}
+
+  jsonrepair@3.14.0:
+    resolution: {integrity: sha512-tWPGKMZf/8UPim+fcW2EfcQ/d/7aKUrP6IECz9G3Tu6Q5dX0orSleqJ9z6sSw7qrQkjF8/Edo4DvsWBZ8H+HNg==}
+    hasBin: true
 
   jsx-ast-utils@3.3.5:
     resolution: {integrity: sha512-ZZow9HBI5O6EPgSJLUb8n2NKgmVWTwCvHGwFuJlMjvLFqlGG6pjirPhtdsseaLZjSibD8eegzmYpUZwoIlj2cQ==}
@@ -8568,6 +8575,8 @@ snapshots:
       graceful-fs: 4.2.11
 
   jsonpath-plus@4.0.0: {}
+
+  jsonrepair@3.14.0: {}
 
   jsx-ast-utils@3.3.5:
     dependencies:
