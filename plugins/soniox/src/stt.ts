@@ -11,11 +11,10 @@ import {
   waitForAbort,
 } from '@livekit/agents';
 import { WebSocket } from 'ws';
+import { type SonioxMessage, newProcessMessageState, processMessage } from './_internal.js';
 
 const BASE_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const KEEPALIVE_MESSAGE = '{"type":"keepalive"}';
-const END_TOKEN = '<end>';
-const FINALIZED_TOKEN = '<fin>';
 
 /** @public */
 export interface ContextGeneralItem {
@@ -127,30 +126,10 @@ export class STT extends stt.STT {
   }
 }
 
-interface SonioxToken {
-  text: string;
-  is_final: boolean;
-  translation_status?: string;
-  language?: string;
-  speaker?: string | number;
-  start_ms?: number;
-  end_ms?: number;
-  confidence?: number;
-}
-
-interface SonioxMessage {
-  tokens?: SonioxToken[];
-  total_audio_proc_ms?: number;
-  finished?: boolean;
-  error_code?: string;
-  error_message?: string;
-}
-
 /** @public */
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
-  #reportedDurationMs = 0;
   label = 'soniox.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
@@ -196,7 +175,6 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     ws.send(JSON.stringify(this.#config()));
-    this.#reportedDurationMs = 0;
     return ws;
   }
 
@@ -226,37 +204,10 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket): Promise<void> {
     let closing = false;
-    const isTranslationMode = this.#opts.translation !== undefined;
-    const final = new TokenAccumulator();
-    const finalOriginal = new TokenAccumulator();
-    let isSpeaking = false;
-
-    const sendEndpointTranscript = () => {
-      if (final.text) {
-        const [srcSegs, tgtSegs] = isTranslationMode
-          ? [finalOriginal.langSegments, final.langSegments]
-          : [final.langSegments, []];
-        const [sourceLanguages, sourceTexts] = langSegmentsToFields(srcSegs);
-        const [targetLanguages, targetTexts] = langSegmentsToFields(tgtSegs);
-
-        this.#put({
-          type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-          alternatives: [
-            final.toSpeechData(this.startTimeOffset, {
-              sourceLanguages,
-              sourceTexts,
-              targetLanguages,
-              targetTexts,
-            }),
-          ],
-        });
-        this.#put({ type: stt.SpeechEventType.END_OF_SPEECH });
-        final.reset();
-        finalOriginal.reset();
-        isSpeaking = false;
-      } else {
-        finalOriginal.reset();
-      }
+    const state = newProcessMessageState();
+    const options = {
+      isTranslationMode: this.#opts.translation !== undefined,
+      startTimeOffset: this.startTimeOffset,
     };
 
     const keepalive = setInterval(() => {
@@ -273,78 +224,14 @@ export class SpeechStream extends stt.SpeechStream {
       ws.on('message', (msg) => {
         try {
           const content = JSON.parse(msg.toString()) as SonioxMessage;
-          const tokens = content.tokens ?? [];
-          const nonFinal = new TokenAccumulator();
-          const nonFinalOriginal = new TokenAccumulator();
-          const totalAudioProcMs = content.total_audio_proc_ms ?? 0;
-
-          for (const token of tokens) {
-            const isTranslated = token.translation_status === 'translation';
-            if (isTranslationMode && !isEndToken(token) && !isTranslated) {
-              if (token.is_final) {
-                finalOriginal.update(token);
-              } else {
-                nonFinalOriginal.update(token);
-              }
-              continue;
-            }
-            if (token.is_final) {
-              if (isEndToken(token)) {
-                sendEndpointTranscript();
-                this.#reportProcessedAudioDuration(totalAudioProcMs);
-              } else {
-                final.update(token);
-              }
-            } else {
-              nonFinal.update(token);
-            }
+          for (const event of processMessage(state, content, options)) {
+            this.#put(event);
           }
-
-          if (final.text || nonFinal.text) {
-            if (!isSpeaking) {
-              isSpeaking = true;
-              this.#put({ type: stt.SpeechEventType.START_OF_SPEECH });
-            }
-
-            const mergedOriginals = mergeLangSegments(
-              finalOriginal.langSegments,
-              nonFinalOriginal.langSegments,
-            );
-            const mergedPrimary = mergeLangSegments(final.langSegments, nonFinal.langSegments);
-            const [srcSegs, tgtSegs] = isTranslationMode
-              ? [mergedOriginals, mergedPrimary]
-              : [mergedPrimary, []];
-            const [sourceLanguages, sourceTexts] = langSegmentsToFields(srcSegs);
-            const [targetLanguages, targetTexts] = langSegmentsToFields(tgtSegs);
-            const eventType =
-              final.text && !nonFinal.text
-                ? stt.SpeechEventType.PREFLIGHT_TRANSCRIPT
-                : stt.SpeechEventType.INTERIM_TRANSCRIPT;
-
-            this.#put({
-              type: eventType,
-              alternatives: [
-                final.mergedSpeechData(nonFinal, this.startTimeOffset, {
-                  sourceLanguages,
-                  sourceTexts,
-                  targetLanguages,
-                  targetTexts,
-                }),
-              ],
-            });
-          }
-
-          if (content.finished || content.error_code || content.error_message) {
-            sendEndpointTranscript();
-            this.#reportProcessedAudioDuration(totalAudioProcMs);
-          }
-
           if (content.error_code || content.error_message) {
             this.#logger.error(
               `WebSocket error: ${content.error_code ?? ''} - ${content.error_message ?? ''}`,
             );
           }
-
           if (content.finished) {
             resolve();
           }
@@ -388,27 +275,12 @@ export class SpeechStream extends stt.SpeechStream {
     onClosing();
   }
 
-  #reportProcessedAudioDuration(totalAudioProcMs: number): void {
-    const toReportMs = totalAudioProcMs - this.#reportedDurationMs;
-    if (toReportMs <= 0) return;
-    this.#put({
-      type: stt.SpeechEventType.RECOGNITION_USAGE,
-      recognitionUsage: {
-        audioDuration: toReportMs / 1000,
-      },
-    });
-    this.#reportedDurationMs = Math.trunc(totalAudioProcMs);
-  }
-
   #put(event: stt.SpeechEvent): void {
     if (!this.queue.closed) {
       this.queue.put(event);
     }
   }
 }
-
-const isEndToken = (token: SonioxToken): boolean =>
-  token.text === END_TOKEN || token.text === FINALIZED_TOKEN;
 
 const serializeContext = (context: ContextObject | string | undefined): unknown => {
   if (context === undefined || typeof context === 'string') return context;
@@ -430,158 +302,3 @@ const serializeTranslation = (translation: TranslationConfig): Record<string, st
     language_b: translation.languageB,
   };
 };
-
-type LangSegment = [stt.SpeechData['language'], string];
-
-const mergeLangSegments = (a: LangSegment[], b: LangSegment[]): LangSegment[] => {
-  const result = [...a];
-  for (const [lang, text] of b) {
-    const last = result[result.length - 1];
-    if (last && last[0] === lang) {
-      last[1] += text;
-    } else {
-      result.push([lang, text]);
-    }
-  }
-  return result;
-};
-
-const langSegmentsToFields = (
-  segments: LangSegment[],
-): [stt.SpeechData['sourceLanguages'] | undefined, string[] | undefined] => {
-  if (segments.length === 0) return [undefined, undefined];
-  return [segments.map(([lang]) => lang), segments.map(([, text]) => text)];
-};
-
-interface SpeechDataFields {
-  sourceLanguages?: stt.SpeechData['sourceLanguages'];
-  sourceTexts?: string[];
-  targetLanguages?: stt.SpeechData['targetLanguages'];
-  targetTexts?: string[];
-}
-
-interface LangStats {
-  numChars: number;
-  updatedAt: number;
-}
-
-class TokenAccumulator {
-  text = '';
-  language: stt.SpeechData['language'] = '' as stt.SpeechData['language'];
-  speakerId?: string;
-  startTime = 0;
-  endTime = 0;
-  #confidenceSum = 0;
-  #confidenceCount = 0;
-  #hasStartTime = false;
-  #langSegments: LangSegment[] = [];
-  #langStats = new Map<string, LangStats>();
-
-  get langSegments(): LangSegment[] {
-    return this.#langSegments;
-  }
-
-  get confidence(): number {
-    return this.#confidenceCount === 0 ? 0 : this.#confidenceSum / this.#confidenceCount;
-  }
-
-  update(token: SonioxToken): void {
-    const text = token.text;
-    const lang = (token.language ?? '') as stt.SpeechData['language'];
-    this.text += text;
-    if (lang && text) {
-      const stats = this.#langStats.get(lang) ?? { numChars: 0, updatedAt: 0 };
-      this.#langStats.set(lang, { numChars: stats.numChars + text.length, updatedAt: Date.now() });
-      this.language = this.#getLanguage();
-    }
-    if (token.speaker !== undefined && this.speakerId === undefined) {
-      this.speakerId = String(token.speaker);
-    }
-    if (token.start_ms !== undefined && !this.#hasStartTime) {
-      this.#hasStartTime = true;
-      this.startTime = token.start_ms;
-    }
-    if (token.end_ms !== undefined) {
-      this.endTime = token.end_ms;
-    }
-    if (token.confidence !== undefined) {
-      this.#confidenceSum += token.confidence;
-      this.#confidenceCount += 1;
-    }
-    if (text) {
-      const last = this.#langSegments[this.#langSegments.length - 1];
-      if (last && last[0] === lang) {
-        last[1] += text;
-      } else {
-        this.#langSegments.push([lang, text]);
-      }
-    }
-  }
-
-  reset(): void {
-    this.text = '';
-    this.language = '' as stt.SpeechData['language'];
-    this.speakerId = undefined;
-    this.startTime = 0;
-    this.endTime = 0;
-    this.#confidenceSum = 0;
-    this.#confidenceCount = 0;
-    this.#hasStartTime = false;
-    this.#langSegments = [];
-    this.#langStats.clear();
-  }
-
-  toSpeechData(startTimeOffset = 0, fields: SpeechDataFields = {}): stt.SpeechData {
-    return {
-      text: this.text,
-      language: this.language,
-      sourceLanguages: fields.sourceLanguages,
-      sourceTexts: fields.sourceTexts,
-      targetLanguages: fields.targetLanguages,
-      targetTexts: fields.targetTexts,
-      speakerId: this.speakerId,
-      startTime: this.startTime / 1000 + startTimeOffset,
-      endTime: this.endTime / 1000 + startTimeOffset,
-      confidence: this.confidence,
-    };
-  }
-
-  mergedSpeechData(
-    other: TokenAccumulator,
-    startTimeOffset = 0,
-    fields: SpeechDataFields = {},
-  ): stt.SpeechData {
-    const starts = [this, other].filter((acc) => acc.#hasStartTime).map((acc) => acc.startTime);
-    const start = starts.length ? Math.min(...starts) : 0;
-    const totalCount = this.#confidenceCount + other.#confidenceCount;
-    const totalSum = this.#confidenceSum + other.#confidenceSum;
-    return {
-      text: this.text + other.text,
-      language: this.language || other.language,
-      sourceLanguages: fields.sourceLanguages,
-      sourceTexts: fields.sourceTexts,
-      targetLanguages: fields.targetLanguages,
-      targetTexts: fields.targetTexts,
-      speakerId: this.speakerId ?? other.speakerId,
-      startTime: start / 1000 + startTimeOffset,
-      endTime: Math.max(this.endTime, other.endTime) / 1000 + startTimeOffset,
-      confidence: totalCount > 0 ? totalSum / totalCount : 0,
-    };
-  }
-
-  #getLanguage(): stt.SpeechData['language'] {
-    let selected = '';
-    let selectedStats: LangStats | undefined;
-    for (const [lang, stats] of this.#langStats) {
-      if (
-        !selectedStats ||
-        stats.numChars > selectedStats.numChars ||
-        (stats.numChars === selectedStats.numChars && stats.updatedAt < selectedStats.updatedAt)
-      ) {
-        selected = lang;
-        selectedStats = stats;
-      }
-    }
-    return selected as stt.SpeechData['language'];
-  }
-}
