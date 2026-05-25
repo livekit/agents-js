@@ -167,6 +167,12 @@ describe('parseFunctionArguments', () => {
     expect(parseFunctionArguments('{"arg1": "<|safe|>"}')).toEqual({ arg1: '<|safe|>' });
   });
 
+  it('should accept pre-parsed argument objects', () => {
+    const args = { arg1: 'hi', optArg2: 'yo' };
+
+    expect(parseFunctionArguments(args)).toEqual(args);
+  });
+
   it('should reject non-object argument shapes', () => {
     expect(() => parseFunctionArguments('[1, 2, 3]')).toThrow(/expected object/);
     expect(() => parseFunctionArguments('"just a string"')).toThrow(/non-JSON string/);
@@ -194,6 +200,27 @@ describe('executeToolCall', () => {
     expect(JSON.parse(result.output)).toBe('O_WAAB70');
     expect(toolCall.args).not.toBe(rawArgs);
     expect(JSON.parse(toolCall.args)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+
+  it('should preserve valid argument structure during execution', async () => {
+    const echo = tool({
+      description: 'echo',
+      parameters: z.object({ arg1: z.string(), optArg2: z.string().optional() }),
+      execute: async ({ arg1, optArg2 }) => ({ arg1, optArg2 }),
+    });
+
+    const originalArgs = '{"arg1": "hello", "optArg2": "<|safe|>"}';
+    const toolCall = FunctionCall.create({
+      callId: 'call-valid-1',
+      name: 'echo',
+      args: originalArgs,
+    });
+
+    const result = await executeToolCall(toolCall, { echo });
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
+    expect(JSON.parse(toolCall.args)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
   });
 });
 

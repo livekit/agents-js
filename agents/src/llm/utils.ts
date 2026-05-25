@@ -209,22 +209,29 @@ function stripTemplateTokens(value: unknown): unknown {
   return value;
 }
 
-export function parseFunctionArguments(rawArgs: string): Record<string, unknown> {
+export function parseFunctionArguments(
+  rawArgs: string | Record<string, unknown>,
+): Record<string, unknown> {
   let args: unknown;
+  const rawForError = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
 
-  try {
-    args = JSON.parse(rawArgs);
-  } catch (strictError) {
-    let repaired: unknown;
+  if (typeof rawArgs === 'string') {
     try {
-      repaired = JSON.parse(jsonrepair(rawArgs));
-    } catch {
-      throw new Error(
-        `could not parse function arguments as JSON: ${strictError}: ${rawArgs.slice(0, 200)}`,
-      );
-    }
+      args = JSON.parse(rawArgs);
+    } catch (strictError) {
+      let repaired: unknown;
+      try {
+        repaired = JSON.parse(jsonrepair(rawArgs));
+      } catch {
+        throw new Error(
+          `could not parse function arguments as JSON: ${strictError}: ${rawForError.slice(0, 200)}`,
+        );
+      }
 
-    args = stripTemplateTokens(repaired);
+      args = stripTemplateTokens(repaired);
+    }
+  } else {
+    args = rawArgs;
   }
 
   while (typeof args === 'string') {
@@ -242,7 +249,7 @@ export function parseFunctionArguments(rawArgs: string): Record<string, unknown>
     return {};
   }
   if (typeof args !== 'object' || Array.isArray(args)) {
-    throw new Error(`expected object from function arguments: ${rawArgs.slice(0, 200)}`);
+    throw new Error(`expected object from function arguments: ${rawForError.slice(0, 200)}`);
   }
 
   return args as Record<string, unknown>;
