@@ -334,12 +334,25 @@ export class LLMStream extends llm.LLMStream {
 
           // Filter chain-of-thought <thinking> blocks when tools are active
           if (this.#toolCtx) {
-            if (text.includes('<thinking>')) {
+            const thinkingStart = text.indexOf('<thinking>');
+            if (thinkingStart >= 0) {
+              const preThinking = text.slice(0, thinkingStart);
+              if (preThinking) {
+                this.queue.put({
+                  id: this.#requestId,
+                  delta: { role: 'assistant', content: preThinking },
+                });
+                retryable = false;
+              }
+              text = text.slice(thinkingStart + '<thinking>'.length);
               this.#ignoringCoT = true;
             }
-            if (this.#ignoringCoT && text.includes('</thinking>')) {
-              text = text.split('</thinking>').pop() || '';
-              this.#ignoringCoT = false;
+            if (this.#ignoringCoT) {
+              const thinkingEnd = text.indexOf('</thinking>');
+              if (thinkingEnd >= 0) {
+                text = text.slice(thinkingEnd + '</thinking>'.length);
+                this.#ignoringCoT = false;
+              }
             }
           }
 

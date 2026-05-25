@@ -6,6 +6,53 @@ import { llm } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import { LLM } from './llm.js';
 
+function messageStartEvent(): Anthropic.MessageStreamEvent {
+  return {
+    type: 'message_start',
+    message: {
+      id: 'msg_123',
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  } as Anthropic.MessageStreamEvent;
+}
+
+function textDeltaEvent(text: string): Anthropic.MessageStreamEvent {
+  return {
+    type: 'content_block_delta',
+    delta: { type: 'text_delta', text },
+  } as Anthropic.MessageStreamEvent;
+}
+
+async function collectTextFromEvents(
+  events: Anthropic.MessageStreamEvent[],
+  toolCtx?: llm.ToolContext,
+): Promise<string> {
+  const client = {
+    messages: {
+      create: async () =>
+        (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+          yield* events;
+        })(),
+    },
+  } as unknown as Anthropic;
+  const anthropicLlm = new LLM({
+    apiKey: 'dummy',
+    client,
+    model: 'claude-3-5-sonnet-20241022',
+  });
+  const chatCtx = new llm.ChatContext();
+  chatCtx.addMessage({ role: 'user', content: 'Hello, world!' });
+
+  const stream = anthropicLlm.chat({ chatCtx, toolCtx });
+  const textChunks: string[] = [];
+  for await (const chunk of stream) {
+    if (chunk.delta?.content) {
+      textChunks.push(chunk.delta.content);
+    }
+  }
+  return textChunks.join('');
+}
+
 describe('Anthropic LLM', () => {
   it('correctly maps ChatContext to Anthropic system and messages arrays', () => {
     const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
@@ -146,5 +193,49 @@ describe('Anthropic LLM', () => {
       promptCachedTokens: 0,
       totalTokens: 0,
     });
+  });
+
+  it('filters thinking blocks when tools are active', async () => {
+    const text = await collectTextFromEvents(
+      [
+        messageStartEvent(),
+        textDeltaEvent('<thinking>hidden'),
+        textDeltaEvent('still hidden</thinking>visible'),
+      ],
+      {},
+    );
+
+    expect(text).toBe('visible');
+  });
+
+  it('does not filter thinking blocks without tools', async () => {
+    const text = await collectTextFromEvents([
+      messageStartEvent(),
+      textDeltaEvent('<thinking>visible without tools</thinking>'),
+    ]);
+
+    expect(text).toBe('<thinking>visible without tools</thinking>');
+  });
+
+  it('preserves text around same-delta thinking blocks', async () => {
+    const text = await collectTextFromEvents(
+      [messageStartEvent(), textDeltaEvent('before <thinking>hidden</thinking> after')],
+      {},
+    );
+
+    expect(text).toBe('before  after');
+  });
+
+  it('preserves text before split thinking blocks', async () => {
+    const text = await collectTextFromEvents(
+      [
+        messageStartEvent(),
+        textDeltaEvent('before <thinking>hidden'),
+        textDeltaEvent('still hidden</thinking> after'),
+      ],
+      {},
+    );
+
+    expect(text).toBe('before  after');
   });
 });
