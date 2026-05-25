@@ -4,6 +4,7 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   AgentHandoffItem,
   ChatContext,
@@ -12,9 +13,12 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
+import { tool } from './tool_context.js';
 import {
   computeChatCtxDiff,
+  executeToolCall,
   formatChatHistory,
+  parseFunctionArguments,
   serializeImage,
   validateChatContextStructure,
 } from './utils.js';
@@ -137,6 +141,61 @@ function expectPixel(
   expect(data[index + 2]).toBe(expected.b);
   expect(data[index + 3]).toBe(expected.a);
 }
+
+describe('parseFunctionArguments', () => {
+  it('should parse strict JSON arguments', () => {
+    expect(parseFunctionArguments('{"a": 1, "b": [2, 3]}')).toEqual({ a: 1, b: [2, 3] });
+    expect(parseFunctionArguments('{}')).toEqual({});
+    expect(parseFunctionArguments('null')).toEqual({});
+  });
+
+  it('should repair malformed JSON arguments', () => {
+    expect(parseFunctionArguments('{"arg1": "hi", "optArg2": "yo"')).toEqual({
+      arg1: 'hi',
+      optArg2: 'yo',
+    });
+    expect(parseFunctionArguments("{arg1: 'hi'}")).toEqual({ arg1: 'hi' });
+  });
+
+  it('should strip leaked chat-template tokens after repair', () => {
+    const leaked = '{"orderId": ["<|\\"|\\"O_WAAB70<|\\"|\\"]}';
+
+    expect(parseFunctionArguments(leaked)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+
+  it('should leave clean chat-template-like strings unchanged', () => {
+    expect(parseFunctionArguments('{"arg1": "<|safe|>"}')).toEqual({ arg1: '<|safe|>' });
+  });
+
+  it('should reject non-object argument shapes', () => {
+    expect(() => parseFunctionArguments('[1, 2, 3]')).toThrow(/expected object/);
+    expect(() => parseFunctionArguments('"just a string"')).toThrow(/non-JSON string/);
+  });
+});
+
+describe('executeToolCall', () => {
+  it('should canonicalize repaired arguments before returning', async () => {
+    const removeOrderItem = tool({
+      description: 'remove order item',
+      parameters: z.object({ orderId: z.array(z.string()) }),
+      execute: async ({ orderId }) => orderId.join(','),
+    });
+
+    const rawArgs = '{"orderId": ["<|\\"|\\"O_WAAB70<|\\"|\\"]}';
+    const toolCall = FunctionCall.create({
+      callId: 'call-canon-1',
+      name: 'removeOrderItem',
+      args: rawArgs,
+    });
+
+    const result = await executeToolCall(toolCall, { removeOrderItem });
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe('O_WAAB70');
+    expect(toolCall.args).not.toBe(rawArgs);
+    expect(JSON.parse(toolCall.args)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+});
 
 describe('computeChatCtxDiff', () => {
   it('should return empty operations for identical contexts', () => {

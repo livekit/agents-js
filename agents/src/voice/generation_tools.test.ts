@@ -4,11 +4,13 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, tool } from '../llm/index.js';
+import { FunctionCall, type ToolContext, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
+import type { AgentSession } from './agent_session.js';
 import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
+import type { SpeechHandle } from './speech_handle.js';
 
 function createStringStream(chunks: string[], delayMs: number = 0): NodeReadableStream<string> {
   return new NodeReadableStream<string>({
@@ -142,6 +144,40 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.output).toContain('echo: hello');
   });
 
+  it('should repair and canonicalize leaked template tokens in tool args', async () => {
+    const replyAbortController = new AbortController();
+
+    const removeOrderItem = tool({
+      description: 'remove order item',
+      parameters: z.object({ orderId: z.array(z.string()) }),
+      execute: async ({ orderId }) => orderId.join(','),
+    });
+
+    const rawArgs = '{"orderId": ["<|\\"|\\"O_WAAB70<|\\"|\\"]}';
+    const fc = FunctionCall.create({
+      callId: 'call_repair_args',
+      name: 'removeOrderItem',
+      args: rawArgs,
+    });
+    const toolCallStream = createFunctionCallStream(fc);
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_repair', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: { removeOrderItem } as unknown as ToolContext,
+      toolCallStream,
+      controller: replyAbortController,
+    });
+
+    await execTask.result;
+    expect(toolOutput.output.length).toBe(1);
+    const out = toolOutput.output[0];
+    expect(out?.toolCallOutput?.isError).toBe(false);
+    expect(out?.toolCallOutput?.output).toBe('"O_WAAB70"');
+    expect(fc.args).not.toBe(rawArgs);
+    expect(JSON.parse(fc.args)).toEqual({ orderId: ['O_WAAB70'] });
+  });
+
   it('should abort tool when reply is aborted mid-execution', async () => {
     const replyAbortController = new AbortController();
 
@@ -185,7 +221,7 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.isError).toBe(true);
   }, 20_000);
 
-  it('should return error output on invalid tool args (zod validation failure)', async () => {
+  it('should strip invalid tool args without returning error output', async () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
@@ -213,7 +249,9 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
-    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(out?.toolCallOutput).toBeUndefined();
+    expect(out?.replyRequired).toBe(false);
+    expect(out?.rawException).toBeInstanceOf(Error);
   });
 
   it('should handle multiple tool calls within a single stream', async () => {
