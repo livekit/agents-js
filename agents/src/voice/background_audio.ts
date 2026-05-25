@@ -44,9 +44,30 @@ export type AudioSourceType = string | BuiltinAudioClip | AsyncIterable<AudioFra
 
 export interface AudioConfig {
   source: AudioSourceType;
+  /**
+   * Volume scalar applied to the audio (0.0-1.0).
+   */
   volume?: number;
+  /**
+   * Probability that this audio is selected when multiple configs are provided (0.0-1.0).
+   */
   probability?: number;
+  /**
+   * Duration in milliseconds to ramp volume from 0 up to `volume` when playback starts.
+   */
+  fadeIn?: number;
+  /**
+   * Duration in milliseconds to ramp volume back down to 0 when `PlayHandle.stop()` is called.
+   */
+  fadeOut?: number;
 }
+
+type NormalizedAudioConfig = {
+  source: AudioSourceType;
+  volume: number;
+  fadeIn: number;
+  fadeOut: number;
+};
 
 export interface BackgroundAudioPlayerOptions {
   /**
@@ -87,6 +108,8 @@ export class PlayHandle {
   private doneFuture = new Future<void>();
   private stopFuture = new Future<void>();
 
+  constructor(private fadeOut = 0) {}
+
   done(): boolean {
     return this.doneFuture.done;
   }
@@ -98,7 +121,13 @@ export class PlayHandle {
       this.stopFuture.resolve();
     }
 
-    this._markPlayoutDone();
+    if (this.fadeOut <= 0) {
+      this._markPlayoutDone();
+    }
+  }
+
+  _stopRequested(): boolean {
+    return this.stopFuture.done;
   }
 
   async waitForPlayout(): Promise<void> {
@@ -173,7 +202,7 @@ export class BackgroundAudioPlayer {
 
   /**
    * Select a sound from a list of background sound based on probability weights
-   * Return undefined if no sound is selected (when sum of probabilities < 1.0).
+   * Return undefined if no sound is selected (when sum of probabilities is below 1.0).
    */
   private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | undefined {
     const totalProbability = sounds.reduce((sum, sound) => sum + (sound.probability ?? 1.0), 0);
@@ -209,7 +238,7 @@ export class BackgroundAudioPlayer {
 
   private normalizeSoundSource(
     source?: AudioSourceType | AudioConfig | AudioConfig[],
-  ): { source: AudioSourceType; volume: number } | undefined {
+  ): NormalizedAudioConfig | undefined {
     if (source === undefined) {
       return undefined;
     }
@@ -218,6 +247,8 @@ export class BackgroundAudioPlayer {
       return {
         source: this.normalizeBuiltinAudio(source),
         volume: 1.0,
+        fadeIn: 0,
+        fadeOut: 0,
       };
     }
 
@@ -228,8 +259,10 @@ export class BackgroundAudioPlayer {
       }
 
       return {
-        source: selected.source,
+        source: this.normalizeBuiltinAudio(selected.source),
         volume: selected.volume ?? 1.0,
+        fadeIn: selected.fadeIn ?? 0,
+        fadeOut: selected.fadeOut ?? 0,
       };
     }
 
@@ -237,10 +270,12 @@ export class BackgroundAudioPlayer {
       return {
         source: this.normalizeBuiltinAudio(source.source),
         volume: source.volume ?? 1.0,
+        fadeIn: source.fadeIn ?? 0,
+        fadeOut: source.fadeOut ?? 0,
       };
     }
 
-    return { source, volume: 1.0 };
+    return { source, volume: 1.0, fadeIn: 0, fadeOut: 0 };
   }
 
   private normalizeBuiltinAudio(source: AudioSourceType): AudioSourceType {
@@ -258,11 +293,11 @@ export class BackgroundAudioPlayer {
       return handle;
     }
 
-    const { source, volume } = normalized;
-    const playHandle = new PlayHandle();
+    const { source, volume, fadeIn, fadeOut } = normalized;
+    const playHandle = new PlayHandle(fadeOut);
 
     const task = Task.from(async ({ signal }) => {
-      await this.playTask({ playHandle, sound: source, volume, loop, signal });
+      await this.playTask({ playHandle, sound: source, volume, fadeIn, fadeOut, loop, signal });
     });
 
     task.addDoneCallback(() => {
@@ -311,8 +346,8 @@ export class BackgroundAudioPlayer {
     const normalized = this.normalizeSoundSource(this.ambientSound);
     if (!normalized) return;
 
-    const { source, volume } = normalized;
-    const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
+    const { source, volume, fadeIn, fadeOut } = normalized;
+    const selectedSound: AudioConfig = { source, volume, probability: 1.0, fadeIn, fadeOut };
     this.ambientHandle = this.play(selectedSound, typeof source === 'string');
   }
 
@@ -396,8 +431,8 @@ export class BackgroundAudioPlayer {
 
       const normalized = this.normalizeSoundSource(this.thinkingSound);
       if (normalized) {
-        const { source, volume } = normalized;
-        const selectedSound: AudioConfig = { source, volume, probability: 1.0 };
+        const { source, volume, fadeIn, fadeOut } = normalized;
+        const selectedSound: AudioConfig = { source, volume, probability: 1.0, fadeIn, fadeOut };
         // Loop thinking sound while in thinking state (same as ambient)
         this.thinkingHandle = this.play(selectedSound, typeof source === 'string');
       }
@@ -406,27 +441,67 @@ export class BackgroundAudioPlayer {
     }
   };
 
-  // Note: Python uses numpy, TS uses typed arrays for equivalent logic
-  private applyVolumeToFrame(frame: AudioFrame, volume: number): AudioFrame {
+  private frameGain({
+    t,
+    n,
+    stopT,
+    fadeIn,
+    fadeOut,
+    sampleRate,
+    volume,
+  }: {
+    t: number;
+    n: number;
+    stopT?: number;
+    fadeIn: number;
+    fadeOut: number;
+    sampleRate: number;
+    volume: number;
+  }): Float32Array | undefined {
+    const fadeInSamples = fadeIn > 0 ? Math.trunc((fadeIn / 1000) * sampleRate) : 0;
+    const fadeOutSamples = fadeOut > 0 ? Math.trunc((fadeOut / 1000) * sampleRate) : 0;
+    const needsFadeIn = fadeInSamples > 0 && t < fadeInSamples;
+    const needsFadeOut = fadeOutSamples > 0 && stopT !== undefined;
+
+    if (!needsFadeIn && !needsFadeOut && volume === 1.0) {
+      return undefined;
+    }
+
+    const gain = new Float32Array(n).fill(volume);
+    for (let i = 0; i < n; i++) {
+      const idx = t + i;
+
+      if (needsFadeIn) {
+        const phase = Math.max(0, Math.min(1, idx / fadeInSamples));
+        gain[i]! *= Math.sin(phase * (Math.PI / 2));
+      }
+
+      if (stopT !== undefined && fadeOutSamples > 0) {
+        const phase = Math.max(0, Math.min(1, (idx - stopT) / fadeOutSamples));
+        gain[i]! *= Math.cos(phase * (Math.PI / 2));
+      }
+    }
+
+    return gain;
+  }
+
+  // Note: Python uses numpy, TS uses typed arrays for equivalent logic.
+  private applyGainToFrame(frame: AudioFrame, gain?: Float32Array): AudioFrame {
+    if (gain === undefined) {
+      return frame;
+    }
+
     const int16Data = new Int16Array(
       frame.data.buffer,
       frame.data.byteOffset,
       frame.data.byteLength / 2,
     );
-    const float32Data = new Float32Array(int16Data.length);
-
+    const outputData = new Int16Array(int16Data.length);
     for (let i = 0; i < int16Data.length; i++) {
-      float32Data[i] = int16Data[i]!;
-    }
-
-    const volumeFactor = 10 ** Math.log10(volume);
-    for (let i = 0; i < float32Data.length; i++) {
-      float32Data[i]! *= volumeFactor;
-    }
-
-    const outputData = new Int16Array(float32Data.length);
-    for (let i = 0; i < float32Data.length; i++) {
-      const clipped = Math.max(-32768, Math.min(32767, float32Data[i]!));
+      const clipped = Math.max(
+        -32768,
+        Math.min(32767, int16Data[i]! * gain[Math.floor(i / frame.channels)]!),
+      );
       outputData[i] = Math.round(clipped);
     }
 
@@ -437,12 +512,16 @@ export class BackgroundAudioPlayer {
     playHandle,
     sound,
     volume,
+    fadeIn,
+    fadeOut,
     loop,
     signal,
   }: {
     playHandle: PlayHandle;
     sound: AudioSourceType;
     volume: number;
+    fadeIn: number;
+    fadeOut: number;
     loop: boolean;
     signal: AbortSignal;
   }): Promise<void> {
@@ -459,11 +538,34 @@ export class BackgroundAudioPlayer {
       audioStream = sound;
     }
 
-    const applyVolume = this.applyVolumeToFrame.bind(this);
+    const frameGain = this.frameGain.bind(this);
+    const applyGain = this.applyGainToFrame.bind(this);
     async function* genWrapper(): AsyncGenerator<AudioFrame> {
+      let t = 0;
+      let stopT: number | undefined;
+
       for await (const frame of audioStream) {
-        if (signal.aborted || playHandle.done()) break;
-        yield volume !== 1.0 ? applyVolume(frame, volume) : frame;
+        if (signal.aborted || (fadeOut <= 0 && playHandle.done())) break;
+        if (stopT === undefined && fadeOut > 0 && playHandle._stopRequested()) {
+          stopT = t;
+        }
+
+        const n = frame.samplesPerChannel;
+        const gain = frameGain({
+          t,
+          n,
+          stopT,
+          fadeIn,
+          fadeOut,
+          sampleRate: frame.sampleRate,
+          volume,
+        });
+        yield applyGain(frame, gain);
+
+        t += n;
+        if (stopT !== undefined && t - stopT >= Math.trunc((fadeOut / 1000) * frame.sampleRate)) {
+          break;
+        }
       }
       playHandle._markPlayoutDone();
     }
