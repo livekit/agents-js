@@ -32,7 +32,7 @@ describe('APIStatusError retryability defaults', () => {
   it('respects explicit retryable override', () => {
     const forceRetryable = new APIStatusError({
       message: 'force retry',
-      options: { statusCode: 404, retryable: true },
+      options: { statusCode: 500, retryable: true },
     });
     const forceNonRetryable = new APIStatusError({
       message: 'force no retry',
