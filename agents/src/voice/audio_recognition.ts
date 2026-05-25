@@ -1625,7 +1625,7 @@ export class AudioRecognition {
         if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
           // flush the stt by pushing silence
           if (audioDetached && this.sampleRate !== undefined) {
-            const silenceFrame = createSilenceFrame(delayDuration / 1000, this.sampleRate);
+            const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
             this.silenceAudioWriter.write(silenceFrame);
           }
 

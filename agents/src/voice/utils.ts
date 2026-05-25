@@ -6,11 +6,11 @@ import type { Span } from '@opentelemetry/api';
 import { traceTypes } from '../telemetry/index.js';
 
 export function createSilenceFrame(
-  durationInS: number,
+  duration: number,
   sampleRate: number,
   numChannels = 1,
 ): AudioFrame {
-  const samples = Math.floor(durationInS * sampleRate);
+  const samples = Math.floor((duration * sampleRate) / 1000);
   return new AudioFrame(new Int16Array(samples * numChannels), sampleRate, numChannels, samples);
 }
 
