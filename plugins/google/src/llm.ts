@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FinishReason,
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
@@ -296,13 +301,13 @@ export class LLM extends llm.LLM {
   }
 }
 
-const BLOCKED_REASONS = [
-  'SAFETY',
-  'SPII',
-  'PROHIBITED_CONTENT',
-  'BLOCKLIST',
-  'LANGUAGE',
-  'RECITATION',
+const BLOCKED_REASONS: types.FinishReason[] = [
+  FinishReason.SAFETY,
+  FinishReason.SPII,
+  FinishReason.PROHIBITED_CONTENT,
+  FinishReason.BLOCKLIST,
+  FinishReason.LANGUAGE,
+  FinishReason.RECITATION,
 ];
 
 export class LLMStream extends llm.LLMStream {
