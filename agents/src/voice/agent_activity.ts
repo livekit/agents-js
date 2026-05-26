@@ -69,8 +69,9 @@ import {
   waitUntilTimeout,
 } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
-import type { Agent, ModelSettings } from './agent.js';
 import {
+  Agent,
+  type ModelSettings,
   StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
@@ -565,14 +566,15 @@ export class AgentActivity implements RecognitionHooks {
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
     const resources: ReusableResources = {};
     try {
-      // stt pipeline
+      // stt pipeline; only reuse with the default sttNode, a custom override may
+      // access the old session/activity inside the yield loop after detach
       if (
         this.audioRecognition &&
         this.stt &&
         newActivity.stt &&
         this.stt === newActivity.stt &&
-        Object.getPrototypeOf(this.agent).sttNode ===
-          Object.getPrototypeOf(newActivity.agent).sttNode
+        Object.getPrototypeOf(this.agent).sttNode === Agent.prototype.sttNode &&
+        Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
       }
