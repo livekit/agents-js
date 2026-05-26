@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  ToolError,
   type ToolChoice,
   type ToolContext,
   isAgentHandoff,
@@ -252,7 +253,7 @@ export class _JsOutput {
         toolCallOutput: FunctionCallOutput.create({
           name: this.toolCall.name,
           callId: this.toolCall.callId,
-          output: (this.exception as Error).message,
+          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
           isError: true,
         }),
       });
@@ -337,7 +338,7 @@ export function createToolOutput(params: {
       toolCallOutput: FunctionCallOutput.create({
         name: toolCall.name,
         callId: toolCall.callId,
-        output: (finalException as Error).message,
+        output: 'An internal error occurred', // Don't send the actual error message, as it may contain sensitive information
         isError: true,
       }),
       rawOutput: finalOutput,
@@ -1046,10 +1047,13 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
         toolCompleted(
           createToolOutput({
             toolCall,
-            exception: error,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
           }),
         );
         continue;

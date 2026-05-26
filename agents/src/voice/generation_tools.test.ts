@@ -4,7 +4,7 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, tool } from '../llm/index.js';
+import { FunctionCall, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
@@ -185,7 +185,7 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.isError).toBe(true);
   }, 20_000);
 
-  it('should return error output on invalid tool args (zod validation failure)', async () => {
+  it('should return descriptive error to LLM on invalid tool args (zod validation failure)', async () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
@@ -214,6 +214,129 @@ describe('Generation + Tool Execution', () => {
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
+    // The LLM must see enough detail to correct its arguments — at minimum the
+    // tool name and the offending field — instead of a generic "internal error".
+    const output = out?.toolCallOutput?.output ?? '';
+    expect(output).toContain('Invalid arguments');
+    expect(output).toContain('echo');
+    expect(output).toContain('msg');
+    expect(output).not.toContain('An internal error occurred');
+  });
+
+  it('should return descriptive error to LLM on invalid JSON args', async () => {
+    const replyAbortController = new AbortController();
+
+    const echo = tool({
+      description: 'echo',
+      parameters: z.object({ msg: z.string() }),
+      execute: async ({ msg }) => `echo: ${msg}`,
+    });
+
+    const fc = FunctionCall.create({
+      callId: 'call_invalid_json',
+      name: 'echo',
+      args: '{not valid json',
+    });
+    const toolCallStream = createFunctionCallStream(fc);
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as any,
+      speechHandle: { id: 'speech_bad_json', _itemAdded: () => {} } as any,
+      toolCtx: { echo } as any,
+      toolCallStream,
+      controller: replyAbortController,
+    });
+
+    await execTask.result;
+    expect(toolOutput.output.length).toBe(1);
+    const out = toolOutput.output[0];
+    expect(out?.toolCallOutput?.isError).toBe(true);
+    const output = out?.toolCallOutput?.output ?? '';
+    expect(output).toContain('Invalid arguments');
+    expect(output).toContain('echo');
+    expect(output).not.toContain('An internal error occurred');
+  });
+
+  it('should mask generic exceptions thrown by tool with a non-sensitive message', async () => {
+    const replyAbortController = new AbortController();
+
+    // Tool throws a regular Error whose message contains sensitive details we must
+    // NOT leak to the LLM (and from there to the end user).
+    const sensitive = tool({
+      description: 'sensitive',
+      parameters: z.object({}),
+      execute: async () => {
+        throw new Error('database connection failed: postgres://admin:hunter2@db.internal:5432');
+      },
+    });
+
+    const fc = FunctionCall.create({
+      callId: 'call_generic_error',
+      name: 'sensitive',
+      args: JSON.stringify({}),
+    });
+    const toolCallStream = createFunctionCallStream(fc);
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as any,
+      speechHandle: { id: 'speech_generic_err', _itemAdded: () => {} } as any,
+      toolCtx: { sensitive } as any,
+      toolCallStream,
+      controller: replyAbortController,
+    });
+
+    await execTask.result;
+    expect(toolOutput.output.length).toBe(1);
+    const out = toolOutput.output[0];
+    expect(out?.toolCallOutput?.isError).toBe(true);
+    const output = out?.toolCallOutput?.output ?? '';
+    expect(output).toBe('An internal error occurred');
+    // Critically, nothing from the original exception leaks through.
+    expect(output).not.toContain('database');
+    expect(output).not.toContain('hunter2');
+    expect(output).not.toContain('postgres');
+    // The raw exception is still preserved for server-side observability.
+    expect(out?.rawException?.message).toContain('hunter2');
+  });
+
+  it('should pass ToolError messages through to the LLM verbatim', async () => {
+    const replyAbortController = new AbortController();
+
+    // Tools that want to give the LLM a corrective hint should throw ToolError —
+    // its message is forwarded as-is so the LLM can react to it.
+    const checked = tool({
+      description: 'checked',
+      parameters: z.object({ qty: z.number() }),
+      execute: async ({ qty }) => {
+        if (qty <= 0) {
+          throw new ToolError('qty must be positive — try again with a value greater than 0');
+        }
+        return qty;
+      },
+    });
+
+    const fc = FunctionCall.create({
+      callId: 'call_tool_error',
+      name: 'checked',
+      args: JSON.stringify({ qty: -1 }),
+    });
+    const toolCallStream = createFunctionCallStream(fc);
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as any,
+      speechHandle: { id: 'speech_tool_error', _itemAdded: () => {} } as any,
+      toolCtx: { checked } as any,
+      toolCallStream,
+      controller: replyAbortController,
+    });
+
+    await execTask.result;
+    expect(toolOutput.output.length).toBe(1);
+    const out = toolOutput.output[0];
+    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(out?.toolCallOutput?.output).toBe(
+      'qty must be positive — try again with a value greater than 0',
+    );
   });
 
   it('should handle multiple tool calls within a single stream', async () => {

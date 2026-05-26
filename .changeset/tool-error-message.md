@@ -2,6 +2,8 @@
 "@livekit/agents": patch
 ---
 
-fix(voice): return actual tool error message to the LLM instead of a generic "An internal error occurred"
+fix(voice): surface tool-argument validation errors to the LLM instead of returning a generic "internal error"
 
-Previously, when a tool's `execute` function threw a non-`ToolError` exception (or arguments failed schema validation), the framework sent the literal string `"An internal error occurred"` back to the LLM as the tool call output. With no information about what went wrong, the LLM would typically retry the same tool call in a loop. The exception's `message` is now passed through to the LLM so it can correct its arguments or recover gracefully.
+When an LLM-generated tool call failed JSON parsing or Zod schema validation, the framework returned `"An internal error occurred"` to the LLM, which left the model with no way to correct itself — causing it to loop on the same invalid call. Argument-validation failures are now wrapped in a `ToolError` whose message includes the tool name and the validator's diagnostic, so the LLM can fix its arguments.
+
+Behavior is unchanged for exceptions thrown from inside a tool's `execute`: regular `Error`s are still masked as `"An internal error occurred"` to avoid leaking server-side details, and `ToolError` continues to be the supported way to forward a custom message to the LLM.
