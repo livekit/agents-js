@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { JsonValue } from '@bufbuild/protobuf';
 import { Duration, Struct, Timestamp } from '@bufbuild/protobuf';
 import { AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
@@ -82,7 +83,10 @@ export type RemoteSessionCallbacks = {
 };
 
 function dictToStruct(data: Record<string, unknown>): Struct {
-  return Struct.fromJson(data);
+  // Caller is contractually responsible for JSON-serializable values; `Struct.fromJson`
+  // validates at runtime. The cast widens `unknown` -> `JsonValue` to satisfy the
+  // structural mismatch (`Record<string, unknown>` is wider than `JsonObject`).
+  return Struct.fromJson(data as JsonValue);
 }
 
 function structToDict(st: Struct | undefined): Record<string, unknown> {
