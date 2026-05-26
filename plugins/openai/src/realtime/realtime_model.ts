@@ -441,6 +441,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
 
+  private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
+
   // Track items that have real server-side audio (created in current session, not restored)
   // Items restored after reconnection are text-only and cannot be truncated
   private audioCapableItemIds: Set<string> = new Set();
@@ -1030,6 +1032,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
+      this.inputTranscriptAccumulators.clear();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1198,6 +1201,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'conversation.item.deleted':
           this.handleConversationItemDeleted(event);
           break;
+        case 'conversation.item.input_audio_transcription.delta':
+          this.handleConversationItemInputAudioTranscriptionDelta(event);
+          break;
         case 'conversation.item.input_audio_transcription.completed':
           this.handleConversationItemInputAudioTranscriptionCompleted(event);
           break;
@@ -1312,6 +1318,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
     this.itemDeleteFutures = {};
+
+    this.inputTranscriptAccumulators.clear();
 
     // Clean up current generation if exists
     if (this.currentGeneration) {
@@ -1470,6 +1478,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Clean up audio-capable tracking for deleted items
     this.audioCapableItemIds.delete(event.item_id);
+    this.inputTranscriptAccumulators.delete(event.item_id);
 
     try {
       this.remoteChatCtx.delete(event.item_id);
@@ -1484,26 +1493,56 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  private handleConversationItemInputAudioTranscriptionDelta(
+    event: api_proto.ConversationItemInputAudioTranscriptionDeltaEvent,
+  ): void {
+    if (!event.delta) return;
+
+    const contentIndex = event.content_index ?? 0;
+    let byIndex = this.inputTranscriptAccumulators.get(event.item_id);
+    if (!byIndex) {
+      byIndex = new Map();
+      this.inputTranscriptAccumulators.set(event.item_id, byIndex);
+    }
+    const accumulated = (byIndex.get(contentIndex) ?? '') + event.delta;
+    byIndex.set(contentIndex, accumulated);
+
+    this.emit('input_audio_transcription_completed', {
+      itemId: event.item_id,
+      transcript: accumulated,
+      isFinal: false,
+    });
+  }
+
+  private clearAccumulator(itemId: string, contentIndex: number): string | undefined {
+    const byIndex = this.inputTranscriptAccumulators.get(itemId);
+    if (!byIndex) return undefined;
+    const partial = byIndex.get(contentIndex);
+    byIndex.delete(contentIndex);
+    if (byIndex.size === 0) this.inputTranscriptAccumulators.delete(itemId);
+    return partial;
+  }
+
   private handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
-    const remoteItem = this.remoteChatCtx.get(event.item_id);
-    if (!remoteItem) {
-      return;
-    }
+    this.clearAccumulator(event.item_id, event.content_index ?? 0);
 
-    const item = remoteItem.item;
-    if (item instanceof llm.ChatMessage) {
-      item.content.push(event.transcript);
-    } else {
-      throw new Error('item is not a chat message');
+    const remoteItem = this.remoteChatCtx.get(event.item_id);
+    if (remoteItem) {
+      const item = remoteItem.item;
+      if (item instanceof llm.ChatMessage) {
+        item.content.push(event.transcript);
+      } else {
+        throw new Error('item is not a chat message');
+      }
     }
 
     this.emit('input_audio_transcription_completed', {
       itemId: event.item_id,
       transcript: event.transcript,
       isFinal: true,
-    } as llm.InputTranscriptionCompleted);
+    });
   }
 
   private handleConversationItemInputAudioTranscriptionFailed(
@@ -1513,6 +1552,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       { error: event.error },
       'OpenAI Realtime API failed to transcribe input audio',
     );
+    this.finalizePartialOnTranscriptionFailure(event.item_id, event.content_index ?? 0);
+  }
+
+  // Close any open partial stream so consumers waiting for isFinal don't hang.
+  private finalizePartialOnTranscriptionFailure(itemId: string, contentIndex: number): void {
+    const partial = this.clearAccumulator(itemId, contentIndex);
+    if (partial === undefined) return;
+    this.emit('input_audio_transcription_completed', {
+      itemId,
+      transcript: partial,
+      isFinal: true,
+    });
   }
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
