@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
+import type { AgentSession as pb } from '@livekit/protocol';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
@@ -61,7 +62,6 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
-  type CustomEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -158,7 +158,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
-  [AgentSessionEventTypes.CustomEvent]: (ev: CustomEvent) => void;
+  [AgentSessionEventTypes.CustomEvent]: (ev: pb.CustomEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {

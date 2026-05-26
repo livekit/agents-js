@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { JsonValue } from '@bufbuild/protobuf';
-import { Duration, Struct, Timestamp } from '@bufbuild/protobuf';
+import { Duration, Timestamp } from '@bufbuild/protobuf';
 import { AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -33,7 +32,6 @@ import {
   type AgentState,
   type AgentStateChangedEvent,
   type ConversationItemAddedEvent,
-  type CustomEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -77,24 +75,10 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
-  custom_event: (ev: { eventType: string; payload: Record<string, unknown> }) => void;
+  custom_event: (ev: pb.CustomEvent) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
-
-function dictToStruct(data: Record<string, unknown>): Struct {
-  // Caller is contractually responsible for JSON-serializable values; `Struct.fromJson`
-  // validates at runtime. The cast widens `unknown` -> `JsonValue` to satisfy the
-  // structural mismatch (`Record<string, unknown>` is wider than `JsonObject`).
-  return Struct.fromJson(data as JsonValue);
-}
-
-function structToDict(st: Struct | undefined): Record<string, unknown> {
-  if (!st) {
-    return {};
-  }
-  return st.toJson() as Record<string, unknown>;
-}
 
 // ===========================================================================
 // SessionTransport
@@ -733,17 +717,8 @@ export class SessionHost {
     );
   };
 
-  private onCustomEvent = (event: CustomEvent): void => {
-    this.emitEvent(
-      {
-        case: 'customEvent',
-        value: new pb.CustomEvent({
-          type: event.eventType,
-          payload: dictToStruct(event.payload),
-        }),
-      },
-      event.createdAt,
-    );
+  private onCustomEvent = (event: pb.CustomEvent): void => {
+    this.emitEvent({ case: 'customEvent', value: event });
   };
 
   /**
@@ -1041,10 +1016,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         this.emit('error', ev.value);
         break;
       case 'customEvent':
-        this.emit('custom_event', {
-          eventType: ev.value.type,
-          payload: structToDict(ev.value.payload),
-        });
+        this.emit('custom_event', ev.value);
         break;
     }
   }

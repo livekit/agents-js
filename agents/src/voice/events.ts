@@ -341,26 +341,6 @@ export const createAgentFalseInterruptionEvent = ({
   createdAt,
 });
 
-export type CustomEvent = {
-  type: 'custom_event';
-  /** Maps to proto `CustomEvent.type`. */
-  eventType: string;
-  /** Maps to proto `CustomEvent.payload` (arbitrary JSON object). */
-  payload: Record<string, unknown>;
-  createdAt: number;
-};
-
-export const createCustomEvent = (
-  eventType: string,
-  payload: Record<string, unknown> = {},
-  createdAt: number = Date.now(),
-): CustomEvent => ({
-  type: 'custom_event',
-  eventType,
-  payload,
-  createdAt,
-});
-
 export type AgentEvent =
   | UserInputTranscribedEvent
   | UserStateChangedEvent
@@ -372,6 +352,5 @@ export type AgentEvent =
   | SpeechCreatedEvent
   | AgentFalseInterruptionEvent
   | OverlappingSpeechEvent
-  | CustomEvent
   | ErrorEvent
   | CloseEvent;
