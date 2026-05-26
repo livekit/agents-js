@@ -687,9 +687,15 @@ importers:
       '@types/json-schema':
         specifier: ^7.0.15
         version: 7.0.15
+      google-auth-library:
+        specifier: ^10.6.2
+        version: 10.6.2
       json-schema:
         specifier: ^0.4.0
         version: 0.4.0
+      openai:
+        specifier: ^6.8.1
+        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
