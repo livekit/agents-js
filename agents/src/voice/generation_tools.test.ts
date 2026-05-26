@@ -4,7 +4,7 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, type ToolContext, tool } from '../llm/index.js';
+import { FunctionCall, type ToolContext, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
@@ -221,7 +221,7 @@ describe('Generation + Tool Execution', () => {
     expect(out?.toolCallOutput?.isError).toBe(true);
   }, 20_000);
 
-  it('should strip invalid tool args without returning error output', async () => {
+  it('should surface invalid tool args as error output', async () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
@@ -249,9 +249,10 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
-    expect(out?.toolCallOutput).toBeUndefined();
-    expect(out?.replyRequired).toBe(false);
-    expect(out?.rawException).toBeInstanceOf(Error);
+    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(out?.toolCallOutput?.output).toContain('Invalid arguments for echo');
+    expect(out?.replyRequired).toBe(true);
+    expect(out?.rawException).toBeInstanceOf(ToolError);
   });
 
   it('should handle multiple tool calls within a single stream', async () => {
