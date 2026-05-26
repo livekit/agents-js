@@ -4,32 +4,31 @@
 import { llm } from '@livekit/agents';
 import type OpenAI from 'openai';
 
-/** A provider tool for the OpenAI Responses API. */
+/** Base class for OpenAI Responses API provider tools. */
 export abstract class OpenAITool extends llm.ProviderTool {
-  /** Convert the tool to an OpenAI Responses API tool configuration. */
+  /** Convert this provider tool to the OpenAI Responses API tool configuration. */
   abstract toToolConfig(): Record<string, unknown>;
 }
 
 /**
- * High level guidance for the amount of context window space to use for the search.
- * One of `low`, `medium`, or `high`. `medium` is the default.
+ * High-level guidance for the amount of context window space to use for web search.
+ * OpenAI defaults this to `medium`.
  */
 export type WebSearchContextSize = 'low' | 'medium' | 'high';
 
-/** Options for the web search tool. */
+/** Options for the OpenAI web search tool. */
 export interface WebSearchOptions {
   /**
-   * Filters for the search. If `allowed_domains` is not provided, all domains are allowed.
+   * Filters for the search, such as allowed domains. If not provided, all domains are allowed.
    */
   filters?: OpenAI.Responses.WebSearchTool['filters'];
 
   /**
-   * High level guidance for the amount of context window space to use for the search.
-   * One of `low`, `medium`, or `high`. `medium` is the default.
+   * Amount of context window space to use for the search. Defaults to `medium`.
    */
   searchContextSize?: WebSearchContextSize | null;
 
-  /** The approximate location of the user. */
+  /** Approximate location of the user, such as city, region, country, or timezone. */
   userLocation?: OpenAI.Responses.WebSearchTool['user_location'];
 }
 
@@ -39,13 +38,13 @@ export interface WebSearchOptions {
  * @see https://platform.openai.com/docs/guides/tools-web-search
  */
 export class WebSearch extends OpenAITool {
-  /** Filters for the search. */
+  /** Filters for the search, such as allowed domains. */
   readonly filters: OpenAI.Responses.WebSearchTool['filters'] | undefined;
 
-  /** High level guidance for the amount of context window space to use for the search. */
+  /** Amount of context window space to use for the search. */
   readonly searchContextSize: WebSearchContextSize | null;
 
-  /** The approximate location of the user. */
+  /** Approximate location of the user. */
   readonly userLocation: OpenAI.Responses.WebSearchTool['user_location'] | undefined;
 
   constructor({ filters, searchContextSize = 'medium', userLocation }: WebSearchOptions = {}) {
@@ -70,34 +69,34 @@ export class WebSearch extends OpenAITool {
   }
 }
 
-/** Options for the file search tool. */
+/** Options for the OpenAI file search tool. */
 export interface FileSearchOptions {
-  /** The IDs of the vector stores to search. */
+  /** IDs of the vector stores to search. */
   vectorStoreIds?: string[];
 
-  /** A filter to apply. */
+  /** Filter to apply to file search results. */
   filters?: OpenAI.Responses.FileSearchTool['filters'];
 
-  /** The maximum number of results to return. This number should be between 1 and 50 inclusive. */
+  /** Maximum number of results to return. This should be between 1 and 50 inclusive. */
   maxNumResults?: number;
 
-  /** Ranking options for search. */
+  /** Ranking options for search, including ranker and score threshold. */
   rankingOptions?: OpenAI.Responses.FileSearchTool.RankingOptions;
 }
 
 /**
- * A tool that searches for relevant content from uploaded files.
+ * Search for relevant content from uploaded files.
  *
  * @see https://platform.openai.com/docs/guides/tools-file-search
  */
 export class FileSearch extends OpenAITool {
-  /** The IDs of the vector stores to search. */
+  /** IDs of the vector stores to search. */
   readonly vectorStoreIds: string[];
 
-  /** A filter to apply. */
+  /** Filter to apply to file search results. */
   readonly filters: OpenAI.Responses.FileSearchTool['filters'] | undefined;
 
-  /** The maximum number of results to return. */
+  /** Maximum number of results to return. */
   readonly maxNumResults: number | undefined;
 
   /** Ranking options for search. */
@@ -134,22 +133,22 @@ export class FileSearch extends OpenAITool {
   }
 }
 
-/** Options for the code interpreter tool. */
+/** Options for the OpenAI code interpreter tool. */
 export interface CodeInterpreterOptions {
   /**
-   * The code interpreter container. Can be a container ID or an object that specifies uploaded file IDs
+   * Code interpreter container. Can be a container ID or an object that specifies uploaded file IDs
    * to make available to the code.
    */
   container?: OpenAI.Responses.Tool.CodeInterpreter['container'] | null;
 }
 
 /**
- * A tool that runs Python code to help generate a response to a prompt.
+ * Run Python code to help generate a response to a prompt.
  *
  * @see https://platform.openai.com/docs/guides/tools-code-interpreter
  */
 export class CodeInterpreter extends OpenAITool {
-  /** The code interpreter container. */
+  /** Code interpreter container ID or configuration. */
   readonly container: OpenAI.Responses.Tool.CodeInterpreter['container'] | null;
 
   constructor({ container = null }: CodeInterpreterOptions = {}) {
