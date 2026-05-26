@@ -55,41 +55,62 @@ export type EndCallToolOptions<UserData = UnknownUserData> = {
 /**
  * Allows the agent to end the call and disconnect from the room.
  */
-export class EndCallTool<UserData = UnknownUserData> extends Toolset {
-  private readonly deleteRoom: boolean;
-  private readonly endInstructions: string | null;
-  private readonly onToolCalled?: (event: EndCallToolCalledEvent<UserData>) => Promise<void> | void;
-  private readonly onToolCompleted?: (
-    event: EndCallToolCompletedEvent<UserData>,
-  ) => Promise<void> | void;
-  private shutdownSessionTimeout: NodeJS.Timeout | undefined;
+export function EndCallTool<UserData = UnknownUserData>({
+  extraDescription = '',
+  deleteRoom = true,
+  endInstructions = 'say goodbye to the user',
+  onToolCalled,
+  onToolCompleted,
+}: EndCallToolOptions<UserData> = {}): Toolset {
+  let shutdownSessionTimeout: NodeJS.Timeout | undefined;
 
-  constructor({
-    extraDescription = '',
-    deleteRoom = true,
-    endInstructions = 'say goodbye to the user',
-    onToolCalled,
-    onToolCompleted,
-  }: EndCallToolOptions<UserData> = {}) {
-    const handlers: {
-      endCall?: (ctx: RunContext<UserData>) => Promise<string | undefined>;
-    } = {};
-    const endCallTool = tool<UserData, string | undefined>({
-      name: 'end_call',
-      description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
-      execute: async (_args, { ctx }) => handlers.endCall!(ctx),
-    });
+  const clearDelayedShutdown = (
+    ctx: RunContext<UserData>,
+    onSpeechCreated: (event: SpeechCreatedEvent) => void,
+  ): void => {
+    ctx.session.off(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
+    if (shutdownSessionTimeout) {
+      clearTimeout(shutdownSessionTimeout);
+      shutdownSessionTimeout = undefined;
+    }
+  };
 
-    super({ id: 'end_call', tools: [endCallTool] });
-    handlers.endCall = (ctx) => this.endCall(ctx);
+  const delayedSessionShutdown = (ctx: RunContext<UserData>): void => {
+    const onSpeechCreated = (event: SpeechCreatedEvent) => {
+      clearDelayedShutdown(ctx, onSpeechCreated);
+      void event.speechHandle.waitForPlayout().finally(() => ctx.session.shutdown());
+    };
 
-    this.deleteRoom = deleteRoom;
-    this.endInstructions = endInstructions;
-    this.onToolCalled = onToolCalled;
-    this.onToolCompleted = onToolCompleted;
-  }
+    ctx.session.once(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
+    shutdownSessionTimeout = setTimeout(() => {
+      clearDelayedShutdown(ctx, onSpeechCreated);
+      log().warn('tool reply timed out, shutting down session');
+      ctx.session.shutdown();
+    }, 5000);
+  };
 
-  private async endCall(ctx: RunContext<UserData>): Promise<string | undefined> {
+  const onSessionClose = (event: CloseEvent): void => {
+    if (shutdownSessionTimeout) {
+      clearTimeout(shutdownSessionTimeout);
+      shutdownSessionTimeout = undefined;
+    }
+
+    const jobCtx = getJobContext(false);
+    if (!jobCtx) {
+      return;
+    }
+
+    if (deleteRoom) {
+      jobCtx.addShutdownCallback(async () => {
+        log().info('deleting the room because the user ended the call');
+        await jobCtx.deleteRoom();
+      });
+    }
+
+    jobCtx.shutdown(String(event.reason));
+  };
+
+  const endCall = async (ctx: RunContext<UserData>): Promise<string | undefined> => {
     log().debug('end_call tool called');
     const llm = ctx.session.currentAgent.getActivityOrThrow().llm;
 
@@ -99,72 +120,37 @@ export class EndCallTool<UserData = UnknownUserData> extends Toolset {
         return;
       }
 
-      this.delayedSessionShutdown(ctx);
+      delayedSessionShutdown(ctx);
     });
 
-    ctx.session.once(AgentSessionEventTypes.Close, this.onSessionClose);
+    ctx.session.once(AgentSessionEventTypes.Close, onSessionClose);
 
-    if (this.onToolCalled) {
-      await this.onToolCalled({ ctx, arguments: {} });
+    if (onToolCalled) {
+      await onToolCalled({ ctx, arguments: {} });
     }
 
     const completedEvent = {
       ctx,
       output:
-        this.endInstructions === null
+        endInstructions === null
           ? undefined
-          : ({ type: 'output', value: this.endInstructions } as const),
+          : ({ type: 'output', value: endInstructions } as const),
     };
-    if (this.onToolCompleted) {
-      await this.onToolCompleted(completedEvent);
+    if (onToolCompleted) {
+      await onToolCompleted(completedEvent);
     }
 
-    return this.endInstructions ?? undefined;
-  }
-
-  private delayedSessionShutdown(ctx: RunContext<UserData>): void {
-    const onSpeechCreated = (event: SpeechCreatedEvent) => {
-      this.clearDelayedShutdown(ctx, onSpeechCreated);
-      void event.speechHandle.waitForPlayout().finally(() => ctx.session.shutdown());
-    };
-
-    ctx.session.once(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
-    this.shutdownSessionTimeout = setTimeout(() => {
-      this.clearDelayedShutdown(ctx, onSpeechCreated);
-      log().warn('tool reply timed out, shutting down session');
-      ctx.session.shutdown();
-    }, 5000);
-  }
-
-  private clearDelayedShutdown(
-    ctx: RunContext<UserData>,
-    onSpeechCreated: (event: SpeechCreatedEvent) => void,
-  ): void {
-    ctx.session.off(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
-    if (this.shutdownSessionTimeout) {
-      clearTimeout(this.shutdownSessionTimeout);
-      this.shutdownSessionTimeout = undefined;
-    }
-  }
-
-  private onSessionClose = (event: CloseEvent): void => {
-    if (this.shutdownSessionTimeout) {
-      clearTimeout(this.shutdownSessionTimeout);
-      this.shutdownSessionTimeout = undefined;
-    }
-
-    const jobCtx = getJobContext(false);
-    if (!jobCtx) {
-      return;
-    }
-
-    if (this.deleteRoom) {
-      jobCtx.addShutdownCallback(async () => {
-        log().info('deleting the room because the user ended the call');
-        await jobCtx.deleteRoom();
-      });
-    }
-
-    jobCtx.shutdown(String(event.reason));
+    return endInstructions ?? undefined;
   };
+
+  return Toolset.create({
+    id: 'end_call',
+    tools: [
+      tool<UserData, string | undefined>({
+        name: 'end_call',
+        description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
+        execute: async (_args, { ctx }) => endCall(ctx),
+      }),
+    ],
+  });
 }
