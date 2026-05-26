@@ -158,6 +158,10 @@ export class CodeInterpreter extends OpenAITool {
   }
 
   toToolConfig(): Record<string, unknown> {
-    return { type: 'code_interpreter', container: this.container };
+    const result: Record<string, unknown> = { type: 'code_interpreter' };
+    if (this.container !== null) {
+      result.container = this.container;
+    }
+    return result;
   }
 }

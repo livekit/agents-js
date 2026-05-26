@@ -68,6 +68,12 @@ describe('toResponsesTools', () => {
     ]);
   });
 
+  it('omits the code interpreter container when unset', () => {
+    expect(toResponsesTools(new llm.ToolContext([new CodeInterpreter()]), false)).toEqual([
+      { type: 'code_interpreter' },
+    ]);
+  });
+
   it('ignores non-OpenAI provider tools', () => {
     class OtherProviderTool extends llm.ProviderTool {}
 
