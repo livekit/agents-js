@@ -102,10 +102,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(
-  new ServerOptions({
-    agent: fileURLToPath(import.meta.url),
-    // Enables explicit dispatch so agents-cli can summon this worker by name.
-    agentName: 'multi-agent-js',
-  }),
-);
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
