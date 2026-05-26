@@ -17,9 +17,9 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
-  ToolError,
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
