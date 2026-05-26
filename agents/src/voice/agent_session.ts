@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { JsonValue } from '@bufbuild/protobuf';
+import { Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
-import type { AgentSession as pb } from '@livekit/protocol';
+import { AgentSession as pb } from '@livekit/protocol';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
@@ -706,6 +708,30 @@ export class AgentSession<
     }
 
     return this.activity.interrupt(options);
+  }
+
+  /**
+   * Emit an application-defined `custom_event` over the remote-session wire.
+   *
+   * Sugar over constructing `pb.CustomEvent` and emitting it: wraps `payload`
+   * (a JSON-compatible object) into a `google.protobuf.Struct` and emits the
+   * proto. Listeners registered via `session.on('custom_event', handler)`
+   * receive the same `pb.CustomEvent`.
+   *
+   * Mirrors python `AgentSession.emit_custom_event`.
+   */
+  emitCustomEvent(eventType: string, payload: Record<string, unknown> = {}): void {
+    // `Struct.fromJson` expects `JsonValue`; `Record<string, unknown>` is
+    // structurally wider than `JsonObject`. Caller is contractually responsible
+    // for JSON-serializable values; the cast satisfies the type, `fromJson`
+    // validates at runtime.
+    this.emit(
+      AgentSessionEventTypes.CustomEvent,
+      new pb.CustomEvent({
+        type: eventType,
+        payload: Struct.fromJson(payload as JsonValue),
+      }),
+    );
   }
 
   /**
