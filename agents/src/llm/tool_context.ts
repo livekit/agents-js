@@ -4,6 +4,7 @@
 import type { JSONSchema7 } from 'json-schema';
 import { z } from 'zod';
 import type { Agent } from '../voice/agent.js';
+import type { AgentSession } from '../voice/agent_session.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
 import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
@@ -212,6 +213,37 @@ export interface ToolCompletedEvent<UserData = UnknownUserData> {
 }
 
 /**
+ * The live context a {@link Toolset} is given when it becomes active in an `AgentActivity`.
+ *
+ * A toolset's tool factory runs with this context, so tools can close over `session` and `signal`
+ * directly — there is no separate setup step and nothing to stash between activation and a tool
+ * call. Scope every listener and timer to `signal` so they detach automatically when the toolset
+ * is torn down; `aclose()` then only needs to release awaitable resources (pools, clients).
+ */
+export interface ToolsetContext<UserData = UnknownUserData> {
+  /** The session the toolset is now bound to. Guaranteed live while tools are being built. */
+  session: AgentSession<UserData>;
+  /**
+   * Aborts when the toolset is torn down, immediately before `aclose()` runs. Wire it into every
+   * listener and timer so they clean up without manual bookkeeping:
+   *
+   * ```ts
+   * once(session, evt, { signal });
+   * setTimeout(ms, undefined, { signal });
+   * ```
+   */
+  signal: AbortSignal;
+}
+
+/**
+ * A function that produces a toolset's tools when it becomes active, given the live
+ * {@link ToolsetContext}. Returned tools may close over `ctx.session` / `ctx.signal` directly.
+ */
+export type ToolsetFactoryFn<UserData = UnknownUserData> = (
+  ctx: ToolsetContext<UserData>,
+) => readonly Tool[] | Promise<readonly Tool[]>;
+
+/**
  * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
  * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
  * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
@@ -229,9 +261,10 @@ export class Toolset {
   }
 
   /**
-   * Compose a `Toolset` with inline `setup` / `aclose` hooks instead of subclassing. `tools`
-   * may also be a thunk that is re-evaluated on every `.tools` access, so the toolset can
-   * expose a dynamic list that changes after `setup()` runs.
+   * Compose a `Toolset` without subclassing. `tools` may be a static list, or a factory invoked
+   * when the toolset becomes active that receives the live {@link ToolsetContext} — letting the
+   * tools close over the session and the teardown `signal` directly. The factory may also resolve
+   * a dynamic list (e.g. tools discovered from an MCP server after connecting).
    *
    * @example Static tool list with a shared backing resource
    * ```ts
@@ -240,26 +273,27 @@ export class Toolset {
    *   return Toolset.create({
    *     id: 'postgres',
    *     tools: [queryOrders, queryCustomers],
-   *     setup: () => pool.connect(),
    *     aclose: () => pool.end(),
    *   });
    * }
    * ```
    *
-   * @example Dynamic tool list
+   * @example Dynamic tool list bound to the session lifetime
    * ```ts
    * function createMcpToolset(url: string): Toolset {
    *   const client = new MCPClient({ url });
    *   return Toolset.create({
    *     id: 'mcp_remote',
-   *     tools: () => client.getTools(),
-   *     setup: () => client.connect(),
+   *     tools: async ({ signal }) => {
+   *       await client.connect({ signal });
+   *       return client.getTools();
+   *     },
    *     aclose: () => client.disconnect(),
    *   });
    * }
    * ```
    */
-  static create(options: ToolsetCreateOptions): Toolset {
+  static create<UserData = UnknownUserData>(options: ToolsetCreateOptions<UserData>): Toolset {
     return new ToolsetFactory(options);
   }
 
@@ -271,48 +305,52 @@ export class Toolset {
     return this.#tools;
   }
 
-  async setup(): Promise<void> {}
+  async setup(_ctx: ToolsetContext): Promise<void> {}
 
   async aclose(): Promise<void> {}
 }
 
-/** Options accepted by `Toolset.create()` — id + tools plus optional lifecycle hooks. */
-export interface ToolsetCreateOptions {
+/** Options accepted by `Toolset.create()` — id + tools plus an optional teardown hook. */
+export interface ToolsetCreateOptions<UserData = UnknownUserData> {
   id: string;
   /**
-   * Either a static list of tools, or a thunk re-evaluated on every `tools` access — useful
-   * when the underlying source (e.g. an MCP discovery loop) can produce a dynamic tool list.
+   * Either a static list of tools, or a factory invoked when the toolset becomes active. The
+   * factory receives the live {@link ToolsetContext} so its tools can close over the session and
+   * the teardown `signal`. Factory-produced tools aren't enumerable until activation.
    */
-  tools: readonly Tool[] | (() => readonly Tool[]);
-  /** Invoked when the toolset becomes active in an `AgentActivity`. */
-  setup?: () => Promise<void>;
-  /** Invoked when the toolset is being torn down. */
+  tools: readonly Tool[] | ToolsetFactoryFn<UserData>;
+  /** Invoked when the toolset is being torn down. Release awaitable resources here. */
   aclose?: () => Promise<void>;
 }
 
 /** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
-class ToolsetFactory extends Toolset {
-  readonly #toolsSource: readonly Tool[] | (() => readonly Tool[]);
+class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
+  readonly #factory?: ToolsetFactoryFn<UserData>;
 
-  readonly #setupFn?: () => Promise<void>;
+  #resolved: readonly Tool[];
 
   readonly #acloseFn?: () => Promise<void>;
 
-  constructor({ id, tools, setup, aclose }: ToolsetCreateOptions) {
-    // Pass [] to super and override the `tools` getter so a thunk can be re-evaluated on
-    // every access (lets callers expose a dynamic tool list).
+  constructor({ id, tools, aclose }: ToolsetCreateOptions<UserData>) {
+    // Pass [] to super and override the `tools` getter so a factory's tools can be resolved
+    // lazily at activation (when the ToolsetContext is available).
     super({ id, tools: [] });
-    this.#toolsSource = tools;
-    this.#setupFn = setup;
+    if (typeof tools === 'function') {
+      this.#factory = tools;
+      this.#resolved = [];
+    } else {
+      // Static tools are available immediately, so the toolset can be flattened before activation.
+      this.#resolved = tools;
+    }
     this.#acloseFn = aclose;
   }
 
   override get tools(): readonly Tool[] {
-    return typeof this.#toolsSource === 'function' ? this.#toolsSource() : this.#toolsSource;
+    return this.#resolved;
   }
 
-  override async setup(): Promise<void> {
-    if (this.#setupFn) await this.#setupFn();
+  override async setup(ctx: ToolsetContext<UserData>): Promise<void> {
+    if (this.#factory) this.#resolved = await this.#factory(ctx);
   }
 
   override async aclose(): Promise<void> {

@@ -220,6 +220,7 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
   private _toolsetsSetup = false;
+  private _toolsetAbortControllers = new Map<Toolset, AbortController>();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -778,14 +779,18 @@ export class AgentActivity implements RecognitionHooks {
     const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
     const oldToolsets = oldToolCtx.toolsets;
     const newToolCtx = new ToolContext(tools);
-    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
     const newToolsets = newToolCtx.toolsets;
-    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
-    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
     const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
     const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
 
+    // Resolve added factory toolsets before re-flattening, so their tools are included in the
+    // advertised set (newToolNames is computed below, after resolution).
     await this.setupToolsetList(addedToolsets);
+    newToolCtx.updateTools(newToolCtx.tools);
+    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
+    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
+    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+
     this.agent._toolCtx = newToolCtx;
     await this.closeToolsetList(removedToolsets);
 
@@ -3755,6 +3760,8 @@ export class AgentActivity implements RecognitionHooks {
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
     await this.setupToolsetList(this.agent.toolCtx.toolsets);
+    // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
+    this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
 
   private async closeToolsets(): Promise<void> {
@@ -3764,7 +3771,15 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
-    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.setup()));
+    const outputs = await Promise.allSettled(
+      toolsets.map((ts) => {
+        // One controller per toolset, aborted in closeToolsetList so listeners/timers wired to
+        // the signal in setup() detach automatically on teardown.
+        const abortController = new AbortController();
+        this._toolsetAbortControllers.set(ts, abortController);
+        return ts.setup({ session: this.agentSession, signal: abortController.signal });
+      }),
+    );
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error setting up toolset');
@@ -3773,7 +3788,13 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {
-    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
+    const outputs = await Promise.allSettled(
+      toolsets.map((ts) => {
+        this._toolsetAbortControllers.get(ts)?.abort();
+        this._toolsetAbortControllers.delete(ts);
+        return ts.aclose();
+      }),
+    );
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error closing toolset');

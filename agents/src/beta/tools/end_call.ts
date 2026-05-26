@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { once } from 'node:events';
+import { setTimeout as waitFor } from 'node:timers/promises';
 import { getJobContext } from '../../job.js';
 import {
   RealtimeModel,
@@ -10,12 +12,16 @@ import {
   tool,
 } from '../../llm/index.js';
 import { log } from '../../log.js';
+import type { AgentSession } from '../../voice/agent_session.js';
 import {
   AgentSessionEventTypes,
   type CloseEvent,
   type SpeechCreatedEvent,
 } from '../../voice/events.js';
 import type { RunContext, UnknownUserData } from '../../voice/run_context.js';
+
+/** How long to wait for the agent's goodbye reply to play out before forcing shutdown. */
+const END_CALL_REPLY_TIMEOUT = 5000;
 
 export const END_CALL_DESCRIPTION = `
 Ends the current call and disconnects immediately.
@@ -62,68 +68,75 @@ export function EndCallTool<UserData = UnknownUserData>({
   onToolCalled,
   onToolCompleted,
 }: EndCallToolOptions<UserData> = {}): Toolset {
-  let shutdownSessionTimeout: NodeJS.Timeout | undefined;
+  // Captured from setup(): aborts when the toolset is torn down, so any per-invocation listener
+  // or timer wired to it detaches automatically instead of being unwound by hand.
+  let teardownSignal: AbortSignal | undefined;
 
-  const clearDelayedShutdown = (
-    ctx: RunContext<UserData>,
-    onSpeechCreated: (event: SpeechCreatedEvent) => void,
-  ): void => {
-    ctx.session.off(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
-    if (shutdownSessionTimeout) {
-      clearTimeout(shutdownSessionTimeout);
-      shutdownSessionTimeout = undefined;
-    }
-  };
+  // For a realtime LLM that generates the goodbye reply itself, wait for that reply to play out
+  // (bounded by END_CALL_REPLY_TIMEOUT) before shutting down. `signal` is aborted when the call
+  // ends or the toolset is torn down, which cancels whichever of the two races is still pending.
+  const delayedSessionShutdown = async (
+    session: AgentSession<UserData>,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const speech = once(session, AgentSessionEventTypes.SpeechCreated, { signal })
+      .then((args) => (args[0] as SpeechCreatedEvent).speechHandle)
+      .catch(() => undefined);
+    const timeout = waitFor(END_CALL_REPLY_TIMEOUT, 'timeout' as const, { signal }).catch(
+      () => undefined,
+    );
 
-  const delayedSessionShutdown = (ctx: RunContext<UserData>): void => {
-    const onSpeechCreated = (event: SpeechCreatedEvent) => {
-      clearDelayedShutdown(ctx, onSpeechCreated);
-      void event.speechHandle.waitForPlayout().finally(() => ctx.session.shutdown());
-    };
+    const winner = await Promise.race([speech, timeout]);
+    if (signal.aborted) return; // session already closed or toolset torn down
 
-    ctx.session.once(AgentSessionEventTypes.SpeechCreated, onSpeechCreated);
-    shutdownSessionTimeout = setTimeout(() => {
-      clearDelayedShutdown(ctx, onSpeechCreated);
+    if (winner === 'timeout') {
       log().warn('tool reply timed out, shutting down session');
-      ctx.session.shutdown();
-    }, 5000);
-  };
-
-  const onSessionClose = (event: CloseEvent): void => {
-    if (shutdownSessionTimeout) {
-      clearTimeout(shutdownSessionTimeout);
-      shutdownSessionTimeout = undefined;
+      session.shutdown();
+    } else if (winner) {
+      await winner.waitForPlayout();
+      session.shutdown();
     }
-
-    const jobCtx = getJobContext(false);
-    if (!jobCtx) {
-      return;
-    }
-
-    if (deleteRoom) {
-      jobCtx.addShutdownCallback(async () => {
-        log().info('deleting the room because the user ended the call');
-        await jobCtx.deleteRoom();
-      });
-    }
-
-    jobCtx.shutdown(String(event.reason));
   };
 
   const endCall = async (ctx: RunContext<UserData>): Promise<string | undefined> => {
     log().debug('end_call tool called');
-    const llm = ctx.session.currentAgent.getActivityOrThrow().llm;
+    const { session } = ctx;
+    const llm = session.currentAgent.getActivityOrThrow().llm;
+
+    // Lifetime of this invocation: aborts when the session closes, and also when the toolset is
+    // torn down (via teardownSignal). All listeners/timers below are scoped to it.
+    const controller = new AbortController();
+    const signal = teardownSignal
+      ? AbortSignal.any([teardownSignal, controller.signal])
+      : controller.signal;
+
+    once(session, AgentSessionEventTypes.Close, { signal })
+      .then((args) => {
+        const event = args[0] as CloseEvent;
+        controller.abort(); // stop the delayed-shutdown race
+
+        const jobCtx = getJobContext(false);
+        if (!jobCtx) return;
+
+        if (deleteRoom) {
+          jobCtx.addShutdownCallback(async () => {
+            log().info('deleting the room because the user ended the call');
+            await jobCtx.deleteRoom();
+          });
+        }
+
+        jobCtx.shutdown(String(event.reason));
+      })
+      .catch(() => undefined); // toolset torn down before the session closed
 
     ctx.speechHandle.addDoneCallback(() => {
       if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {
-        ctx.session.shutdown();
+        session.shutdown();
         return;
       }
 
-      delayedSessionShutdown(ctx);
+      void delayedSessionShutdown(session, signal);
     });
-
-    ctx.session.once(AgentSessionEventTypes.Close, onSessionClose);
 
     if (onToolCalled) {
       await onToolCalled({ ctx, arguments: {} });
@@ -143,8 +156,11 @@ export function EndCallTool<UserData = UnknownUserData>({
     return endInstructions ?? undefined;
   };
 
-  return Toolset.create({
+  return Toolset.create<UserData>({
     id: 'end_call',
+    setup: async ({ signal }) => {
+      teardownSignal = signal;
+    },
     tools: [
       tool<UserData, string | undefined>({
         name: 'end_call',

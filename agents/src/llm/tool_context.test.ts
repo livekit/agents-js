@@ -7,10 +7,10 @@ import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
 import {
   ProviderTool,
-  type Tool,
   ToolContext,
   type ToolOptions,
   Toolset,
+  type ToolsetContext,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
@@ -617,9 +617,15 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a, b]);
   });
 
+  const fakeToolsetContext = (): ToolsetContext => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tests don't touch the session
+    session: {} as any,
+    signal: new AbortController().signal,
+  });
+
   it('default setup and aclose are no-ops', async () => {
     const ts = new Toolset({ id: 'noop', tools: [] });
-    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.setup(fakeToolsetContext())).resolves.toBeUndefined();
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
@@ -635,20 +641,17 @@ describe('Toolset', () => {
     }
 
     const ts = new Recording({ id: 'rec', tools: [] });
-    await ts.setup();
+    await ts.setup(fakeToolsetContext());
     await ts.aclose();
     expect(events).toEqual(['setup:rec', 'close:rec']);
   });
 
-  it('Toolset.create() composes lifecycle callbacks without subclassing', async () => {
+  it('Toolset.create() resolves a static tools list eagerly and composes aclose', async () => {
     const a = makeFn('a');
     const events: string[] = [];
     const ts = Toolset.create({
       id: 'composed',
       tools: [a],
-      setup: async () => {
-        events.push('setup');
-      },
       aclose: async () => {
         events.push('close');
       },
@@ -656,37 +659,42 @@ describe('Toolset', () => {
 
     expect(ts).toBeInstanceOf(Toolset);
     expect(ts.id).toBe('composed');
-    expect(ts.tools).toEqual([a]);
+    expect(ts.tools).toEqual([a]); // static tools available before activation
 
-    await ts.setup();
+    await ts.setup(fakeToolsetContext());
     await ts.aclose();
-    expect(events).toEqual(['setup', 'close']);
+    expect(events).toEqual(['close']);
   });
 
-  it('Toolset.create() defaults setup and aclose to no-ops when callbacks are omitted', async () => {
+  it('Toolset.create() defaults aclose to a no-op when omitted', async () => {
     const ts = Toolset.create({ id: 'bare', tools: [] });
-    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.setup(fakeToolsetContext())).resolves.toBeUndefined();
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
-  it('Toolset.create() accepts a tools thunk, re-evaluated on every access (dynamic)', () => {
+  it('Toolset.create() resolves a tools factory once at setup with the live context', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    const current: Tool[] = [a];
     let calls = 0;
+    let received: ToolsetContext | undefined;
     const ts = Toolset.create({
       id: 'dynamic',
-      tools: () => {
+      tools: (ctx) => {
         calls += 1;
-        return current;
+        received = ctx;
+        return [a, b];
       },
     });
-    // Each access re-invokes the thunk so the toolset reflects the current source-of-truth.
-    expect(ts.tools).toEqual([a]);
-    expect(calls).toBe(1);
-    current.push(b);
+
+    // The factory isn't run — and tools aren't enumerable — until activation.
+    expect(ts.tools).toEqual([]);
+    expect(calls).toBe(0);
+
+    const ctx = fakeToolsetContext();
+    await ts.setup(ctx);
     expect(ts.tools).toEqual([a, b]);
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
+    expect(received).toBe(ctx);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {
