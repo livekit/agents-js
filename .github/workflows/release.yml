@@ -32,7 +32,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 10
+          done
       # npm trusted publishing cannot publish a package for the first time. New packages must be
       # created on npm before release CI can publish subsequent versions with OIDC.
       - name: Verify all packages exist on npm
