@@ -14,7 +14,8 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import type { FunctionTool, ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import { ToolError, isToolError } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
@@ -255,50 +256,69 @@ export function parseFunctionArguments(
   return args as Record<string, unknown>;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function prepareFunctionArguments({
+  toolName,
+  tool,
+  rawArgs,
+  toolCall,
+}: {
+  toolName: string;
+  tool: FunctionTool<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- Tool registry accepts arbitrary schemas and outputs
+  rawArgs: string | Record<string, unknown>;
+  toolCall?: FunctionCall;
+}): Promise<object> {
+  try {
+    const parsedArgs = parseFunctionArguments(rawArgs);
+
+    if (toolCall && typeof rawArgs === 'string') {
+      const canonicalArgs = JSON.stringify(parsedArgs);
+      if (canonicalArgs !== rawArgs) {
+        toolCall.args = canonicalArgs;
+      }
+    }
+
+    if (!isZodSchema(tool.parameters)) {
+      return parsedArgs;
+    }
+
+    const result = await parseZodSchema<object>(tool.parameters, parsedArgs);
+    if (result.success) {
+      return result.data;
+    }
+
+    throw result.error;
+  } catch (error) {
+    if (isToolError(error)) {
+      throw error;
+    }
+
+    throw new ToolError(`Error parsing arguments for \`${toolName}\`: ${getErrorMessage(error)}`);
+  }
+}
+
 export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
-  let args: Record<string, unknown> | undefined;
   let params: object | undefined;
 
-  // Ensure valid JSON
   try {
     const rawArgs = toolCall.args || '{}';
-    args = parseFunctionArguments(rawArgs);
-    const canonicalArgs = JSON.stringify(args);
-    if (canonicalArgs !== rawArgs) {
-      toolCall.args = canonicalArgs;
-    }
-  } catch (error) {
-    return FunctionCallOutput.create({
-      callId: toolCall.callId,
-      output: `Invalid JSON: ${error}`,
-      isError: true,
+    params = await prepareFunctionArguments({
+      toolName: toolCall.name,
+      tool,
+      rawArgs,
+      toolCall,
     });
-  }
-
-  // Ensure valid arguments schema
-  try {
-    if (isZodSchema(tool.parameters)) {
-      const result = await parseZodSchema<object>(tool.parameters, args);
-      if (result.success) {
-        params = result.data;
-      } else {
-        return FunctionCallOutput.create({
-          callId: toolCall.callId,
-          output: `Arguments parsing failed: ${result.error}`,
-          isError: true,
-        });
-      }
-    } else {
-      params = args;
-    }
   } catch (error) {
     return FunctionCallOutput.create({
       callId: toolCall.callId,
-      output: `Arguments parsing failed: ${error}`,
+      output: isToolError(error) ? error.message : 'An internal error occurred',
       isError: true,
     });
   }

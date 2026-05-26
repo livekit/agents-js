@@ -178,6 +178,40 @@ describe('Generation + Tool Execution', () => {
     expect(JSON.parse(fc.args)).toEqual({ orderId: ['O_WAAB70'] });
   });
 
+  it('should canonicalize repaired arguments when validation fails', async () => {
+    const replyAbortController = new AbortController();
+
+    const takeInt = tool({
+      description: 'take int',
+      parameters: z.object({ arg1: z.number() }),
+      execute: async ({ arg1 }) => String(arg1),
+    });
+
+    const rawArgs = '{arg1: "not_an_int"}';
+    const fc = FunctionCall.create({
+      callId: 'call_validate_fail',
+      name: 'takeInt',
+      args: rawArgs,
+    });
+    const toolCallStream = createFunctionCallStream(fc);
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_validate_fail', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: { takeInt } as unknown as ToolContext,
+      toolCallStream,
+      controller: replyAbortController,
+    });
+
+    await execTask.result;
+
+    expect(toolOutput.output.length).toBe(1);
+    const out = toolOutput.output[0];
+    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(fc.args).not.toBe(rawArgs);
+    expect(JSON.parse(fc.args)).toEqual({ arg1: 'not_an_int' });
+  });
+
   it('should abort tool when reply is aborted mid-execution', async () => {
     const replyAbortController = new AbortController();
 
@@ -253,7 +287,7 @@ describe('Generation + Tool Execution', () => {
     // LLM must see enough detail (tool name + offending field) to self-correct,
     // not the masked generic message reserved for tool-runtime exceptions.
     const output = out?.toolCallOutput?.output ?? '';
-    expect(output).toContain('Invalid arguments');
+    expect(output).toContain('Error parsing arguments');
     expect(output).toContain('echo');
     expect(output).toContain('msg');
     expect(output).not.toContain('An internal error occurred');
@@ -289,7 +323,7 @@ describe('Generation + Tool Execution', () => {
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
     const output = out?.toolCallOutput?.output ?? '';
-    expect(output).toContain('Invalid arguments');
+    expect(output).toContain('Error parsing arguments');
     expect(output).toContain('echo');
     expect(output).not.toContain('An internal error occurred');
   });
