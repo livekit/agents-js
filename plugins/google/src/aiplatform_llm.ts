@@ -50,7 +50,11 @@ type ResolvedAIPlatformLLMOptions = Required<
   Omit<AIPlatformLLMOptions, 'apiVersion' | 'location' | 'model' | 'strictToolSchema' | 'client'>;
 
 function normalizeEndpointURL(endpointURL: string): string {
-  return endpointURL.replace(/\/+$/, '');
+  let end = endpointURL.length;
+  while (end > 0 && endpointURL[end - 1] === '/') {
+    end -= 1;
+  }
+  return endpointURL.slice(0, end);
 }
 
 function resolveTokenProvider(opts: {
@@ -197,7 +201,7 @@ export class AIPlatformLLM extends llm.LLM {
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (parallelToolCalls !== undefined) {
+    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 
