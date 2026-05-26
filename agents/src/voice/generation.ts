@@ -19,6 +19,7 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
@@ -1043,21 +1044,22 @@ export function performToolExecutions({
         }
       } catch (rawError) {
         const error = toError(rawError);
-        logger.warn(
+        logger.error(
           {
             function: toolCall.name,
             arguments: toolCall.args,
             speech_id: speechHandle.id,
             error: error.message,
           },
-          `tried to call AI function ${toolCall.name} with invalid arguments; stripping the call from chat history`,
+          `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
         toolCompleted(
-          ToolExecutionOutput.create({
-            toolCall: FunctionCall.create({ ...toolCall }),
-            rawOutput: undefined,
-            rawException: error,
-            replyRequired: false,
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
           }),
         );
         continue;

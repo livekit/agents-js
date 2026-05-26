@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as realtime from './realtime/index.js';
 
 export {
   TTS,
@@ -10,4 +11,5 @@ export {
   type GeminiVoices,
   type TTSOptions,
 } from './gemini_tts.js';
-export * as realtime from './realtime/index.js';
+
+export { realtime };

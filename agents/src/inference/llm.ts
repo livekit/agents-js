@@ -443,6 +443,8 @@ export class LLMStream extends llm.LLMStream {
         ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
+      const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
+      const extraQuery = requestOptions.extra_query as Record<string, unknown> | undefined;
       if (this.provider) {
         extraHeaders[INFERENCE_PROVIDER_HEADER] = this.provider;
       }
@@ -450,6 +452,8 @@ export class LLMStream extends llm.LLMStream {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
       delete requestOptions.extra_headers;
+      delete requestOptions.extra_body;
+      delete requestOptions.extra_query;
 
       const stream = await this.client.chat.completions.create(
         {
@@ -459,9 +463,11 @@ export class LLMStream extends llm.LLMStream {
           stream: true,
           stream_options: { include_usage: true },
           ...requestOptions,
+          ...extraBody,
         },
         {
           headers: extraHeaders,
+          query: extraQuery,
           timeout: this.connOptions.timeoutMs,
           signal: this.abortController.signal,
         },
