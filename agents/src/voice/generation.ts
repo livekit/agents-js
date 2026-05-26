@@ -252,7 +252,7 @@ export class _JsOutput {
         toolCallOutput: FunctionCallOutput.create({
           name: this.toolCall.name,
           callId: this.toolCall.callId,
-          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
+          output: (this.exception as Error).message,
           isError: true,
         }),
       });
@@ -337,7 +337,7 @@ export function createToolOutput(params: {
       toolCallOutput: FunctionCallOutput.create({
         name: toolCall.name,
         callId: toolCall.callId,
-        output: 'An internal error occurred', // Don't send the actual error message, as it may contain sensitive information
+        output: (finalException as Error).message,
         isError: true,
       }),
       rawOutput: finalOutput,
