@@ -61,6 +61,7 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type CustomEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -157,6 +158,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.CustomEvent]: (ev: CustomEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
