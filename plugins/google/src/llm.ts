@@ -396,21 +396,6 @@ export class LLMStream extends llm.LLMStream {
           });
         }
 
-        // Check for blocked reasons first — safety-blocked responses often lack content.parts,
-        // so this must run before the no-content guard to avoid wasting retries.
-        if (
-          chunk.candidates?.[0]?.finishReason &&
-          BLOCKED_REASONS.includes(chunk.candidates[0].finishReason)
-        ) {
-          throw new APIStatusError({
-            message: `Google LLM: generation blocked - ${chunk.candidates[0].finishReason}`,
-            options: {
-              retryable: false,
-              requestId,
-            },
-          });
-        }
-
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
           this.logger.warn(`No content in the response: ${JSON.stringify(chunk)}`);
           throw new APIStatusError({
@@ -431,8 +416,28 @@ export class LLMStream extends llm.LLMStream {
         const candidate = chunk.candidates[0];
         const finishReason = candidate.finishReason;
 
+        if (finishReason && BLOCKED_REASONS.includes(finishReason)) {
+          throw new APIStatusError({
+            message: `Google LLM: generation blocked by Gemini: ${finishReason}`,
+            options: {
+              retryable: false,
+              requestId,
+            },
+          });
+        }
+
+        if (!candidate.content?.parts) {
+          throw new APIStatusError({
+            message: 'Google LLM: no content in the response',
+            options: {
+              retryable,
+              requestId,
+            },
+          });
+        }
+
         let chunksYielded = false;
-        for (const part of candidate.content!.parts!) {
+        for (const part of candidate.content.parts) {
           const chatChunk = this.#parsePart(requestId, part);
           if (chatChunk) {
             chunksYielded = true;
@@ -441,7 +446,7 @@ export class LLMStream extends llm.LLMStream {
           }
         }
 
-        if (finishReason === 'STOP' && !chunksYielded) {
+        if (finishReason === FinishReason.STOP && !chunksYielded) {
           throw new APIStatusError({
             message: 'Google LLM: no response generated',
             options: {
