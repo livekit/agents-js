@@ -204,7 +204,7 @@ export const runApp = (opts: ServerOptions) => {
       const logger = log();
 
       logger.warn(
-        'Invoking the download-files command via cli.runApp() is deprecated as of 1.5.10. ' +
+        'Invoking the download-files command via cli.runApp() is deprecated as of 1.4.4. ' +
           'Run it directly with the livekit-agents CLI instead, e.g. ' +
           '`npx livekit-agents download-files`.',
       );
