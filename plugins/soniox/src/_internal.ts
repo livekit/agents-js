@@ -25,7 +25,7 @@ export interface SonioxMessage {
   tokens?: SonioxToken[];
   total_audio_proc_ms?: number;
   finished?: boolean;
-  error_code?: string;
+  error_code?: string | number;
   error_message?: string;
 }
 
