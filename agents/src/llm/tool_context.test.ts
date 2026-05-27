@@ -717,13 +717,14 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a]);
   });
 
-  it('resolveTools() re-runs the factory so a dynamic tool list stays current', async () => {
+  it('resolveTools() re-runs the factory when resolveEachTurn is set', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
     let current = [a];
     let setupCalls = 0;
     const ts = Toolset.create({
       id: 'dynamic',
+      resolveEachTurn: true,
       setup: async () => {
         setupCalls += 1;
       },
@@ -740,6 +741,31 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a, b]);
     // re-resolving does not re-run one-time setup
     expect(setupCalls).toBe(1);
+  });
+
+  it('resolveTools() runs the factory only once by default', async () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    let current = [a];
+    let resolveCalls = 0;
+    const ts = Toolset.create({
+      id: 'once',
+      tools: async () => {
+        resolveCalls += 1;
+        return current;
+      },
+    });
+
+    const ctx = fakeToolsetContext();
+    await ts.setup(ctx);
+    expect(ts.tools).toEqual([a]);
+    expect(resolveCalls).toBe(1);
+
+    // Tools change at runtime, but a once-resolved toolset keeps its activation-time list.
+    current = [a, b];
+    await ts.resolveTools(ctx);
+    expect(ts.tools).toEqual([a]);
+    expect(resolveCalls).toBe(1);
   });
 
   it('resolveTools() is a no-op for a static toolset', async () => {

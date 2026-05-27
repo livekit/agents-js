@@ -239,9 +239,10 @@ export interface ToolsetContext<UserData = UnknownUserData> {
  * A function that resolves a toolset's current tools, given the live {@link ToolsetContext}.
  * Returned tools may close over `ctx.session` / `ctx.signal` directly.
  *
- * Re-invoked before every agent turn, so the returned list always reflects the toolset's current
- * tools (e.g. an MCP server that adds or removes tools at runtime). Keep it cheap and side-effect
- * free — do one-time work like connecting in {@link ToolsetCreateOptions.setup} instead.
+ * Resolved once when the toolset activates by default. Set {@link ToolsetCreateOptions.resolveEachTurn}
+ * to re-invoke it before every agent turn, so the returned list always reflects the toolset's
+ * current tools (e.g. an MCP server that adds or removes tools at runtime). Keep it cheap and
+ * side-effect free — do one-time work like connecting in {@link ToolsetCreateOptions.setup} instead.
  */
 export type ToolsetFactoryFn<UserData = UnknownUserData> = (
   ctx: ToolsetContext<UserData>,
@@ -290,8 +291,9 @@ export class Toolset {
    *     id: 'mcp_remote',
    *     // `setup` runs once when the toolset activates — connect here.
    *     setup: ({ signal }) => client.connect({ signal }),
-   *     // `tools` is re-invoked before every turn, so the list stays current as the MCP server
-   *     // adds or removes tools.
+   *     // `resolveEachTurn` re-invokes `tools` before every turn, so the list stays current as the
+   *     // MCP server adds or removes tools. Without it, `tools` runs only once at activation.
+   *     resolveEachTurn: true,
    *     tools: async () => client.listTools(),
    *     aclose: () => client.disconnect(),
    *   });
@@ -314,8 +316,9 @@ export class Toolset {
   async setup(_ctx: ToolsetContext): Promise<void> {}
 
   /**
-   * Re-resolve the toolset's tools. Invoked once after {@link setup} and again before every agent
-   * turn, so a dynamic tool list (e.g. MCP) stays current. A no-op for static toolsets.
+   * Re-resolve the toolset's tools. Invoked once after {@link setup}, and again before every agent
+   * turn when {@link ToolsetCreateOptions.resolveEachTurn} is set, so a dynamic tool list (e.g. MCP)
+   * stays current. A no-op for static toolsets and for already-resolved one-time toolsets.
    */
   async resolveTools(_ctx: ToolsetContext): Promise<void> {}
 
@@ -334,10 +337,18 @@ export interface ToolsetCreateOptions<UserData = UnknownUserData> {
   /**
    * Either a static list of tools, or a factory resolving the toolset's current tools. The factory
    * receives the live {@link ToolsetContext} so its tools can close over the session and the
-   * teardown `signal`, and is re-invoked before every turn so a changing tool list stays current.
-   * Factory-produced tools aren't enumerable until activation.
+   * teardown `signal`. By default it runs once when the toolset activates; set
+   * {@link resolveEachTurn} to re-invoke it before every turn. Factory-produced tools aren't
+   * enumerable until activation.
    */
   tools: readonly Tool[] | ToolsetFactoryFn<UserData>;
+  /**
+   * When `true`, re-invoke the `tools` factory before every agent turn so a changing tool list
+   * (e.g. an MCP server adding or removing tools) stays current. Defaults to `false`: the factory
+   * runs once at activation and the resolved tools are reused on every turn, which is cheaper.
+   * Has no effect when `tools` is a static list.
+   */
+  resolveEachTurn?: boolean;
   /** Invoked when the toolset is being torn down. Release awaitable resources here. */
   aclose?: () => Promise<void>;
 }
@@ -348,15 +359,20 @@ class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
 
   readonly #factory?: ToolsetFactoryFn<UserData>;
 
+  readonly #resolveEachTurn: boolean;
+
   #resolved: readonly Tool[];
+
+  #hasResolved = false;
 
   readonly #acloseFn?: () => Promise<void>;
 
-  constructor({ id, setup, tools, aclose }: ToolsetCreateOptions<UserData>) {
+  constructor({ id, setup, tools, resolveEachTurn, aclose }: ToolsetCreateOptions<UserData>) {
     // Pass [] to super and override the `tools` getter so a factory's tools can be resolved
     // lazily at activation (when the ToolsetContext is available).
     super({ id, tools: [] });
     this.#setupFn = setup;
+    this.#resolveEachTurn = resolveEachTurn ?? false;
     if (typeof tools === 'function') {
       this.#factory = tools;
       this.#resolved = [];
@@ -378,7 +394,12 @@ class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
   }
 
   override async resolveTools(ctx: ToolsetContext<UserData>): Promise<void> {
-    if (this.#factory) this.#resolved = await this.#factory(ctx);
+    if (!this.#factory) return;
+    // By default the factory runs once at activation; per-turn re-resolution is opt-in. Skipping it
+    // keeps every turn cheap for the common case of a stable tool list.
+    if (this.#hasResolved && !this.#resolveEachTurn) return;
+    this.#resolved = await this.#factory(ctx);
+    this.#hasResolved = true;
   }
 
   override async aclose(): Promise<void> {
