@@ -146,11 +146,25 @@ export function createWsTransport(
 
   function setupMessageHandler(socket: WebSocket): void {
     socket.on('message', (data: WebSocket.Data) => {
+      let message: WsMessage;
       try {
-        const message = wsMessageSchema.parse(JSON.parse(data.toString()));
+        message = wsMessageSchema.parse(JSON.parse(data.toString()));
+      } catch (err) {
+        logger.warn(
+          { data: data.toString(), err: err instanceof Error ? err.message : String(err) },
+          'Failed to parse WebSocket message',
+        );
+        return;
+      }
+      // Keep handler errors distinct from parse errors — a thrown handler must
+      // not be mislabeled as a malformed payload (and its real cause dropped).
+      try {
         handleMessage(message);
-      } catch {
-        logger.warn({ data: data.toString() }, 'Failed to parse WebSocket message');
+      } catch (err) {
+        logger.warn(
+          { type: message.type, err: err instanceof Error ? err.message : String(err) },
+          'Failed to handle WebSocket message',
+        );
       }
     });
 
@@ -247,7 +261,15 @@ export function createWsTransport(
             numRequests: getAndResetNumRequests?.() ?? 0,
           };
 
-          outputController?.enqueue(event);
+          // `desiredSize === null` means the readable side is errored or
+          // closed (e.g. a prior inference timeout, or session teardown). A
+          // late prediction can still arrive on the socket; drop it quietly
+          // rather than throwing on `enqueue` into a dead stream.
+          if (outputController !== null && outputController.desiredSize !== null) {
+            outputController.enqueue(event);
+          } else {
+            logger.debug('interruption output stream closed; dropping late bargein event');
+          }
           setState({ overlapSpeechStarted: false });
         }
         break;
