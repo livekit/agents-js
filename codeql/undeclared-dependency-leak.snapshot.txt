@@ -1,0 +1,7 @@
+plugins/bey	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/hedra	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/lemonslice	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/liveavatar	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/runway	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/tavus	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.
+plugins/trugen	Public API exported function log references 'Logger' from 'pino', which is not a declared dependency of this package.

@@ -256,6 +256,10 @@ plugins/minimax/src/index.ts	TTSModel
 plugins/minimax/src/index.ts	TTSOptions
 plugins/minimax/src/index.ts	TTSSampleRate
 plugins/minimax/src/index.ts	TTSVoice
+plugins/mistral/src/index.ts	LLM
+plugins/mistral/src/index.ts	LLMOptions
+plugins/mistral/src/index.ts	LLMStream
+plugins/mistral/src/index.ts	MistralChatModels
 plugins/mistralai/src/index.ts	ChunkedStream
 plugins/mistralai/src/index.ts	LLM
 plugins/mistralai/src/index.ts	LLMOptions

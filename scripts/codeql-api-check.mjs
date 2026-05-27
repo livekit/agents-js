@@ -52,6 +52,18 @@ const problemQueries = [
     file: 'implicit-public-return-types.ql',
     snapshot: path.join(repoRoot, 'codeql', 'implicit-public-return-types.snapshot.txt'),
   },
+  {
+    name: '`any`/`unknown` in public API',
+    label: 'any-in-public-api',
+    file: 'any-in-public-api.ql',
+    snapshot: path.join(repoRoot, 'codeql', 'any-in-public-api.snapshot.txt'),
+  },
+  {
+    name: 'Public API leaks an undeclared dependency',
+    label: 'undeclared-dependency-leak',
+    file: 'undeclared-dependency-leak.ql',
+    snapshot: path.join(repoRoot, 'codeql', 'undeclared-dependency-leak.snapshot.txt'),
+  },
 ];
 
 const update = process.argv.includes('--update');
@@ -79,6 +91,8 @@ const codeql = (args) =>
   execFileSync('codeql', args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
 
 const createDatabase = () => {
+  // Remove any prior database; `--overwrite` alone has been observed to reuse stale extraction.
+  fs.rmSync(dbDir, { recursive: true, force: true });
   fs.mkdirSync(workDir, { recursive: true });
   const config = path.join(workDir, 'extraction-config.yml');
   fs.writeFileSync(
@@ -87,6 +101,9 @@ const createDatabase = () => {
       'paths:',
       '  - agents/src',
       '  - plugins/*/src',
+      // package manifests, so the undeclared-dependency query can read declared deps
+      '  - agents/package.json',
+      '  - plugins/*/package.json',
       'paths-ignore:',
       '  - "**/*.test.ts"',
       '',
@@ -105,27 +122,42 @@ const createDatabase = () => {
   ]);
 };
 
-/** Parse one CodeQL CSV row into fields, handling quoted commas. @param {string} line */
-const parseCsv = (line) => {
-  const out = [];
+/**
+ * Parse full CodeQL CSV content into rows of fields, honoring quoted commas, escaped quotes,
+ * and quoted fields that span multiple physical lines (CodeQL embeds newlines in descriptions).
+ * @param {string} content
+ * @returns {string[][]}
+ */
+const parseCsvRows = (content) => {
+  const rows = [];
+  let row = [];
   let cur = '';
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
+  const endRow = () => {
+    row.push(cur);
+    cur = '';
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+    row = [];
+  };
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
     if (inQuotes) {
-      if (c === '"' && line[i + 1] === '"') {
+      if (c === '"' && content[i + 1] === '"') {
         cur += '"';
         i++;
       } else if (c === '"') inQuotes = false;
       else cur += c;
     } else if (c === '"') inQuotes = true;
     else if (c === ',') {
-      out.push(cur);
+      row.push(cur);
       cur = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && content[i + 1] === '\n') i++;
+      endRow();
     } else cur += c;
   }
-  out.push(cur);
-  return out;
+  if (cur !== '' || row.length > 0) endRow();
+  return rows;
 };
 
 /** Maps a repo-relative file path to its owning package root, e.g. `plugins/cartesia`. */
@@ -148,11 +180,8 @@ const computeApiSurface = () => {
     path.join(queriesDir, 'api-surface.ql'),
   ]);
   codeql(['bqrs', 'decode', '--format=csv', '--no-titles', `--output=${csv}`, bqrs]);
-  return fs
-    .readFileSync(csv, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim().length > 0)
-    .map((l) => parseCsv(l).join('\t'))
+  return parseCsvRows(fs.readFileSync(csv, 'utf8'))
+    .map((cols) => cols.join('\t'))
     .sort();
 };
 
@@ -177,11 +206,7 @@ const runProblemQueries = () => {
   ]);
   /** @type {Map<string, { snapshot: Set<string>, printable: string[] }>} */
   const byName = new Map();
-  for (const cols of fs
-    .readFileSync(out, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim().length > 0)
-    .map(parseCsv)) {
+  for (const cols of parseCsvRows(fs.readFileSync(out, 'utf8'))) {
     // columns: name, description, severity, message, path, startLine, ...
     const [name, , , message, file, line] = cols;
     if (!byName.has(name)) byName.set(name, { snapshot: new Set(), printable: [] });

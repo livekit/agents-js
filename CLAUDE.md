@@ -36,14 +36,16 @@ pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
 pnpm format:check           # Prettier check
 pnpm format:write           # Prettier format
-pnpm api:check              # CodeQL public-API checks (surface snapshot + forgotten exports)
+pnpm api:check              # CodeQL public-API checks (see below)
 pnpm api:update             # Refresh the CodeQL API snapshots
 ```
 
 > `api:check`/`api:update` require the [CodeQL CLI](https://github.com/github/codeql-cli-binaries)
-> on `PATH` (`brew install codeql`). The queries live in `codeql/queries/` and compare against
-> committed snapshots in `codeql/*.snapshot.txt`; `api:check` fails only on drift. See
-> `scripts/codeql-api-check.mjs`.
+> on `PATH` (`brew install codeql`). The queries live in `codeql/queries/` and each is compared
+> against a committed snapshot in `codeql/*.snapshot.txt`; `api:check` fails only on drift, so
+> existing debt is tracked and regressions are blocked. The checks are: public API surface,
+> forgotten exports, missing return types on the public API, `any`/`unknown` in public
+> signatures, and public APIs that leak an undeclared dependency. See `scripts/codeql-api-check.mjs`.
 
 ### Running an example agent
 
