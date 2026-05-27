@@ -1,5 +1,5 @@
 ---
-"@livekit/agents-plugin-inworld": minor
+"@livekit/agents-plugin-inworld": patch
 ---
 
 feat(inworld): add STT plugin with voice profiling support
