@@ -104,20 +104,11 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
    *
    * Consumed by `AudioRecognition` when an `AudioTurnDetector` is active —
    * the EOT detector needs a wider silence window than typical VAD
-   * defaults, and reads/writes this knob to bump the floor (with restore
-   * on detach). Implementations that don't support runtime tuning should
-   * leave the default `null` return.
+   * defaults, so the floor is validated against this knob. Implementations
+   * that don't support introspection should leave the default `null` return.
    */
   get minSilenceDuration(): number | null {
     return null;
-  }
-
-  /**
-   * Set the `minSilenceDuration` floor in milliseconds. No-op for VADs
-   * that don't expose this knob (check the getter first).
-   */
-  setMinSilenceDuration(_durationMs: number): void {
-    return;
   }
 
   /**

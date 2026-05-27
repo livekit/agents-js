@@ -117,14 +117,9 @@ async function waitUntilConnected(transport: CloudTransport, ticks = 50): Promis
   throw new Error('transport did not connect within timeout');
 }
 
-async function drainSendQueue(transport: CloudTransport, ticks = 50): Promise<void> {
+async function drainSendQueue(_transport: CloudTransport, ticks = 50): Promise<void> {
+  // Let the sender task flush the buffered ClientMsgs to the fake socket.
   for (let i = 0; i < ticks; i++) {
-    // @ts-expect-error reaching into protected test-visible state
-    const q = transport._sendQueue as unknown[];
-    if (q.length === 0) {
-      await tick();
-      return;
-    }
     await tick();
   }
 }

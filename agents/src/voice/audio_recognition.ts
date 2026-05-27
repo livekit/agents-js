@@ -251,7 +251,6 @@ export class AudioRecognition {
   private vad?: VAD;
   private turnDetector?: _TurnDetector | AudioTurnDetector;
   private turnDetectorStream?: AudioTurnDetectorStream;
-  private turnDetectionTask?: Task<void>;
   /**
    * The last `TurnDetectionEvent` we forwarded via `onEotPrediction`, kept
    * by reference to dedupe: both EOU triggers in a turn read the same
@@ -269,10 +268,6 @@ export class AudioRecognition {
    * park until the next utterance.
    */
   private userSpeakingEvent = new SpeakingEvent();
-  /** Snapshot of the VAD's `minSilenceDuration` (ms) when the audio EOT
-   * detector raised it; null while unmodified. Used to restore on detach. */
-  private vadMinSilenceOrigMs?: number;
-  private warnedVadSilenceOverride = false;
   private warnedTurnDetectorPushFailure = false;
   private turnDetectionMode?: TurnDetectionMode;
   private endpointing: BaseEndpointing;
@@ -353,10 +348,11 @@ export class AudioRecognition {
     this.stt = opts.stt;
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
+    this.checkVadSilenceRequirement();
     // If the caller passed an `AudioTurnDetector`, wire up its FSM stream
     // here so audio frames + VAD events route into it from this turn.
     if (this.turnDetector instanceof AudioTurnDetector) {
-      this.attachAudioTurnDetector(this.turnDetector);
+      this.turnDetectorStream = this.turnDetector.stream();
     }
     this.turnDetectionMode = opts.turnDetectionMode;
     this.userTurnLimit = opts.userTurnLimit;
@@ -505,134 +501,50 @@ export class AudioRecognition {
 
   /**
    * Swap the active turn detector at runtime. When an `AudioTurnDetector`
-   * is provided, opens a per-turn FSM stream, starts the event-drain task,
-   * and bumps the VAD's `minSilenceDuration` floor if needed.
+   * is provided, opens a per-turn FSM stream after retiring the prior one.
    */
-  async updateTurnDetector(detector: _TurnDetector | AudioTurnDetector | undefined): Promise<void> {
-    // Audio detector going away → restore VAD min_silence on the still-bound VAD.
-    if (!(detector instanceof AudioTurnDetector)) {
-      this.revertVadSilenceOverride();
-    }
+  updateTurnDetector(detector: _TurnDetector | AudioTurnDetector | undefined): void {
     this.turnDetector = detector;
-    // Tear down the prior stream + drain task BEFORE attaching the new
-    // one. Without sequencing, audio frames flowing through the broadcast
-    // transform could fan into the new stream while the old drain task is
-    // still alive — which races `_lastPrediction` (the cached prediction
-    // for the previous turn could leak into the new stream's first
-    // `predictEndOfTurn`).
+    this.checkVadSilenceRequirement();
+
+    // Retire the prior stream before creating the new one. `detach()` frees
+    // the detector's single-stream slot synchronously (so `stream()` below
+    // won't throw if the same detector is reused), while the network teardown
+    // runs in the background.
     const oldStream = this.turnDetectorStream;
-    const oldTask = this.turnDetectionTask;
-    this.turnDetectorStream = undefined;
-    this.turnDetectionTask = undefined;
-    // Cancel the task first — its abort listener triggers `stream.aclose()`,
-    // which races the explicit close below. Both paths are idempotent.
-    if (oldTask !== undefined) {
-      await oldTask.cancelAndWait().catch(() => undefined);
-    }
     if (oldStream !== undefined) {
-      await oldStream.aclose().catch(() => undefined);
+      oldStream.detach();
+      void oldStream.aclose().catch(() => undefined);
     }
     // Cross-detector state should not leak: the cached speaking signal
     // from the prior detector's turn must not race the new detector's
     // first bounce.
     this.userSpeakingEvent.clear();
-    if (detector instanceof AudioTurnDetector) {
-      this.attachAudioTurnDetector(detector);
-    }
-    this.maybeApplyVadSilenceOverride();
+    this.turnDetectorStream = detector instanceof AudioTurnDetector ? detector.stream() : undefined;
   }
 
-  /** Construct the per-turn FSM stream and the event-drain background task. */
-  private attachAudioTurnDetector(detector: AudioTurnDetector): void {
-    const stream = detector.stream();
-    this.turnDetectorStream = stream;
-    this.turnDetectionTask = Task.from(({ signal }) => this.turnDetectionDrain(stream, signal));
-  }
-
-  /** Drain the audio-EOT stream events. We don't act on every event — the
-   * endpointing bounce reads `lastPrediction` directly via
-   * `predictEndOfTurn`. This loop just short-circuits further inference
-   * when a high-probability prediction lands so the cloud transport stops
-   * wasting bandwidth for the rest of the silence window.
-   *
-   * Cooperatively cancellable: when `signal` aborts we trigger
-   * `stream.aclose()` so the async-iterator wakes with `done: true` and
-   * the loop exits. Without this, `for await (... of stream)` parks on
-   * the event channel indefinitely and `cancelAndWait` on the task hangs
-   * until something else closes the stream.
+  /**
+   * The audio EOT detector needs a wider silence window than typical VAD
+   * defaults. Rather than mutate the VAD's knob, require the caller to
+   * configure it: raise if the bound VAD exposes `minSilenceDuration` and it
+   * is below the floor. VADs that don't expose the knob are left untouched.
    */
-  private async turnDetectionDrain(
-    stream: AudioTurnDetectorStream,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const onAbort = () => {
-      // Closing the stream wakes the iterator; don't await here — we're
-      // in the signal listener and must return synchronously.
-      void stream.aclose().catch(() => undefined);
-    };
-    if (signal.aborted) {
-      onAbort();
-    } else {
-      signal.addEventListener('abort', onAbort, { once: true });
+  private checkVadSilenceRequirement(): void {
+    if (!(this.turnDetector instanceof AudioTurnDetector) || this.vad === undefined) {
+      return;
     }
-    try {
-      for await (const ev of stream) {
-        if (signal.aborted) return;
-        if (!stream.isInferenceRunning) continue;
-        const threshold = await stream.unlikelyThreshold(this.lastLanguage);
-        if (threshold !== undefined && ev.endOfTurnProbability >= threshold) {
-          stream.deactivate('positive eou prediction');
-        }
-      }
-    } catch (err) {
-      this.logger.warn(
-        { err: err instanceof Error ? err.message : String(err) },
-        'turn detection drain failed',
-      );
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-    }
-  }
-
-  /** Bump the bound VAD's `minSilenceDuration` to give the audio EOT
-   * detector a wider window. Stores the original value for restore. */
-  private maybeApplyVadSilenceOverride(): void {
-    if (this.vadMinSilenceOrigMs !== undefined) return; // already overridden
-    if (!(this.turnDetector instanceof AudioTurnDetector)) return;
-    if (this.vad === undefined) return;
     const current = this.vad.minSilenceDuration;
     if (current === null) {
-      // VAD doesn't expose this knob — warn once so the user knows the
-      // audio EOT detector may be working with a too-short silence
-      // window (the FSM defaults the floor to MIN_SILENCE_DURATION_MS).
-      if (!this.warnedVadSilenceOverride) {
-        this.logger.warn(
-          { label: this.vad.label, required: MIN_SILENCE_DURATION_MS + 50 },
-          'VAD does not expose minSilenceDuration; the audio EOT detector may ' +
-            'see a shorter silence window than recommended. Consider using ' +
-            'inference.VAD or @livekit/agents-plugin-silero.',
-        );
-        this.warnedVadSilenceOverride = true;
-      }
       return;
     }
     const required = MIN_SILENCE_DURATION_MS + 50;
-    if (current >= required) return;
-    this.vad.setMinSilenceDuration(required);
-    this.vadMinSilenceOrigMs = current;
-    if (!this.warnedVadSilenceOverride) {
-      this.logger.info(
-        { from: current, to: required },
-        'bumping vad minSilenceDuration for audio eot detector',
+    if (current < required) {
+      throw new Error(
+        `vad minSilenceDuration=${current}ms is too low for the audio ` +
+          `end-of-turn detector. Raise the VAD's minSilenceDuration to at ` +
+          `least ${required}ms.`,
       );
-      this.warnedVadSilenceOverride = true;
     }
-  }
-
-  private revertVadSilenceOverride(): void {
-    if (this.vadMinSilenceOrigMs === undefined) return;
-    this.vad?.setMinSilenceDuration(this.vadMinSilenceOrigMs);
-    this.vadMinSilenceOrigMs = undefined;
   }
 
   /**
@@ -707,14 +619,11 @@ export class AudioRecognition {
     await this.sttForwardTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
-    await this.turnDetectionTask?.cancelAndWait();
-    this.turnDetectionTask = undefined;
     if (this.turnDetectorStream !== undefined) {
       const stream = this.turnDetectorStream;
       this.turnDetectorStream = undefined;
       await stream.aclose().catch(() => undefined);
     }
-    this.revertVadSilenceOverride();
   }
 
   async disableInterruptionDetection(): Promise<void> {
@@ -1108,6 +1017,7 @@ export class AudioRecognition {
         const transcript = ev.alternatives?.[0]?.text;
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
+        this.turnDetectorStream?.setLanguage(this.lastLanguage);
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -1185,6 +1095,7 @@ export class AudioRecognition {
           (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
         ) {
           this.lastLanguage = preflightLanguage;
+          this.turnDetectorStream?.setLanguage(this.lastLanguage);
         }
 
         if (!preflightTranscript) {
@@ -1774,6 +1685,12 @@ export class AudioRecognition {
               // Wake any speaking-guard waiter — STT-only sessions don't
               // see START_OF_SPEECH but do see INFERENCE_DONE-with-speech.
               this.userSpeakingEvent.set();
+            } else if (!this.speaking) {
+              // A sub-threshold speech spike can set `userSpeakingEvent` without
+              // ever reaching START_OF_SPEECH, so no END_OF_SPEECH will fire to
+              // clear it. Clear it here once speech drops back to zero (confirmed
+              // turns are cleared by EOS).
+              this.userSpeakingEvent.clear();
             }
 
             // Audio EOT FSM: warm up inference once we've seen enough

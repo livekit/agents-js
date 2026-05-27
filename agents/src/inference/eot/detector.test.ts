@@ -151,8 +151,9 @@ function makeMockDetector(
   }
   const det = new AudioTurnDetector();
   process.env = originalEnv;
-  det._setBackend(backend);
-  det._setThresholds(opts.thresholds);
+  const internals = det as unknown as { _backend: typeof backend; _opts: TurnDetectorOptions };
+  internals._backend = backend;
+  internals._opts = { ...internals._opts, thresholds: opts.thresholds };
   return det;
 }
 
@@ -285,8 +286,40 @@ describe('Fallback', () => {
   });
 });
 
+describe('SingleStreamOwnership', () => {
+  it('second stream rejected until the first is retired', async () => {
+    let detector!: AudioTurnDetector;
+    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      detector = new AudioTurnDetector({ backend: 'local' });
+    });
+    const s1 = detector.stream();
+    // The detector drives one stream at a time.
+    expect(() => detector.stream()).toThrow();
+
+    // Synchronous detach alone frees the slot (what updateTurnDetector does
+    // before scheduling the old stream's async aclose).
+    (s1 as AudioTurnDetectorStreamImpl).detach();
+    const s2 = detector.stream();
+    await s1.aclose();
+    await s2.aclose();
+  });
+
+  it('aclose releases the slot', async () => {
+    let detector!: AudioTurnDetector;
+    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      detector = new AudioTurnDetector({ backend: 'local' });
+    });
+    const s1 = detector.stream();
+    await s1.aclose();
+    expect(detector._activeStream()).toBeUndefined();
+    // A fresh stream is accepted once the previous one closed.
+    const s2 = detector.stream();
+    await s2.aclose();
+  });
+});
+
 describe('DetectorViewAfterFallback', () => {
-  it('detector model and threshold follow fallback', async () => {
+  it('detector model/backend/threshold follow the active stream after fallback', async () => {
     let detector!: AudioTurnDetector;
     await withEnv(
       {
@@ -297,8 +330,7 @@ describe('DetectorViewAfterFallback', () => {
       async () => {
         detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
         expect(detector.model).toBe('eot-audio');
-        const cloudThreshold = await detector.unlikelyThreshold('en');
-        expect(cloudThreshold).toBeCloseTo(0.5);
+        expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
       },
     );
 
@@ -313,13 +345,24 @@ describe('DetectorViewAfterFallback', () => {
       backend: 'cloud',
       transport,
     });
+    // Register as the detector's active stream (what stream() does) so the
+    // detector's model/backend/threshold views resolve through it. The
+    // fallback state lives on the stream, never written back to the detector.
+    (
+      detector as unknown as { _activeStreamRef: WeakRef<AudioTurnDetectorStreamImpl> }
+    )._activeStreamRef = new WeakRef(stream);
     await waitFor(() => stream.backend === 'local');
 
+    // The stream reflects the fallback...
+    expect(stream.backend).toBe('local');
+    expect(stream.model).toBe('eot-audio-mini');
+    const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(expected);
+
+    // ...and the detector delegates to it, so its views follow the fallback.
     expect(detector.model).toBe('eot-audio-mini');
     expect(detector.backend).toBe('local');
-    const localThreshold = await detector.unlikelyThreshold('en');
-    const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
-    expect(localThreshold).toBeCloseTo(expected);
+    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(expected);
     await stream.aclose();
   });
 });

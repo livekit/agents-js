@@ -19,7 +19,7 @@ import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { Future, Task, cancelAndWait, readStream, shortuuid } from '../../utils.js';
+import { Future, Task, cancelAndWait, shortuuid } from '../../utils.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
@@ -152,8 +152,8 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
  * Per-turn FSM:
  *
  * - `warmup()` opens an inference window (transport.startInference).
- * - `activate(trigger)` flips IDLE→ACTIVE; releases any held preemptive
- *   prediction.
+ * - `activate(trigger)` flips IDLE→ACTIVE; commits early if a confident
+ *   prediction already resolved during warmup.
  * - `deactivate(trigger)` clears the request id, resolves the in-flight
  *   future with 0.0, calls transport.stopInference.
  * - `flush(reason, keepTailMs)` deactivates and signals turn boundary to
@@ -171,7 +171,7 @@ export class SwapAbortError extends Error {
   }
 }
 
-export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetectionEvent> {
+export class AudioTurnDetectorStream {
   protected _detector: AudioTurnDetector;
   protected _opts: TurnDetectorOptions;
   protected _transport: AudioTurnDetectionTransport;
@@ -180,21 +180,23 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
   private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
-  private _eventChannel: StreamChannel<TurnDetectionEvent> = createStreamChannel();
-  private _eventReader: AsyncIterator<TurnDetectionEvent> | undefined;
 
   protected _status: Status = Status.IDLE;
   protected _preemptiveRequestId: string | undefined;
   protected _preemptiveRequestFut: Future<number> | undefined;
-  /** Held when status is IDLE; released on next `activate()`. */
-  protected _preemptivePrediction: TurnDetectionEvent | undefined;
   /**
    * Latest resolved prediction in the current inference window. Cleared
    * when a new window starts (next warmup) or on commit (flush). Lets
    * `predictEndOfTurn` return immediately when a prediction is already
-   * in hand via the event stream.
+   * in hand.
    */
   protected _lastPrediction: TurnDetectionEvent | undefined;
+  /**
+   * Most recent detected language, pushed by `AudioRecognition` on each STT
+   * transcript. Used by the inline early-deactivation check (`_isLikely`) to
+   * resolve the per-language unlikely-EOT threshold.
+   */
+  protected _lastLanguage: LanguageCode | undefined;
   /**
    * True between `onSpeechStarted()` and the next `flush()` — i.e. a user
    * turn is open and `predictEndOfTurn` should run. When false, predict
@@ -228,9 +230,6 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
     this._transport.bind(this);
 
     this._mainTask = Task.from((controller) => this._mainTaskBody(controller));
-    this._mainTask.addDoneCallback(() => {
-      void this._eventChannel.close();
-    });
   }
 
   // region: _TurnDetector protocol proxies
@@ -250,6 +249,27 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
     return (await this.unlikelyThreshold(language)) !== undefined;
+  }
+
+  /**
+   * Record the most recent detected language so the inline early-deactivation
+   * check can resolve the unlikely-EOT threshold. Pushed by `AudioRecognition`
+   * on each STT transcript.
+   */
+  setLanguage(language: LanguageCode | undefined): void {
+    this._lastLanguage = language;
+  }
+
+  /**
+   * A prediction at or above `unlikelyThreshold` is no longer "unlikely" — it's
+   * a confident end-of-turn. Mirrors that method's `undefined → "en"` fallback:
+   * an unknown language still gets the English threshold; an explicitly
+   * unsupported code misses the table and is never treated as likely.
+   */
+  protected _isLikely(probability: number): boolean {
+    const key = this._lastLanguage ?? 'en';
+    const threshold = this._opts.thresholds[key];
+    return threshold !== undefined && probability >= threshold;
   }
 
   // endregion
@@ -305,10 +325,15 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
       this.warmup();
     }
     this._status = Status.ACTIVE;
-    if (this._preemptivePrediction !== undefined) {
-      const held = this._preemptivePrediction;
-      this._preemptivePrediction = undefined;
-      this._emitEvent(held);
+    // A prediction may have resolved during the preemptive warmup window,
+    // before activation. We deliberately hold off acting on the threshold
+    // until now: a confident EOT only commits once VAD confirms end-of-speech
+    // (the trigger that calls `activate`).
+    if (
+      this._lastPrediction !== undefined &&
+      this._isLikely(this._lastPrediction.endOfTurnProbability)
+    ) {
+      this.deactivate('positive eou prediction');
     }
   }
 
@@ -320,7 +345,6 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
       return;
     }
     this._preemptiveRequestId = undefined;
-    this._preemptivePrediction = undefined;
     if (this._preemptiveRequestFut !== undefined) {
       if (!this._preemptiveRequestFut.done) {
         this._preemptiveRequestFut.resolve(0.0);
@@ -430,19 +454,9 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
 
   // region: results
 
-  /** Subclasses (`_FakeBackend` in tests) override to intercept emissions. */
-  protected _emitEvent(event: TurnDetectionEvent): void {
-    // The event channel may already be closed if the stream was torn down
-    // while a prediction was still in flight (e.g. a local `predict()`
-    // resolving on libuv's worker pool after `aclose`). Guard + swallow so
-    // the late write doesn't surface as an unhandled rejection.
-    if (this._eventChannel.closed) return;
-    void this._eventChannel.write(event).catch(() => undefined);
-  }
-
   /**
    * Accept a prediction from a transport. The stream owns dedup (by
-   * requestId), future resolution, and active-vs-held event routing.
+   * requestId), future resolution, and the inline early-deactivate.
    */
   _handlePrediction(
     requestId: string,
@@ -468,10 +482,14 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
       inferenceDuration: opts.inferenceDuration,
     };
     this._lastPrediction = event;
-    if (this.isActive) {
-      this._emitEvent(event);
-    } else {
-      this._preemptivePrediction = event;
+    // Early-deactivate: stop inference as soon as a confident EOT lands so a
+    // later intra-speech silence can warm up a fresh window. Only while active
+    // — predictions during preemptive warmup are cached and re-checked in
+    // `activate()`. `deactivate` just sends a non-blocking `stopInference`, so
+    // calling it inline from the transport's prediction callback is safe (no
+    // reentrant await).
+    if (this.isActive && this._isLikely(probability)) {
+      this.deactivate('positive eou prediction');
     }
   }
 
@@ -557,17 +575,16 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
 
   // endregion
 
-  // region: async iteration
+  // region: teardown
 
-  async next(): Promise<IteratorResult<TurnDetectionEvent>> {
-    if (this._eventReader === undefined) {
-      this._eventReader = readStream(this._eventChannel.stream())[Symbol.asyncIterator]();
-    }
-    return this._eventReader.next();
-  }
-
-  [Symbol.asyncIterator](): AsyncIterableIterator<TurnDetectionEvent> {
-    return this;
+  /**
+   * Synchronously release this stream's registration on its owning detector,
+   * so a replacement stream can be created before this one's async teardown
+   * finishes. Base is a no-op; detectors that enforce single-stream ownership
+   * override it. Idempotent.
+   */
+  detach(): void {
+    return;
   }
 
   async aclose(): Promise<void> {
@@ -580,7 +597,6 @@ export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetect
     }
     this._preemptiveRequestFut = undefined;
     this._preemptiveRequestId = undefined;
-    this._preemptivePrediction = undefined;
     this._status = Status.IDLE;
     // Drop our strong reference on the parent detector so callers that
     // forget `detector.aclose()` don't leak the stream graph.
