@@ -34,6 +34,8 @@ export enum AgentSessionEventTypes {
   SpeechCreated = 'speech_created',
   AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
+  /** Audio EOT detector emitted a per-turn prediction. */
+  EotPrediction = 'eot_prediction',
   Error = 'error',
   Close = 'close',
 }
@@ -243,6 +245,46 @@ export const createSpeechCreatedEvent = ({
   userInitiated,
   source,
   speechHandle,
+  createdAt,
+});
+
+/**
+ * Audio EOT prediction landed on the wire. Emitted once per turn boundary
+ * decision when an `AudioTurnDetector` is wired into the session.
+ *
+ * Port of Python `EotPredictionEvent`.
+ */
+export type EotPredictionEvent = {
+  type: 'eot_prediction';
+  /** End-of-turn probability in [0, 1] returned by the detector. */
+  probability: number;
+  /** Threshold below which the detector treats the prediction as unlikely. */
+  threshold: number;
+  /** Model-side inference time, in milliseconds. */
+  inferenceDurationMs: number;
+  /** End-of-speech → prediction receive time, in milliseconds. */
+  delayMs: number;
+  createdAt: number;
+};
+
+export const createEotPredictionEvent = ({
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
+  createdAt = Date.now(),
+}: {
+  probability: number;
+  threshold: number;
+  inferenceDurationMs: number;
+  delayMs: number;
+  createdAt?: number;
+}): EotPredictionEvent => ({
+  type: 'eot_prediction',
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
   createdAt,
 });
 

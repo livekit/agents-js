@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -14,15 +13,11 @@ import {
 import * as anam from '@livekit/agents-plugin-anam';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 
 // Uses OpenAI Advanced Voice (Realtime), so no separate STT/TTS/VAD.
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     initializeLogger({ pretty: true });
 
@@ -31,7 +26,6 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',

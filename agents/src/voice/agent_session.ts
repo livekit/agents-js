@@ -16,6 +16,7 @@ import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
+  VAD as InferenceVAD,
   type LLMModels,
   type STTModelString,
   type TTSModelString,
@@ -63,6 +64,7 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -90,6 +92,7 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
+import type { AudioTurnDetector } from './turn_config/audio_turn_detector.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
@@ -199,7 +202,13 @@ export type VoiceOptions = {
   maxEndpointingDelay?: number;
 };
 
-export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
+export type TurnDetectionMode =
+  | 'stt'
+  | 'vad'
+  | 'realtime_llm'
+  | 'manual'
+  | _TurnDetector
+  | AudioTurnDetector;
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
@@ -215,11 +224,18 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.EotPrediction]: (ev: EotPredictionEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   stt?: STT | STTModelString;
-  vad?: VAD;
+  /**
+   * Voice Activity Detection. When omitted, `AgentSession` auto-provisions a
+   * bundled `inference.VAD({ model: 'silero' })` and marks it as the default
+   * (so sites that previously distinguished "user supplied a VAD" continue
+   * to treat the bundled one as absent). Pass `null` to opt out entirely.
+   */
+  vad?: VAD | null;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
@@ -438,7 +454,18 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
-    this.vad = vad;
+    // VAD: undefined → auto-provision bundled inference.VAD (silero) and
+    // mark it as the default. null → leave VAD off entirely. Otherwise use
+    // what the caller supplied.
+    if (vad === undefined) {
+      const defaultVad = new InferenceVAD({ model: 'silero' });
+      defaultVad._markAsDefault();
+      this.vad = defaultVad;
+    } else if (vad === null) {
+      this.vad = undefined;
+    } else {
+      this.vad = vad;
+    }
 
     if (typeof stt === 'string') {
       this.stt = InferenceSTT.fromModelString(stt);

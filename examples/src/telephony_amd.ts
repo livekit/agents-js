@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { TrackKind } from '@livekit/rtc-node';
 import { RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { fileURLToPath } from 'node:url';
@@ -41,9 +39,6 @@ class MyAgent extends voice.Agent {
  *   SIP_PARTICIPANT_IDENTITY  — identity to assign the dialed participant
  */
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log().child({ room: ctx.room.name });
 
@@ -60,7 +55,6 @@ export default defineAgent({
       turnHandling: {
         turnDetection: new livekit.turnDetector.MultilingualModel(),
       },
-      vad: ctx.proc.userData.vad! as silero.VAD,
       preemptiveGeneration: true,
     });
 

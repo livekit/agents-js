@@ -2,33 +2,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  Agent,
+  AgentSession,
+  AgentSessionEventTypes,
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
   inference,
-  llm,
   log,
-  metrics,
-  voice,
+  logMetrics,
+  tool,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
+// import * as livekit from '@livekit/agents-plugin-livekit';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the silero VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
+    const agent = Agent.create({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -37,15 +38,16 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-      },
+      ],
     });
 
     const logger = log();
 
-    const session = new voice.AgentSession({
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
+    const session = new AgentSession({
+      // Explicit VAD (cheap to construct; the silero model lazy-loads on the
+      // first stream). Passing it rather than relying on the auto-provisioned
+      // default marks `isDefault=false`, which is what enables adaptive interruption.
+      vad: new inference.VAD(),
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -69,7 +71,15 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        // VAD and turn detection determine when the user is speaking and when the agent
+        // should respond. See https://docs.livekit.io/agents/build/turns
+        //
+        // Cloud audio EOT detector pointed at the staging gateway. Requires
+        // LIVEKIT_API_KEY_STAGING / LIVEKIT_API_SECRET_STAGING in the env.
+        turnDetection: new inference.AudioTurnDetector(),
+        // To use the local on-device text turn detector instead, re-enable the
+        // `@livekit/agents-plugin-livekit` import above and use:
+        // turnDetection: new livekit.turnDetector.MultilingualModel(),
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,
@@ -103,8 +113,8 @@ export default defineAgent({
     });
 
     // Log metrics as they are emitted
-    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
-      metrics.logMetrics(ev.metrics);
+    session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      logMetrics(ev.metrics);
     });
 
     // Log usage summary when job shuts down
@@ -117,7 +127,7 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
+    session.on(AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
