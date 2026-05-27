@@ -195,6 +195,7 @@ export class AgentActivity implements RecognitionHooks {
   private turnDetectionMode?: TurnDetectionMode;
   private logger = log();
   private _schedulingPaused = true;
+  private newTurnsBlocked = false;
   private _authorizationPaused = false;
   private _drainBlockedTasks: Task<any>[] = [];
   private _currentSpeech?: SpeechHandle;
@@ -669,6 +670,11 @@ export class AgentActivity implements RecognitionHooks {
 
   get schedulingPaused(): boolean {
     return this._schedulingPaused;
+  }
+
+  /** @internal */
+  blockNewTurns(): void {
+    this.newTurnsBlocked = true;
   }
 
   pauseReplyAuthorization(): void {
@@ -1418,6 +1424,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onUserTurnExceeded(ev: UserTurnExceededEvent): void {
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      this.logger.warn(
+        { numWords: ev.accumulatedWordCount, duration: ev.duration },
+        'skipping user turn exceeded, speech scheduling is paused',
+      );
+      return;
+    }
+
     if (this.userTurnExceededLocked) {
       return;
     }
@@ -1479,6 +1493,10 @@ export class AgentActivity implements RecognitionHooks {
       if (!waitInactiveTask.done) {
         waitInactiveTask.cancel();
       }
+    }
+
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      return;
     }
 
     this.logger.debug(
@@ -3539,6 +3557,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!this._schedulingPaused) return;
 
     this._schedulingPaused = false;
+    this.newTurnsBlocked = false;
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
   }
 

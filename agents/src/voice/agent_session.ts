@@ -614,6 +614,8 @@ export class AgentSession<
       return;
     }
 
+    this.activity?.blockNewTurns();
+
     const _updateActivityTask = async (oldTask: Task<void> | undefined, agent: Agent) => {
       if (oldTask) {
         try {
