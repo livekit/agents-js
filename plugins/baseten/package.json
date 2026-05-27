@@ -32,9 +32,7 @@
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint --fix \"src/**/*.ts\"",
-    "api:check": "api-extractor run --typescript-compiler-folder ../../node_modules/typescript",
-    "api:update": "api-extractor run --local --typescript-compiler-folder ../../node_modules/typescript --verbose"
+    "lint:fix": "eslint --fix \"src/**/*.ts\""
   },
   "keywords": [
     "livekit",
@@ -50,7 +48,6 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.18.11",
     "@types/ws": "catalog:",
     "tsx": "^4.7.0",

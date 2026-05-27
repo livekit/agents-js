@@ -36,8 +36,6 @@ pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
 pnpm format:check           # Prettier check
 pnpm format:write           # Prettier format
-pnpm api:check              # API Extractor validation
-pnpm api:update             # Update API declarations
 ```
 
 ### Running an example agent
@@ -154,7 +152,6 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **TypeScript**: strict mode, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`, target ES2022, module node16.
 - **Time units**: Use milliseconds for all time-based values by default. Only use seconds when the name explicitly ends with `InS`.
 - **Changesets**: All packages in `agents/` and `plugins/` release together (fixed versioning). Run `pnpm changeset` to add a changeset before PRing. The examples package is ignored.
-- **API Extractor**: Public API surface is tracked. Run `pnpm api:check` after changing exports and `pnpm api:update` to update declarations.
 
 ## Testing
 

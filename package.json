@@ -10,8 +10,6 @@
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "agents:download-files": "pnpm --filter livekit-agents-examples exec livekit-agents download-files",
     "ci:publish": "pnpm build && changeset publish",
-    "api:check": "turbo run api:check",
-    "api:update": "turbo run api:update",
     "format:check": "prettier --check \"**/src/**/*.{ts,tsx,md,json}\"",
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
     "lint": "turbo lint",
