@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
+  inference,
   llm,
   voice,
 } from '@livekit/agents';
@@ -14,7 +14,6 @@ import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
@@ -376,15 +375,13 @@ export async function newUserData(): Promise<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata = await newUserData();
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
-      vad,
+      // VAD lazy-loads the bundled silero model on first stream, so no
+      // prewarm hook is needed.
+      vad: new inference.VAD(),
       stt: new deepgram.STT(),
       llm: new openai.LLM({ model: 'gpt-4.1', temperature: 0.45 }),
       tts: new elevenlabs.TTS(),

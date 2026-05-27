@@ -107,10 +107,6 @@ export class VAD extends baseVAD {
     return this.#opts.minSilenceDuration;
   }
 
-  override setMinSilenceDuration(durationMs: number): void {
-    this.updateOptions({ minSilenceDuration: durationMs });
-  }
-
   stream(): VADStream {
     const stream = new VADStream(
       this,

@@ -13,6 +13,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { APIConnectionError, APIError, APIStatusError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { log } from '../../log.js';
+import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
 import {
@@ -251,7 +252,7 @@ export class LocalTransport implements AudioTurnDetectionTransport {
  * receive) → protobuf encode/decode → `stream._handlePrediction(...)` +
  * `EOTInferenceMetrics` on the detector. Mirrors Python `_CloudTransport`.
  *
- * All outbound messages flow through a single FIFO send queue so control
+ * All outbound messages flow through a single FIFO send channel so control
  * hooks fired synchronously between two awaited audio frames (e.g.
  * `inferenceStart` then `inputAudio`) reach the wire in call order.
  */
@@ -264,9 +265,8 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   protected _ws: CloudWebSocket | undefined;
   protected _numRetries = 0;
   protected _connectCalls = 0;
-  protected _sendQueue: ClientMsg[] = [];
-  protected _sendNotify: (() => void) | undefined;
-  protected _sendClosed = false;
+  /** Outbound FIFO for the active connection; recreated per `_runOnce`. */
+  protected _sendChannel: StreamChannel<ClientMsg> | undefined;
   protected _logger = log();
   /** Optional connect override for tests; defaults to a real WS handshake. */
   private _connectImpl: (() => Promise<CloudWebSocket>) | undefined;
@@ -342,15 +342,14 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   }
 
   detach(): void {
-    this._sendClosed = true;
-    this._sendNotify?.();
+    void this._sendChannel?.close();
     this._ws = undefined;
   }
 
   private _enqueue(msg: ClientMsg): void {
-    if (this._sendClosed) return;
-    this._sendQueue.push(msg);
-    this._sendNotify?.();
+    const channel = this._sendChannel;
+    if (channel === undefined || channel.closed) return;
+    void channel.write(msg).catch(() => {});
   }
 
   private async _defaultConnect(): Promise<CloudWebSocket> {
@@ -449,8 +448,8 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     // the session lifetime don't accumulate toward maxRetry.
     this._numRetries = 0;
     this._ws = ws;
-    this._sendClosed = false;
-    this._sendQueue = [];
+    const sendChannel = createStreamChannel<ClientMsg>();
+    this._sendChannel = sendChannel;
 
     // Send the SessionCreate handshake first, before any queued control msg.
     ws.send(
@@ -469,10 +468,11 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     );
 
     let closingWs = false;
-    let closed = false;
     let socketErr: Error | undefined;
-    const recvBuffer: Uint8Array[] = [];
-    let recvNotify: (() => void) | undefined;
+    // Closing the recv channel makes the reader drain buffered frames and then
+    // observe `done`; we use it (not `abort`) on socket close/error so the
+    // post-drain throw below still decides the outcome.
+    const recvChannel = createStreamChannel<Uint8Array>();
 
     ws.on('message', (data) => {
       const chunk =
@@ -481,19 +481,16 @@ export class CloudTransport implements AudioTurnDetectionTransport {
           : Array.isArray(data)
             ? new Uint8Array(Buffer.concat(data))
             : new Uint8Array(data);
-      recvBuffer.push(chunk);
-      recvNotify?.();
+      void recvChannel.write(chunk).catch(() => {});
     });
     ws.on('close', () => {
-      closed = true;
-      recvNotify?.();
-      this._sendNotify?.();
+      void recvChannel.close();
+      void sendChannel.close();
     });
     ws.on('error', (err) => {
       socketErr = err;
-      closed = true;
-      recvNotify?.();
-      this._sendNotify?.();
+      void recvChannel.close();
+      void sendChannel.close();
     });
 
     const drainAudioTask = Task.from(async () => {
@@ -502,41 +499,39 @@ export class CloudTransport implements AudioTurnDetectionTransport {
       this._enqueue(
         new ClientMessageCtor({ message: { case: 'sessionClose', value: new SessionClose() } }),
       );
-      this._sendClosed = true;
-      this._sendNotify?.();
+      // Close after enqueue so the sender flushes `sessionClose` before exiting.
+      await sendChannel.close();
     });
 
     const senderTask = Task.from(async () => {
-      while (!this._sendClosed || this._sendQueue.length > 0) {
-        if (this._sendQueue.length === 0) {
-          await new Promise<void>((resolve) => {
-            this._sendNotify = resolve;
-          });
-          this._sendNotify = undefined;
-          continue;
+      const reader = sendChannel.stream().getReader();
+      try {
+        while (true) {
+          const { done, value: msg } = await reader.read();
+          if (done) return;
+          if (msg.createdAt === undefined) msg.createdAt = nowTimestamp();
+          if (ws.readyState !== WS_OPEN) return;
+          try {
+            ws.send(msg.toBinary());
+          } catch {
+            return;
+          }
         }
-        const msg = this._sendQueue.shift()!;
-        if (msg.createdAt === undefined) msg.createdAt = nowTimestamp();
-        if (ws.readyState !== WS_OPEN) return;
-        try {
-          ws.send(msg.toBinary());
-        } catch {
-          return;
-        }
+      } finally {
+        reader.releaseLock();
       }
     });
 
     const recvTask = Task.from(async () => {
-      while (!closed || recvBuffer.length > 0) {
-        if (recvBuffer.length === 0) {
-          await new Promise<void>((resolve) => {
-            recvNotify = resolve;
-          });
-          recvNotify = undefined;
-          continue;
+      const reader = recvChannel.stream().getReader();
+      try {
+        while (true) {
+          const { done, value: chunk } = await reader.read();
+          if (done) break;
+          this._processServerMessage(ServerMessageCtor.fromBinary(chunk));
         }
-        const chunk = recvBuffer.shift()!;
-        this._processServerMessage(ServerMessageCtor.fromBinary(chunk));
+      } finally {
+        reader.releaseLock();
       }
       if (socketErr !== undefined && !closingWs) {
         throw new APIConnectionError({
@@ -557,8 +552,8 @@ export class CloudTransport implements AudioTurnDetectionTransport {
       drainAudioTask.cancel();
       senderTask.cancel();
       recvTask.cancel();
-      this._sendClosed = true;
-      this._sendNotify?.();
+      void sendChannel.close();
+      void recvChannel.close();
       this._ws = undefined;
       try {
         ws.close();

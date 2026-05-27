@@ -39,7 +39,9 @@ export interface VADOptions {
 
 const defaultVADOptions: VADOptions = {
   minSpeechDuration: 50,
-  minSilenceDuration: 100,
+  // 250ms (= MIN_SILENCE_DURATION_MS + 50) so the default satisfies the audio
+  // end-of-turn detector's silence-window requirement out of the box.
+  minSilenceDuration: 250,
   prefixPaddingDuration: 500,
   maxBufferedSpeech: 60_000,
   activationThreshold: 0.5,
@@ -77,10 +79,6 @@ export class VAD extends BaseVAD {
 
   override get minSilenceDuration(): number {
     return this._opts.minSilenceDuration;
-  }
-
-  override setMinSilenceDuration(durationMs: number): void {
-    this._opts = { ...this._opts, minSilenceDuration: durationMs };
   }
 
   /** Update one or more knobs at runtime. */

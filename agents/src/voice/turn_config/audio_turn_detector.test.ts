@@ -8,10 +8,12 @@
  * Covers the warmup → activate → deactivate / flush lifecycle and the
  * regression cases:
  *
- * - `deactivate()` from a pre-active state (the historical
- *   `setActive(false)` during WARMING_UP) must stop the inference cleanly
- *   so a late prediction for the cancelled request isn't replayed on the
+ * - `deactivate()` from a pre-active state must stop the inference cleanly
+ *   so a late prediction for the cancelled request isn't acted on by the
  *   next activate.
+ * - a confident prediction (at or above the per-language threshold)
+ *   early-deactivates inline while active, or at `activate()` if it resolved
+ *   during warmup.
  * - `predictEndOfTurn` timeout must leave the FSM consistent so the next
  *   `warmup()` can proceed.
  *
@@ -25,7 +27,6 @@ import {
   AudioTurnDetectorStream,
   type FlushSentinel,
   Status,
-  type TurnDetectionEvent,
   type TurnDetectorOptions,
 } from './audio_turn_detector.js';
 
@@ -72,7 +73,6 @@ class FakeDetector extends AudioTurnDetector {
 }
 
 class FakeBackend extends AudioTurnDetectorStream {
-  emitted: number[] = [];
   fakeTransport: FakeTransport;
 
   constructor(opts: TurnDetectorOptions) {
@@ -85,11 +85,6 @@ class FakeBackend extends AudioTurnDetectorStream {
     return this.fakeTransport.events;
   }
 
-  protected _emitEvent(event: TurnDetectionEvent): void {
-    this.emitted.push(event.endOfTurnProbability);
-    super._emitEvent(event);
-  }
-
   simulatePrediction(requestId: string, probability: number): void {
     this._handlePrediction(requestId, probability);
   }
@@ -98,21 +93,23 @@ class FakeBackend extends AudioTurnDetectorStream {
   get status(): Status {
     return this._status;
   }
-  get preemptivePrediction(): TurnDetectionEvent | undefined {
-    return this._preemptivePrediction;
-  }
   get preemptiveRequestFut() {
     return this._preemptiveRequestFut;
   }
 }
 
-function makeOpts(): TurnDetectorOptions {
-  return { sampleRate: 16000, thresholds: {} };
+function makeOpts(thresholds: Record<string, number> = {}): TurnDetectorOptions {
+  return { sampleRate: 16000, thresholds };
 }
 
-function makeStream(): FakeBackend {
-  return new FakeBackend(makeOpts());
+function makeStream(thresholds: Record<string, number> = {}): FakeBackend {
+  return new FakeBackend(makeOpts(thresholds));
 }
+
+/** Did the stream record an early-deactivate (`stop_inference` with the
+ * positive-EOT trigger)? */
+const earlyDeactivated = (events: Array<[string, string]>) =>
+  events.some((e) => e[0] === 'stop_inference' && e[1] === 'positive eou prediction');
 
 const countStartInference = (events: Array<[string, string]>) =>
   events.filter((e) => e[0] === 'start_inference').length;
@@ -182,19 +179,23 @@ describe('AudioTurnDetectionFSM', () => {
     }
   });
 
-  it('late prediction after deactivate not replayed', async () => {
-    const s = makeStream();
+  it('late prediction after deactivate not acted on', async () => {
+    const s = makeStream({ en: 0.5 });
     try {
       s.warmup();
       const cancelledId = s.preemptiveRequestId!;
       s.deactivate('vad sos');
 
       s.simulatePrediction(cancelledId, 0.9);
-      expect(s.preemptivePrediction).toBeUndefined();
+      // Request-id mismatch → dropped, not cached for a later activate().
+      expect(s.lastPrediction).toBeUndefined();
 
       s.warmup();
       s.activate('vad eos');
-      expect(s.emitted).toEqual([]);
+      // No cached prediction for the fresh window → activate must not
+      // early-deactivate; inference stays running.
+      expect(s.isInferenceRunning).toBe(true);
+      expect(earlyDeactivated(s.events)).toBe(false);
     } finally {
       await s.aclose();
     }
@@ -265,20 +266,50 @@ describe('AudioTurnDetectionFSM', () => {
     }
   });
 
-  it('activate releases preemptive prediction', async () => {
-    const s = makeStream();
+  it('positive prediction while active early-deactivates', async () => {
+    const s = makeStream({ en: 0.5 });
+    try {
+      s.warmup();
+      s.activate('vad eos');
+      const requestId = s.preemptiveRequestId!;
+
+      s.simulatePrediction(requestId, 0.9); // >= 0.5
+      expect(s.isInferenceRunning).toBe(false);
+      expect(s.events).toContainEqual(['stop_inference', 'positive eou prediction']);
+    } finally {
+      await s.aclose();
+    }
+  });
+
+  it('subthreshold prediction while active keeps running', async () => {
+    const s = makeStream({ en: 0.5 });
+    try {
+      s.warmup();
+      s.activate('vad eos');
+      const requestId = s.preemptiveRequestId!;
+
+      s.simulatePrediction(requestId, 0.3); // < 0.5
+      expect(s.isInferenceRunning).toBe(true);
+      expect(s.lastPrediction?.endOfTurnProbability).toBe(0.3);
+      expect(earlyDeactivated(s.events)).toBe(false);
+    } finally {
+      await s.aclose();
+    }
+  });
+
+  it('preemptive positive prediction acted on at activate', async () => {
+    const s = makeStream({ en: 0.5 });
     try {
       s.warmup();
       const requestId = s.preemptiveRequestId!;
-      s.simulatePrediction(requestId, 0.7);
-      // Held — not emitted yet.
-      expect(s.emitted).toEqual([]);
-      expect(s.preemptivePrediction).toBeDefined();
-      expect(s.preemptivePrediction?.endOfTurnProbability).toBe(0.7);
+      s.simulatePrediction(requestId, 0.9);
+      // Cached, but not active yet → inference still running.
+      expect(s.isInferenceRunning).toBe(true);
+      expect(s.lastPrediction?.endOfTurnProbability).toBe(0.9);
 
-      s.activate();
-      expect(s.emitted).toEqual([0.7]);
-      expect(s.preemptivePrediction).toBeUndefined();
+      s.activate('vad eos');
+      expect(s.isInferenceRunning).toBe(false);
+      expect(s.events).toContainEqual(['stop_inference', 'positive eou prediction']);
     } finally {
       await s.aclose();
     }
