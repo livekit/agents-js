@@ -217,6 +217,10 @@ plugins/inworld/src/index.ts	DeliveryMode
 plugins/inworld/src/index.ts	Encoding
 plugins/inworld/src/index.ts	InworldMessage
 plugins/inworld/src/index.ts	InworldResult
+plugins/inworld/src/index.ts	STT
+plugins/inworld/src/index.ts	STTModels
+plugins/inworld/src/index.ts	STTOptions
+plugins/inworld/src/index.ts	SpeechStream
 plugins/inworld/src/index.ts	TTS
 plugins/inworld/src/index.ts	TTSModels
 plugins/inworld/src/index.ts	TTSOptions
@@ -224,9 +228,12 @@ plugins/inworld/src/index.ts	TextNormalization
 plugins/inworld/src/index.ts	TimestampInfo
 plugins/inworld/src/index.ts	TimestampTransportStrategy
 plugins/inworld/src/index.ts	TimestampType
+plugins/inworld/src/index.ts	TranscriptionUsage
 plugins/inworld/src/index.ts	Voice
+plugins/inworld/src/index.ts	VoiceProfile
 plugins/inworld/src/index.ts	WSConnectionPool
 plugins/inworld/src/index.ts	WordAlignment
+plugins/inworld/src/index.ts	WordTimestamp
 plugins/lemonslice/src/index.ts	AvatarSession
 plugins/lemonslice/src/index.ts	AvatarSessionOptions
 plugins/lemonslice/src/index.ts	LemonSliceException
