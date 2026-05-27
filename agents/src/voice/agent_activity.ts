@@ -45,7 +45,7 @@ import {
   isToolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
-import { isSameToolChoice } from '../llm/tool_context.js';
+import { DynamicToolset, isSameToolChoice } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -3788,12 +3788,16 @@ export class AgentActivity implements RecognitionHooks {
    */
   private async refreshToolsets(): Promise<boolean> {
     if (!this._toolsetsSetup) return false;
-    const toolsets = this.agent._toolCtx.toolsets;
-    if (toolsets.length === 0) return false;
+    // Only DynamicToolsets re-resolve their tools per turn; everything else is fixed after setup.
+    // Skip re-resolution (and building a fresh ToolContext) entirely when none are active.
+    const dynamicToolsets = this.agent._toolCtx.toolsets.filter(
+      (ts) => ts instanceof DynamicToolset,
+    );
+    if (dynamicToolsets.length === 0) return false;
 
     const before = this.agent._toolCtx;
     const outputs = await Promise.allSettled(
-      toolsets.map((ts) =>
+      dynamicToolsets.map((ts) =>
         ts.resolveTools({
           session: this.agentSession,
           signal: this._toolsetAbortControllers.get(ts)?.signal ?? new AbortController().signal,

@@ -301,7 +301,10 @@ export class Toolset {
    * ```
    */
   static create<UserData = UnknownUserData>(options: ToolsetCreateOptions<UserData>): Toolset {
-    return new ToolsetFactory(options);
+    if (options.resolveEachTurn && typeof options.tools === 'function') {
+      return new DynamicToolset(options, options.tools);
+    }
+    return new ToolsetImpl(options);
   }
 
   get id(): string {
@@ -353,13 +356,14 @@ export interface ToolsetCreateOptions<UserData = UnknownUserData> {
   aclose?: () => Promise<void>;
 }
 
-/** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
-class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
+/**
+ * Backing implementation of `Toolset.create()`. Resolves its factory once at activation and reuses
+ * the result on every turn. Kept private so callers go through `Toolset.create()`.
+ */
+class ToolsetImpl<UserData = UnknownUserData> extends Toolset {
   readonly #setupFn?: (ctx: ToolsetContext<UserData>) => Promise<void>;
 
   readonly #factory?: ToolsetFactoryFn<UserData>;
-
-  readonly #resolveEachTurn: boolean;
 
   #resolved: readonly Tool[];
 
@@ -367,12 +371,11 @@ class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
 
   readonly #acloseFn?: () => Promise<void>;
 
-  constructor({ id, setup, tools, resolveEachTurn, aclose }: ToolsetCreateOptions<UserData>) {
+  constructor({ id, setup, tools, aclose }: ToolsetCreateOptions<UserData>) {
     // Pass [] to super and override the `tools` getter so a factory's tools can be resolved
     // lazily at activation (when the ToolsetContext is available).
     super({ id, tools: [] });
     this.#setupFn = setup;
-    this.#resolveEachTurn = resolveEachTurn ?? false;
     if (typeof tools === 'function') {
       this.#factory = tools;
       this.#resolved = [];
@@ -394,16 +397,42 @@ class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
   }
 
   override async resolveTools(ctx: ToolsetContext<UserData>): Promise<void> {
-    if (!this.#factory) return;
-    // By default the factory runs once at activation; per-turn re-resolution is opt-in. Skipping it
-    // keeps every turn cheap for the common case of a stable tool list.
-    if (this.#hasResolved && !this.#resolveEachTurn) return;
+    // Static toolsets have no factory; one-time factories resolve only on the first call. Skipping
+    // later re-resolution keeps every turn cheap. {@link DynamicToolset} opts into per-turn resolution.
+    if (!this.#factory || this.#hasResolved) return;
     this.#resolved = await this.#factory(ctx);
     this.#hasResolved = true;
   }
 
   override async aclose(): Promise<void> {
     if (this.#acloseFn) await this.#acloseFn();
+  }
+}
+
+/**
+ * Backing implementation of `Toolset.create({ resolveEachTurn: true })`. Re-runs its factory before
+ * every agent turn so a changing tool list (e.g. an MCP server adding or removing tools) stays
+ * current. The runtime detects it via `instanceof` to skip per-turn re-resolution when no dynamic
+ * toolset is active. Constructed only by `Toolset.create`, which guarantees a `tools` factory.
+ */
+export class DynamicToolset<UserData = UnknownUserData> extends ToolsetImpl<UserData> {
+  readonly #factory: ToolsetFactoryFn<UserData>;
+
+  #resolved: readonly Tool[] = [];
+
+  constructor(options: ToolsetCreateOptions<UserData>, factory: ToolsetFactoryFn<UserData>) {
+    // The base only handles static tools / one-time factories; this subclass owns re-resolution, so
+    // hand the base an empty static list and keep the factory here.
+    super({ ...options, tools: [] });
+    this.#factory = factory;
+  }
+
+  override get tools(): readonly Tool[] {
+    return this.#resolved;
+  }
+
+  override async resolveTools(ctx: ToolsetContext<UserData>): Promise<void> {
+    this.#resolved = await this.#factory(ctx);
   }
 }
 
