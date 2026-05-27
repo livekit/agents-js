@@ -50,3 +50,34 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
+  api-check:
+    name: Public API (CodeQL)
+    runs-on: ubuntu-latest
+    env:
+      # CodeQL CLI bundle (CLI + standard query packs). Keep in sync with the version used to
+      # regenerate the committed snapshots in codeql/*.snapshot.txt.
+      CODEQL_BUNDLE: codeql-bundle-v2.25.4
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install CodeQL CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$CODEQL_BUNDLE" \
+            --repo github/codeql-action \
+            --pattern codeql-bundle-linux64.tar.gz \
+            --output "$RUNNER_TEMP/codeql.tar.gz"
+          tar -xzf "$RUNNER_TEMP/codeql.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/codeql" >> "$GITHUB_PATH"
+      - name: Install query pack dependencies
+        run: codeql pack install codeql
+      - name: Check public API
+        run: pnpm api:check
