@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { llm as llmModule } from '@livekit/agents';
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
   inference,
-  llm as llmModule,
   log,
   metrics,
   voice,
@@ -16,14 +15,10 @@ import {
 import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as google from '@livekit/agents-plugin-google';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions:
@@ -31,8 +26,6 @@ export default defineAgent({
     });
 
     const logger = log();
-    const vad =
-      ctx.proc.userData.vad instanceof silero.VAD ? ctx.proc.userData.vad : await silero.VAD.load();
 
     const apiKey = process.env.CARTESIA_API_KEY;
 
@@ -67,7 +60,6 @@ export default defineAgent({
     }
 
     const session = new voice.AgentSession({
-      vad,
       stt: new cartesia.STT({ model: 'ink-2', apiKey }),
       llm,
       tts: new cartesia.TTS({ model: 'sonic-3.5', apiKey }),

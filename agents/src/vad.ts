@@ -66,6 +66,7 @@ export type VADCallbacks = {
 
 export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCallbacks>) {
   #capabilities: VADCapabilities;
+  #isDefault = false;
   abstract label: string;
 
   constructor(capabilities: VADCapabilities) {
@@ -75,6 +76,48 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
   get capabilities(): VADCapabilities {
     return this.#capabilities;
+  }
+
+  /**
+   * True iff this VAD instance was auto-provisioned by `AgentSession`.
+   *
+   * Set by the framework when constructing the default VAD; never set by user
+   * code. The framework treats a default-VAD instance as absent at sites that
+   * would otherwise activate behavior just because a VAD is present:
+   * - realtime LLM turn-detection fallback to `mode='vad'`
+   * - adaptive interruption detector eligibility
+   * - the audio-recognition VAD pipeline when the realtime LLM already runs
+   *   server-side turn detection
+   */
+  get isDefault(): boolean {
+    return this.#isDefault;
+  }
+
+  /** @internal Framework-only; flips the `isDefault` marker. */
+  _markAsDefault(): void {
+    this.#isDefault = true;
+  }
+
+  /**
+   * Current `minSilenceDuration` floor in milliseconds, or `null` if the
+   * VAD does not expose this knob.
+   *
+   * Consumed by `AudioRecognition` when an `AudioTurnDetector` is active —
+   * the EOT detector needs a wider silence window than typical VAD
+   * defaults, and reads/writes this knob to bump the floor (with restore
+   * on detach). Implementations that don't support runtime tuning should
+   * leave the default `null` return.
+   */
+  get minSilenceDuration(): number | null {
+    return null;
+  }
+
+  /**
+   * Set the `minSilenceDuration` floor in milliseconds. No-op for VADs
+   * that don't expose this knob (check the getter first).
+   */
+  setMinSilenceDuration(_durationMs: number): void {
+    return;
   }
 
   /**

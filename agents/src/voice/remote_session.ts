@@ -18,6 +18,7 @@ import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
+  EOTModelUsage,
   InterruptionModelUsage,
   LLMModelUsage,
   STTModelUsage,
@@ -32,6 +33,7 @@ import {
   type AgentState,
   type AgentStateChangedEvent,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -62,6 +64,7 @@ export type RemoteSessionEventTypes =
   | 'function_tools_executed'
   | 'overlapping_speech'
   | 'amd_prediction'
+  | 'eot_prediction'
   | 'session_usage'
   | 'error';
 
@@ -74,6 +77,7 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
+  eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
@@ -464,6 +468,22 @@ function sessionUsageToProto(usage: AgentSessionUsage): pb.AgentSessionUsage {
         );
         break;
       }
+      case 'eot_usage': {
+        const eu = mu as Partial<EOTModelUsage>;
+        modelUsages.push(
+          new pb.ModelUsage({
+            usage: {
+              case: 'eot',
+              value: new pb.EotModelUsage({
+                provider: eu.provider ?? '',
+                model: eu.model ?? '',
+                totalRequests: eu.totalRequests ?? 0,
+              }),
+            },
+          }),
+        );
+        break;
+      }
     }
   }
   return new pb.AgentSessionUsage({ modelUsage: modelUsages });
@@ -521,6 +541,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
     }
   }
@@ -549,6 +570,7 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
     }
 
@@ -676,6 +698,10 @@ export class SessionHost {
     );
   };
 
+  private onEotPrediction = (event: EotPredictionEvent): void => {
+    this._onEotPrediction(event);
+  };
+
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
@@ -727,6 +753,23 @@ export class SessionHost {
         category: AMD_CATEGORY_MAP[event.category],
         reason: event.reason,
         transcript: event.transcript,
+      }),
+    });
+  }
+
+  /**
+   * @internal — forwards an audio-EOT prediction to the connected
+   * {@link RemoteSession} peer. Mirrors python
+   * `SessionHost._on_eot_prediction`.
+   */
+  _onEotPrediction(event: EotPredictionEvent): void {
+    this.emitEvent({
+      case: 'eotPrediction',
+      value: new pb.AgentSessionEvent_EotPrediction({
+        probability: event.probability,
+        threshold: event.threshold,
+        inferenceDuration: msToDuration(event.inferenceDurationMs),
+        delay: msToDuration(event.delayMs),
       }),
     });
   }
@@ -1000,6 +1043,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'amdPrediction':
         this.emit('amd_prediction', ev.value);
+        break;
+      case 'eotPrediction':
+        this.emit('eot_prediction', ev.value);
         break;
       case 'sessionUsageUpdated':
         this.emit('session_usage', ev.value);

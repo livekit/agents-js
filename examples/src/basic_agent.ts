@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -13,16 +12,15 @@ import {
   metrics,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
+// import * as livekit from '@livekit/agents-plugin-livekit';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the silero VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions:
@@ -43,9 +41,10 @@ export default defineAgent({
     const logger = log();
 
     const session = new voice.AgentSession({
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
+      // Explicit VAD (cheap to construct; the silero model lazy-loads on the
+      // first stream). Passing it rather than relying on the auto-provisioned
+      // default marks `isDefault=false`, which is what enables adaptive interruption.
+      vad: new inference.VAD(),
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -69,7 +68,15 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        // VAD and turn detection determine when the user is speaking and when the agent
+        // should respond. See https://docs.livekit.io/agents/build/turns
+        //
+        // Cloud audio EOT detector pointed at the staging gateway. Requires
+        // LIVEKIT_API_KEY_STAGING / LIVEKIT_API_SECRET_STAGING in the env.
+        turnDetection: new inference.AudioTurnDetector(),
+        // To use the local on-device text turn detector instead, re-enable the
+        // `@livekit/agents-plugin-livekit` import above and use:
+        // turnDetection: new livekit.turnDetector.MultilingualModel(),
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,

@@ -1,0 +1,672 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Audio EOT (end-of-turn) detector base, stream state machine, and the
+ * transport interface that concrete cloud/local backends implement.
+ *
+ * Concrete implementations live in `agents/src/inference/eot/`.
+ *
+ * Port of Python `livekit.agents.voice.turn.audio`.
+ */
+import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { EventEmitter } from 'node:events';
+import type { LanguageCode } from '../../language.js';
+import type { ChatContext } from '../../llm/chat_context.js';
+import { log } from '../../log.js';
+import type { EOTInferenceMetrics } from '../../metrics/base.js';
+import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
+import { Future, Task, cancelAndWait, readStream, shortuuid } from '../../utils.js';
+
+export const DEFAULT_SAMPLE_RATE = 16000;
+export const MIN_SILENCE_DURATION_MS = 200;
+
+export enum Status {
+  IDLE = 'idle',
+  ACTIVE = 'active',
+}
+
+/**
+ * Options shared by the audio EOT stream and every transport.
+ *
+ * Cloud-only transport concerns (base URL, credentials, conn options)
+ * live on a separate options class owned by the cloud transport.
+ */
+export interface TurnDetectorOptions {
+  sampleRate: number;
+  thresholds: Record<string, number>;
+}
+
+/**
+ * Event emitted on each EOT prediction.
+ */
+export interface TurnDetectionEvent {
+  type: 'eot_prediction';
+  endOfTurnProbability: number;
+  /** Wall-clock time when the prediction landed (milliseconds since epoch). */
+  lastSpeakingTime: number;
+  /** Latest input-audio creation time → prediction receive time (ms). */
+  detectionDelay?: number;
+  /** Server-side model inference time (ms). */
+  inferenceDuration?: number;
+}
+
+/**
+ * Sentinel value carried alongside flush requests. Transports use
+ * `keepTailMs` to optionally retain trailing audio for the next turn.
+ */
+export interface FlushSentinel {
+  readonly kind: 'flush';
+  reason?: string;
+  keepTailMs: number;
+}
+
+export function isFlushSentinel(value: unknown): value is FlushSentinel {
+  return typeof value === 'object' && value !== null && (value as FlushSentinel).kind === 'flush';
+}
+
+/**
+ * Transport adapter for `AudioTurnDetectorStream` — owns the I/O (WebSocket
+ * session, in-process predict, etc.). The stream calls these methods
+ * directly; transports report predictions back via
+ * `stream._handlePrediction(requestId, probability, ...)`.
+ */
+export interface AudioTurnDetectionTransport {
+  bind(stream: AudioTurnDetectorStream): void;
+  run(): Promise<void>;
+  startInference(requestId: string): void;
+  pushFrame(frame: AudioFrame): Promise<void>;
+  flush(sentinel: FlushSentinel): Promise<void>;
+  stopInference(reason?: string): void;
+  detach(): void;
+  transportReady(): boolean;
+}
+
+export type AudioTurnDetectorCallbacks = {
+  metrics_collected: (metrics: EOTInferenceMetrics) => void;
+};
+
+/**
+ * Abstract base for audio EOT detectors. Holds the threshold table and
+ * provides `stream()` to create a per-turn FSM instance.
+ *
+ * Subclasses (`AudioTurnDetector` in `inference/eot/detector.ts`) wire up
+ * concrete transports.
+ */
+export abstract class AudioTurnDetector extends (EventEmitter as new () => TypedEmitter<AudioTurnDetectorCallbacks>) {
+  protected _opts: TurnDetectorOptions;
+  /**
+   * Active streams the detector tracks for bulk teardown via `aclose()`.
+   * `Set` rather than `WeakSet` because we need iteration; each stream
+   * removes itself on its own `aclose` (see `AudioTurnDetectorStream.aclose`)
+   * so the strong refs are released without requiring the caller to call
+   * `detector.aclose()`.
+   */
+  protected _streams: Set<AudioTurnDetectorStream> = new Set();
+
+  constructor(opts: TurnDetectorOptions) {
+    super();
+    this._opts = opts;
+  }
+
+  /** @internal Stream lifecycle hook — called by the stream itself on close. */
+  _unregisterStream(stream: AudioTurnDetectorStream): void {
+    this._streams.delete(stream);
+  }
+
+  abstract get model(): string;
+
+  get provider(): string {
+    return 'livekit';
+  }
+
+  /** Most-recent threshold map (after any cloud→local fallback rescale). */
+  get thresholds(): Record<string, number> {
+    return this._opts.thresholds;
+  }
+
+  /** Threshold below which the detector treats the prediction as "unlikely
+   * to be end-of-turn". Returns `undefined` when the language isn't covered. */
+  async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
+    const key = language ?? 'en';
+    return this._opts.thresholds[key];
+  }
+
+  async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
+    return (await this.unlikelyThreshold(language)) !== undefined;
+  }
+
+  abstract stream(): AudioTurnDetectorStream;
+
+  async aclose(): Promise<void> {
+    const streams = Array.from(this._streams);
+    this._streams.clear();
+    await Promise.allSettled(streams.map((s) => s.aclose()));
+  }
+}
+
+/**
+ * Per-turn FSM:
+ *
+ * - `warmup()` opens an inference window (transport.startInference).
+ * - `activate(trigger)` flips IDLE→ACTIVE; releases any held preemptive
+ *   prediction.
+ * - `deactivate(trigger)` clears the request id, resolves the in-flight
+ *   future with 0.0, calls transport.stopInference.
+ * - `flush(reason, keepTailMs)` deactivates and signals turn boundary to
+ *   the transport via a `FlushSentinel`. Clears the cached prediction so
+ *   it can't leak into the next turn.
+ * - `onSpeechStarted()` re-arms the predict guard (so the next
+ *   `predictEndOfTurn` runs warmup/activate again).
+ * - `predictEndOfTurn(chatCtx?, { timeoutMs })` returns a probability,
+ *   defaulting to 1.0 on timeout.
+ */
+export class SwapAbortError extends Error {
+  constructor() {
+    super('__swap__');
+    this.name = 'SwapAbortError';
+  }
+}
+
+export class AudioTurnDetectorStream implements AsyncIterableIterator<TurnDetectionEvent> {
+  protected _detector: AudioTurnDetector;
+  protected _opts: TurnDetectorOptions;
+  protected _transport: AudioTurnDetectionTransport;
+
+  private _audioInputSampleRate: number | undefined;
+  private _audioInputNumChannels: number | undefined;
+  private _audioResampler: AudioResampler | undefined;
+  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _eventChannel: StreamChannel<TurnDetectionEvent> = createStreamChannel();
+  private _eventReader: AsyncIterator<TurnDetectionEvent> | undefined;
+
+  protected _status: Status = Status.IDLE;
+  protected _preemptiveRequestId: string | undefined;
+  protected _preemptiveRequestFut: Future<number> | undefined;
+  /** Held when status is IDLE; released on next `activate()`. */
+  protected _preemptivePrediction: TurnDetectionEvent | undefined;
+  /**
+   * Latest resolved prediction in the current inference window. Cleared
+   * when a new window starts (next warmup) or on commit (flush). Lets
+   * `predictEndOfTurn` return immediately when a prediction is already
+   * in hand via the event stream.
+   */
+  protected _lastPrediction: TurnDetectionEvent | undefined;
+  /**
+   * True between `onSpeechStarted()` and the next `flush()` — i.e. a user
+   * turn is open and `predictEndOfTurn` should run. When false, predict
+   * short-circuits to a positive default (the audio EOT model has already
+   * committed; an STT final arriving after has nothing fresh to evaluate).
+   * Initialized true so the first turn isn't gated before any flush.
+   */
+  protected _userTurnStarted = true;
+  /** Warn once per stream when predict is called after a commit. */
+  protected _latePredictWarned = false;
+
+  protected _mainTask: Task<void>;
+  protected _logger = log();
+  /**
+   * Aborted whenever the main loop needs to retry on a new transport (e.g.
+   * fallback). The base FSM also aborts it from `aclose()` so idle
+   * transports that are awaiting forever can be unstuck. Listeners check
+   * `signal.aborted` and surface a sentinel rejection so the `_run` loop
+   * can decide whether to continue or exit.
+   */
+  protected _swapController = new AbortController();
+
+  constructor(args: {
+    detector: AudioTurnDetector;
+    opts: TurnDetectorOptions;
+    transport: AudioTurnDetectionTransport;
+  }) {
+    this._detector = args.detector;
+    this._opts = args.opts;
+    this._transport = args.transport;
+    this._transport.bind(this);
+
+    this._mainTask = Task.from((controller) => this._mainTaskBody(controller));
+    this._mainTask.addDoneCallback(() => {
+      void this._eventChannel.close();
+    });
+  }
+
+  // region: _TurnDetector protocol proxies
+
+  get model(): string {
+    return this._detector.model;
+  }
+
+  get provider(): string {
+    return this._detector.provider;
+  }
+
+  async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
+    const key = language ?? 'en';
+    return this._opts.thresholds[key];
+  }
+
+  async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
+    return (await this.unlikelyThreshold(language)) !== undefined;
+  }
+
+  // endregion
+
+  // region: state machine
+
+  get isActive(): boolean {
+    return this._status === Status.ACTIVE;
+  }
+
+  get isInferenceRunning(): boolean {
+    return this._preemptiveRequestId !== undefined;
+  }
+
+  get preemptiveRequestId(): string | undefined {
+    return this._preemptiveRequestId;
+  }
+
+  get status(): Status {
+    return this._status;
+  }
+
+  get lastPrediction(): TurnDetectionEvent | undefined {
+    return this._lastPrediction;
+  }
+
+  /** Start an inference window if one isn't already open. Returns the
+   * in-flight future. Idempotent. */
+  warmup(): Future<number> {
+    if (this._preemptiveRequestId === undefined) {
+      const requestId = shortuuid('turn_request_');
+      this._preemptiveRequestId = requestId;
+      this._preemptiveRequestFut = new Future<number>();
+      // New inference window — drop any cached prediction from the previous
+      // window so `predictEndOfTurn` won't return stale.
+      this._lastPrediction = undefined;
+      this._transport.startInference(requestId);
+    }
+    if (this._preemptiveRequestFut === undefined) {
+      throw new Error('eot detection warmup failed, no request future');
+    }
+    return this._preemptiveRequestFut;
+  }
+
+  activate(_trigger?: string): void {
+    if (!this._transport.transportReady() || this._status === Status.ACTIVE) {
+      return;
+    }
+    if (this._preemptiveRequestId === undefined) {
+      this._logger.trace(
+        'eot detector not warmed up before activation, likely due to overlapping speech',
+      );
+      this.warmup();
+    }
+    this._status = Status.ACTIVE;
+    if (this._preemptivePrediction !== undefined) {
+      const held = this._preemptivePrediction;
+      this._preemptivePrediction = undefined;
+      this._emitEvent(held);
+    }
+  }
+
+  deactivate(trigger?: string): void {
+    if (!this._transport.transportReady()) {
+      return;
+    }
+    if (this._preemptiveRequestId === undefined && this._status === Status.IDLE) {
+      return;
+    }
+    this._preemptiveRequestId = undefined;
+    this._preemptivePrediction = undefined;
+    if (this._preemptiveRequestFut !== undefined) {
+      if (!this._preemptiveRequestFut.done) {
+        this._preemptiveRequestFut.resolve(0.0);
+      }
+      this._preemptiveRequestFut = undefined;
+    }
+    this._status = Status.IDLE;
+    this._transport.stopInference(trigger);
+  }
+
+  flush(reason?: string, opts: { keepTailMs?: number } = {}): void {
+    if (this._audioChannel.closed) {
+      return;
+    }
+    const keepTailMs = opts.keepTailMs ?? 0;
+    for (const resampled of this._flushAudioResampler()) {
+      void this._audioChannel.write(resampled);
+    }
+    const sentinel: FlushSentinel = {
+      kind: 'flush',
+      reason,
+      keepTailMs,
+    };
+    void this._audioChannel.write(sentinel);
+    // Turn boundary — the cached prediction belongs to the turn we just
+    // closed and must not leak into the next one.
+    this._lastPrediction = undefined;
+    // Close the user turn: until the next `onSpeechStarted()` signal,
+    // `predictEndOfTurn` short-circuits.
+    this._userTurnStarted = false;
+    this.deactivate(reason);
+  }
+
+  /** Signal that a fresh user utterance has started. Opens the user turn so
+   * `predictEndOfTurn` runs normally again and deactivates any in-flight
+   * inference for the now-stale prior window — the next VAD silence /
+   * end-of-speech will warm up and activate a fresh one. */
+  onSpeechStarted(): void {
+    this._userTurnStarted = true;
+    this.deactivate('vad sos');
+  }
+
+  // endregion
+
+  // region: audio ingress
+
+  pushAudio(frame: AudioFrame): void {
+    if (this._audioChannel.closed) {
+      return;
+    }
+    for (const resampled of this._resampleAudioFrame(frame)) {
+      void this._audioChannel.write(resampled);
+    }
+  }
+
+  endInput(): void {
+    this.flush();
+    void this._audioChannel.close();
+  }
+
+  private _resampleAudioFrame(frame: AudioFrame): AudioFrame[] {
+    if (this._audioInputSampleRate === undefined || this._audioInputNumChannels === undefined) {
+      this._audioInputSampleRate = frame.sampleRate;
+      this._audioInputNumChannels = frame.channels;
+      if (this._audioInputSampleRate !== this._opts.sampleRate) {
+        this._audioResampler = new AudioResampler(
+          this._audioInputSampleRate,
+          this._opts.sampleRate,
+          this._audioInputNumChannels,
+          AudioResamplerQuality.QUICK,
+        );
+      }
+    } else if (
+      frame.sampleRate !== this._audioInputSampleRate ||
+      frame.channels !== this._audioInputNumChannels
+    ) {
+      this._logger.error(
+        {
+          sampleRate: frame.sampleRate,
+          expectedSampleRate: this._audioInputSampleRate,
+          numChannels: frame.channels,
+          expectedNumChannels: this._audioInputNumChannels,
+        },
+        'a frame with different audio format was already pushed',
+      );
+      return [];
+    }
+    if (this._audioResampler === undefined) {
+      return [frame];
+    }
+    return this._audioResampler.push(frame);
+  }
+
+  private _flushAudioResampler(): AudioFrame[] {
+    const frames = this._audioResampler?.flush() ?? [];
+    this._resetAudioResampler();
+    return frames;
+  }
+
+  private _resetAudioResampler(): void {
+    this._audioResampler = undefined;
+    this._audioInputSampleRate = undefined;
+    this._audioInputNumChannels = undefined;
+  }
+
+  // endregion
+
+  // region: results
+
+  /** Subclasses (`_FakeBackend` in tests) override to intercept emissions. */
+  protected _emitEvent(event: TurnDetectionEvent): void {
+    // The event channel may already be closed if the stream was torn down
+    // while a prediction was still in flight (e.g. a local `predict()`
+    // resolving on libuv's worker pool after `aclose`). Guard + swallow so
+    // the late write doesn't surface as an unhandled rejection.
+    if (this._eventChannel.closed) return;
+    void this._eventChannel.write(event).catch(() => undefined);
+  }
+
+  /**
+   * Accept a prediction from a transport. The stream owns dedup (by
+   * requestId), future resolution, and active-vs-held event routing.
+   */
+  _handlePrediction(
+    requestId: string,
+    probability: number,
+    opts: { inferenceDuration?: number; detectionDelay?: number } = {},
+  ): void {
+    // Drop predictions that land after teardown — an in-flight transport
+    // predict can resolve after `aclose` closed the channels.
+    if (this._closing) {
+      return;
+    }
+    if (requestId !== this._preemptiveRequestId) {
+      return;
+    }
+    if (this._preemptiveRequestFut !== undefined && !this._preemptiveRequestFut.done) {
+      this._preemptiveRequestFut.resolve(probability);
+    }
+    const event: TurnDetectionEvent = {
+      type: 'eot_prediction',
+      endOfTurnProbability: probability,
+      lastSpeakingTime: Date.now(),
+      detectionDelay: opts.detectionDelay,
+      inferenceDuration: opts.inferenceDuration,
+    };
+    this._lastPrediction = event;
+    if (this.isActive) {
+      this._emitEvent(event);
+    } else {
+      this._preemptivePrediction = event;
+    }
+  }
+
+  /**
+   * Run a warmup inference and wait for a prediction within `timeoutMs`.
+   *
+   * Returns the cached prediction if one has already arrived for the
+   * current inference window. `chatCtx` is accepted (and ignored) so the
+   * call site stays uniform with text-based `_TurnDetector` impls.
+   */
+  async predictEndOfTurn(
+    _chatCtx?: ChatContext,
+    optsOrTimeoutMs?: { timeoutMs?: number } | number,
+  ): Promise<number> {
+    // Accept both the options-bag form (FSM-native) and the positional-ms
+    // form (matches the `_TurnDetector` Protocol so audio detectors are a
+    // drop-in for text-based detectors).
+    const opts: { timeoutMs?: number } =
+      typeof optsOrTimeoutMs === 'number' ? { timeoutMs: optsOrTimeoutMs } : optsOrTimeoutMs ?? {};
+    if (this._lastPrediction !== undefined) {
+      return this._lastPrediction.endOfTurnProbability;
+    }
+    if (!this._userTurnStarted) {
+      if (!this._latePredictWarned) {
+        this._latePredictWarned = true;
+        this._logger.warn(
+          'predictEndOfTurn called after the audio eot model already committed ' +
+            'the turn (likely a late stt final). consider raising `minDelay` in ' +
+            'the endpointing options to accommodate slow stt. subsequent ' +
+            'occurrences on this stream will log at debug level.',
+        );
+      } else {
+        this._logger.debug('stt transcript arrived after a turn commit, short-circuiting');
+      }
+      return 1.0;
+    }
+
+    const timeoutMs = opts.timeoutMs ?? 500;
+    let fut: Future<number> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      fut = this.warmup();
+      this.activate();
+      const winner = await Promise.race([
+        fut.await.then((v) => ({ kind: 'value', v }) as const),
+        new Promise<{ kind: 'timeout' }>((resolve) => {
+          timeoutId = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
+        }),
+      ]);
+      if (winner.kind === 'value') {
+        return winner.v;
+      }
+      throw new Error('__eot_predict_timeout__');
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.message === '__eot_predict_timeout__';
+      if (!isTimeout) throw err;
+      // Contract on timeout: we couldn't tell within `timeoutMs`, so assume
+      // the turn is over. Resolve the future with 1.0 (so any concurrent
+      // waiter sees the same value) and deactivate the inference window
+      // (a stale prediction arriving later must not fire an event).
+      this._logger.warn(
+        {
+          timeoutMs,
+          requestId: this._preemptiveRequestId,
+          default: 1.0,
+        },
+        'eot prediction timed out, returning a default value',
+      );
+      if (fut !== undefined && !fut.done) {
+        fut.resolve(1.0);
+      }
+      this.deactivate('predict_end_of_turn timeout');
+      this._onPredictTimeout();
+      // Positive default so minEndpointingDelay applies.
+      return 1.0;
+    } finally {
+      // Always release the timer — on the value path the timeout would
+      // otherwise keep the event loop alive until it fires, and N
+      // concurrent turns would queue N pending timers.
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+  }
+
+  // endregion
+
+  // region: async iteration
+
+  async next(): Promise<IteratorResult<TurnDetectionEvent>> {
+    if (this._eventReader === undefined) {
+      this._eventReader = readStream(this._eventChannel.stream())[Symbol.asyncIterator]();
+    }
+    return this._eventReader.next();
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableIterator<TurnDetectionEvent> {
+    return this;
+  }
+
+  async aclose(): Promise<void> {
+    this.endInput();
+    this._closing = true;
+    this._swapController.abort();
+    await cancelAndWait([this._mainTask]);
+    if (this._preemptiveRequestFut !== undefined && !this._preemptiveRequestFut.done) {
+      this._preemptiveRequestFut.resolve(0.0);
+    }
+    this._preemptiveRequestFut = undefined;
+    this._preemptiveRequestId = undefined;
+    this._preemptivePrediction = undefined;
+    this._status = Status.IDLE;
+    // Drop our strong reference on the parent detector so callers that
+    // forget `detector.aclose()` don't leak the stream graph.
+    this._detector._unregisterStream(this);
+  }
+
+  /** True once `aclose()` has been called. The `_run` loop uses this to
+   * distinguish swap-aborts (continue with new transport) from teardown
+   * aborts (exit). */
+  protected _closing = false;
+
+  // endregion
+
+  // region: main task scaffolding
+
+  private async _mainTaskBody(_controller: AbortController): Promise<void> {
+    await this._run();
+  }
+
+  async _drainAudioChannel(): Promise<void> {
+    const stream = this._audioChannel.stream();
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        if (isFlushSentinel(value)) {
+          await this._transport.flush(value);
+        } else {
+          await this._transport.pushFrame(value);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // endregion
+
+  // region: subclass hooks
+
+  /** Default: hand control to the transport. Subclasses override for
+   * cross-transport orchestration (e.g. cloud→local fallback). */
+  protected async _run(): Promise<void> {
+    await this._raceWithSwap(this._transport.run());
+  }
+
+  /**
+   * Race `inner` against `_swapController.signal`. If the signal aborts
+   * while `inner` is still pending, throw a `SwapAbortError` so the
+   * subclass loop can decide whether to continue or exit. Resets the
+   * controller after a swap-abort so subsequent races have a fresh signal.
+   *
+   * `aclose()` aborts during teardown — subclasses observe `_closing` to
+   * exit cleanly instead of looping.
+   */
+  protected async _raceWithSwap<T>(inner: Promise<T>): Promise<T> {
+    const signal = this._swapController.signal;
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        reject(new SwapAbortError());
+        return;
+      }
+      signal.addEventListener('abort', () => reject(new SwapAbortError()), { once: true });
+    });
+    try {
+      return await Promise.race([inner, abortPromise]);
+    } finally {
+      if (signal.aborted) {
+        // Reset for the next iteration of the subclass loop.
+        this._swapController = new AbortController();
+      }
+    }
+  }
+
+  /** @internal Wake up an idle transport so the main loop can pick up a
+   * new one after fallback. Subclasses call this from their swap logic. */
+  protected _signalSwap(): void {
+    this._swapController.abort();
+  }
+
+  /** `predictEndOfTurn` timed out. Subclasses may override to react (e.g.
+   * promote local on cloud timeout). */
+  protected _onPredictTimeout(): void {
+    return;
+  }
+
+  // endregion
+}

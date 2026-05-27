@@ -85,7 +85,12 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
-import type { AgentState, AgentStateChangedEvent, UserTurnExceededEvent } from './events.js';
+import type {
+  AgentState,
+  AgentStateChangedEvent,
+  EotPredictionEvent,
+  UserTurnExceededEvent,
+} from './events.js';
 import {
   AgentSessionEventTypes,
   createAgentFalseInterruptionEvent,
@@ -337,10 +342,13 @@ export class AgentActivity implements RecognitionHooks {
         this.turnDetectionMode = undefined;
       }
 
-      // fallback to VAD if server side turn detection is disabled and VAD is available
+      // fallback to VAD if server side turn detection is disabled and the
+      // user explicitly supplied a VAD. The bundled-default VAD is treated
+      // as absent here so behavior matches "no vad passed" sessions.
       if (
         !this.llm.capabilities.turnDetection &&
         this.vad &&
+        !this.vad.isDefault &&
         this.turnDetectionMode === undefined
       ) {
         this.turnDetectionMode = 'vad';
@@ -511,11 +519,21 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.on('metrics_collected', this.onMetricsCollected);
     }
 
+    // Bundled-default VAD ("isDefault") is treated as absent when the
+    // RealtimeModel does its own server-side turn detection — the realtime
+    // session is already canonical and an extra audio pipeline would just
+    // pay the native model load for no behavioral gain. User-supplied VADs
+    // still flow through (e.g. when the user wants adaptive interruption).
+    const isBundledDefaultVad = this.vad?.isDefault === true;
+    const realtimeUsesServerVad =
+      this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
+    const recognitionVad = isBundledDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
+
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
-      vad: this.vad,
+      vad: recognitionVad,
       turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
@@ -1001,7 +1019,11 @@ export class AgentActivity implements RecognitionHooks {
   onInputSpeechStarted(_ev: InputSpeechStartedEvent): void {
     this.logger.info('onInputSpeechStarted');
 
-    if (!this.vad) {
+    // Bundled-default VAD is treated as absent here so the realtime
+    // session's own server-side turn detection drives the user-state /
+    // overlap-detection update, identical to a session that didn't
+    // configure any VAD.
+    if (!this.vad || this.vad.isDefault) {
       this.agentSession._updateUserState('speaking');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfOverlapSpeech(
@@ -1027,7 +1049,7 @@ export class AgentActivity implements RecognitionHooks {
   onInputSpeechStopped(ev: InputSpeechStoppedEvent): void {
     this.logger.info(ev, 'onInputSpeechStopped');
 
-    if (!this.vad) {
+    if (!this.vad || this.vad.isDefault) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
@@ -1357,6 +1379,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.cancelSpeechPauseTask = this.cancelSpeechPause();
+  }
+
+  /** Forward audio EOT predictions up to the session so listeners (e.g.
+   * remote-session forwarders) can observe them. */
+  onEotPrediction(ev: EotPredictionEvent): void {
+    this.agentSession.emit(AgentSessionEventTypes.EotPrediction, ev);
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
@@ -3663,12 +3691,17 @@ export class AgentActivity implements RecognitionHooks {
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
+    // The bundled-default VAD does not auto-enable adaptive interruption;
+    // the opt-in stays opt-in (the PR matrix's "Adaptive interruption
+    // detection eligibility: No change" row). Only a user-supplied VAD
+    // counts as "VAD present" here.
+    const userSuppliedVad = this.vad && !this.vad.isDefault;
     if (
       !(
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
         this.stt.capabilities.streaming &&
-        this.vad &&
+        userSuppliedVad &&
         this.turnDetection !== 'manual' &&
         this.turnDetection !== 'realtime_llm' &&
         !(this.llm instanceof RealtimeModel)

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -13,7 +12,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -72,14 +70,10 @@ class StoryAgent extends voice.Agent<StoryData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
