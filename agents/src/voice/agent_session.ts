@@ -160,7 +160,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
-  [AgentSessionEventTypes.CustomEvent]: (ev: pb.CustomEvent) => void;
+  [AgentSessionEventTypes.DebugMessage]: (ev: pb.DebugMessage) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
@@ -710,27 +710,11 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
-  /**
-   * Emit an application-defined `custom_event` over the remote-session wire.
-   *
-   * Sugar over constructing `pb.CustomEvent` and emitting it: wraps `payload`
-   * (a JSON-compatible object) into a `google.protobuf.Struct` and emits the
-   * proto. Listeners registered via `session.on('custom_event', handler)`
-   * receive the same `pb.CustomEvent`.
-   *
-   * Mirrors python `AgentSession.emit_custom_event`.
-   */
-  emitCustomEvent(eventType: string, payload: Record<string, unknown> = {}): void {
-    // `Struct.fromJson` expects `JsonValue`; `Record<string, unknown>` is
-    // structurally wider than `JsonObject`. Caller is contractually responsible
-    // for JSON-serializable values; the cast satisfies the type, `fromJson`
-    // validates at runtime.
+  /* internal */
+  _emitDebugMessage(payload: Record<string, unknown>): void {
     this.emit(
-      AgentSessionEventTypes.CustomEvent,
-      new pb.CustomEvent({
-        type: eventType,
-        payload: Struct.fromJson(payload as JsonValue),
-      }),
+      AgentSessionEventTypes.DebugMessage,
+      new pb.DebugMessage({ payload: Struct.fromJson(payload as JsonValue) }),
     );
   }
 

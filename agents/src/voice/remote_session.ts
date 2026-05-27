@@ -62,7 +62,7 @@ export type RemoteSessionEventTypes =
   | 'function_tools_executed'
   | 'overlapping_speech'
   | 'amd_prediction'
-  | 'custom_event'
+  | 'debug_message'
   | 'session_usage'
   | 'error';
 
@@ -75,7 +75,7 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
-  custom_event: (ev: pb.CustomEvent) => void;
+  debug_message: (ev: pb.DebugMessage) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
@@ -524,7 +524,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
-      session.on(AgentSessionEventTypes.CustomEvent, this.onCustomEvent);
+      session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
   }
 
@@ -553,7 +553,7 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
-      this.session.off(AgentSessionEventTypes.CustomEvent, this.onCustomEvent);
+      this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
 
     if (this.recvTask) {
@@ -717,8 +717,8 @@ export class SessionHost {
     );
   };
 
-  private onCustomEvent = (event: pb.CustomEvent): void => {
-    this.emitEvent({ case: 'customEvent', value: event });
+  private onDebugMessage = (event: pb.DebugMessage): void => {
+    this.emitEvent({ case: 'debugMessage', value: event });
   };
 
   /**
@@ -1015,8 +1015,8 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       case 'error':
         this.emit('error', ev.value);
         break;
-      case 'customEvent':
-        this.emit('custom_event', ev.value);
+      case 'debugMessage':
+        this.emit('debug_message', ev.value);
         break;
     }
   }

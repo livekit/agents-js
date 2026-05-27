@@ -33,7 +33,7 @@ export enum AgentSessionEventTypes {
   SpeechCreated = 'speech_created',
   AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
-  CustomEvent = 'custom_event',
+  DebugMessage = 'debug_message',
   Error = 'error',
   Close = 'close',
 }
