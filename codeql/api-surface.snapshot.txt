@@ -134,6 +134,7 @@ plugins/baseten/src/index.ts	BasetenTTSOptions
 plugins/baseten/src/index.ts	ChunkedStream
 plugins/baseten/src/index.ts	LLM
 plugins/baseten/src/index.ts	STT
+plugins/baseten/src/index.ts	SpeechStream
 plugins/baseten/src/index.ts	TTS
 plugins/bey/src/index.ts	AvatarSession
 plugins/bey/src/index.ts	AvatarSessionOptions
@@ -359,6 +360,7 @@ plugins/sarvam/src/index.ts	TTSV2Speakers
 plugins/sarvam/src/index.ts	TTSV3Options
 plugins/sarvam/src/index.ts	TTSV3Speakers
 plugins/silero/src/index.ts	VAD
+plugins/silero/src/index.ts	VADOptions
 plugins/silero/src/index.ts	VADStream
 plugins/tavus/src/index.ts	AvatarSession
 plugins/tavus/src/index.ts	AvatarSessionOptions
@@ -376,3 +378,4 @@ plugins/trugen/src/index.ts	TrugenException
 plugins/xai/src/index.ts	STT
 plugins/xai/src/index.ts	STTLanguages
 plugins/xai/src/index.ts	STTOptions
+plugins/xai/src/index.ts	SpeechStream

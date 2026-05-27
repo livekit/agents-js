@@ -1,120 +1,33 @@
-agents	Public API ActivityTransitionOptions uses 'any' in a type annotation.
-agents	Public API Agent uses 'any' in a type annotation.
 agents	Public API Agent uses 'unknown' in a type annotation.
-agents	Public API AgentActivity.pause uses 'any' in a type annotation.
-agents	Public API AgentHandoff uses 'any' in a type annotation.
-agents	Public API AgentSession.run uses 'unknown' in a type annotation.
-agents	Public API AgentTask uses 'any' in a type annotation.
-agents	Public API AgentTask uses 'unknown' in a type annotation.
-agents	Public API AgentTaskOptions uses 'any' in a type annotation.
-agents	Public API AnyString uses 'unknown' in a type annotation.
-agents	Public API AvatarSession.start uses 'unknown' in a type annotation.
-agents	Public API ChatCompletionOptions uses 'unknown' in a type annotation.
-agents	Public API ChatContext.addMessage uses 'unknown' in a type annotation.
-agents	Public API ChatContext.copy uses 'any' in a type annotation.
-agents	Public API ChatContext.toProviderFormat uses 'any' in a type annotation.
-agents	Public API ChatContext.toProviderFormat uses 'unknown' in a type annotation.
-agents	Public API ChatMessage uses 'unknown' in a type annotation.
-agents	Public API ChatMessage.create uses 'unknown' in a type annotation.
-agents	Public API ChoiceDelta uses 'unknown' in a type annotation.
-agents	Public API ErrorEvent uses 'unknown' in a type annotation.
-agents	Public API FakeLLM.chat uses 'unknown' in a type annotation.
-agents	Public API FakeLLMResponse uses 'unknown' in a type annotation.
-agents	Public API FallbackAdapter.chat uses 'unknown' in a type annotation.
-agents	Public API FunctionCall uses 'unknown' in a type annotation.
-agents	Public API FunctionCall.create uses 'unknown' in a type annotation.
-agents	Public API FunctionCallAssertOptions uses 'unknown' in a type annotation.
-agents	Public API FunctionTool uses 'unknown' in a type annotation.
-agents	Public API IPCMessage uses 'unknown' in a type annotation.
-agents	Public API ImageContent uses 'any' in a type annotation.
-agents	Public API InferToolInput uses 'any' in a type annotation.
-agents	Public API InferenceExecutor.doInference uses 'unknown' in a type annotation.
-agents	Public API InferenceProcExecutor.doInference uses 'unknown' in a type annotation.
 agents	Public API InferenceRunner uses 'unknown' in a type annotation.
 agents	Public API InvalidErrorType uses 'unknown' in a type annotation.
 agents	Public API JobContext uses 'unknown' in a type annotation.
-agents	Public API JobExecutor uses 'any' in a type annotation.
-agents	Public API JobProcExecutor.userArguments uses 'any' in a type annotation.
 agents	Public API JobProcess uses 'unknown' in a type annotation.
-agents	Public API LLM.chat uses 'unknown' in a type annotation.
-agents	Public API PluginDownloadFailure uses 'unknown' in a type annotation.
-agents	Public API ProviderDefinedTool uses 'unknown' in a type annotation.
-agents	Public API RunAssert.skipNextEventIf uses 'unknown' in a type annotation.
-agents	Public API RunResult uses 'unknown' in a type annotation.
-agents	Public API STTFallbackModel uses 'unknown' in a type annotation.
-agents	Public API STTOptions uses 'unknown' in a type annotation.
-agents	Public API SimpleLogRecord uses 'unknown' in a type annotation.
-agents	Public API SpeechData uses 'unknown' in a type annotation.
-agents	Public API SpeechHandle uses 'unknown' in a type annotation.
-agents	Public API SpeechHandle.then uses 'unknown' in a type annotation.
-agents	Public API SpeechHandle.waitIfNotInterrupted uses 'unknown' in a type annotation.
-agents	Public API SpeechmaticsOptions uses 'unknown' in a type annotation.
-agents	Public API TTSFallbackModel uses 'unknown' in a type annotation.
-agents	Public API TTSOptions uses 'unknown' in a type annotation.
 agents	Public API Task.current uses 'unknown' in a type annotation.
-agents	Public API TaskCompletedEvent uses 'unknown' in a type annotation.
-agents	Public API TaskGroupResult uses 'unknown' in a type annotation.
-agents	Public API ToolExecuteFunction uses 'unknown' in a type annotation.
-agents	Public API ToolExecutionOutput.create uses 'unknown' in a type annotation.
-agents	Public API UnknownUserData uses 'unknown' in a type annotation.
-agents	Public API ZodParseResult uses 'unknown' in a type annotation.
-agents	Public API ZodSchema uses 'any' in a type annotation.
-agents	Public API _JsOutput uses 'unknown' in a type annotation.
-agents	Public API _JsOutput.create uses 'unknown' in a type annotation.
-agents	Public API _LLMGenerationData uses 'unknown' in a type annotation.
 agents	Public API exported function asError uses 'unknown' in a type annotation.
 agents	Public API exported function cancelAndWait uses 'any' in a type annotation.
-agents	Public API exported function createErrorEvent uses 'unknown' in a type annotation.
-agents	Public API exported function createToolOutput uses 'unknown' in a type annotation.
 agents	Public API exported function dedent uses 'unknown' in a type annotation.
 agents	Public API exported function defaultInitializeProcessFunc uses 'unknown' in a type annotation.
 agents	Public API exported function defineAgent uses 'unknown' in a type annotation.
 agents	Public API exported function getJobContext uses 'unknown' in a type annotation.
-agents	Public API exported function handoff uses 'any' in a type annotation.
-agents	Public API exported function hasAlignedTranscript uses 'unknown' in a type annotation.
 agents	Public API exported function isAPIError uses 'unknown' in a type annotation.
 agents	Public API exported function isAgent uses 'unknown' in a type annotation.
-agents	Public API exported function isAgentHandoff uses 'any' in a type annotation.
 agents	Public API exported function isFfmpegTeardownError uses 'unknown' in a type annotation.
-agents	Public API exported function isFunctionTool uses 'any' in a type annotation.
 agents	Public API exported function isImmutableArray uses 'unknown' in a type annotation.
-agents	Public API exported function isInstructions uses 'unknown' in a type annotation.
 agents	Public API exported function isPending uses 'unknown' in a type annotation.
-agents	Public API exported function isProviderDefinedTool uses 'any' in a type annotation.
-agents	Public API exported function isSchedulingPausedError uses 'unknown' in a type annotation.
-agents	Public API exported function isSpeechHandle uses 'unknown' in a type annotation.
-agents	Public API exported function isStopResponse uses 'unknown' in a type annotation.
 agents	Public API exported function isStreamClosedError uses 'unknown' in a type annotation.
-agents	Public API exported function isStreamReaderReleaseError uses 'unknown' in a type annotation.
 agents	Public API exported function isTimedString uses 'unknown' in a type annotation.
-agents	Public API exported function isTool uses 'any' in a type annotation.
-agents	Public API exported function isToolError uses 'any' in a type annotation.
 agents	Public API exported function isWritableStreamClosedError uses 'unknown' in a type annotation.
-agents	Public API exported function isZod4Schema uses 'any' in a type annotation.
-agents	Public API exported function isZodSchema uses 'unknown' in a type annotation.
 agents	Public API exported function loopAudioFramesFromFile uses 'unknown' in a type annotation.
-agents	Public API exported function oaiParams uses 'any' in a type annotation.
-agents	Public API exported function parseFunctionArguments uses 'unknown' in a type annotation.
-agents	Public API exported function parseZodSchema uses 'unknown' in a type annotation.
-agents	Public API exported function sessionReportToJSON uses 'unknown' in a type annotation.
-agents	Public API exported function toChatCtx uses 'any' in a type annotation.
-agents	Public API exported function toChatCtx uses 'unknown' in a type annotation.
 agents	Public API exported function toError uses 'unknown' in a type annotation.
-agents	Public API exported function toJsonSchema uses 'any' in a type annotation.
-agents	Public API exported function toResponsesChatCtx uses 'any' in a type annotation.
-agents	Public API exported function tool uses 'any' in a type annotation.
-agents	Public API exported function tool uses 'unknown' in a type annotation.
 agents	Public API exported function withResolvers uses 'unknown' in a type annotation.
-plugins/baseten	Public API OpenAILLM.chat uses 'unknown' in a type annotation.
 plugins/google	Public API AIPlatformLLM.chat uses 'unknown' in a type annotation.
 plugins/google	Public API AIPlatformLLMOptions uses 'unknown' in a type annotation.
 plugins/google	Public API LLM.chat uses 'unknown' in a type annotation.
-plugins/google	Public API exported function convertJSONSchemaToOpenAPISchema uses 'unknown' in a type annotation.
 plugins/lemonslice	Public API AvatarSessionOptions uses 'unknown' in a type annotation.
 plugins/liveavatar	Public API AvatarSession.sendEvent uses 'unknown' in a type annotation.
 plugins/liveavatar	Public API StopSessionResponse uses 'unknown' in a type annotation.
 plugins/mistralai	Public API LLM.chat uses 'unknown' in a type annotation.
 plugins/openai	Public API LLM.chat uses 'unknown' in a type annotation.
-plugins/openai	Public API WSLLM.chat uses 'unknown' in a type annotation.
 plugins/tavus	Public API CreateConversationOptions uses 'unknown' in a type annotation.
 plugins/tavus	Public API CreatePersonaOptions uses 'unknown' in a type annotation.

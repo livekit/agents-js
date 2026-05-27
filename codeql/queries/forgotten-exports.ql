@@ -14,9 +14,7 @@
  */
 
 import javascript
-
-/** Holds if `tn` is exported (directly or via re-export) from some module. */
-predicate isExported(LocalTypeName tn) { exists(ES2015Module m | m.exportsAs(tn, _)) }
+import PublicApi
 
 /** Holds if `tn` is a named type declared in this repo's own (non-external) sources. */
 predicate isLocalProjectType(LocalTypeName tn) {
@@ -32,30 +30,17 @@ predicate isLocalProjectType(LocalTypeName tn) {
   )
 }
 
-/** The AST node that declares the exported type `tn` (class/interface/alias/enum body). */
+/** The AST node that declares the public-API type `tn` (class/interface/alias/enum body). */
 AstNode exportedTypeDeclaration(LocalTypeName tn) {
-  isExported(tn) and
+  isExportedName(tn) and
   result = tn.getADeclaration().getParent()
-}
-
-/** Holds if `ta` sits in the body of a function rather than in a public signature. */
-predicate inFunctionBody(LocalTypeAccess ta) {
-  exists(Function f | ta.getParent+() = f.getBody())
-}
-
-/** Holds if `ta` sits inside a non-public (private/protected) class member. */
-predicate inNonPublicMember(LocalTypeAccess ta) {
-  exists(MemberDeclaration m |
-    (m.isPrivate() or m.isProtected()) and
-    ta.getParent+() = m
-  )
 }
 
 from LocalTypeAccess ta, LocalTypeName referenced, LocalTypeName container
 where
   referenced = ta.getLocalTypeName() and
   isLocalProjectType(referenced) and
-  not isExported(referenced) and
+  not isExportedName(referenced) and
   container != referenced and
   // the reference appears within the declaration of an exported type ...
   ta.getParent+() = exportedTypeDeclaration(container) and

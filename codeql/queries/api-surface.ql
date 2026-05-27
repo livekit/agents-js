@@ -14,14 +14,7 @@
  */
 
 import javascript
-
-/** Holds if `f` is the entry point of a published package (`agents` or a plugin). */
-predicate isPackageEntryPoint(File f) {
-  f.getBaseName() = "index.ts" and
-  f.getRelativePath().regexpMatch("(agents|plugins/[^/]+)/src/index\\.ts") and
-  // `plugins/test` is a private test-only mock package, not published
-  not f.getRelativePath().matches("plugins/test/%")
-}
+import PublicApi
 
 from ES2015Module entry, string name
 where

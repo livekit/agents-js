@@ -63,7 +63,7 @@ where
   inPublishedSource(ta) and
   // the referenced type is brought in by an import ...
   imp.getASpecifier().getLocal() = ta.getLocalTypeName().getADeclaration() and
-  pkg = packageOf(imp.getImportedPath().getValue()) and
+  pkg = packageOf(imp.getImportedPathString()) and
   not isNodeBuiltin(pkg) and
   // ... from a package the owning package.json does not declare
   pkgJson = owningPackageJson(ta.getFile()) and

@@ -10,8 +10,22 @@
 
 import javascript
 
-/** Holds if `n` is exported (directly or via re-export) from some ES module. */
-predicate isExportedName(LexicalName n) { exists(ES2015Module m | m.exportsAs(n, _)) }
+/** Holds if `f` is the entry point of a published package (`agents` or a plugin). */
+predicate isPackageEntryPoint(File f) {
+  f.getBaseName() = "index.ts" and
+  f.getRelativePath().regexpMatch("(agents|plugins/[^/]+)/src/index\\.ts") and
+  // `plugins/test` is a private test-only mock package, not published
+  not f.getRelativePath().matches("plugins/test/%")
+}
+
+/**
+ * Holds if `n` is part of a published package's public API: exported (directly or via
+ * re-export) from a package entry point. A name merely exported from an internal module
+ * (e.g. a plugin's `log.ts` that `index.ts` never re-exports) is NOT public API.
+ */
+predicate isExportedName(LexicalName n) {
+  exists(ES2015Module entry | isPackageEntryPoint(entry.getFile()) and entry.exportsAs(n, _))
+}
 
 /** Holds if `n` lives in source that ships to consumers (not externs, deps, or test mocks). */
 predicate inPublishedSource(AstNode n) {
