@@ -679,7 +679,7 @@ describe('Toolset', () => {
     let received: ToolsetContext | undefined;
     const ts = Toolset.create({
       id: 'dynamic',
-      tools: (ctx) => {
+      tools: async (ctx) => {
         calls += 1;
         received = ctx;
         return [a, b];
@@ -695,6 +695,58 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a, b]);
     expect(calls).toBe(1);
     expect(received).toBe(ctx);
+  });
+
+  it('Toolset.create() runs setup once before resolving tools', async () => {
+    const a = makeFn('a');
+    const events: string[] = [];
+    const ts = Toolset.create({
+      id: 'with-setup',
+      setup: async () => {
+        events.push('setup');
+      },
+      tools: async () => {
+        events.push('resolve');
+        return [a];
+      },
+    });
+
+    await ts.setup(fakeToolsetContext());
+    // setup runs before the initial tool resolution
+    expect(events).toEqual(['setup', 'resolve']);
+    expect(ts.tools).toEqual([a]);
+  });
+
+  it('resolveTools() re-runs the factory so a dynamic tool list stays current', async () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    let current = [a];
+    let setupCalls = 0;
+    const ts = Toolset.create({
+      id: 'dynamic',
+      setup: async () => {
+        setupCalls += 1;
+      },
+      tools: async () => current,
+    });
+
+    const ctx = fakeToolsetContext();
+    await ts.setup(ctx);
+    expect(ts.tools).toEqual([a]);
+
+    // The toolset's tools change at runtime (e.g. an MCP server adds a tool).
+    current = [a, b];
+    await ts.resolveTools(ctx);
+    expect(ts.tools).toEqual([a, b]);
+    // re-resolving does not re-run one-time setup
+    expect(setupCalls).toBe(1);
+  });
+
+  it('resolveTools() is a no-op for a static toolset', async () => {
+    const a = makeFn('a');
+    const ts = Toolset.create({ id: 'static', tools: [a] });
+    await ts.resolveTools(fakeToolsetContext());
+    expect(ts.tools).toEqual([a]);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {

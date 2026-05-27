@@ -86,7 +86,7 @@ export type EndCallToolOptions<UserData = UnknownUserData> = {
 /**
  * Allows the agent to end the call and disconnect from the room.
  */
-export function EndCallTool<UserData = UnknownUserData>({
+export function createEndCallTool<UserData = UnknownUserData>({
   extraDescription = '',
   deleteRoom = true,
   endInstructions = 'say goodbye to the user',
@@ -123,7 +123,7 @@ export function EndCallTool<UserData = UnknownUserData>({
     id: 'end_call',
     // `session` and `teardownSignal` are in lexical scope for the tool below — no state is stashed
     // between activation and a tool call. `teardownSignal` aborts when the toolset is torn down.
-    tools: ({ session, signal: teardownSignal }) => {
+    tools: async ({ session, signal: teardownSignal }) => {
       const endCall = async (ctx: RunContext<UserData>): Promise<string | undefined> => {
         log().debug('end_call tool called');
         const llm = session.currentAgent.getActivityOrThrow().llm;

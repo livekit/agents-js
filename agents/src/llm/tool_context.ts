@@ -236,12 +236,16 @@ export interface ToolsetContext<UserData = UnknownUserData> {
 }
 
 /**
- * A function that produces a toolset's tools when it becomes active, given the live
- * {@link ToolsetContext}. Returned tools may close over `ctx.session` / `ctx.signal` directly.
+ * A function that resolves a toolset's current tools, given the live {@link ToolsetContext}.
+ * Returned tools may close over `ctx.session` / `ctx.signal` directly.
+ *
+ * Re-invoked before every agent turn, so the returned list always reflects the toolset's current
+ * tools (e.g. an MCP server that adds or removes tools at runtime). Keep it cheap and side-effect
+ * free — do one-time work like connecting in {@link ToolsetCreateOptions.setup} instead.
  */
 export type ToolsetFactoryFn<UserData = UnknownUserData> = (
   ctx: ToolsetContext<UserData>,
-) => readonly Tool[] | Promise<readonly Tool[]>;
+) => Promise<readonly Tool[]>;
 
 /**
  * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
@@ -284,10 +288,11 @@ export class Toolset {
    *   const client = new MCPClient({ url });
    *   return Toolset.create({
    *     id: 'mcp_remote',
-   *     tools: async ({ signal }) => {
-   *       await client.connect({ signal });
-   *       return client.getTools();
-   *     },
+   *     // `setup` runs once when the toolset activates — connect here.
+   *     setup: ({ signal }) => client.connect({ signal }),
+   *     // `tools` is re-invoked before every turn, so the list stays current as the MCP server
+   *     // adds or removes tools.
+   *     tools: async () => client.listTools(),
    *     aclose: () => client.disconnect(),
    *   });
    * }
@@ -305,18 +310,32 @@ export class Toolset {
     return this.#tools;
   }
 
+  /** One-time initialization run when the toolset becomes active (e.g. connecting to a server). */
   async setup(_ctx: ToolsetContext): Promise<void> {}
+
+  /**
+   * Re-resolve the toolset's tools. Invoked once after {@link setup} and again before every agent
+   * turn, so a dynamic tool list (e.g. MCP) stays current. A no-op for static toolsets.
+   */
+  async resolveTools(_ctx: ToolsetContext): Promise<void> {}
 
   async aclose(): Promise<void> {}
 }
 
-/** Options accepted by `Toolset.create()` — id + tools plus an optional teardown hook. */
+/** Options accepted by `Toolset.create()` — id + tools plus optional setup/teardown hooks. */
 export interface ToolsetCreateOptions<UserData = UnknownUserData> {
   id: string;
   /**
-   * Either a static list of tools, or a factory invoked when the toolset becomes active. The
-   * factory receives the live {@link ToolsetContext} so its tools can close over the session and
-   * the teardown `signal`. Factory-produced tools aren't enumerable until activation.
+   * One-time async initialization run when the toolset becomes active — e.g. connecting to an MCP
+   * server. Receives the live {@link ToolsetContext}; its `signal` aborts on teardown. Do recurring
+   * work (like enumerating current tools) in `tools` instead, which is re-invoked every turn.
+   */
+  setup?: (ctx: ToolsetContext<UserData>) => Promise<void>;
+  /**
+   * Either a static list of tools, or a factory resolving the toolset's current tools. The factory
+   * receives the live {@link ToolsetContext} so its tools can close over the session and the
+   * teardown `signal`, and is re-invoked before every turn so a changing tool list stays current.
+   * Factory-produced tools aren't enumerable until activation.
    */
   tools: readonly Tool[] | ToolsetFactoryFn<UserData>;
   /** Invoked when the toolset is being torn down. Release awaitable resources here. */
@@ -325,16 +344,19 @@ export interface ToolsetCreateOptions<UserData = UnknownUserData> {
 
 /** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
 class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
+  readonly #setupFn?: (ctx: ToolsetContext<UserData>) => Promise<void>;
+
   readonly #factory?: ToolsetFactoryFn<UserData>;
 
   #resolved: readonly Tool[];
 
   readonly #acloseFn?: () => Promise<void>;
 
-  constructor({ id, tools, aclose }: ToolsetCreateOptions<UserData>) {
+  constructor({ id, setup, tools, aclose }: ToolsetCreateOptions<UserData>) {
     // Pass [] to super and override the `tools` getter so a factory's tools can be resolved
     // lazily at activation (when the ToolsetContext is available).
     super({ id, tools: [] });
+    this.#setupFn = setup;
     if (typeof tools === 'function') {
       this.#factory = tools;
       this.#resolved = [];
@@ -350,6 +372,12 @@ class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
   }
 
   override async setup(ctx: ToolsetContext<UserData>): Promise<void> {
+    if (this.#setupFn) await this.#setupFn(ctx);
+    // Resolve once after setup so the tools are enumerable for the first flatten.
+    await this.resolveTools(ctx);
+  }
+
+  override async resolveTools(ctx: ToolsetContext<UserData>): Promise<void> {
     if (this.#factory) this.#resolved = await this.#factory(ctx);
   }
 

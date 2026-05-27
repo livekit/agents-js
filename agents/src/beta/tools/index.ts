@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   END_CALL_DESCRIPTION,
-  EndCallTool,
+  createEndCallTool,
   type EndCallToolCalledEvent,
   type EndCallToolCompletedEvent,
   type EndCallToolOptions,
