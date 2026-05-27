@@ -80,7 +80,7 @@ export interface TTSOptions {
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
-interface ResolvedTTSOptions {
+export interface ResolvedTTSOptions {
   model: TTSModel | string;
   voice: TTSVoice | string;
   emotion?: TTSEmotion;

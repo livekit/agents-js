@@ -17,9 +17,9 @@ import {
 } from './constants.js';
 import { normalizeText } from './utils.js';
 
-type RawChatItem = { role: string; content: string };
+export type RawChatItem = { role: string; content: string };
 
-type EOUOutput = { eouProbability: number; input: string; duration: number };
+export type EOUOutput = { eouProbability: number; input: string; duration: number };
 
 export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOutput> {
   private modelType: EOUModelType;

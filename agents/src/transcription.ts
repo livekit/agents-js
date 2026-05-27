@@ -51,7 +51,7 @@ interface TextData {
   forwardedSentences: number;
 }
 
-type SyncCallbacks = {
+export type SyncCallbacks = {
   textUpdated: (text: TranscriptionSegment) => void;
 };
 

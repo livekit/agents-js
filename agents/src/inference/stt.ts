@@ -171,7 +171,7 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
   });
 }
 
-type _STTModels =
+export type _STTModels =
   | DeepgramModels
   | CartesiaModels
   | AssemblyaiModels

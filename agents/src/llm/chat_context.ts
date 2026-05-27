@@ -37,7 +37,7 @@ export interface AudioContent {
   transcript?: string;
 }
 
-type InstructionsOptions = {
+export type InstructionsOptions = {
   /** The audio/voice variant of the instructions. */
   audio: string;
   /** The text variant of the instructions; falls back to `audio` when omitted. */

@@ -13,7 +13,7 @@ import { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
 import type { InterruptionOptions, OverlappingSpeechEvent } from './types.js';
 
-type InterruptionCallbacks = {
+export type InterruptionCallbacks = {
   overlapping_speech: (event: OverlappingSpeechEvent) => void;
   metrics_collected: (metrics: InterruptionMetrics) => void;
   error: (error: InterruptionDetectionError) => void;

@@ -36,9 +36,9 @@ const BASE_URL = 'https://api.openai.com/v1';
 
 const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
-type Modality = 'text' | 'audio';
+export type Modality = 'text' | 'audio';
 
-interface RealtimeOptions {
+export interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   toolChoice?: llm.ToolChoice;

@@ -249,7 +249,7 @@ export type AgentSessionUpdateOptions = {
   turnDetection?: TurnDetectionMode | null;
 };
 
-type ActivityTransitionOptions = {
+export type ActivityTransitionOptions = {
   previousActivity?: 'close' | 'pause';
   newActivity?: 'start' | 'resume';
   blockedTasks?: Task<any>[];

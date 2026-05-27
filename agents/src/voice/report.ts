@@ -6,7 +6,7 @@ import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
-type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
+export type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
 
 export interface SessionReport {
   jobId: string;

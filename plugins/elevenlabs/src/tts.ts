@@ -79,7 +79,7 @@ export interface TTSOptions {
 }
 
 // Internal options type with resolved defaults
-interface ResolvedTTSOptions {
+export interface ResolvedTTSOptions {
   apiKey: string;
   voiceId: string;
   voiceSettings?: VoiceSettings;
@@ -247,7 +247,7 @@ function toTimedWords(
   return [timedWords, text.slice(end)];
 }
 
-class Connection {
+export class Connection {
   #opts: ResolvedTTSOptions;
   #ws: WebSocket | null = null;
   #isCurrent = true;

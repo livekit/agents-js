@@ -4,7 +4,7 @@
 import { realtime } from '@livekit/agents-plugin-openai';
 
 const { RealtimeModel: OpenAIRealtimeModel } = realtime;
-type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeModel>[0];
+export type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeModel>[0];
 
 const XAI_BASE_URL = 'wss://api.x.ai/v1';
 // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/realtime/realtime_model.py - 32 lines

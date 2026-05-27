@@ -11,6 +11,8 @@ export {
   type STTV2Options,
   type STTTranslateOptions,
   type STTV3Options,
+  type STTBaseOptions,
+  type ResolvedSTTOptions,
 } from './stt.js';
 export {
   ChunkedStream,
@@ -19,6 +21,8 @@ export {
   type TTSOptions,
   type TTSV2Options,
   type TTSV3Options,
+  type TTSBaseOptions,
+  type ResolvedTTSOptions,
 } from './tts.js';
 
 class SarvamPlugin extends Plugin {

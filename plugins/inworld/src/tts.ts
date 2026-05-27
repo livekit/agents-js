@@ -171,7 +171,7 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
 const MAX_RETRIES = 2;
 const BASE_DELAY_MS = 1000;
 
-class WSConnectionPool {
+export class WSConnectionPool {
   #ws?: WebSocket;
   #url: string;
   #auth: string;

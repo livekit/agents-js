@@ -126,7 +126,7 @@ export interface InworldOptions {
   text_normalization?: 'ON' | 'OFF';
 }
 
-type _TTSModels =
+export type _TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
   | ElevenlabsModels
@@ -221,7 +221,7 @@ export function normalizeTTSFallback(
   return [makeFallback(fallback)];
 }
 
-type TTSEncoding = 'pcm_s16le';
+export type TTSEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
 const DEFAULT_SAMPLE_RATE = 16000;

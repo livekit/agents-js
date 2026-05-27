@@ -21,7 +21,7 @@ import {
  * Internal status tracking for each STT instance.
  * @internal
  */
-interface STTStatus {
+export interface STTStatus {
   available: boolean;
   recoveringRecognizeTask: Task<void> | null;
   recoveringStreamTask: Task<void> | null;

@@ -1,0 +1,242 @@
+agents	Public API AgentActivity.clearUserTurn has no explicit return type annotation.
+agents	Public API AgentActivity.commitUserTurn has no explicit return type annotation.
+agents	Public API AgentActivity.inputStartedAt has no explicit return type annotation.
+agents	Public API AgentActivity.onInterruption has no explicit return type annotation.
+agents	Public API AgentActivity.turnHandling has no explicit return type annotation.
+agents	Public API AgentConfigUpdate.create has no explicit return type annotation.
+agents	Public API AgentHandoffItem.create has no explicit return type annotation.
+agents	Public API AgentServer.close has no explicit return type annotation.
+agents	Public API AgentServer.run has no explicit return type annotation.
+agents	Public API AgentServer.simulateJob has no explicit return type annotation.
+agents	Public API AgentSession._updateAgentState has no explicit return type annotation.
+agents	Public API AgentSession._updateUserState has no explicit return type annotation.
+agents	Public API AgentSession.clearUserTurn has no explicit return type annotation.
+agents	Public API AgentSession.commitUserTurn has no explicit return type annotation.
+agents	Public API AgentSession.interrupt has no explicit return type annotation.
+agents	Public API AgentSession.interruptionDetection has no explicit return type annotation.
+agents	Public API AudioOutput.onPlaybackFinished has no explicit return type annotation.
+agents	Public API AudioRecognition.clearUserTurn has no explicit return type annotation.
+agents	Public API AudioRecognition.close has no explicit return type annotation.
+agents	Public API AudioRecognition.commitUserTurn has no explicit return type annotation.
+agents	Public API AudioRecognition.detachInputAudioStream has no explicit return type annotation.
+agents	Public API AudioRecognition.inputStartedAt has no explicit return type annotation.
+agents	Public API AudioRecognition.onEndOfAgentSpeech has no explicit return type annotation.
+agents	Public API AudioRecognition.onEndOfOverlapSpeech has no explicit return type annotation.
+agents	Public API AudioRecognition.onStartOfAgentSpeech has no explicit return type annotation.
+agents	Public API AudioRecognition.onStartOfOverlapSpeech has no explicit return type annotation.
+agents	Public API AudioRecognition.setInputAudioStream has no explicit return type annotation.
+agents	Public API AudioRecognition.start has no explicit return type annotation.
+agents	Public API AudioRecognition.stop has no explicit return type annotation.
+agents	Public API BaseEndpointing.updateOptions has no explicit return type annotation.
+agents	Public API BufferedSentenceStream.close has no explicit return type annotation.
+agents	Public API BufferedSentenceStream.endInput has no explicit return type annotation.
+agents	Public API BufferedSentenceStream.flush has no explicit return type annotation.
+agents	Public API BufferedSentenceStream.pushText has no explicit return type annotation.
+agents	Public API BufferedTokenStream.close has no explicit return type annotation.
+agents	Public API BufferedTokenStream.endInput has no explicit return type annotation.
+agents	Public API BufferedTokenStream.flush has no explicit return type annotation.
+agents	Public API BufferedTokenStream.pushText has no explicit return type annotation.
+agents	Public API BufferedWordStream.close has no explicit return type annotation.
+agents	Public API BufferedWordStream.endInput has no explicit return type annotation.
+agents	Public API BufferedWordStream.flush has no explicit return type annotation.
+agents	Public API BufferedWordStream.pushText has no explicit return type annotation.
+agents	Public API ChatContext.toProviderFormat has no explicit return type annotation.
+agents	Public API ChatMessage.create has no explicit return type annotation.
+agents	Public API ChunkedStream.close has no explicit return type annotation.
+agents	Public API DataStreamAudioOutput.registerPlaybackFinishedRpc has no explicit return type annotation.
+agents	Public API DataStreamAudioOutput.registerPlaybackStartedRpc has no explicit return type annotation.
+agents	Public API DeferredReadableStream.detachSource has no explicit return type annotation.
+agents	Public API DeferredReadableStream.isSourceSet has no explicit return type annotation.
+agents	Public API DeferredReadableStream.setSource has no explicit return type annotation.
+agents	Public API DeferredReadableStream.stream has no explicit return type annotation.
+agents	Public API DynamicEndpointing.updateOptions has no explicit return type annotation.
+agents	Public API Event.wait has no explicit return type annotation.
+agents	Public API ExpFilter.reset has no explicit return type annotation.
+agents	Public API FunctionCall.create has no explicit return type annotation.
+agents	Public API FunctionCallOutput.create has no explicit return type annotation.
+agents	Public API Future.await has no explicit return type annotation.
+agents	Public API Future.done has no explicit return type annotation.
+agents	Public API Future.reject has no explicit return type annotation.
+agents	Public API Future.rejected has no explicit return type annotation.
+agents	Public API Future.resolve has no explicit return type annotation.
+agents	Public API InferenceProcExecutor.mainTask has no explicit return type annotation.
+agents	Public API InferenceRunner.registerRunner has no explicit return type annotation.
+agents	Public API JobContext.addParticipantEntrypoint has no explicit return type annotation.
+agents	Public API JobContext.addShutdownCallback has no explicit return type annotation.
+agents	Public API JobContext.connect has no explicit return type annotation.
+agents	Public API JobContext.initRecording has no explicit return type annotation.
+agents	Public API JobContext.onParticipantConnected has no explicit return type annotation.
+agents	Public API JobContext.shutdown has no explicit return type annotation.
+agents	Public API JobProcExecutor.launchJob has no explicit return type annotation.
+agents	Public API JobProcExecutor.mainTask has no explicit return type annotation.
+agents	Public API JobRequest.accept has no explicit return type annotation.
+agents	Public API JobRequest.reject has no explicit return type annotation.
+agents	Public API LLMStream.close has no explicit return type annotation.
+agents	Public API ParalellTextOutput.captureText has no explicit return type annotation.
+agents	Public API ParalellTextOutput.flush has no explicit return type annotation.
+agents	Public API ParticipantAudioInputStream.close has no explicit return type annotation.
+agents	Public API ParticipantAudioInputStream.setParticipant has no explicit return type annotation.
+agents	Public API ParticipantAudioOutput.close has no explicit return type annotation.
+agents	Public API ParticipantLegacyTranscriptionOutput.publishTranscription has no explicit return type annotation.
+agents	Public API ParticipantTranscriptionOutput.captureText has no explicit return type annotation.
+agents	Public API Plugin.downloadFiles has no explicit return type annotation.
+agents	Public API Plugin.registerPlugin has no explicit return type annotation.
+agents	Public API ProcPool.close has no explicit return type annotation.
+agents	Public API ProcPool.procWatchTask has no explicit return type annotation.
+agents	Public API ProcPool.run has no explicit return type annotation.
+agents	Public API ProcPool.start has no explicit return type annotation.
+agents	Public API Queue.put has no explicit return type annotation.
+agents	Public API RealtimeModel.capabilities has no explicit return type annotation.
+agents	Public API RealtimeSession.realtimeModel has no explicit return type annotation.
+agents	Public API RoomIO.close has no explicit return type annotation.
+agents	Public API RoomIO.setParticipant has no explicit return type annotation.
+agents	Public API RoomIO.start has no explicit return type annotation.
+agents	Public API RoomIO.unsetParticipant has no explicit return type annotation.
+agents	Public API RunContext.waitForPlayout has no explicit return type annotation.
+agents	Public API STTPipeline.audioChannel has no explicit return type annotation.
+agents	Public API STTPipeline.eventChannel has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.audioInputEnded has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.closed has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.endAudioInput has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.endTextInput has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.markPlaybackFinished has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.pushAudio has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.pushText has no explicit return type annotation.
+agents	Public API SegmentSynchronizerImpl.textInputEnded has no explicit return type annotation.
+agents	Public API SentenceStream.close has no explicit return type annotation.
+agents	Public API SentenceStream.endInput has no explicit return type annotation.
+agents	Public API SentenceStream.flush has no explicit return type annotation.
+agents	Public API SentenceStream.pushText has no explicit return type annotation.
+agents	Public API SpeechHandle.addDoneCallback has no explicit return type annotation.
+agents	Public API SpeechHandle.create has no explicit return type annotation.
+agents	Public API SpeechHandle.removeDoneCallback has no explicit return type annotation.
+agents	Public API SpeechStream.close has no explicit return type annotation.
+agents	Public API SpeechStream.detachInputStream has no explicit return type annotation.
+agents	Public API SpeechStream.endInput has no explicit return type annotation.
+agents	Public API SpeechStream.flush has no explicit return type annotation.
+agents	Public API SpeechStream.pushFrame has no explicit return type annotation.
+agents	Public API SpeechStream.updateInputStream has no explicit return type annotation.
+agents	Public API StreamAdapterWrapper.close has no explicit return type annotation.
+agents	Public API StreamAdapterWrapper.monitorMetrics has no explicit return type annotation.
+agents	Public API SupervisedProc.close has no explicit return type annotation.
+agents	Public API SupervisedProc.initialize has no explicit return type annotation.
+agents	Public API SupervisedProc.join has no explicit return type annotation.
+agents	Public API SupervisedProc.launchJob has no explicit return type annotation.
+agents	Public API SupervisedProc.run has no explicit return type annotation.
+agents	Public API SupervisedProc.start has no explicit return type annotation.
+agents	Public API SyncedAudioOutput.clearBuffer has no explicit return type annotation.
+agents	Public API SyncedAudioOutput.flush has no explicit return type annotation.
+agents	Public API SyncedAudioOutput.onPlaybackFinished has no explicit return type annotation.
+agents	Public API SyncedTextOutput.flush has no explicit return type annotation.
+agents	Public API SynthesizeStream.close has no explicit return type annotation.
+agents	Public API SynthesizeStream.endInput has no explicit return type annotation.
+agents	Public API SynthesizeStream.flush has no explicit return type annotation.
+agents	Public API SynthesizeStream.label has no explicit return type annotation.
+agents	Public API SynthesizeStream.pushText has no explicit return type annotation.
+agents	Public API SynthesizeStream.updateInputStream has no explicit return type annotation.
+agents	Public API SynthesizeStream.updateOptions has no explicit return type annotation.
+agents	Public API TTS.capabilities has no explicit return type annotation.
+agents	Public API TTS.close has no explicit return type annotation.
+agents	Public API TTS.closeWs has no explicit return type annotation.
+agents	Public API TTS.label has no explicit return type annotation.
+agents	Public API TTS.updateOptions has no explicit return type annotation.
+agents	Public API Task.addDoneCallback has no explicit return type annotation.
+agents	Public API Task.cancel has no explicit return type annotation.
+agents	Public API Task.cancelAndWait has no explicit return type annotation.
+agents	Public API Task.from has no explicit return type annotation.
+agents	Public API Task.removeDoneCallback has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.close has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.markAudioSegmentEnd has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.markTextSegmentEnd has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.pushAudio has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.pushText has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.segmentPlayoutFinished has no explicit return type annotation.
+agents	Public API TextAudioSynchronizer.segmentPlayoutStarted has no explicit return type annotation.
+agents	Public API ToolExecutionOutput.create has no explicit return type annotation.
+agents	Public API TranscriptionSynchronizer.rotateSegment has no explicit return type annotation.
+agents	Public API VADStream.close has no explicit return type annotation.
+agents	Public API VADStream.detachInputStream has no explicit return type annotation.
+agents	Public API VADStream.endInput has no explicit return type annotation.
+agents	Public API VADStream.flush has no explicit return type annotation.
+agents	Public API VADStream.pushFrame has no explicit return type annotation.
+agents	Public API VADStream.updateInputStream has no explicit return type annotation.
+agents	Public API WordStream.close has no explicit return type annotation.
+agents	Public API WordStream.endInput has no explicit return type annotation.
+agents	Public API WordStream.flush has no explicit return type annotation.
+agents	Public API WordStream.pushText has no explicit return type annotation.
+agents	Public API _JsOutput.create has no explicit return type annotation.
+agents	Public API _SanitizedOutput.create has no explicit return type annotation.
+agents	Public API exported function DEFAULT_TEXT_INPUT_CALLBACK has no explicit return type annotation.
+agents	Public API exported function applyInstructionsModality has no explicit return type annotation.
+agents	Public API exported function calculateAudioDurationSeconds has no explicit return type annotation.
+agents	Public API exported function defaultInitializeProcessFunc has no explicit return type annotation.
+agents	Public API exported function enableOtelLogging has no explicit return type annotation.
+agents	Public API exported function groupToolCalls has no explicit return type annotation.
+agents	Public API exported function initializeLogger has no explicit return type annotation.
+agents	Public API exported function isCloud has no explicit return type annotation.
+agents	Public API exported function isStreamReaderReleaseError has no explicit return type annotation.
+agents	Public API exported function log has no explicit return type annotation.
+agents	Public API exported function logMetrics has no explicit return type annotation.
+agents	Public API exported function mergeWithDefaults has no explicit return type annotation.
+agents	Public API exported function noop has no explicit return type annotation.
+agents	Public API exported function removeInstructions has no explicit return type annotation.
+agents	Public API exported function runApp has no explicit return type annotation.
+agents	Public API exported function startSoon has no explicit return type annotation.
+agents	Public API exported function toChatCtx has no explicit return type annotation.
+agents	Public API exported function toResponsesChatCtx has no explicit return type annotation.
+agents	Public API exported function updateInstructions has no explicit return type annotation.
+agents	Public API exported function waitForAbort has no explicit return type annotation.
+agents	Public API exported function withResolvers has no explicit return type annotation.
+plugins/anam	Public API AnamAPI.createSessionToken has no explicit return type annotation.
+plugins/anam	Public API AnamAPI.startEngineSession has no explicit return type annotation.
+plugins/anam	Public API AvatarSession.start has no explicit return type annotation.
+plugins/assemblyai	Public API STT.updateOptions has no explicit return type annotation.
+plugins/assemblyai	Public API SpeechStream.forceEndpoint has no explicit return type annotation.
+plugins/assemblyai	Public API SpeechStream.updateOptions has no explicit return type annotation.
+plugins/baseten	Public API STT.updateOptions has no explicit return type annotation.
+plugins/baseten	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/cartesia	Public API SpeechStream.close has no explicit return type annotation.
+plugins/cartesia	Public API SynthesizeStream.updateOptions has no explicit return type annotation.
+plugins/cartesia	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/deepgram	Public API STT.close has no explicit return type annotation.
+plugins/deepgram	Public API STT.updateOptions has no explicit return type annotation.
+plugins/deepgram	Public API STTv2.updateOptions has no explicit return type annotation.
+plugins/deepgram	Public API SpeechStream.updateOptions has no explicit return type annotation.
+plugins/google	Public API RealtimeModel.session has no explicit return type annotation.
+plugins/google	Public API RealtimeSession.clearAudio has no explicit return type annotation.
+plugins/google	Public API RealtimeSession.commitAudio has no explicit return type annotation.
+plugins/google	Public API RealtimeSession.interrupt has no explicit return type annotation.
+plugins/google	Public API RealtimeSession.truncate has no explicit return type annotation.
+plugins/google	Public API RealtimeSession.updateOptions has no explicit return type annotation.
+plugins/google	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/inworld	Public API TTS.close has no explicit return type annotation.
+plugins/inworld	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/inworld	Public API WSConnectionPool.close has no explicit return type annotation.
+plugins/inworld	Public API WSConnectionPool.registerListener has no explicit return type annotation.
+plugins/inworld	Public API WSConnectionPool.unregisterListener has no explicit return type annotation.
+plugins/livekit	Public API EOURunnerBase.close has no explicit return type annotation.
+plugins/livekit	Public API EOURunnerBase.initialize has no explicit return type annotation.
+plugins/livekit	Public API EOURunnerBase.run has no explicit return type annotation.
+plugins/mistralai	Public API STT.updateOptions has no explicit return type annotation.
+plugins/mistralai	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/openai	Public API RealtimeModel.close has no explicit return type annotation.
+plugins/openai	Public API RealtimeModel.session has no explicit return type annotation.
+plugins/openai	Public API RealtimeModel.withAzure has no explicit return type annotation.
+plugins/openai	Public API RealtimeSession.chatCtx has no explicit return type annotation.
+plugins/openai	Public API RealtimeSession.close has no explicit return type annotation.
+plugins/openai	Public API RealtimeSession.tools has no explicit return type annotation.
+plugins/openai	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/phonic	Public API RealtimeSession.truncate has no explicit return type annotation.
+plugins/rime	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/sarvam	Public API STT.updateOptions has no explicit return type annotation.
+plugins/sarvam	Public API SpeechStream.updateOptions has no explicit return type annotation.
+plugins/sarvam	Public API TTS.updateOptions has no explicit return type annotation.
+plugins/silero	Public API VADStream.updateOptions has no explicit return type annotation.
+plugins/silero	Public API exported function newInferenceSession has no explicit return type annotation.
+plugins/test	Public API exported function llm has no explicit return type annotation.
+plugins/test	Public API exported function llmStrict has no explicit return type annotation.
+plugins/test	Public API exported function stt has no explicit return type annotation.
+plugins/test	Public API exported function tts has no explicit return type annotation.
+plugins/xai	Public API STT.close has no explicit return type annotation.
+plugins/xai	Public API STT.updateOptions has no explicit return type annotation.
+plugins/xai	Public API SpeechStream.updateOptions has no explicit return type annotation.

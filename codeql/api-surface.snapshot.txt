@@ -1,7 +1,9 @@
 agents/src/index.ts	APIConnectOptions
 agents/src/index.ts	APIConnectionError
 agents/src/index.ts	APIError
+agents/src/index.ts	APIErrorOptions
 agents/src/index.ts	APIStatusError
+agents/src/index.ts	APIStatusErrorOptions
 agents/src/index.ts	APITimeoutError
 agents/src/index.ts	Agent
 agents/src/index.ts	AgentServer
@@ -43,6 +45,7 @@ agents/src/index.ts	ResolvedSessionConnectOptions
 agents/src/index.ts	RunningJobInfo
 agents/src/index.ts	ServerOptions
 agents/src/index.ts	SessionConnectOptions
+agents/src/index.ts	SyncCallbacks
 agents/src/index.ts	Task
 agents/src/index.ts	TaskResult
 agents/src/index.ts	TextAudioSynchronizer
@@ -156,8 +159,11 @@ plugins/deepgram/src/index.ts	SynthesizeStream
 plugins/deepgram/src/index.ts	TTS
 plugins/deepgram/src/index.ts	TTSOptions
 plugins/elevenlabs/src/index.ts	ChunkedStream
+plugins/elevenlabs/src/index.ts	Connection
 plugins/elevenlabs/src/index.ts	ElevenLabsSTTModels
 plugins/elevenlabs/src/index.ts	PronunciationDictionaryLocator
+plugins/elevenlabs/src/index.ts	ResolvedSTTOptions
+plugins/elevenlabs/src/index.ts	ResolvedTTSOptions
 plugins/elevenlabs/src/index.ts	STT
 plugins/elevenlabs/src/index.ts	STTHTTPSession
 plugins/elevenlabs/src/index.ts	STTOptions
@@ -174,6 +180,7 @@ plugins/elevenlabs/src/index.ts	Voice
 plugins/elevenlabs/src/index.ts	VoiceSettings
 plugins/fishaudio/src/index.ts	ChunkedStream
 plugins/fishaudio/src/index.ts	LatencyMode
+plugins/fishaudio/src/index.ts	ResolvedTTSOptions
 plugins/fishaudio/src/index.ts	SynthesizeStream
 plugins/fishaudio/src/index.ts	TTS
 plugins/fishaudio/src/index.ts	TTSModels
@@ -211,6 +218,7 @@ plugins/inworld/src/index.ts	TextNormalization
 plugins/inworld/src/index.ts	TimestampTransportStrategy
 plugins/inworld/src/index.ts	TimestampType
 plugins/inworld/src/index.ts	Voice
+plugins/inworld/src/index.ts	WSConnectionPool
 plugins/lemonslice/src/index.ts	AvatarSession
 plugins/lemonslice/src/index.ts	AvatarSessionOptions
 plugins/lemonslice/src/index.ts	LemonSliceException
@@ -232,6 +240,7 @@ plugins/minimax/src/index.ts	ChunkedStream
 plugins/minimax/src/index.ts	DEFAULT_BASE_URL
 plugins/minimax/src/index.ts	DEFAULT_MODEL
 plugins/minimax/src/index.ts	DEFAULT_VOICE_ID
+plugins/minimax/src/index.ts	ResolvedTTSOptions
 plugins/minimax/src/index.ts	SynthesizeStream
 plugins/minimax/src/index.ts	TTS
 plugins/minimax/src/index.ts	TTSEmotion
@@ -243,6 +252,7 @@ plugins/minimax/src/index.ts	TTSVoice
 plugins/mistralai/src/index.ts	ChunkedStream
 plugins/mistralai/src/index.ts	LLM
 plugins/mistralai/src/index.ts	LLMOptions
+plugins/mistralai/src/index.ts	LLMOpts
 plugins/mistralai/src/index.ts	LLMStream
 plugins/mistralai/src/index.ts	MistralChatModels
 plugins/mistralai/src/index.ts	MistralSTTModels
@@ -272,6 +282,7 @@ plugins/openai/src/index.ts	LLMStream
 plugins/openai/src/index.ts	MetaChatModels
 plugins/openai/src/index.ts	OctoChatModels
 plugins/openai/src/index.ts	PerplexityChatModels
+plugins/openai/src/index.ts	ResolvedSTTOptions
 plugins/openai/src/index.ts	STT
 plugins/openai/src/index.ts	STTOptions
 plugins/openai/src/index.ts	TTS
@@ -309,7 +320,10 @@ plugins/runway/src/index.ts	AvatarSessionOptions
 plugins/runway/src/index.ts	RunwayException
 plugins/runway/src/index.ts	StartOptions
 plugins/sarvam/src/index.ts	ChunkedStream
+plugins/sarvam/src/index.ts	ResolvedSTTOptions
+plugins/sarvam/src/index.ts	ResolvedTTSOptions
 plugins/sarvam/src/index.ts	STT
+plugins/sarvam/src/index.ts	STTBaseOptions
 plugins/sarvam/src/index.ts	STTLanguages
 plugins/sarvam/src/index.ts	STTModels
 plugins/sarvam/src/index.ts	STTModes
@@ -322,6 +336,7 @@ plugins/sarvam/src/index.ts	STTV3Options
 plugins/sarvam/src/index.ts	SpeechStream
 plugins/sarvam/src/index.ts	SynthesizeStream
 plugins/sarvam/src/index.ts	TTS
+plugins/sarvam/src/index.ts	TTSBaseOptions
 plugins/sarvam/src/index.ts	TTSLanguages
 plugins/sarvam/src/index.ts	TTSModels
 plugins/sarvam/src/index.ts	TTSOptions

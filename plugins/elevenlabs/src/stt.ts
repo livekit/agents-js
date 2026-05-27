@@ -61,7 +61,7 @@ export interface STTOptions {
   keyterms?: string[];
 }
 
-interface ResolvedSTTOptions {
+export interface ResolvedSTTOptions {
   modelId: ElevenLabsSTTModels | string;
   apiKey: string;
   baseURL: string;

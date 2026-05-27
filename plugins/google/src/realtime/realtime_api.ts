@@ -80,7 +80,7 @@ function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 /**
  * Internal realtime options for Google Realtime API
  */
-interface RealtimeOptions {
+export interface RealtimeOptions {
   model: LiveAPIModels | string;
   apiKey?: string;
   voice: Voice | string;

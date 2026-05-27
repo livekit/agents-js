@@ -141,7 +141,7 @@ interface AudioData {
   annotatedRate: SpeakingRateData | null;
 }
 
-class SegmentSynchronizerImpl {
+export class SegmentSynchronizerImpl {
   private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
@@ -699,7 +699,7 @@ export class TranscriptionSynchronizer {
   }
 }
 
-class SyncedAudioOutput extends AudioOutput {
+export class SyncedAudioOutput extends AudioOutput {
   private pushedDuration: number = 0.0;
 
   constructor(
@@ -832,7 +832,7 @@ class SyncedAudioOutput extends AudioOutput {
   }
 }
 
-class SyncedTextOutput extends TextOutput {
+export class SyncedTextOutput extends TextOutput {
   private capturing: boolean = false;
   private logger = log();
 

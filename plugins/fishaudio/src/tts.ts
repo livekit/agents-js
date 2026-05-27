@@ -42,7 +42,7 @@ export interface TTSOptions {
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
-interface ResolvedTTSOptions {
+export interface ResolvedTTSOptions {
   apiKey: string;
   model: TTSModels | string;
   voiceId?: string;

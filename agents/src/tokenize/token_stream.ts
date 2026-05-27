@@ -5,7 +5,7 @@ import { AsyncIterableQueue, shortuuid } from '../utils.js';
 import type { TokenData } from './tokenizer.js';
 import { SentenceStream, WordStream } from './tokenizer.js';
 
-type TokenizeFunc = (x: string) => string[] | [string, number, number][];
+export type TokenizeFunc = (x: string) => string[] | [string, number, number][];
 
 export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   protected queue = new AsyncIterableQueue<TokenData>();

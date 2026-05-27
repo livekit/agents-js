@@ -40,7 +40,7 @@ const NUM_CHANNELS = 1;
 // Model-specific option types
 // ---------------------------------------------------------------------------
 
-interface STTBaseOptions {
+export interface STTBaseOptions {
   /** Sarvam API key. Defaults to $SARVAM_API_KEY */
   apiKey?: string;
   /**
@@ -126,7 +126,7 @@ export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
 // Resolved (internal) options — flat union of all fields
 // ---------------------------------------------------------------------------
 
-interface ResolvedSTTOptions {
+export interface ResolvedSTTOptions {
   apiKey: string;
   model: STTModels;
   streaming: boolean;

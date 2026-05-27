@@ -4,20 +4,25 @@
 // @ts-check
 
 /**
- * Public-API checks backed by CodeQL, replacing API Extractor. Runs two queries
+ * Public-API checks backed by CodeQL, replacing API Extractor. Runs three queries
  * (see `codeql/queries/`) and compares each against a committed snapshot, failing only
  * on drift — so the existing surface/debt is tracked and regressions are blocked, much
  * like API Extractor's `.api.md` report:
  *
- *   1. api-surface       — names exported from each published package entry point
- *                          (`codeql/api-surface.snapshot.txt`).
- *   2. forgotten-exports — types referenced by the public API but not themselves exported
- *                          (`codeql/forgotten-exports.snapshot.txt`).
+ *   1. api-surface                 — names exported from each published package entry point
+ *                                    (`codeql/api-surface.snapshot.txt`).
+ *   2. forgotten-exports           — types referenced by the public API but not themselves
+ *                                    exported (`codeql/forgotten-exports.snapshot.txt`).
+ *   3. implicit-public-return-types — exported functions / public methods with no explicit
+ *                                    return type (`codeql/implicit-public-return-types.snapshot.txt`).
+ *                                    These are the blind spot for #2: CodeQL's TS resolver
+ *                                    can't see compiler-inferred types, so an un-annotated
+ *                                    return can smuggle an internal type into the public API.
  *
  * Requires the CodeQL CLI (`codeql`) on PATH: https://github.com/github/codeql-cli-binaries
  *
  *   node scripts/codeql-api-check.mjs            # check (fails on drift from snapshots)
- *   node scripts/codeql-api-check.mjs --update   # refresh both snapshots
+ *   node scripts/codeql-api-check.mjs --update   # refresh all snapshots
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,9 +32,27 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const queriesDir = path.join(repoRoot, 'codeql', 'queries');
 const surfaceSnapshot = path.join(repoRoot, 'codeql', 'api-surface.snapshot.txt');
-const forgottenSnapshot = path.join(repoRoot, 'codeql', 'forgotten-exports.snapshot.txt');
 const dbDir = path.join(repoRoot, '.codeql', 'db');
 const workDir = path.join(repoRoot, '.codeql');
+
+/**
+ * `@kind problem` queries, keyed by the `@name` they emit in the analyze CSV. Each is
+ * snapshotted to its own baseline and diffed independently.
+ */
+const problemQueries = [
+  {
+    name: 'Forgotten export',
+    label: 'forgotten-exports',
+    file: 'forgotten-exports.ql',
+    snapshot: path.join(repoRoot, 'codeql', 'forgotten-exports.snapshot.txt'),
+  },
+  {
+    name: 'Missing return type on public API',
+    label: 'implicit-public-return-types',
+    file: 'implicit-public-return-types.ql',
+    snapshot: path.join(repoRoot, 'codeql', 'implicit-public-return-types.snapshot.txt'),
+  },
+];
 
 const update = process.argv.includes('--update');
 
@@ -134,37 +157,44 @@ const computeApiSurface = () => {
 };
 
 /**
- * Runs the forgotten-exports query. Returns the location-independent snapshot lines
- * (`package<TAB>message`, sorted/unique) plus a printable `file:line — message` list.
- * @returns {{ snapshot: string[], printable: string[] }}
+ * Runs every `@kind problem` query in one analyze pass and groups results by `@name`.
+ * Each group yields location-independent snapshot lines (`package<TAB>message`,
+ * sorted/unique) plus a printable `file:line — message` list.
+ * @returns {Map<string, { snapshot: string[], printable: string[] }>}
  */
-const computeForgottenExports = () => {
-  const out = path.join(workDir, 'forgotten-exports.csv');
+const runProblemQueries = () => {
+  const out = path.join(workDir, 'problems.csv');
   codeql([
     'database',
     'analyze',
     dbDir,
-    path.join(queriesDir, 'forgotten-exports.ql'),
+    ...problemQueries.map((q) => path.join(queriesDir, q.file)),
     '--format=csv',
     `--output=${out}`,
     '--rerun',
     '--threads=0',
     '--quiet',
   ]);
-  const rows = fs
+  /** @type {Map<string, { snapshot: Set<string>, printable: string[] }>} */
+  const byName = new Map();
+  for (const cols of fs
     .readFileSync(out, 'utf8')
     .split('\n')
     .filter((l) => l.trim().length > 0)
-    .map(parseCsv);
-  const snapshot = new Set();
-  const printable = [];
-  for (const cols of rows) {
+    .map(parseCsv)) {
     // columns: name, description, severity, message, path, startLine, ...
-    const [, , , message, file, line] = cols;
-    snapshot.add(`${packageRoot(file)}\t${message}`);
-    printable.push(`${file.replace(/^\//, '')}:${line} — ${message}`);
+    const [name, , , message, file, line] = cols;
+    if (!byName.has(name)) byName.set(name, { snapshot: new Set(), printable: [] });
+    const g = byName.get(name);
+    g.snapshot.add(`${packageRoot(file)}\t${message}`);
+    g.printable.push(`${file.replace(/^\//, '')}:${line} — ${message}`);
   }
-  return { snapshot: [...snapshot].sort(), printable: printable.sort() };
+  return new Map(
+    [...byName].map(([name, g]) => [
+      name,
+      { snapshot: [...g.snapshot].sort(), printable: g.printable.sort() },
+    ]),
+  );
 };
 
 /**
@@ -199,18 +229,22 @@ const main = () => {
   createDatabase();
 
   const surface = computeApiSurface();
-  const forgotten = computeForgottenExports();
+  const problems = runProblemQueries();
 
-  const surfaceOk = diffSnapshot('api-surface', surfaceSnapshot, surface);
-  const forgottenOk = diffSnapshot('forgotten-exports', forgottenSnapshot, forgotten.snapshot);
+  let ok = diffSnapshot('api-surface', surfaceSnapshot, surface);
 
-  if (!update && !forgottenOk) {
-    console.log('\nforgotten-export locations:');
-    for (const l of forgotten.printable) console.log(`    ${l}`);
+  for (const q of problemQueries) {
+    const result = problems.get(q.name) ?? { snapshot: [], printable: [] };
+    const matched = diffSnapshot(q.label, q.snapshot, result.snapshot);
+    if (!update && !matched) {
+      console.log(`\n${q.label} locations:`);
+      for (const l of result.printable) console.log(`    ${l}`);
+    }
+    ok = ok && matched;
   }
 
   if (update) return;
-  if (!surfaceOk || !forgottenOk) fail('CodeQL API checks failed (snapshot drift).');
+  if (!ok) fail('CodeQL API checks failed (snapshot drift).');
   console.log('\n✓ CodeQL API checks passed.');
 };
 
