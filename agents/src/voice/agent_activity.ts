@@ -2964,17 +2964,6 @@ export class AgentActivity implements RecognitionHooks {
           trTextInput = msg.textStream;
         }
 
-        const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
-        if (trNodeResult) {
-          const [textForwardTask, textOut] = performTextForwarding(
-            trNodeResult,
-            messageAbortController,
-            textOutput,
-          );
-          forwardTasks.push(textForwardTask);
-          output.textOut = textOut;
-        }
-
         if (audioOutput) {
           let realtimeAudioResult: ReadableStream<AudioFrame> | null = null;
 
@@ -3021,17 +3010,33 @@ export class AgentActivity implements RecognitionHooks {
               .then((ts) => onFirstFrame(ts))
               .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
           }
-        } else if (output.textOut) {
+        }
+
+        const trNodeResult = await this.agent.transcriptionNode(trTextInput, modelSettings);
+        if (trNodeResult) {
+          const [textForwardTask, textOut] = performTextForwarding(
+            trNodeResult,
+            messageAbortController,
+            textOutput,
+          );
+          forwardTasks.push(textForwardTask);
+          output.textOut = textOut;
+        }
+
+        if (!output.audioOut && output.textOut) {
           output.textOut.firstTextFut.await
             .then(() => onFirstFrame())
             .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
         }
 
-        let playoutPromise: Promise<PlaybackFinishedEvent> | null = null;
+        let playoutEv: PlaybackFinishedEvent | undefined;
         await speechHandle.waitIfNotInterrupted(forwardTasks.map((task) => task.result));
         if (!speechHandle.interrupted && audioOutput) {
-          playoutPromise = audioOutput.waitForPlayout();
+          const playoutPromise = audioOutput.waitForPlayout();
           await speechHandle.waitIfNotInterrupted([playoutPromise]);
+          if (!speechHandle.interrupted) {
+            playoutEv = await playoutPromise;
+          }
         }
 
         if (speechHandle.interrupted) {
@@ -3050,11 +3055,10 @@ export class AgentActivity implements RecognitionHooks {
           return output;
         }
 
-        if (audioOutput) {
-          const playbackEv = await playoutPromise!;
+        if (audioOutput && playoutEv) {
           output.played = 'full';
-          output.playbackPositionInS = playbackEv.playbackPosition;
-          output.synchronizedTranscript = playbackEv.synchronizedTranscript;
+          output.playbackPositionInS = playoutEv.playbackPosition;
+          output.synchronizedTranscript = playoutEv.synchronizedTranscript;
         } else if (output.textOut?.text) {
           output.played = 'full';
         }
@@ -3121,6 +3125,7 @@ export class AgentActivity implements RecognitionHooks {
             content: forwardedText,
             id: output.message.messageId,
             interrupted,
+            createdAt: startedSpeakingAt,
           });
           this.agent._chatCtx.insert(message);
           speechHandle._itemAdded([message]);
