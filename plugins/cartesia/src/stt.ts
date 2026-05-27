@@ -611,7 +611,7 @@ export class SpeechStream extends stt.SpeechStream {
     return `${wsBase}/stt/turns/websocket?${params.toString()}`;
   }
 
-  override close() {
+  override close(): void {
     super.close();
     this.#ws?.close();
   }

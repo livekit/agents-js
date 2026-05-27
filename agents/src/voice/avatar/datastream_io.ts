@@ -250,7 +250,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     room: Room;
     callerIdentity: string;
     handler: (data: RpcInvocationData) => string;
-  }) {
+  }): void {
     DataStreamAudioOutput._playbackFinishedHandlers[callerIdentity] = handler;
 
     if (DataStreamAudioOutput._playbackFinishedRpcRegistered) {
@@ -301,7 +301,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     room: Room;
     callerIdentity: string;
     handler: (data: RpcInvocationData) => string;
-  }) {
+  }): void {
     DataStreamAudioOutput._playbackStartedHandlers[callerIdentity] = handler;
 
     if (DataStreamAudioOutput._playbackStartedRpcRegistered) {

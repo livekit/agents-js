@@ -77,7 +77,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     return fork(forkUrl, [this.#agent], forkOptions);
   }
 
-  async mainTask(proc: ChildProcess) {
+  async mainTask(proc: ChildProcess): Promise<void> {
     proc.on('message', (msg: IPCMessage) => {
       switch (msg.case) {
         case 'inferenceRequest':
@@ -107,7 +107,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     }
   }
 
-  async launchJob(info: RunningJobInfo) {
+  async launchJob(info: RunningJobInfo): Promise<void> {
     if (this.#runningJob) {
       throw Error('process already has a running job');
     }

@@ -28,7 +28,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   }
 
   /** Push a string of text into the token stream */
-  pushText(text: string) {
+  pushText(text: string): void {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -68,7 +68,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   }
 
   /** Flush the stream, causing it to process all pending text */
-  flush() {
+  flush(): void {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -97,7 +97,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   }
 
   /** Mark the input as ended and forbid additional pushes */
-  endInput() {
+  endInput(): void {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
@@ -110,7 +110,7 @@ export class BufferedTokenStream implements AsyncIterableIterator<TokenData> {
   }
 
   /** Close both the input and output of the token stream */
-  close() {
+  close(): void {
     this.queue.close();
     this.closed = true;
   }
@@ -128,20 +128,20 @@ export class BufferedSentenceStream extends SentenceStream {
     this.#stream = new BufferedTokenStream(func, minTokenLength, minContextLength);
   }
 
-  pushText(text: string) {
+  pushText(text: string): void {
     this.#stream.pushText(text);
   }
 
-  flush() {
+  flush(): void {
     this.#stream.flush();
   }
 
-  close() {
+  close(): void {
     super.close();
     this.#stream.close();
   }
 
-  endInput() {
+  endInput(): void {
     this.#stream.endInput();
   }
 
@@ -158,19 +158,19 @@ export class BufferedWordStream extends WordStream {
     this.#stream = new BufferedTokenStream(func, minTokenLength, minContextLength);
   }
 
-  pushText(text: string) {
+  pushText(text: string): void {
     this.#stream.pushText(text);
   }
 
-  flush() {
+  flush(): void {
     this.#stream.flush();
   }
 
-  endInput() {
+  endInput(): void {
     this.#stream.endInput();
   }
 
-  close() {
+  close(): void {
     this.#stream.close();
   }
 

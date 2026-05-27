@@ -39,7 +39,7 @@ export type Expand<T> = T extends Function
 /** Union of a single and a list of {@link AudioFrame}s */
 export type AudioBuffer = AudioFrame[] | AudioFrame;
 
-export const noop = () => {};
+export const noop = (): void => {};
 
 export const isPending = async (promise: Promise<unknown>): Promise<Throws<boolean, Error>> => {
   const sentinel = Symbol('sentinel');
@@ -115,7 +115,7 @@ export class Queue<T> {
     return item;
   }
 
-  async put(item: T) {
+  async put(item: T): Promise<void> {
     if (this.#limit && this.items.length >= this.#limit) {
       await once(this.#events, 'get');
     }
@@ -141,11 +141,11 @@ export class Future<T = void, E extends Error = Error> {
     });
   }
 
-  get await() {
+  get await(): ThrowsPromise<T, E> {
     return this.#await;
   }
 
-  get done() {
+  get done(): boolean {
     return this.#done;
   }
 
@@ -162,17 +162,17 @@ export class Future<T = void, E extends Error = Error> {
   }
 
   /** Whether the future was rejected (cancelled) */
-  get rejected() {
+  get rejected(): boolean {
     return this.#rejected;
   }
 
-  resolve(value: T) {
+  resolve(value: T): void {
     this.#done = true;
     this.#result = value;
     this.#resolvePromise(value);
   }
 
-  reject(error: E) {
+  reject(error: E): void {
     this.#done = true;
     this.#rejected = true;
     this.#error = error;
@@ -190,7 +190,7 @@ export class Event {
   #isSet = false;
   #waiters: Array<() => void> = [];
 
-  async wait() {
+  async wait(): Promise<boolean> {
     if (this.#isSet) return true;
 
     let resolve: () => void = noop;
@@ -376,7 +376,7 @@ export class ExpFilter {
 
   reset(
     alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number },
-  ) {
+  ): void {
     if (typeof alphaOrOpts === 'object') {
       if (alphaOrOpts.alpha !== undefined) {
         this.#validateAlpha(alphaOrOpts.alpha);
@@ -533,7 +533,7 @@ export class Task<T> {
     fn: (controller: AbortController) => Promise<T>,
     controller?: AbortController,
     name?: string,
-  ) {
+  ): Task<T> {
     const abortController = controller ?? new AbortController();
     return new Task(fn, abortController, name);
   }
@@ -572,7 +572,7 @@ export class Task<T> {
   /**
    * Cancels the task.
    */
-  cancel() {
+  cancel(): void {
     this.controller.abort();
   }
 
@@ -582,7 +582,16 @@ export class Task<T> {
    * @param timeout - The timeout in milliseconds
    * @returns The result status of the task (timeout, completed, aborted)
    */
-  async cancelAndWait(timeout?: number) {
+  async cancelAndWait(timeout?: number): Promise<
+    | TaskResult.Completed
+    | TaskResult.Aborted
+    | (TaskResult.Completed & {
+        __throws?(error: never): void;
+      })
+    | (TaskResult.Aborted & {
+        __throws?(error: never): void;
+      })
+  > {
     this.cancel();
 
     // Race between task completion and timeout
@@ -625,7 +634,7 @@ export class Task<T> {
     return this.resultFuture.done;
   }
 
-  addDoneCallback(callback: () => void) {
+  addDoneCallback(callback: () => void): void {
     if (this.done) {
       queueMicrotask(callback);
       return;
@@ -633,7 +642,7 @@ export class Task<T> {
     this.doneCallbacks.add(callback);
   }
 
-  removeDoneCallback(callback: () => void) {
+  removeDoneCallback(callback: () => void): void {
     this.doneCallbacks.delete(callback);
   }
 }
@@ -647,7 +656,11 @@ export async function cancelAndWait(tasks: Task<any>[], timeout?: number): Promi
   await ThrowsPromise.allSettled(tasks.map((task) => task.cancelAndWait(timeout)));
 }
 
-export function withResolvers<T = unknown>() {
+export function withResolvers<T = unknown>(): {
+  promise: ThrowsPromise<T, Error>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason: Error) => void;
+} {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason: Error) => void;
 
@@ -881,7 +894,7 @@ export function toError(error: unknown): Error {
  *
  * @param func - The function to run.
  */
-export function startSoon(func: () => void) {
+export function startSoon(func: () => void): void {
   setTimeout(func, 0);
 }
 
@@ -1263,7 +1276,7 @@ export async function* readStream<T>(
   }
 }
 
-export async function waitForAbort(signal: AbortSignal) {
+export async function waitForAbort(signal: AbortSignal): Promise<Throws<void, Error>> {
   if (signal.aborted) {
     return;
   }
@@ -1312,7 +1325,7 @@ export const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
   return c.signal;
 };
 
-export const isCloud = (url: URL) => {
+export const isCloud = (url: URL): boolean => {
   const hostname = url.hostname;
   return hostname.endsWith('.livekit.cloud') || hostname.endsWith('.livekit.run');
 };

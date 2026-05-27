@@ -338,7 +338,7 @@ export class TTS extends tts.TTS {
    * dictId, enablePreprocessing) are dropped so resolveOptions re-applies
    * the correct defaults for the new model.
    */
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     const modelChanging = opts.model != null && opts.model !== this.#opts.model;
 
     const base: Partial<TTSOptions> = modelChanging

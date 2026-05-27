@@ -1,6 +1,0 @@
-agents	Type 'AgentConstructor' is part of the public API (referenced by exported 'RunAssert') but is not exported.
-agents	Type 'OutputSchema' is part of the public API (referenced by exported 'RunResult') but is not exported.
-agents	Type 'TextSyncOptions' is part of the public API (referenced by exported 'SegmentSynchronizerImpl') but is not exported.
-agents	Type 'UpdateOptions' is part of the public API (referenced by exported 'FakeSTT') but is not exported.
-plugins/elevenlabs	Type 'SynthesizeContent' is part of the public API (referenced by exported 'Connection') but is not exported.
-plugins/inworld	Type 'InworldMessage' is part of the public API (referenced by exported 'WSConnectionPool') but is not exported.

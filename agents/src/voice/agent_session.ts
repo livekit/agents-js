@@ -41,7 +41,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task, asError } from '../utils.js';
+import { type Future, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -443,7 +443,7 @@ export class AgentSession<
     return this._connOptions;
   }
 
-  get interruptionDetection() {
+  get interruptionDetection(): 'vad' | 'adaptive' | undefined {
     return this._interruptionDetection;
   }
 
@@ -675,7 +675,7 @@ export class AgentSession<
     }
   }
 
-  commitUserTurn() {
+  commitUserTurn(): void {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
@@ -683,7 +683,7 @@ export class AgentSession<
     this.activity.commitUserTurn();
   }
 
-  clearUserTurn() {
+  clearUserTurn(): void {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
@@ -732,7 +732,7 @@ export class AgentSession<
     return handle;
   }
 
-  interrupt(options?: { force?: boolean }) {
+  interrupt(options?: { force?: boolean }): Future<void, Error> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
@@ -1155,7 +1155,10 @@ export class AgentSession<
   }
 
   /** @internal */
-  _updateAgentState(state: AgentState, options?: { startTime?: number; otelContext?: Context }) {
+  _updateAgentState(
+    state: AgentState,
+    options?: { startTime?: number; otelContext?: Context },
+  ): void {
     if (this._agentState === state) {
       return;
     }
@@ -1210,7 +1213,7 @@ export class AgentSession<
   _updateUserState(
     state: UserState,
     options?: { lastSpeakingTime?: number; otelContext?: Context },
-  ) {
+  ): void {
     if (this._userState === state) {
       return;
     }

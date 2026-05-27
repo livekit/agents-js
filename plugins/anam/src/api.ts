@@ -121,7 +121,7 @@ export class AnamAPI {
     personaConfig: PersonaConfig;
     livekitUrl?: string;
     livekitToken?: string;
-  }) {
+  }): Promise<{ sessionToken: string }> {
     const pc = params.personaConfig;
     const personaPayload = {
       type: 'ephemeral',
@@ -141,7 +141,7 @@ export class AnamAPI {
     return this.post<{ sessionToken: string }>(this.tokenPath, payload);
   }
 
-  startEngineSession(params: { sessionToken: string }) {
+  startEngineSession(params: { sessionToken: string }): Promise<{ sessionId: string }> {
     return this.postWithHeaders<{ sessionId: string }>(
       this.startPath,
       {},

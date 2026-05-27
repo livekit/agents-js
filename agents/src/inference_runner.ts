@@ -6,7 +6,7 @@
 export abstract class InferenceRunner<InputType = unknown, OutputType = unknown> {
   static registeredRunners: { [id: string]: string } = {};
 
-  static registerRunner(method: string, importPath: string) {
+  static registerRunner(method: string, importPath: string): void {
     if (InferenceRunner.registeredRunners[method]) {
       throw new Error(`Inference runner ${method} already registered`);
     }

@@ -26,10 +26,13 @@ predicate publicApiFunction(Function f, string what) {
     fds = f and isExportedName(fds.getVariable()) and what = "exported function " + fds.getName()
   )
   or
-  // arrow/function expression assigned to an exported binding
+  // arrow/function expression assigned to an exported binding, unless the binding itself
+  // carries an explicit type annotation (e.g. `const cb: TextInputCallback = () => …`),
+  // which already fully specifies the signature including the return type.
   exists(VarDecl vd |
     isExportedName(vd.getVariable()) and
     f = vd.getVariable().getAnAssignedExpr() and
+    not exists(vd.getTypeAnnotation()) and
     what = "exported function " + vd.getName()
   )
   or

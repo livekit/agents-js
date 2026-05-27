@@ -63,7 +63,7 @@ export interface FakeSTTOptions {
   capabilities?: Partial<STTCapabilities>;
 }
 
-type UpdateOptions = Partial<
+export type UpdateOptions = Partial<
   Pick<FakeSTTOptions, 'fakeException' | 'fakeTranscript' | 'fakeTimeoutMs'>
 >;
 

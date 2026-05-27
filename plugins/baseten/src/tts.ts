@@ -55,7 +55,7 @@ export class TTS extends tts.TTS {
     } as BasetenTTSOptions;
   }
 
-  updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>) {
+  updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>): void {
     this.opts = {
       ...this.opts,
       ...opts,

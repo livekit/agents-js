@@ -8,7 +8,7 @@ function roundTwoDecimals(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-export const logMetrics = (metrics: AgentMetrics) => {
+export const logMetrics = (metrics: AgentMetrics): void => {
   const logger = log();
   if (metrics.type === 'llm_metrics') {
     logger

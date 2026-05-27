@@ -448,13 +448,13 @@ export abstract class SynthesizeStream
 
   protected abstract run(): Promise<void>;
 
-  updateInputStream(text: ReadableStream<string>) {
+  updateInputStream(text: ReadableStream<string>): void {
     this.deferredInputStream.setSource(text);
   }
 
   /** Push a string of text to the TTS */
   /** @deprecated Use `updateInputStream` instead */
-  pushText(text: string) {
+  pushText(text: string): void {
     if (!this.#monitorMetricsTask) {
       this.#monitorMetricsTask = this.monitorMetrics();
       // Close output when metrics task completes
@@ -471,7 +471,7 @@ export abstract class SynthesizeStream
   }
 
   /** Flush the TTS, causing it to process all pending text */
-  flush() {
+  flush(): void {
     if (this.#metricsText) {
       this.#metricsPendingTexts.push(this.#metricsText);
       this.#metricsText = '';
@@ -486,7 +486,7 @@ export abstract class SynthesizeStream
   }
 
   /** Mark the input as ended and forbid additional pushes */
-  endInput() {
+  endInput(): void {
     this.flush();
 
     if (this.input.closed || this.closed) {
@@ -506,7 +506,7 @@ export abstract class SynthesizeStream
   }
 
   /** Close both the input and output of the TTS stream */
-  close() {
+  close(): void {
     this.abortController.abort();
   }
 
@@ -719,7 +719,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   }
 
   /** Close both the input and output of the TTS stream */
-  close() {
+  close(): void {
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();
     if (!this.abortController.signal.aborted) this.abortController.abort();

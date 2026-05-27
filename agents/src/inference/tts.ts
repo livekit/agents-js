@@ -350,7 +350,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     });
   }
 
-  get label() {
+  get label(): string {
     return 'inference.TTS';
   }
 
@@ -362,7 +362,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'livekit';
   }
 
-  override get capabilities() {
+  override get capabilities(): { streaming: boolean; alignedTranscript: boolean } {
     return { streaming: true, alignedTranscript: this.#alignedTranscript };
   }
 
@@ -375,7 +375,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     opts: Partial<
       Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language' | 'modelOptions'>
     >,
-  ) {
+  ): void {
     const mergedModelOptions =
       opts.modelOptions !== undefined
         ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as TTSOptions<TModel>)
@@ -469,7 +469,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return socket;
   }
 
-  async closeWs(ws: WebSocket) {
+  async closeWs(ws: WebSocket): Promise<void> {
     await ws.close();
   }
 
@@ -477,7 +477,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     this.pool.prewarm();
   }
 
-  async close() {
+  async close(): Promise<void> {
     for (const stream of this.streams) {
       await stream.close();
     }
@@ -498,7 +498,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     this.tts = tts;
   }
 
-  get label() {
+  get label(): string {
     return 'inference.SynthesizeStream';
   }
 
@@ -506,7 +506,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     opts: Partial<
       Pick<InferenceTTSOptions<TModel>, 'model' | 'voice' | 'language' | 'modelOptions'>
     >,
-  ) {
+  ): void {
     const mergedModelOptions =
       opts.modelOptions !== undefined
         ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as TTSOptions<TModel>)

@@ -103,7 +103,7 @@ export interface ResolvedTTSOptions {
 }
 
 // Internal types for connection management
-interface SynthesizeContent {
+export interface SynthesizeContent {
   contextId: string;
   text: string;
   flush: boolean;

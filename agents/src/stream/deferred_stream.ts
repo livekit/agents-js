@@ -19,7 +19,7 @@ import { IdentityTransform } from './identity_transform.js';
  * Invalid state: Controller is already closed
  * Invalid state: WritableStream is closed
  */
-export function isStreamReaderReleaseError(e: unknown) {
+export function isStreamReaderReleaseError(e: unknown): boolean {
   const allowedMessages = [
     'Invalid state: Releasing reader',
     'Invalid state: The reader is not attached to a stream',
@@ -48,18 +48,18 @@ export class DeferredReadableStream<T> {
     this.writer = this.transform.writable.getWriter();
   }
 
-  get stream() {
+  get stream(): ReadableStream<T> {
     return this.transform.readable;
   }
 
-  get isSourceSet() {
+  get isSourceSet(): boolean {
     return !!this.sourceReader;
   }
 
   /**
    * Call once the actual source is ready.
    */
-  setSource(source: ReadableStream<T>) {
+  setSource(source: ReadableStream<T>): void {
     if (this.sourceAttached) {
       throw new Error('Stream source already set');
     }
@@ -119,7 +119,7 @@ export class DeferredReadableStream<T> {
   /**
    * Detach the source stream and clean up resources.
    */
-  async detachSource() {
+  async detachSource(): Promise<void> {
     if (!this.isSourceSet) {
       // No-op if source was never set - this is a common case during cleanup
       return;

@@ -102,29 +102,29 @@ interface CreateContextConfig {
   autoMode?: boolean;
 }
 
-interface WordAlignment {
+export interface WordAlignment {
   words: string[];
   wordStartTimeSeconds: number[];
   wordEndTimeSeconds: number[];
 }
 
-interface CharacterAlignment {
+export interface CharacterAlignment {
   characters: string[];
   characterStartTimeSeconds: number[];
   characterEndTimeSeconds: number[];
 }
 
-interface TimestampInfo {
+export interface TimestampInfo {
   wordAlignment?: WordAlignment;
   characterAlignment?: CharacterAlignment;
 }
 
-interface AudioChunk {
+export interface AudioChunk {
   audioContent?: string;
   timestampInfo?: TimestampInfo;
 }
 
-interface InworldResult {
+export interface InworldResult {
   contextId?: string;
   contextCreated?: boolean;
   contextClosed?: boolean;
@@ -134,7 +134,7 @@ interface InworldResult {
   status?: { code: number; message: string };
 }
 
-interface InworldMessage {
+export interface InworldMessage {
   result?: InworldResult;
   contextId?: string;
   error?: { message: string };
@@ -278,15 +278,15 @@ export class WSConnectionPool {
     });
   }
 
-  registerListener(contextId: string, cb: (msg: InworldMessage) => void) {
+  registerListener(contextId: string, cb: (msg: InworldMessage) => void): void {
     this.#listeners.set(contextId, cb);
   }
 
-  unregisterListener(contextId: string) {
+  unregisterListener(contextId: string): void {
     this.#listeners.delete(contextId);
   }
 
-  close() {
+  close(): void {
     if (this.#ws) {
       this.#ws.close();
       this.#ws = undefined;
@@ -370,7 +370,7 @@ export class TTS extends tts.TTS {
     return new SynthesizeStream(this, this.#opts);
   }
 
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
     if (opts.apiKey) {
       this.#authorization = `Basic ${opts.apiKey}`;
@@ -379,7 +379,7 @@ export class TTS extends tts.TTS {
     }
   }
 
-  async close() {
+  async close(): Promise<void> {
     this.#pool.close();
   }
 }

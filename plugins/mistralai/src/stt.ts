@@ -93,7 +93,7 @@ export class STT extends stt.STT {
     language?: string;
     contextBias?: string[];
     targetStreamingDelayMs?: number;
-  }) {
+  }): void {
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.contextBias !== undefined) this.#opts.contextBias = opts.contextBias;
     if (opts.targetStreamingDelayMs !== undefined)

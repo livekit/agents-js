@@ -32,7 +32,7 @@ const globals = globalThis as typeof globalThis & GlobalState;
 export const loggerOptions = (): LoggerOptions | undefined => globals[LOGGER_OPTIONS_KEY];
 
 /** @internal */
-export const log = () => {
+export const log = (): Logger => {
   const logger = globals[LOGGER_KEY];
   if (!logger) {
     throw new TypeError('logger not initialized. did you forget to run initializeLogger()?');
@@ -54,7 +54,7 @@ const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
 };
 
 /** @internal */
-export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
+export const initializeLogger = ({ pretty, level }: LoggerOptions): void => {
   globals[LOGGER_OPTIONS_KEY] = { pretty, level };
   globals[LOGGER_KEY] = createLogger({ pretty, level });
 };
@@ -88,7 +88,7 @@ class OtelDestination extends Writable {
  *
  * @internal
  */
-export const enableOtelLogging = () => {
+export const enableOtelLogging = (): void => {
   if (globals[OTEL_ENABLED_KEY] || !globals[LOGGER_KEY]) {
     console.warn('OTEL logging already enabled or logger not initialized');
     return;

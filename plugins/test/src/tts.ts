@@ -22,7 +22,7 @@ export const tts = async (
   tts: ttslib.TTS,
   stt: stt.STT,
   supports: Partial<{ streaming: boolean }> = {},
-) => {
+): Promise<void> => {
   initializeLogger({ pretty: false });
   supports = { streaming: true, ...supports };
   describe('TTS', () => {

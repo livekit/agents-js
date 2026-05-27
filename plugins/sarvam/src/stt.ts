@@ -465,7 +465,7 @@ export class STT extends stt.STT {
     this.opts = resolved;
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     const modelChanging = opts.model != null && opts.model !== this.opts.model;
 
     const base: Partial<STTOptions> = modelChanging
@@ -563,7 +563,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.#audioEnergyFilter = new AudioEnergyFilter();
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     const modelChanging = opts.model != null && opts.model !== this.#opts.model;
 
     const base: Partial<STTOptions> = modelChanging

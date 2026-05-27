@@ -35,7 +35,7 @@ export const stt = async (
   stt: sttlib.STT,
   vad: VAD,
   supports: Partial<{ streaming: boolean; nonStreaming: boolean }> = {},
-) => {
+): Promise<void> => {
   initializeLogger({ pretty: false });
   supports = { streaming: true, nonStreaming: true, ...supports };
   describe('STT', async () => {

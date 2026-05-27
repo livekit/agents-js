@@ -52,12 +52,12 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.label = `stt.StreamAdapterWrapper<${this.#stt.label}>`;
   }
 
-  close() {
+  close(): void {
     super.close();
     this.#vadStream.close();
   }
 
-  async monitorMetrics() {
+  async monitorMetrics(): Promise<void> {
     return; // do nothing
   }
 

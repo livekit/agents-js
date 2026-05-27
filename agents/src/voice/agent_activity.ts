@@ -112,6 +112,7 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
+import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -711,7 +712,7 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling?.turnDetection ?? this.agentSession.turnDetection;
   }
 
-  get turnHandling() {
+  get turnHandling(): Partial<TurnHandlingOptions> {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
@@ -734,7 +735,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /** @internal */
-  get inputStartedAt() {
+  get inputStartedAt(): number | undefined {
     return this.audioRecognition?.inputStartedAt;
   }
 
@@ -897,7 +898,7 @@ export class AgentActivity implements RecognitionHooks {
       audioDetached?: boolean;
       throwIfNotReady?: boolean;
     } = {},
-  ) {
+  ): void {
     const { audioDetached = false, throwIfNotReady = true } = options;
     if (!this.audioRecognition) {
       if (throwIfNotReady) {
@@ -909,7 +910,7 @@ export class AgentActivity implements RecognitionHooks {
     this.audioRecognition.commitUserTurn(audioDetached);
   }
 
-  clearUserTurn() {
+  clearUserTurn(): void {
     this.audioRecognition?.clearUserTurn();
     this.realtimeSession?.clearAudio();
   }
@@ -1288,7 +1289,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  onInterruption(ev: OverlappingSpeechEvent) {
+  onInterruption(ev: OverlappingSpeechEvent): void {
     this.restoreInterruptionByAudioActivity();
     this.interruptByAudioActivity({
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,

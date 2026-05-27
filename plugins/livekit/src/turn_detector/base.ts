@@ -36,7 +36,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
     this.modelRevision = MODEL_REVISIONS[modelType];
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     const { AutoTokenizer } = await import('@huggingface/transformers');
 
     try {
@@ -87,7 +87,9 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
     }
   }
 
-  async run(data: RawChatItem[]) {
+  async run(
+    data: RawChatItem[],
+  ): Promise<{ eouProbability: number; input: string; duration: number }> {
     const startTime = Date.now();
 
     const text = this.formatChatCtx(data);
@@ -115,7 +117,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
     return result;
   }
 
-  async close() {
+  async close(): Promise<void> {
     await this.session?.release();
   }
 

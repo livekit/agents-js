@@ -71,7 +71,7 @@ export class STT extends stt.STT {
     throw new Error('Recognize is not supported on Baseten STT');
   }
 
-  updateOptions(opts: Partial<BasetenSttOptions>) {
+  updateOptions(opts: Partial<BasetenSttOptions>): void {
     this.#opts = {
       ...this.#opts,
       ...opts,

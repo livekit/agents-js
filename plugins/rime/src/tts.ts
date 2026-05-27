@@ -244,7 +244,7 @@ export class TTS extends tts.TTS {
    *
    * @param opts - Partial options to update
    */
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     this.opts = resolveOptions({ ...this.opts, ...opts });
   }
 

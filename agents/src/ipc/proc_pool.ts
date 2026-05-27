@@ -80,7 +80,7 @@ export class ProcPool {
     await proc.launchJob(info);
   }
 
-  async procWatchTask(procUnlock: () => void) {
+  async procWatchTask(procUnlock: () => void): Promise<void> {
     const proc = new JobProcExecutor(
       this.agent,
       this.inferenceExecutor,
@@ -136,7 +136,7 @@ export class ProcPool {
     }
   }
 
-  start() {
+  start(): void {
     if (this.started) {
       return;
     }
@@ -145,7 +145,7 @@ export class ProcPool {
     this.run(this.controller.signal);
   }
 
-  async run(signal: AbortSignal) {
+  async run(signal: AbortSignal): Promise<void> {
     if (this.procMutex) {
       while (!signal.aborted) {
         const procUnlock = await this.procMutex.lock();
@@ -163,7 +163,7 @@ export class ProcPool {
     }
   }
 
-  async close() {
+  async close(): Promise<void> {
     if (!this.started) {
       return;
     }

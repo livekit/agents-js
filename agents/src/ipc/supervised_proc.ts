@@ -74,7 +74,7 @@ export abstract class SupervisedProc {
     return this.#runningJob;
   }
 
-  async start() {
+  async start(): Promise<void> {
     if (this.#started) {
       throw new Error('runner already started');
     } else if (this.#closing) {
@@ -94,7 +94,7 @@ export abstract class SupervisedProc {
     });
   }
 
-  async run() {
+  async run(): Promise<void> {
     await this.init.await;
 
     this.#pingInterval = setInterval(() => {
@@ -170,7 +170,7 @@ export abstract class SupervisedProc {
     await this.#join.await;
   }
 
-  async join() {
+  async join(): Promise<void> {
     if (!this.#started) {
       throw new Error('runner not started');
     }
@@ -178,7 +178,7 @@ export abstract class SupervisedProc {
     await this.#join.await;
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     const timer = setTimeout(() => {
       this.init.reject(new Error('runner initialization timed out'));
     }, this.#opts.initializeTimeout);
@@ -204,7 +204,7 @@ export abstract class SupervisedProc {
     this.init.resolve();
   }
 
-  async close() {
+  async close(): Promise<void> {
     if (!this.#started) {
       return;
     }
@@ -224,7 +224,7 @@ export abstract class SupervisedProc {
     });
   }
 
-  async launchJob(info: RunningJobInfo) {
+  async launchJob(info: RunningJobInfo): Promise<void> {
     if (this.#runningJob) {
       throw new Error('executor already has a running job');
     }

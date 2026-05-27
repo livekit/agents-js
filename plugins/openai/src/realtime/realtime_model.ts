@@ -282,7 +282,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     turnDetection?: api_proto.TurnDetectionType;
     speed?: number;
     tracing?: api_proto.TracingConfig;
-  }) {
+  }): RealtimeModel {
     apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
     if (!apiKey && !entraToken) {
       throw new Error(
@@ -323,11 +323,11 @@ export class RealtimeModel extends llm.RealtimeModel {
     });
   }
 
-  session() {
+  session(): RealtimeSession {
     return new RealtimeSession(this);
   }
 
-  async close() {
+  async close(): Promise<void> {
     return;
   }
 }
@@ -543,11 +543,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
   }
 
-  get chatCtx() {
+  get chatCtx(): llm.ChatContext {
     return this.remoteChatCtx.toChatCtx();
   }
 
-  get tools() {
+  get tools(): llm.ToolContext {
     return { ...this._tools } as llm.ToolContext;
   }
 
@@ -1292,7 +1292,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  async close() {
+  async close(): Promise<void> {
     super.close();
     this.#closed = true;
     await this.#task;

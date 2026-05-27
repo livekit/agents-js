@@ -154,7 +154,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     this.jsonFormat = options.jsonFormat ?? false;
   }
 
-  override async captureText(text: string | TimedString) {
+  override async captureText(text: string | TimedString): Promise<void> {
     if (!this.participantIdentity) {
       return;
     }
@@ -315,7 +315,12 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     this.resetState();
   }
 
-  async publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal) {
+  async publishTranscription(
+    id: string,
+    text: string,
+    final: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (!this.participantIdentity || !this.trackId) {
       return;
     }
@@ -352,11 +357,11 @@ export class ParalellTextOutput extends TextOutput {
     this._sinks = sinks;
   }
 
-  async captureText(text: string | TimedString) {
+  async captureText(text: string | TimedString): Promise<void> {
     await Promise.all(this._sinks.map((sink) => sink.captureText(text)));
   }
 
-  flush() {
+  flush(): void {
     for (const sink of this._sinks) {
       sink.flush();
     }
@@ -542,7 +547,7 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
   }
 
-  async close() {
+  async close(): Promise<void> {
     await this.audioSource.close();
   }
 }

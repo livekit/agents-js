@@ -53,7 +53,7 @@ export class BaseEndpointing {
     this._maxDelay = maxDelay;
   }
 
-  updateOptions({ minDelay, maxDelay }: { minDelay?: number; maxDelay?: number }) {
+  updateOptions({ minDelay, maxDelay }: { minDelay?: number; maxDelay?: number }): void {
     if (minDelay !== undefined) {
       this._minDelay = minDelay;
     }
@@ -256,7 +256,7 @@ export class DynamicEndpointing extends BaseEndpointing {
     minDelay?: number;
     maxDelay?: number;
     alpha?: number;
-  }) {
+  }): void {
     if (minDelay !== undefined) {
       this._minDelay = minDelay;
       this.#utterancePause.reset({ initial: minDelay, minVal: minDelay });

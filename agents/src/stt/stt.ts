@@ -408,16 +408,16 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this._startTimeOffset = value;
   }
 
-  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+  updateInputStream(audioStream: ReadableStream<AudioFrame>): void {
     this.deferredInputStream.setSource(audioStream);
   }
 
-  detachInputStream() {
+  detachInputStream(): void {
     this.deferredInputStream.detachSource();
   }
 
   /** Push an audio frame to the STT */
-  pushFrame(frame: AudioFrame) {
+  pushFrame(frame: AudioFrame): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -447,7 +447,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   /** Flush the STT, causing it to process all pending text */
-  flush() {
+  flush(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -458,7 +458,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   /** Mark the input as ended and forbid additional pushes */
-  endInput() {
+  endInput(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -473,7 +473,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   /** Close both the input and output of the STT stream */
-  close() {
+  close(): void {
     if (!this.input.closed) this.input.close();
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();

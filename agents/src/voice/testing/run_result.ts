@@ -29,9 +29,9 @@ import {
 
 // Type for agent constructor (used in assertions)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentConstructor = new (...args: any[]) => Agent;
+export type AgentConstructor = new (...args: any[]) => Agent;
 // In JS we use a zod schema so runtime validation and TS generic inference stay aligned.
-type OutputSchema<T> = z.ZodType<T>;
+export type OutputSchema<T> = z.ZodType<T>;
 
 // Environment variable for verbose output
 const evalsVerbose = parseInt(process.env.LIVEKIT_EVALS_VERBOSE || '0', 10);

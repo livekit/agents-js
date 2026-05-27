@@ -71,7 +71,7 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
     return fork(forkUrl, [JSON.stringify(this.#runners)], forkOptions);
   }
 
-  async mainTask(proc: ChildProcess) {
+  async mainTask(proc: ChildProcess): Promise<void> {
     proc.on('message', (msg: IPCMessage) => {
       switch (msg.case) {
         case 'inferenceResponse':

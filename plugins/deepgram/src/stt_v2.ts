@@ -184,7 +184,7 @@ export class STTv2 extends stt.STT {
    *
    * @param opts - Partial options to update
    */
-  updateOptions(opts: Partial<STTv2Options>) {
+  updateOptions(opts: Partial<STTv2Options>): void {
     this.#opts = {
       ...this.#opts,
       ...opts,

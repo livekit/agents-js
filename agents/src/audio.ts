@@ -22,7 +22,7 @@ export interface AudioDecodeOptions {
   abortSignal?: AbortSignal;
 }
 
-export function calculateAudioDurationSeconds(frame: AudioBuffer) {
+export function calculateAudioDurationSeconds(frame: AudioBuffer): number {
   // TODO(AJS-102): use frame.durationMs once available in rtc-node
   return Array.isArray(frame)
     ? frame.reduce((sum, a) => sum + a.samplesPerChannel / a.sampleRate, 0)

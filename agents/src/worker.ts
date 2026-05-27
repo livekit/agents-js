@@ -76,7 +76,8 @@ export class WorkerError extends Error {
 }
 
 /** @internal */
-export const defaultInitializeProcessFunc = (_: JobProcess) => _;
+export const defaultInitializeProcessFunc = (_: JobProcess): JobProcess<Record<string, unknown>> =>
+  _;
 const defaultRequestFunc = async (ctx: JobRequest) => {
   await ctx.accept();
 };
@@ -379,7 +380,7 @@ export class AgentServer {
   }
 
   /** @throws {@link WorkerError} if worker failed to connect or already running */
-  async run() {
+  async run(): Promise<void> {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
     }
@@ -500,7 +501,7 @@ export class AgentServer {
     await ThrowsPromise.race(promises);
   }
 
-  async simulateJob(roomName: string, participantIdentity?: string) {
+  async simulateJob(roomName: string, participantIdentity?: string): Promise<void> {
     const client = new RoomServiceClient(this.#opts.wsURL, this.#opts.apiKey, this.#opts.apiSecret);
     const room = await client.createRoom({ name: roomName });
     let participant: ParticipantInfo | undefined = undefined;
@@ -863,7 +864,7 @@ export class AgentServer {
     await proc.close().catch((e) => this.#logger.error(e, 'Error terminating job'));
   }
 
-  async close() {
+  async close(): Promise<void> {
     if (this.#closed) {
       await this.#close.await;
       return;

@@ -112,7 +112,7 @@ const toolCtxStrict: llmlib.ToolContext = {
   }),
 };
 
-export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
+export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean): Promise<void> => {
   initializeLogger({ pretty: false });
 
   describe('LLM', async () => {
@@ -191,7 +191,7 @@ export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
   });
 };
 
-export const llmStrict = async (llm: llmlib.LLM) => {
+export const llmStrict = async (llm: llmlib.LLM): Promise<void> => {
   initializeLogger({ pretty: false });
 
   describe('LLM', async () => {

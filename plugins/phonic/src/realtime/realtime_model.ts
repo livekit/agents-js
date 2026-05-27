@@ -550,7 +550,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
   }
 
-  async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
+  async truncate(_options: {
+    messageId: string;
+    audioEndMs: number;
+    audioTranscript?: string;
+  }): Promise<void> {
     this.#logger.warn('truncate is not supported by the Phonic realtime model.');
   }
 

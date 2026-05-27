@@ -165,7 +165,7 @@ export class TTS extends tts.TTS {
     }
   }
 
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
     if (opts.language !== undefined) {
       this.#opts.language = normalizeLanguage(opts.language);
@@ -298,7 +298,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#opts = opts;
   }
 
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
 
     if (

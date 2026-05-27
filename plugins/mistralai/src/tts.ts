@@ -84,7 +84,7 @@ export class TTS extends tts.TTS {
     model?: MistralTTSModels | string;
     voice?: MistralTTSVoices | string;
     refAudio?: string;
-  }) {
+  }): void {
     if (opts.voice && opts.refAudio) {
       throw new Error("Only one of 'voice' or 'refAudio' may be provided, not both");
     }
