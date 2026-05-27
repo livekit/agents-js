@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: livekit/agents-api-checks
+version: 0.0.0
+library: false
+dependencies:
+  codeql/javascript-all: '*'

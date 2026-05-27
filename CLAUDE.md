@@ -36,7 +36,14 @@ pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
 pnpm format:check           # Prettier check
 pnpm format:write           # Prettier format
+pnpm api:check              # CodeQL public-API checks (surface snapshot + forgotten exports)
+pnpm api:update             # Refresh the CodeQL API snapshots
 ```
+
+> `api:check`/`api:update` require the [CodeQL CLI](https://github.com/github/codeql-cli-binaries)
+> on `PATH` (`brew install codeql`). The queries live in `codeql/queries/` and compare against
+> committed snapshots in `codeql/*.snapshot.txt`; `api:check` fails only on drift. See
+> `scripts/codeql-api-check.mjs`.
 
 ### Running an example agent
 
