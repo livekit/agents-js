@@ -279,9 +279,21 @@ const computeApiSignatures = (): string[] => {
       tELine,
       tECol,
     ] = cols as [
-      string, string, string, string, string,
-      string, string, string, string, string,
-      string, string, string, string, string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
     ];
     const key = pkg + '|' + qname + '|' + funcKey;
     let group = groups.get(key);
@@ -292,6 +304,9 @@ const computeApiSignatures = (): string[] => {
     let text: string;
     if (slot === 'return') {
       text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
+    } else if (slot === 'generics' || slot === 'class-generics') {
+      // raw type-parameter list text (without surrounding `< >`); the writer adds the brackets
+      text = sliceOrEmpty(bFile, +bSLine, +bSCol, +bELine, +bECol);
     } else {
       const binding = sliceOrEmpty(bFile, +bSLine, +bSCol, +bELine, +bECol);
       const isRest = flags.includes('rest');
@@ -309,13 +324,21 @@ const computeApiSignatures = (): string[] => {
   const out: string[] = [];
   for (const g of groups.values()) {
     g.slots.sort((a, b) => a.slot.localeCompare(b.slot));
+    // Class/interface type-parameter rows stand alone — emit as `{class|interface} Name<...>`.
+    const classGenerics = g.slots.find((s) => s.slot === 'class-generics');
+    if (classGenerics) {
+      out.push(`${g.package}\t${g.qname}<${classGenerics.text}>`);
+      continue;
+    }
     const params: string[] = [];
     let ret = '<inferred>';
+    let generics = '';
     for (const s of g.slots) {
       if (s.slot === 'return') ret = s.text;
+      else if (s.slot === 'generics') generics = `<${s.text}>`;
       else params.push(s.text);
     }
-    out.push(`${g.package}\t${g.qname}(${params.join(', ')}): ${ret}`);
+    out.push(`${g.package}\t${g.qname}${generics}(${params.join(', ')}): ${ret}`);
   }
   return out.sort();
 };

@@ -14,21 +14,21 @@ agents	AudioByteStream.flush(): AudioFrame[]
 agents	AudioByteStream.write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[]
 agents	AudioEnergyFilter.pushFrame(frame: AudioFrame): boolean
 agents	CancellablePromise.cancel(): void
-agents	CancellablePromise.catch(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>
+agents	CancellablePromise.catch<TResult = never>(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>
 agents	CancellablePromise.error(): Error | null
 agents	CancellablePromise.finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>
-agents	CancellablePromise.from(promise: Promise<T>): CancellablePromise<T>
-agents	CancellablePromise.from(promise: Promise<T>): CancellablePromise<T>
-agents	CancellablePromise.from(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>
+agents	CancellablePromise.from<T, E extends Error = Error>(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>
+agents	CancellablePromise.from<T>(promise: Promise<T>): CancellablePromise<T>
+agents	CancellablePromise.from<T>(promise: Promise<T>): CancellablePromise<T>
 agents	CancellablePromise.isCancelled(): boolean
-agents	CancellablePromise.then(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>
+agents	CancellablePromise.then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>
 agents	ConnectionPool.close(): Promise<void>
 agents	ConnectionPool.get(timeout?: number): Promise<T>
 agents	ConnectionPool.invalidate(): void
 agents	ConnectionPool.prewarm(): void
 agents	ConnectionPool.put(conn: T): void
 agents	ConnectionPool.remove(conn: T): void
-agents	ConnectionPool.withConnection(fn: (conn: T) => Promise<R>, options?: { timeout?: number; signal?: AbortSignal; }): Promise<R>
+agents	ConnectionPool.withConnection<R>(fn: (conn: T) => Promise<R>, options?: { timeout?: number; signal?: AbortSignal; }): Promise<R>
 agents	Event.clear(): void
 agents	Event.isSet(): boolean
 agents	Event.set(): void
@@ -85,7 +85,7 @@ agents	Task.cancel(): void
 agents	Task.cancelAndWait(timeout?: number): Promise< | TaskResult.Completed | TaskResult.Aborted | (TaskResult.Completed & { __throws?(error: never): void; }) | (TaskResult.Aborted & { __throws?(error: never): void; }) >
 agents	Task.current(): Task<unknown> | undefined
 agents	Task.done(): boolean
-agents	Task.from(fn: (controller: AbortController) => Promise<T>, controller?: AbortController, name?: string): Task<T>
+agents	Task.from<T>(fn: (controller: AbortController) => Promise<T>, controller?: AbortController, name?: string): Task<T>
 agents	Task.removeDoneCallback(callback: () => void): void
 agents	Task.result(): Promise<T>
 agents	TextAudioSynchronizer.close(interrupt: boolean): Promise<void>
@@ -106,6 +106,15 @@ agents	VADStream.flush(): void
 agents	VADStream.next(): Promise<IteratorResult<VADEvent>>
 agents	VADStream.pushFrame(frame: AudioFrame): void
 agents	VADStream.updateInputStream(audioStream: ReadableStream<AudioFrame>): void
+agents	class AsyncIterableQueue<T>
+agents	class CancellablePromise<T, E extends Error = Error>
+agents	class ConnectionPool<T>
+agents	class Future<T = void, E extends Error = Error>
+agents	class InferenceRunner<InputType = unknown, OutputType = unknown>
+agents	class JobContext<ProcessUserData = Record<string, unknown>>
+agents	class JobProcess<UserData = Record<string, unknown>>
+agents	class Queue<T>
+agents	class Task<T>
 agents	exported function areLanguagesEquivalent(left: string | null | undefined, right: string | null | undefined): boolean
 agents	exported function asError(maybeError: unknown): Error
 agents	exported function asLanguageCode(language: string): LanguageCode
@@ -113,20 +122,20 @@ agents	exported function audioFramesFromFile(filePath: string, options: AudioDec
 agents	exported function calculateAudioDurationSeconds(frame: AudioBuffer): number
 agents	exported function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>
 agents	exported function combineSignals(a: AbortSignal, b: AbortSignal): AbortSignal
-agents	exported function createImmutableArray(array: T[], additionalErrorMessage: string): T[]
+agents	exported function createImmutableArray<T>(array: T[], additionalErrorMessage: string): T[]
 agents	exported function createTimedString(opts: { text: string; startTime?: number; endTime?: number; confidence?: number; startTimeOffset?: number; speakerId?: string | null; }): TimedString
 agents	exported function dedent(strings: TemplateStringsArray, ...values: unknown[]): string
 agents	exported function defaultInitializeProcessFunc(_: JobProcess): JobProcess<Record<string, unknown>>
-agents	exported function defineAgent(agent: Agent<ProcessUserData>): Agent<ProcessUserData>
+agents	exported function defineAgent<ProcessUserData = Record<string, unknown>>(agent: Agent<ProcessUserData>): Agent<ProcessUserData>
 agents	exported function delay(ms: number, options: DelayOptions): Promise<void>
 agents	exported function enableOtelLogging(): void
 agents	exported function getBaseLanguage(language: string): string
 agents	exported function getIsoLanguage(language: string): string
-agents	exported function getJobContext(required: <unannotated>): JobContext<ProcessUserData> | undefined
-agents	exported function getJobContext(required: false): JobContext<ProcessUserData> | undefined
-agents	exported function getJobContext(required?: true): JobContext<ProcessUserData>
+agents	exported function getJobContext<ProcessUserData = Record<string, unknown>>(required: <unannotated>): JobContext<ProcessUserData> | undefined
+agents	exported function getJobContext<ProcessUserData = Record<string, unknown>>(required: false): JobContext<ProcessUserData> | undefined
+agents	exported function getJobContext<ProcessUserData = Record<string, unknown>>(required?: true): JobContext<ProcessUserData>
 agents	exported function getLanguageRegion(language: string): string | undefined
-agents	exported function gracefullyCancel(promise: CancellablePromise<T>): Promise<void>
+agents	exported function gracefullyCancel<T>(promise: CancellablePromise<T>): Promise<void>
 agents	exported function initializeLogger({ pretty, level }: LoggerOptions): void
 agents	exported function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number
 agents	exported function isAPIError(error: unknown): error is APIError
@@ -146,11 +155,11 @@ agents	exported function loopAudioFramesFromFile(filePath: string, options: Audi
 agents	exported function mergeFrames(buffer: AudioBuffer): AudioFrame
 agents	exported function noop(): void
 agents	exported function normalizeLanguage(language: string): LanguageCode
-agents	exported function readStream(stream: ReadableStream<T>, signal?: AbortSignal): AsyncGenerator<T>
+agents	exported function readStream<T>(stream: ReadableStream<T>, signal?: AbortSignal): AsyncGenerator<T>
 agents	exported function rejectOnAbort(signal: AbortSignal): Promise<never>
 agents	exported function resampleStream({ stream, outputRate, }: { stream: ReadableStream<AudioFrame>; outputRate: number; }): ReadableStream<AudioFrame>
-agents	exported function runWithJobContext(context: JobContext, fn: () => T): T
-agents	exported function runWithJobContextAsync(context: JobContext, fn: () => Promise<T>): Promise<T>
+agents	exported function runWithJobContext<T>(context: JobContext, fn: () => T): T
+agents	exported function runWithJobContextAsync<T>(context: JobContext, fn: () => Promise<T>): Promise<T>
 agents	exported function shortuuid(prefix: string): string
 agents	exported function startSoon(func: () => void): void
 agents	exported function toError(error: unknown): Error
@@ -163,8 +172,10 @@ agents	exported function waitForParticipant({ room, identity, kind, includeLocal
 agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription = false, signal, includeLocal = false, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal?: boolean; }): Promise<RemoteTrackPublication | LocalTrackPublication>
 agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription, signal, includeLocal, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal: true; }): Promise<RemoteTrackPublication | LocalTrackPublication>
 agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription, signal, includeLocal, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal?: false; }): Promise<RemoteTrackPublication>
-agents	exported function waitUntilTimeout(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>
-agents	exported function withResolvers(): { promise: ThrowsPromise<T, Error>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason: Error) => void; }
+agents	exported function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>
+agents	exported function withResolvers<T = unknown>(): { promise: ThrowsPromise<T, Error>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason: Error) => void; }
+agents	interface Agent<ProcessUserData = Record<string, unknown>>
+agents	interface ConnectionPoolOptions<T>
 plugins/anam	AnamAPI.createSessionToken(params: { personaConfig: PersonaConfig; livekitUrl?: string; livekitToken?: string; }): Promise<{ sessionToken: string }>
 plugins/anam	AnamAPI.startEngineSession(params: { sessionToken: string }): Promise<{ sessionId: string }>
 plugins/anam	AvatarSession.avatarIdentity(): string

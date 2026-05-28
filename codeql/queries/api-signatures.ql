@@ -30,11 +30,34 @@ string paddedIndex(int i) {
   if i < 10 then result = "0" + i.toString() else result = i.toString()
 }
 
-/** Stable per-function key so overloaded methods don't collapse into a single signature. */
-string functionKey(Function f) {
+/** Stable per-AST-node key so overloaded methods don't collapse into a single signature. */
+string nodeKey(AstNode n) {
   result =
-    f.getFile().getRelativePath() + ":" + f.getLocation().getStartLine() + ":" +
-      f.getLocation().getStartColumn()
+    n.getFile().getRelativePath() + ":" + n.getLocation().getStartLine() + ":" +
+      n.getLocation().getStartColumn()
+}
+
+/** Source range covering a TypeParameterized node's type parameters (excluding `< >`). */
+predicate typeParamsRange(
+  TypeParameterized tp, string file, int sLine, int sCol, int eLine, int eCol
+) {
+  exists(TypeParameter first, TypeParameter last, int n |
+    n = count(tp.getATypeParameter()) and
+    n > 0 and
+    first = tp.getTypeParameter(0) and
+    last = tp.getTypeParameter(n - 1) and
+    file = first.getFile().getRelativePath() and
+    sLine = first.getLocation().getStartLine() and
+    sCol = first.getLocation().getStartColumn() and
+    eLine = last.getLocation().getEndLine() and
+    eCol = last.getLocation().getEndColumn()
+  )
+}
+
+string classOrInterfaceKind(ClassOrInterface c) {
+  c instanceof ClassDefinition and result = "class"
+  or
+  c instanceof InterfaceDeclaration and result = "interface"
 }
 
 string paramFlags(Parameter p) {
@@ -70,7 +93,7 @@ predicate signatureRow(
     p = f.getParameter(i) and
     package = packageRoot(f.getFile()) and
     qname = what and
-    funcKey = functionKey(f) and
+    funcKey = nodeKey(f) and
     slot = "param-" + paddedIndex(i) and
     flags = paramFlags(p) and
     bFile = p.getFile().getRelativePath() and
@@ -101,7 +124,7 @@ predicate signatureRow(
     inPublishedSource(f) and
     package = packageRoot(f.getFile()) and
     qname = what and
-    funcKey = functionKey(f) and
+    funcKey = nodeKey(f) and
     slot = "return" and
     flags = "" and
     bFile = "" and
@@ -125,6 +148,46 @@ predicate signatureRow(
       tELine = 0 and
       tECol = 0
     )
+  )
+  or
+  // function/method-level type parameters (`function foo<T>(...)`, `method bar<T extends U>(...)`).
+  // Emitted as a single `generics` slot whose binding range covers the type-parameter list (the
+  // text between `<` and `>`, exclusive of the angle brackets). The runner wraps it with `<>` and
+  // splices it into the qname so signature drift on type parameters shows up in the snapshot.
+  exists(Function f, string what |
+    publicApiFunction(f, what) and
+    inPublishedSource(f) and
+    package = packageRoot(f.getFile()) and
+    qname = what and
+    funcKey = nodeKey(f) and
+    slot = "generics" and
+    flags = "" and
+    typeParamsRange(f, bFile, bSLine, bSCol, bELine, bECol) and
+    tFile = "" and
+    tSLine = 0 and
+    tSCol = 0 and
+    tELine = 0 and
+    tECol = 0
+  )
+  or
+  // class/interface-level type parameters (`class Foo<T> {...}`, `interface Bar<T extends X>`).
+  // Each exported class/interface with type parameters gets its own row; the runner emits a
+  // standalone snapshot line `class Foo<T>` / `interface Bar<T extends X>`.
+  exists(ClassOrInterface c, LocalTypeName tn |
+    tn = c.getIdentifier().(TypeDecl).getLocalTypeName() and
+    isExportedName(tn) and
+    inPublishedSource(c) and
+    package = packageRoot(c.getFile()) and
+    qname = classOrInterfaceKind(c) + " " + c.getName() and
+    funcKey = nodeKey(c) and
+    slot = "class-generics" and
+    flags = "" and
+    typeParamsRange(c, bFile, bSLine, bSCol, bELine, bECol) and
+    tFile = "" and
+    tSLine = 0 and
+    tSCol = 0 and
+    tELine = 0 and
+    tECol = 0
   )
 }
 
