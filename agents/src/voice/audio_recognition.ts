@@ -1576,6 +1576,7 @@ export class AudioRecognition {
     this.lastSpeakingTime = undefined;
     this.speaking = false;
     this.userTurnCommitted = false;
+    this.userTurnTracker = { words: 0, transcript: '' };
 
     if (this.userTurnSpan?.isRecording()) {
       this.userTurnSpan.end();
