@@ -28,11 +28,11 @@ export interface VADEvent {
    * Index of the audio sample where the event occurred, relative to the inference sample rate.
    */
   samplesIndex: number;
-  /** Timestamp when the event was fired. */
+  /** Timestamp (milliseconds since epoch) when the event was fired. */
   timestamp: number;
-  /** Duration of the speech segment in seconds. */
+  /** Duration of the speech segment in milliseconds. */
   speechDuration: number;
-  /** Duration of the silence segment in seconds. */
+  /** Duration of the silence segment in milliseconds. */
   silenceDuration: number;
   /**
    * List of audio frames associated with the speech.
@@ -45,7 +45,7 @@ export interface VADEvent {
   frames: AudioFrame[];
   /** Probability that speech is present (only for `INFERENCE_DONE` events). */
   probability: number;
-  /** Time taken to perform the inference, in seconds (only for `INFERENCE_DONE` events). */
+  /** Time taken to perform the inference, in milliseconds (only for `INFERENCE_DONE` events). */
   inferenceDuration: number;
   /** Indicates whether speech was detected in the frames. */
   speaking: boolean;

@@ -47,7 +47,7 @@ export interface TurnDetectionEvent {
   type: 'eot_prediction';
   endOfTurnProbability: number;
   /** Wall-clock time when the prediction landed (milliseconds since epoch). */
-  lastSpeakingTime: number;
+  lastSpeakingTimeMs: number;
   /** Latest input-audio creation time → prediction receive time (ms). */
   detectionDelay?: number;
   /** Server-side model inference time (ms). */
@@ -468,7 +468,7 @@ export class AudioTurnDetectorStream {
     const event: TurnDetectionEvent = {
       type: 'eot_prediction',
       endOfTurnProbability: probability,
-      lastSpeakingTime: Date.now(),
+      lastSpeakingTimeMs: Date.now(),
       detectionDelay: opts.detectionDelay,
       inferenceDuration: opts.inferenceDuration,
     };

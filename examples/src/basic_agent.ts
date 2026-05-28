@@ -41,10 +41,6 @@ export default defineAgent({
     const logger = log();
 
     const session = new voice.AgentSession({
-      // Explicit VAD (cheap to construct; the silero model lazy-loads on the
-      // first stream). Passing it rather than relying on the auto-provisioned
-      // default marks `isDefault=false`, which is what enables adaptive interruption.
-      vad: new inference.VAD(),
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -68,11 +64,7 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        // VAD and turn detection determine when the user is speaking and when the agent
-        // should respond. See https://docs.livekit.io/agents/build/turns
-        //
-        // Cloud audio EOT detector pointed at the staging gateway. Requires
-        // LIVEKIT_API_KEY_STAGING / LIVEKIT_API_SECRET_STAGING in the env.
+        // turn detection determines when the agent should respond. See https://docs.livekit.io/agents/build/turns
         turnDetection: new inference.AudioTurnDetector(),
         // To use the local on-device text turn detector instead, re-enable the
         // `@livekit/agents-plugin-livekit` import above and use:
@@ -125,7 +117,7 @@ export default defineAgent({
     });
 
     session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
-      logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
+      logger.info({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
     await session.start({
