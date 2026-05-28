@@ -617,10 +617,13 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a, b]);
   });
 
-  const fakeToolsetContext = (): ToolsetContext => ({
+  const fakeToolsetContext = (
+    updateTools: (tools: readonly Tool[]) => void = () => {},
+  ): ToolsetContext => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tests don't touch the session
     session: {} as any,
     signal: new AbortController().signal,
+    updateTools,
   });
 
   it('default setup and aclose are no-ops', async () => {
@@ -672,14 +675,14 @@ describe('Toolset', () => {
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
-  it('Toolset.create() resolves a tools factory once at setup with the live context', async () => {
+  it('Toolset.create() resolves a tools factory at setup with the live context', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
     let calls = 0;
     let received: ToolsetContext | undefined;
     const ts = Toolset.create({
       id: 'dynamic',
-      tools: async (ctx) => {
+      tools: (ctx) => {
         calls += 1;
         received = ctx;
         return [a, b];
@@ -697,7 +700,7 @@ describe('Toolset', () => {
     expect(received).toBe(ctx);
   });
 
-  it('Toolset.create() runs setup once before resolving tools', async () => {
+  it('runs setup once before resolving the tools factory', async () => {
     const a = makeFn('a');
     const events: string[] = [];
     const ts = Toolset.create({
@@ -705,74 +708,62 @@ describe('Toolset', () => {
       setup: async () => {
         events.push('setup');
       },
-      tools: async () => {
+      tools: () => {
         events.push('resolve');
         return [a];
       },
     });
 
     await ts.setup(fakeToolsetContext());
-    // setup runs before the initial tool resolution
     expect(events).toEqual(['setup', 'resolve']);
     expect(ts.tools).toEqual([a]);
   });
 
-  it('resolveTools() re-runs the factory when resolveEachTurn is set', async () => {
+  it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    let current = [a];
-    let setupCalls = 0;
+    let push!: (tools: readonly Tool[]) => void;
+    const ts = Toolset.create({
+      id: 'mcp',
+      setup: async ({ updateTools }) => {
+        push = updateTools;
+      },
+      tools: [],
+    });
+
+    // Mimic the runtime: ctx.updateTools writes the toolset's current tools.
+    await ts.setup(fakeToolsetContext((tools) => ts._setTools(tools)));
+    expect(ts.tools).toEqual([]);
+
+    // A dynamic source (e.g. an MCP server) pushes its tools after connecting.
+    push([a, b]);
+    expect(ts.tools).toEqual([a, b]);
+  });
+
+  it('runs the factory once and pushes later changes via ctx.updateTools', async () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    let calls = 0;
+    let push!: (tools: readonly Tool[]) => void;
     const ts = Toolset.create({
       id: 'dynamic',
-      resolveEachTurn: true,
-      setup: async () => {
-        setupCalls += 1;
+      tools: ({ updateTools }) => {
+        calls += 1;
+        push = updateTools;
+        return [a];
       },
-      tools: async () => current,
     });
 
-    const ctx = fakeToolsetContext();
-    await ts.setup(ctx);
+    // Mimic the runtime: ctx.updateTools writes the toolset's current tools.
+    await ts.setup(fakeToolsetContext((tools) => ts._setTools(tools)));
     expect(ts.tools).toEqual([a]);
+    expect(calls).toBe(1);
 
-    // The toolset's tools change at runtime (e.g. an MCP server adds a tool).
-    current = [a, b];
-    await ts.resolveTools(ctx);
+    // The source changes (e.g. an MCP server adds a tool) and pushes the new list — without
+    // re-running the factory.
+    push([a, b]);
     expect(ts.tools).toEqual([a, b]);
-    // re-resolving does not re-run one-time setup
-    expect(setupCalls).toBe(1);
-  });
-
-  it('resolveTools() runs the factory only once by default', async () => {
-    const a = makeFn('a');
-    const b = makeFn('b');
-    let current = [a];
-    let resolveCalls = 0;
-    const ts = Toolset.create({
-      id: 'once',
-      tools: async () => {
-        resolveCalls += 1;
-        return current;
-      },
-    });
-
-    const ctx = fakeToolsetContext();
-    await ts.setup(ctx);
-    expect(ts.tools).toEqual([a]);
-    expect(resolveCalls).toBe(1);
-
-    // Tools change at runtime, but a once-resolved toolset keeps its activation-time list.
-    current = [a, b];
-    await ts.resolveTools(ctx);
-    expect(ts.tools).toEqual([a]);
-    expect(resolveCalls).toBe(1);
-  });
-
-  it('resolveTools() is a no-op for a static toolset', async () => {
-    const a = makeFn('a');
-    const ts = Toolset.create({ id: 'static', tools: [a] });
-    await ts.resolveTools(fakeToolsetContext());
-    expect(ts.tools).toEqual([a]);
+    expect(calls).toBe(1);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {

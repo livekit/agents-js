@@ -45,7 +45,7 @@ import {
   isToolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
-import { DynamicToolset, isSameToolChoice } from '../llm/tool_context.js';
+import { isSameToolChoice } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -1752,38 +1752,32 @@ export class AgentActivity implements RecognitionHooks {
       const shouldFilterTools =
         onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
 
-      // Built later, inside the task after refreshToolsets(), so it reflects each toolset's
-      // current tools.
-      const buildTools = (): ToolContext =>
-        shouldFilterTools
-          ? new ToolContext(
-              this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
-                const keepFn = (fn: Tool): boolean =>
-                  !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
-                if (isToolset(t)) {
-                  return t.tools.filter(keepFn) as ToolContextEntry[];
-                }
-                return keepFn(t) ? [t] : [];
-              }),
-            )
-          : this.agent.toolCtx;
+      const tools: ToolContext = shouldFilterTools
+        ? new ToolContext(
+            this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
+              const keepFn = (fn: Tool): boolean =>
+                !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
+              if (isToolset(t)) {
+                return t.tools.filter(keepFn) as ToolContextEntry[];
+              }
+              return keepFn(t) ? [t] : [];
+            }),
+          )
+        : this.agent.toolCtx;
 
       const task = this.createSpeechTask({
-        taskFn: async (abortController: AbortController) => {
-          // Re-resolve dynamic toolsets so this turn advertises their current tools.
-          await this.refreshToolsets();
-          return this.pipelineReplyTask(
+        taskFn: (abortController: AbortController) =>
+          this.pipelineReplyTask(
             handle,
             chatCtx ?? this.agent.chatCtx,
-            buildTools(),
+            tools,
             {
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
             },
             abortController,
             instructions,
             userMessage,
-          );
-        },
+          ),
         ownedSpeechHandle: handle,
         name: 'AgentActivity.pipelineReply',
       });
@@ -3298,11 +3292,6 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('realtime session is not available');
     }
 
-    // Re-resolve dynamic toolsets and re-advertise to the session only when the tool set changed.
-    if (await this.refreshToolsets()) {
-      await this.realtimeSession.updateTools(this.agent.toolCtx);
-    }
-
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForAuthorization()]);
 
     if (userInput) {
@@ -3782,38 +3771,19 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /**
-   * Re-resolve every toolset's tools so a turn advertises their current set (e.g. an MCP server
-   * that added or removed tools since activation). Reuses each toolset's setup-time abort signal so
-   * re-resolution doesn't detach lifetime-scoped listeners. Static toolsets resolve to a no-op.
+   * Re-flatten the agent's tool context after a dynamic toolset pushed a new tool list (via
+   * `ToolsetContext.updateTools`), and re-advertise to the realtime session when the set changed.
+   * The next LLM turn picks up the new tools from `agent.toolCtx` automatically.
    */
-  private async refreshToolsets(): Promise<boolean> {
-    if (!this._toolsetsSetup) return false;
-    // Only DynamicToolsets re-resolve their tools per turn; everything else is fixed after setup.
-    // Skip re-resolution (and building a fresh ToolContext) entirely when none are active.
-    const dynamicToolsets = this.agent._toolCtx.toolsets.filter(
-      (ts) => ts instanceof DynamicToolset,
-    );
-    if (dynamicToolsets.length === 0) return false;
-
+  private async onToolsetToolsChanged(): Promise<void> {
+    if (!this._toolsetsSetup) return;
     const before = this.agent._toolCtx;
-    const outputs = await Promise.allSettled(
-      dynamicToolsets.map((ts) =>
-        ts.resolveTools({
-          session: this.agentSession,
-          signal: this._toolsetAbortControllers.get(ts)?.signal ?? new AbortController().signal,
-        }),
-      ),
-    );
-    for (const output of outputs) {
-      if (output.status === 'rejected') {
-        this.logger.error({ error: output.reason }, 'error resolving toolset tools');
-      }
-    }
-    // Re-flatten so the agent's advertised tool set reflects the freshly resolved tools.
-    const refreshed = new ToolContext(this.agent._toolCtx.tools);
-    const changed = !refreshed.equals(before);
+    const refreshed = new ToolContext(before.tools);
+    if (refreshed.equals(before)) return;
     this.agent._toolCtx = refreshed;
-    return changed;
+    if (this.realtimeSession) {
+      await this.realtimeSession.updateTools(refreshed);
+    }
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
@@ -3823,7 +3793,17 @@ export class AgentActivity implements RecognitionHooks {
         // the signal in setup() detach automatically on teardown.
         const abortController = new AbortController();
         this._toolsetAbortControllers.set(ts, abortController);
-        return ts.setup({ session: this.agentSession, signal: abortController.signal });
+        return ts.setup({
+          session: this.agentSession,
+          signal: abortController.signal,
+          // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+          updateTools: (tools) => {
+            ts._setTools(tools);
+            void this.onToolsetToolsChanged().catch((error) =>
+              this.logger.error({ error }, 'error re-advertising toolset tools'),
+            );
+          },
+        });
       }),
     );
     for (const output of outputs) {
