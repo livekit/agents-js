@@ -24,7 +24,7 @@ export default defineAgent({
     const logger = log();
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad! as silero.VAD,
-      llm: new google.beta.realtime.RealtimeModel({
+      llm: new google.realtime.RealtimeModel({
         thinkingConfig: { includeThoughts: false },
       }),
     });
