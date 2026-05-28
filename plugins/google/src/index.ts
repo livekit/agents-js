@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 import * as beta from './beta/index.js';
+import * as realtime from './realtime/index.js';
 
 export {
   AIPlatformLLM,
@@ -14,6 +15,7 @@ export {
 export { beta };
 export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
+export { realtime };
 
 class GooglePlugin extends Plugin {
   constructor() {
