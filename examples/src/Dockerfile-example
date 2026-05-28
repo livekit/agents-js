@@ -15,12 +15,9 @@ FROM node:${NODE_VERSION}-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 
-# Install ca-certificates (required) and pnpm, then clean the apt cache for a smaller image.
-# @livekit/rtc-node ships a native Rust core that reads the system trust store, not Node's
-# bundled CA roots. Slim Debian images don't include /etc/ssl/certs/ca-certificates.crt by
-# default, so without this package, calls into LiveKit Cloud fail with a misleading
-# "failed to retrieve region info" error.
-# --no-install-recommends keeps the image minimal.
+# Install ca-certificates and pnpm, then clean the apt cache.
+# ca-certificates is required: the LiveKit SDK needs the system CA bundle at
+# runtime, and node:22-slim doesn't ship one.
 RUN apt-get update -qq && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Pin pnpm version for reproducible builds
