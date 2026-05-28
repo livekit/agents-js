@@ -228,12 +228,24 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
 export type AgentSessionUpdateOptions = {
   /** Configuration updates for turn handling. */
   turnHandling?: {
-    /** Strategy for deciding when the user has finished speaking. */
+    /**
+     * Strategy for deciding when the user has finished speaking.
+     *
+     * - `undefined`: leave the current turn detection setting unchanged.
+     * - `null`: clear the current turn detection setting and return to automatic selection.
+     * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+     */
     turnDetection?: TurnDetectionMode | null;
     /** Endpointing options to merge into the current session defaults. */
     endpointing?: Partial<EndpointingOptions>;
   };
-  /** @deprecated use turnHandling.turnDetection instead */
+  /**
+   * @deprecated use turnHandling.turnDetection instead.
+   *
+   * - `undefined`: leave the current turn detection setting unchanged.
+   * - `null`: clear the current turn detection setting and return to automatic selection.
+   * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+   */
   turnDetection?: TurnDetectionMode | null;
 };
 
