@@ -140,6 +140,7 @@ export type STTOptions = {
   sampleRate: number;
   baseUrl: string;
   audioChunkDurationMS: number;
+  language: string;
 };
 
 const defaultSTTOptions = {
@@ -149,6 +150,7 @@ const defaultSTTOptions = {
   /** recommended default */
   audioChunkDurationMS: 160,
   baseUrl: 'https://api.cartesia.ai',
+  language: 'en',
 };
 
 function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOptions {
@@ -158,6 +160,7 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     model: override.model ?? base.model,
     sampleRate: override.sampleRate ?? base.sampleRate,
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
+    language: override.language ?? base.language,
   };
 }
 
@@ -223,6 +226,10 @@ export class STT extends stt.STT {
 
   override stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
     return new SpeechStream(this, this.#opts, options?.connOptions);
+  }
+
+  updateOptions(opts: Partial<STTOptions>) {
+    this.#opts = mergeSTTOptions(this.#opts, opts);
   }
 }
 
@@ -536,7 +543,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.eager_end': {
         if (!this.#speaking) return;
-        const transcript = data.transcript;
+        const transcript = data.transcript || this.#currentTranscript;
         if (!transcript) return;
         this.#currentTranscript = transcript;
         this.#sendTranscriptEvent(stt.SpeechEventType.PREFLIGHT_TRANSCRIPT, transcript);
@@ -552,7 +559,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.end': {
         if (!this.#speaking) return;
-        const transcript = data.transcript;
+        const transcript = data.transcript || this.#currentTranscript;
 
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, transcript);
 
@@ -589,8 +596,7 @@ export class SpeechStream extends stt.SpeechStream {
       requestId: this.#requestId,
       alternatives: [
         {
-          // Cartesia STT only supports English at this time.
-          language: asLanguageCode('en'),
+          language: asLanguageCode(this.#opts.language),
           text: transcript,
           startTime: 0,
           endTime: 0,
