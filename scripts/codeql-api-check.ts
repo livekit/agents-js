@@ -192,6 +192,7 @@ const packageRoot = (file: string): string => {
 interface SignatureSlot {
   slot: string;
   text: string;
+  flags: string;
 }
 
 interface SignatureGroup {
@@ -304,9 +305,16 @@ const computeApiSignatures = (): string[] => {
     let text: string;
     if (slot === 'return') {
       text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
-    } else if (slot === 'generics' || slot === 'class-generics') {
-      // raw type-parameter list text (without surrounding `< >`); the writer adds the brackets
+    } else if (
+      slot === 'generics' ||
+      slot === 'class-generics' ||
+      slot === 'type-alias' ||
+      slot === 'enum-body'
+    ) {
+      // raw source text; the writer adds wrapping (`< >`, `{ }`, etc.)
       text = sliceOrEmpty(bFile, +bSLine, +bSCol, +bELine, +bECol);
+    } else if (slot.startsWith('prop-') || slot === 'const') {
+      text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
     } else {
       const binding = sliceOrEmpty(bFile, +bSLine, +bSCol, +bELine, +bECol);
       const isRest = flags.includes('rest');
@@ -319,26 +327,59 @@ const computeApiSignatures = (): string[] => {
           : ': ' + sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
       text = restPrefix + binding + optMark + typeSuffix;
     }
-    group.slots.push({ slot, text });
+    group.slots.push({ slot, text, flags });
   }
   const out: string[] = [];
   for (const g of groups.values()) {
     g.slots.sort((a, b) => a.slot.localeCompare(b.slot));
-    // Class/interface type-parameter rows stand alone — emit as `{class|interface} Name<...>`.
     const classGenerics = g.slots.find((s) => s.slot === 'class-generics');
-    if (classGenerics) {
+    const typeAlias = g.slots.find((s) => s.slot === 'type-alias');
+    const enumBody = g.slots.find((s) => s.slot === 'enum-body');
+    const constSlot = g.slots.find((s) => s.slot === 'const');
+    const propSlots = g.slots.filter((s) => s.slot.startsWith('prop-'));
+    const callableSlots = g.slots.filter(
+      (s) => s.slot.startsWith('param-') || s.slot === 'return' || s.slot === 'generics',
+    );
+
+    // type alias (combine with class-generics for `type Foo<T> = ...`)
+    if (typeAlias) {
+      const gen = classGenerics ? `<${classGenerics.text}>` : '';
+      out.push(`${g.package}\t${g.qname}${gen} = ${typeAlias.text}`);
+    } else if (classGenerics) {
+      // class/interface type-parameter rows: standalone `{class|interface} Name<...>`
       out.push(`${g.package}\t${g.qname}<${classGenerics.text}>`);
-      continue;
     }
-    const params: string[] = [];
-    let ret = '<inferred>';
-    let generics = '';
-    for (const s of g.slots) {
-      if (s.slot === 'return') ret = s.text;
-      else if (s.slot === 'generics') generics = `<${s.text}>`;
-      else params.push(s.text);
+
+    // interface/class properties: one line per property
+    for (const p of propSlots) {
+      const propName = p.slot.slice('prop-'.length);
+      const optMark = p.flags.includes('opt') ? '?' : '';
+      const readonlyPrefix = p.flags.includes('readonly') ? 'readonly ' : '';
+      out.push(`${g.package}\t${g.qname}.${readonlyPrefix}${propName}${optMark}: ${p.text}`);
     }
-    out.push(`${g.package}\t${g.qname}${generics}(${params.join(', ')}): ${ret}`);
+
+    // enum body
+    if (enumBody) {
+      out.push(`${g.package}\t${g.qname} { ${enumBody.text} }`);
+    }
+
+    // exported const
+    if (constSlot) {
+      out.push(`${g.package}\t${g.qname}: ${constSlot.text}`);
+    }
+
+    // function/method signature
+    if (callableSlots.length > 0) {
+      const params: string[] = [];
+      let ret = '<inferred>';
+      let generics = '';
+      for (const s of callableSlots) {
+        if (s.slot === 'return') ret = s.text;
+        else if (s.slot === 'generics') generics = `<${s.text}>`;
+        else params.push(s.text);
+      }
+      out.push(`${g.package}\t${g.qname}${generics}(${params.join(', ')}): ${ret}`);
+    }
   }
   return out.sort();
 };

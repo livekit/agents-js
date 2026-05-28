@@ -106,15 +106,71 @@ agents	VADStream.flush(): void
 agents	VADStream.next(): Promise<IteratorResult<VADEvent>>
 agents	VADStream.pushFrame(frame: AudioFrame): void
 agents	VADStream.updateInputStream(audioStream: ReadableStream<AudioFrame>): void
+agents	class APIError.readonly body: object | null
+agents	class APIError.readonly retryable: boolean
+agents	class APIStatusError.readonly requestId: string | null
+agents	class APIStatusError.readonly statusCode: number
+agents	class AgentServer.event: <inferred>
 agents	class AsyncIterableQueue<T>
 agents	class CancellablePromise<T, E extends Error = Error>
 agents	class ConnectionPool<T>
 agents	class Future<T = void, E extends Error = Error>
+agents	class InferenceRunner.registeredRunners: { [id: string]: string }
 agents	class InferenceRunner<InputType = unknown, OutputType = unknown>
+agents	class InvalidErrorType.readonly error: unknown
+agents	class JobContext._primaryAgentSession?: AgentSession
+agents	class JobContext._sessionDirectory: string
+agents	class JobContext.shutdownCallbacks: (() => Promise<void>)[]
 agents	class JobContext<ProcessUserData = Record<string, unknown>>
+agents	class JobProcess.userData: <inferred>
 agents	class JobProcess<UserData = Record<string, unknown>>
+agents	class Plugin.emitter: <inferred>
+agents	class Plugin.registeredPlugins: <inferred>
+agents	class Queue.items: T[]
 agents	class Queue<T>
+agents	class ServerOptions.agent: string
+agents	class ServerOptions.agentName: string
+agents	class ServerOptions.agentNameIsEnv: boolean
+agents	class ServerOptions.apiKey?: string
+agents	class ServerOptions.apiSecret?: string
+agents	class ServerOptions.host: string
+agents	class ServerOptions.initializeProcessTimeout: number
+agents	class ServerOptions.jobMemoryLimitMB: number
+agents	class ServerOptions.jobMemoryWarnMB: number
+agents	class ServerOptions.loadFunc: (worker: AgentServer) => Promise<number>
+agents	class ServerOptions.loadThreshold: number
+agents	class ServerOptions.logLevel: string
+agents	class ServerOptions.maxRetry: number
+agents	class ServerOptions.numIdleProcesses: number
+agents	class ServerOptions.permissions: WorkerPermissions
+agents	class ServerOptions.port: number
+agents	class ServerOptions.production: boolean
+agents	class ServerOptions.requestFunc: (job: JobRequest) => Promise<void>
+agents	class ServerOptions.serverType: JobType
+agents	class ServerOptions.shutdownProcessTimeout: number
+agents	class ServerOptions.workerToken?: string
+agents	class ServerOptions.wsURL: string
+agents	class Task.readonly name: string
 agents	class Task<T>
+agents	class VAD.label: string
+agents	class WorkerPermissions.canPublish: boolean
+agents	class WorkerPermissions.canPublishData: boolean
+agents	class WorkerPermissions.canPublishSources: TrackSource[]
+agents	class WorkerPermissions.canSubscribe: boolean
+agents	class WorkerPermissions.canUpdateMetadata: boolean
+agents	class WorkerPermissions.hidden: boolean
+agents	const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions
+agents	const DEFAULT_SESSION_CONNECT_OPTIONS: ResolvedSessionConnectOptions
+agents	const KNOWN_LANGUAGE_CODES: <inferred>
+agents	const USERDATA_TIMED_TRANSCRIPT: <inferred>
+agents	const Worker: <inferred>
+agents	const WorkerOptions: <inferred>
+agents	const defaultTextSyncOptions: TextSyncOptions
+agents	const version: <inferred>
+agents	enum AutoSubscribe { SUBSCRIBE_ALL, SUBSCRIBE_NONE, VIDEO_ONLY, AUDIO_ONLY }
+agents	enum PluginEventTypes { PluginRegistered = 'plugin_registered' }
+agents	enum TaskResult { Timeout = 'timeout', Completed = 'completed', Aborted = 'aborted' }
+agents	enum VADEventType { START_OF_SPEECH, INFERENCE_DONE, END_OF_SPEECH, METRICS_COLLECTED }
 agents	exported function areLanguagesEquivalent(left: string | null | undefined, right: string | null | undefined): boolean
 agents	exported function asError(maybeError: unknown): Error
 agents	exported function asLanguageCode(language: string): LanguageCode
@@ -174,14 +230,77 @@ agents	exported function waitForTrackPublication({ room, identity, kind, waitFor
 agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription, signal, includeLocal, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal?: false; }): Promise<RemoteTrackPublication>
 agents	exported function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>
 agents	exported function withResolvers<T = unknown>(): { promise: ThrowsPromise<T, Error>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason: Error) => void; }
+agents	interface APIConnectOptions.maxRetry: number
+agents	interface APIConnectOptions.retryIntervalMs: number
+agents	interface APIConnectOptions.timeoutMs: number
+agents	interface APIErrorOptions.body?: object | null
+agents	interface APIErrorOptions.retryable?: boolean
+agents	interface APIStatusErrorOptions.requestId?: string | null
+agents	interface APIStatusErrorOptions.statusCode?: number
+agents	interface Agent.entry: (ctx: JobContext<ProcessUserData>) => Promise<void>
+agents	interface Agent.prewarm?: (proc: JobProcess<ProcessUserData>) => unknown
 agents	interface Agent<ProcessUserData = Record<string, unknown>>
+agents	interface AudioDecodeOptions.abortSignal?: AbortSignal
+agents	interface AudioDecodeOptions.format?: string
+agents	interface AudioDecodeOptions.numChannels?: number
+agents	interface AudioDecodeOptions.sampleRate?: number
+agents	interface ConnectionPoolOptions.closeCb?: (conn: T) => Promise<void>
+agents	interface ConnectionPoolOptions.connectCb: (timeout: number) => Promise<T>
+agents	interface ConnectionPoolOptions.connectTimeout?: number
+agents	interface ConnectionPoolOptions.markRefreshedOnGet?: boolean
+agents	interface ConnectionPoolOptions.maxSessionDuration?: number
 agents	interface ConnectionPoolOptions<T>
+agents	interface ResolvedSessionConnectOptions.llmConnOptions: APIConnectOptions
+agents	interface ResolvedSessionConnectOptions.maxUnrecoverableErrors: number
+agents	interface ResolvedSessionConnectOptions.sttConnOptions: APIConnectOptions
+agents	interface ResolvedSessionConnectOptions.ttsConnOptions: APIConnectOptions
+agents	interface SessionConnectOptions.llmConnOptions?: Partial<APIConnectOptions>
+agents	interface SessionConnectOptions.maxUnrecoverableErrors?: number
+agents	interface SessionConnectOptions.sttConnOptions?: Partial<APIConnectOptions>
+agents	interface SessionConnectOptions.ttsConnOptions?: Partial<APIConnectOptions>
+agents	interface TextSyncOptions.hyphenateWord: (word: string) => string[]
+agents	interface TextSyncOptions.language: string
+agents	interface TextSyncOptions.newSentenceDelay: number
+agents	interface TextSyncOptions.sentenceTokenizer: SentenceTokenizer
+agents	interface TextSyncOptions.speed: number
+agents	interface TextSyncOptions.splitWords: (words: string) => [string, number, number][]
+agents	interface TimedString.confidence?: number
+agents	interface TimedString.endTime?: number
+agents	interface TimedString.speakerId?: string | null
+agents	interface TimedString.startTime?: number
+agents	interface TimedString.startTimeOffset?: number
+agents	interface TimedString.text: string
+agents	interface VADCapabilities.updateInterval: number
+agents	interface VADEvent.frames: AudioFrame[]
+agents	interface VADEvent.inferenceDuration: number
+agents	interface VADEvent.probability: number
+agents	interface VADEvent.rawAccumulatedSilence: number
+agents	interface VADEvent.rawAccumulatedSpeech: number
+agents	interface VADEvent.samplesIndex: number
+agents	interface VADEvent.silenceDuration: number
+agents	interface VADEvent.speaking: boolean
+agents	interface VADEvent.speechDuration: number
+agents	interface VADEvent.timestamp: number
+agents	interface VADEvent.type: VADEventType
+agents	type AudioBuffer = AudioFrame[] | AudioFrame
+agents	type DelayOptions = { signal?: AbortSignal; }
+agents	type Expand<T> = T extends Function ? T : T extends object ? T extends Array<infer U> ? Array<Expand<U>> : T extends Map<infer K, infer V> ? Map<Expand<K>, Expand<V>> : T extends Set<infer M> ? Set<Expand<M>> : { [K in keyof T]: Expand<T[K]> } : T
+agents	type JobAcceptArguments = { name: string; identity: string; metadata: string; attributes?: { [key: string]: string }; }
+agents	type KnownLanguageCode = (typeof KNOWN_LANGUAGE_CODES)[number]
+agents	type LanguageCode = string & { readonly [languageCodeBrand]: 'LanguageCode' }
+agents	type LoggerOptions = { pretty: boolean; level?: string; }
+agents	type PluginEventMap = { [PluginEventTypes.PluginRegistered]: [Plugin]; }
+agents	type RunningJobInfo = { acceptArguments: JobAcceptArguments; job: proto.Job; url: string; token: string; workerId: string; apiKey?: string; apiSecret?: string; }
+agents	type SyncCallbacks = { textUpdated: (text: TranscriptionSegment) => void; }
+agents	type VADCallbacks = { ['metrics_collected']: (metrics: VADMetrics) => void; }
 plugins/anam	AnamAPI.createSessionToken(params: { personaConfig: PersonaConfig; livekitUrl?: string; livekitToken?: string; }): Promise<{ sessionToken: string }>
 plugins/anam	AnamAPI.startEngineSession(params: { sessionToken: string }): Promise<{ sessionId: string }>
 plugins/anam	AvatarSession.avatarIdentity(): string
 plugins/anam	AvatarSession.provider(): string
 plugins/anam	AvatarSession.start(agentSession: voice.AgentSession, room: Room, params?: { livekitUrl?: string; livekitApiKey?: string; livekitApiSecret?: string; }): Promise<void>
 plugins/anam	exported function mintAvatarJoinToken({ roomName, avatarIdentity, publishOnBehalf, apiKey = process.env.LIVEKIT_API_KEY!, apiSecret = process.env.LIVEKIT_API_SECRET!, ttl = '60s', }: { roomName: string; avatarIdentity: string; publishOnBehalf: string; apiKey?: string; apiSecret?: string; ttl?: string | number; }): Promise<string>
+plugins/anam	type APIConnectOptions = { maxRetry?: number; retryInterval?: number; timeout?: number; }
+plugins/anam	type PersonaConfig = { name?: string; avatarId?: string; personaId?: string; }
 plugins/assemblyai	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
 plugins/assemblyai	STT.model(): string
 plugins/assemblyai	STT.provider(): string
@@ -191,6 +310,28 @@ plugins/assemblyai	SpeechStream.expiresAt(): number | null
 plugins/assemblyai	SpeechStream.forceEndpoint(): void
 plugins/assemblyai	SpeechStream.sessionId(): string | null
 plugins/assemblyai	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/assemblyai	class STT.label: <inferred>
+plugins/assemblyai	class SpeechStream.label: <inferred>
+plugins/assemblyai	class SpeechStream.readonly CLOSE_MSG: <inferred>
+plugins/assemblyai	interface STTOptions.apiKey?: string
+plugins/assemblyai	interface STTOptions.baseUrl: string
+plugins/assemblyai	interface STTOptions.bufferSizeMs: number
+plugins/assemblyai	interface STTOptions.domain?: string
+plugins/assemblyai	interface STTOptions.encoding: STTEncoding
+plugins/assemblyai	interface STTOptions.endOfTurnConfidenceThreshold?: number
+plugins/assemblyai	interface STTOptions.formatTurns?: boolean
+plugins/assemblyai	interface STTOptions.keytermsPrompt?: string[]
+plugins/assemblyai	interface STTOptions.languageDetection?: boolean
+plugins/assemblyai	interface STTOptions.maxSpeakers?: number
+plugins/assemblyai	interface STTOptions.maxTurnSilence?: number
+plugins/assemblyai	interface STTOptions.minTurnSilence?: number
+plugins/assemblyai	interface STTOptions.prompt?: string
+plugins/assemblyai	interface STTOptions.sampleRate: number
+plugins/assemblyai	interface STTOptions.speakerLabels?: boolean
+plugins/assemblyai	interface STTOptions.speechModel: STTModels
+plugins/assemblyai	interface STTOptions.vadThreshold?: number
+plugins/assemblyai	type STTEncoding = 'pcm_s16le' | 'pcm_mulaw'
+plugins/assemblyai	type STTModels = | 'universal-streaming-english' | 'universal-streaming-multilingual' | 'u3-rt-pro' | 'u3-pro'
 plugins/baseten	LLM.label(): string
 plugins/baseten	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
 plugins/baseten	STT.stream(): SpeechStream
@@ -199,9 +340,54 @@ plugins/baseten	TTS.close(): Promise<void>
 plugins/baseten	TTS.stream(): tts.SynthesizeStream
 plugins/baseten	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/baseten	TTS.updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>): void
+plugins/baseten	class ChunkedStream.label: <inferred>
+plugins/baseten	class STT.label: <inferred>
+plugins/baseten	class SpeechStream.label: <inferred>
+plugins/baseten	class TTS.label: <inferred>
+plugins/baseten	interface BasetenLLMOptions.apiKey?: string
+plugins/baseten	interface BasetenLLMOptions.frequencyPenalty?: number
+plugins/baseten	interface BasetenLLMOptions.maxTokens?: number
+plugins/baseten	interface BasetenLLMOptions.model: string
+plugins/baseten	interface BasetenLLMOptions.parallelToolCalls?: boolean
+plugins/baseten	interface BasetenLLMOptions.presencePenalty?: number
+plugins/baseten	interface BasetenLLMOptions.temperature?: number
+plugins/baseten	interface BasetenLLMOptions.toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } }
+plugins/baseten	interface BasetenLLMOptions.topP?: number
+plugins/baseten	interface BasetenLLMOptions.user?: string
+plugins/baseten	interface BasetenSttOptions.apiKey: string
+plugins/baseten	interface BasetenSttOptions.audioLanguage?: string
+plugins/baseten	interface BasetenSttOptions.bufferSizeSeconds?: number
+plugins/baseten	interface BasetenSttOptions.enablePartialTranscripts?: boolean
+plugins/baseten	interface BasetenSttOptions.encoding?: string
+plugins/baseten	interface BasetenSttOptions.environment?: string
+plugins/baseten	interface BasetenSttOptions.finalTranscriptMaxDurationS?: number
+plugins/baseten	interface BasetenSttOptions.languageDetectionOnly?: boolean
+plugins/baseten	interface BasetenSttOptions.modelEndpoint?: string
+plugins/baseten	interface BasetenSttOptions.modelId?: string
+plugins/baseten	interface BasetenSttOptions.partialTranscriptIntervalS?: number
+plugins/baseten	interface BasetenSttOptions.prompt?: string
+plugins/baseten	interface BasetenSttOptions.sampleRate?: number
+plugins/baseten	interface BasetenSttOptions.vadMinSilenceDurationMs?: number
+plugins/baseten	interface BasetenSttOptions.vadSpeechPadMs?: number
+plugins/baseten	interface BasetenSttOptions.vadThreshold?: number
+plugins/baseten	interface BasetenTTSOptions.apiKey: string
+plugins/baseten	interface BasetenTTSOptions.language?: string
+plugins/baseten	interface BasetenTTSOptions.maxTokens?: number
+plugins/baseten	interface BasetenTTSOptions.modelEndpoint: string
+plugins/baseten	interface BasetenTTSOptions.temperature?: number
+plugins/baseten	interface BasetenTTSOptions.voice?: string
 plugins/bey	AvatarSession.avatarIdentity(): string
 plugins/bey	AvatarSession.provider(): string
 plugins/bey	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/bey	interface AvatarSessionOptions.apiKey?: string
+plugins/bey	interface AvatarSessionOptions.apiUrl?: string
+plugins/bey	interface AvatarSessionOptions.avatarId?: string | null
+plugins/bey	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/bey	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/bey	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/bey	interface StartOptions.livekitApiKey?: string
+plugins/bey	interface StartOptions.livekitApiSecret?: string
+plugins/bey	interface StartOptions.livekitUrl?: string
 plugins/cartesia	STT.label(): string
 plugins/cartesia	STT.model(): string
 plugins/cartesia	STT.provider(): string
@@ -214,7 +400,36 @@ plugins/cartesia	TTS.provider(): string
 plugins/cartesia	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
 plugins/cartesia	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
 plugins/cartesia	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/cartesia	class ChunkedStream.label: <inferred>
+plugins/cartesia	class SynthesizeStream.label: <inferred>
+plugins/cartesia	class TTS.label: <inferred>
+plugins/cartesia	interface TTSOptions.apiKey?: string
+plugins/cartesia	interface TTSOptions.apiVersion: string
+plugins/cartesia	interface TTSOptions.baseUrl: string
+plugins/cartesia	interface TTSOptions.chunkTimeout: number
+plugins/cartesia	interface TTSOptions.emotion?: (TTSVoiceEmotion | string)[]
+plugins/cartesia	interface TTSOptions.encoding: TTSEncoding
+plugins/cartesia	interface TTSOptions.language: string
+plugins/cartesia	interface TTSOptions.model: TTSModels | string
+plugins/cartesia	interface TTSOptions.pronunciationDictId?: string
+plugins/cartesia	interface TTSOptions.sampleRate: number
+plugins/cartesia	interface TTSOptions.speed?: TTSVoiceSpeed | number
+plugins/cartesia	interface TTSOptions.voice: string | number[]
+plugins/cartesia	interface TTSOptions.volume?: number
+plugins/cartesia	interface TTSOptions.wordTimestamps?: boolean
+plugins/cartesia	type STTOptions = { apiKey: string; model: STTModel | (string & {}); sampleRate: number; baseUrl: string; audioChunkDurationMS: number; }
 plugins/cerebras	LLM.label(): string
+plugins/cerebras	interface LLMOptions.apiKey?: string
+plugins/cerebras	interface LLMOptions.baseURL?: string
+plugins/cerebras	interface LLMOptions.client?: OpenAI
+plugins/cerebras	interface LLMOptions.gzipCompression?: boolean
+plugins/cerebras	interface LLMOptions.model: string | CerebrasChatModels
+plugins/cerebras	interface LLMOptions.msgpackEncoding?: boolean
+plugins/cerebras	interface LLMOptions.parallelToolCalls?: boolean
+plugins/cerebras	interface LLMOptions.temperature?: number
+plugins/cerebras	interface LLMOptions.toolChoice?: llm.ToolChoice
+plugins/cerebras	interface LLMOptions.user?: string
+plugins/cerebras	type CerebrasChatModels = | 'llama3.1-8b' | 'llama-3.3-70b' | 'llama-4-scout-17b-16e-instruct' | 'llama-4-maverick-17b-128e-instruct' | 'qwen-3-32b' | 'qwen-3-235b-a22b-instruct-2507' | 'qwen-3-235b-a22b-thinking-2507' | 'qwen-3-coder-480b' | 'gpt-oss-120b'
 plugins/deepgram	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
 plugins/deepgram	STT.close(): Promise<void>
 plugins/deepgram	STT.model(): string
@@ -230,6 +445,53 @@ plugins/deepgram	TTS.model(): string
 plugins/deepgram	TTS.provider(): string
 plugins/deepgram	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
 plugins/deepgram	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/deepgram	class ChunkedStream.label: <inferred>
+plugins/deepgram	class STT.label: <inferred>
+plugins/deepgram	class STTv2.readonly label: <inferred>
+plugins/deepgram	class SpeechStream.label: <inferred>
+plugins/deepgram	class SynthesizeStream.label: <inferred>
+plugins/deepgram	class TTS.label: <inferred>
+plugins/deepgram	interface STTOptions.apiKey?: string
+plugins/deepgram	interface STTOptions.baseUrl: string
+plugins/deepgram	interface STTOptions.detectLanguage: boolean
+plugins/deepgram	interface STTOptions.diarize: boolean
+plugins/deepgram	interface STTOptions.dictation: boolean
+plugins/deepgram	interface STTOptions.endpointing: number
+plugins/deepgram	interface STTOptions.fillerWords: boolean
+plugins/deepgram	interface STTOptions.interimResults: boolean
+plugins/deepgram	interface STTOptions.keyterm: string[]
+plugins/deepgram	interface STTOptions.keywords: [string, number][]
+plugins/deepgram	interface STTOptions.language?: STTLanguages | string
+plugins/deepgram	interface STTOptions.mipOptOut: boolean
+plugins/deepgram	interface STTOptions.model: STTModels
+plugins/deepgram	interface STTOptions.noDelay: boolean
+plugins/deepgram	interface STTOptions.numChannels: number
+plugins/deepgram	interface STTOptions.numerals: boolean
+plugins/deepgram	interface STTOptions.profanityFilter: boolean
+plugins/deepgram	interface STTOptions.punctuate: boolean
+plugins/deepgram	interface STTOptions.redact: string | string[]
+plugins/deepgram	interface STTOptions.sampleRate: number
+plugins/deepgram	interface STTOptions.smartFormat: boolean
+plugins/deepgram	interface STTv2Options.apiKey?: string
+plugins/deepgram	interface STTv2Options.eagerEotThreshold?: number
+plugins/deepgram	interface STTv2Options.endpointUrl: string
+plugins/deepgram	interface STTv2Options.eotThreshold?: number
+plugins/deepgram	interface STTv2Options.eotTimeoutMs?: number
+plugins/deepgram	interface STTv2Options.keyterms: string[]
+plugins/deepgram	interface STTv2Options.language?: string
+plugins/deepgram	interface STTv2Options.languageHint?: string[]
+plugins/deepgram	interface STTv2Options.mipOptOut?: boolean
+plugins/deepgram	interface STTv2Options.model: V2Models | string
+plugins/deepgram	interface STTv2Options.sampleRate: number
+plugins/deepgram	interface STTv2Options.tags?: string[]
+plugins/deepgram	interface TTSOptions.apiKey?: string
+plugins/deepgram	interface TTSOptions.baseUrl?: string
+plugins/deepgram	interface TTSOptions.capabilities: tts.TTSCapabilities
+plugins/deepgram	interface TTSOptions.encoding: TTSEncoding
+plugins/deepgram	interface TTSOptions.model: TTSModels | string
+plugins/deepgram	interface TTSOptions.sampleRate: number
+plugins/deepgram	interface TTSOptions.sentenceTokenizer: tokenize.SentenceTokenizer
+plugins/deepgram	interface TTSOptions.speed?: number
 plugins/elevenlabs	Connection.close(): Promise<void>
 plugins/elevenlabs	Connection.closeContext(contextId: string): void
 plugins/elevenlabs	Connection.closed(): boolean
@@ -260,11 +522,126 @@ plugins/elevenlabs	TTS.provider(): string
 plugins/elevenlabs	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
 plugins/elevenlabs	TTS.synthesize(text: string): ChunkedStream
 plugins/elevenlabs	TTS.updateOptions(opts: { voiceId?: string; voiceSettings?: VoiceSettings; model?: TTSModels | string; language?: string; pronunciationDictionaryLocators?: PronunciationDictionaryLocator[]; }): void
+plugins/elevenlabs	class ChunkedStream.label: <inferred>
+plugins/elevenlabs	class STT.label: <inferred>
+plugins/elevenlabs	class SpeechStream.label: <inferred>
+plugins/elevenlabs	class SynthesizeStream.label: <inferred>
+plugins/elevenlabs	class TTS.label: <inferred>
+plugins/elevenlabs	interface PronunciationDictionaryLocator.pronunciation_dictionary_id: string
+plugins/elevenlabs	interface PronunciationDictionaryLocator.version_id: string
+plugins/elevenlabs	interface ResolvedSTTOptions.apiKey: string
+plugins/elevenlabs	interface ResolvedSTTOptions.baseURL: string
+plugins/elevenlabs	interface ResolvedSTTOptions.includeTimestamps: boolean
+plugins/elevenlabs	interface ResolvedSTTOptions.keyterms?: string[]
+plugins/elevenlabs	interface ResolvedSTTOptions.languageCode?: string
+plugins/elevenlabs	interface ResolvedSTTOptions.modelId: ElevenLabsSTTModels | string
+plugins/elevenlabs	interface ResolvedSTTOptions.sampleRate: STTRealtimeSampleRates
+plugins/elevenlabs	interface ResolvedSTTOptions.serverVad?: VADOptions | null
+plugins/elevenlabs	interface ResolvedSTTOptions.tagAudioEvents: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.apiKey: string
+plugins/elevenlabs	interface ResolvedTTSOptions.applyLanguageTextNormalization?: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.applyTextNormalization: 'auto' | 'on' | 'off'
+plugins/elevenlabs	interface ResolvedTTSOptions.autoMode: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.baseURL: string
+plugins/elevenlabs	interface ResolvedTTSOptions.chunkLengthSchedule?: number[]
+plugins/elevenlabs	interface ResolvedTTSOptions.enableLogging: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.enableSsmlParsing: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.encoding: TTSEncoding
+plugins/elevenlabs	interface ResolvedTTSOptions.inactivityTimeout: number
+plugins/elevenlabs	interface ResolvedTTSOptions.language?: string
+plugins/elevenlabs	interface ResolvedTTSOptions.model: TTSModels | string
+plugins/elevenlabs	interface ResolvedTTSOptions.preferredAlignment: 'normalized' | 'original'
+plugins/elevenlabs	interface ResolvedTTSOptions.pronunciationDictionaryLocators?: PronunciationDictionaryLocator[]
+plugins/elevenlabs	interface ResolvedTTSOptions.sampleRate: number
+plugins/elevenlabs	interface ResolvedTTSOptions.streamingLatency?: number
+plugins/elevenlabs	interface ResolvedTTSOptions.syncAlignment: boolean
+plugins/elevenlabs	interface ResolvedTTSOptions.voiceId: string
+plugins/elevenlabs	interface ResolvedTTSOptions.voiceSettings?: VoiceSettings
+plugins/elevenlabs	interface ResolvedTTSOptions.wordTokenizer: tokenize.WordTokenizer | tokenize.SentenceTokenizer
+plugins/elevenlabs	interface STTHTTPSession.fetch?: typeof fetch
+plugins/elevenlabs	interface STTHTTPSession.wsConnect?: ( url: string, options: { headers: Record<string, string>; signal?: AbortSignal; timeoutMs?: number }, ) => WebSocket | Promise<WebSocket>
+plugins/elevenlabs	interface STTOptions.apiKey?: string
+plugins/elevenlabs	interface STTOptions.baseURL?: string
+plugins/elevenlabs	interface STTOptions.httpSession?: STTHTTPSession
+plugins/elevenlabs	interface STTOptions.includeTimestamps?: boolean
+plugins/elevenlabs	interface STTOptions.keyterms?: string[]
+plugins/elevenlabs	interface STTOptions.languageCode?: string
+plugins/elevenlabs	interface STTOptions.modelId?: ElevenLabsSTTModels | string
+plugins/elevenlabs	interface STTOptions.sampleRate?: STTRealtimeSampleRates
+plugins/elevenlabs	interface STTOptions.serverVad?: VADOptions | null
+plugins/elevenlabs	interface STTOptions.tagAudioEvents?: boolean
+plugins/elevenlabs	interface STTOptions.useRealtime?: boolean
+plugins/elevenlabs	interface STTRecognizeOptions.abortSignal?: AbortSignal
+plugins/elevenlabs	interface STTRecognizeOptions.connOptions?: APIConnectOptions
+plugins/elevenlabs	interface STTRecognizeOptions.language?: string
+plugins/elevenlabs	interface SynthesizeContent.contextId: string
+plugins/elevenlabs	interface SynthesizeContent.flush: boolean
+plugins/elevenlabs	interface SynthesizeContent.text: string
+plugins/elevenlabs	interface TTSOptions.apiKey?: string
+plugins/elevenlabs	interface TTSOptions.applyLanguageTextNormalization?: boolean
+plugins/elevenlabs	interface TTSOptions.applyTextNormalization?: 'auto' | 'on' | 'off'
+plugins/elevenlabs	interface TTSOptions.autoMode?: boolean
+plugins/elevenlabs	interface TTSOptions.baseURL?: string
+plugins/elevenlabs	interface TTSOptions.chunkLengthSchedule?: number[]
+plugins/elevenlabs	interface TTSOptions.enableLogging?: boolean
+plugins/elevenlabs	interface TTSOptions.enableSsmlParsing?: boolean
+plugins/elevenlabs	interface TTSOptions.encoding?: TTSEncoding
+plugins/elevenlabs	interface TTSOptions.inactivityTimeout?: number
+plugins/elevenlabs	interface TTSOptions.language?: string
+plugins/elevenlabs	interface TTSOptions.languageCode?: string
+plugins/elevenlabs	interface TTSOptions.model?: TTSModels | string
+plugins/elevenlabs	interface TTSOptions.modelID?: TTSModels | string
+plugins/elevenlabs	interface TTSOptions.preferredAlignment?: 'normalized' | 'original'
+plugins/elevenlabs	interface TTSOptions.pronunciationDictionaryLocators?: PronunciationDictionaryLocator[]
+plugins/elevenlabs	interface TTSOptions.streamingLatency?: number
+plugins/elevenlabs	interface TTSOptions.syncAlignment?: boolean
+plugins/elevenlabs	interface TTSOptions.voice?: Voice
+plugins/elevenlabs	interface TTSOptions.voiceId?: string
+plugins/elevenlabs	interface TTSOptions.voiceSettings?: VoiceSettings
+plugins/elevenlabs	interface TTSOptions.wordTokenizer?: tokenize.WordTokenizer | tokenize.SentenceTokenizer
+plugins/elevenlabs	interface VADOptions.minSilenceDurationMs?: number | null
+plugins/elevenlabs	interface VADOptions.minSpeechDurationMs?: number | null
+plugins/elevenlabs	interface VADOptions.vadSilenceThresholdSecs?: number | null
+plugins/elevenlabs	interface VADOptions.vadThreshold?: number | null
+plugins/elevenlabs	interface Voice.category: string
+plugins/elevenlabs	interface Voice.id: string
+plugins/elevenlabs	interface Voice.name: string
+plugins/elevenlabs	interface Voice.settings?: VoiceSettings
+plugins/elevenlabs	interface VoiceSettings.similarity_boost: number
+plugins/elevenlabs	interface VoiceSettings.speed?: number
+plugins/elevenlabs	interface VoiceSettings.stability: number
+plugins/elevenlabs	interface VoiceSettings.style?: number
+plugins/elevenlabs	interface VoiceSettings.use_speaker_boost?: boolean
+plugins/elevenlabs	type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime'
+plugins/elevenlabs	type STTRealtimeSampleRates = 8000 | 16000 | 22050 | 24000 | 44100 | 48000
+plugins/elevenlabs	type TTSEncoding = | 'mp3_22050_32' | 'mp3_44100_32' | 'mp3_44100_64' | 'mp3_44100_96' | 'mp3_44100_128' | 'mp3_44100_192' | 'pcm_16000' | 'pcm_22050' | 'pcm_44100'
+plugins/elevenlabs	type TTSModels = | 'eleven_monolingual_v1' | 'eleven_multilingual_v1' | 'eleven_multilingual_v2' | 'eleven_flash_v2' | 'eleven_flash_v2_5' | 'eleven_turbo_v2' | 'eleven_turbo_v2_5' | 'eleven_v3'
 plugins/fishaudio	TTS.model(): string
 plugins/fishaudio	TTS.provider(): string
 plugins/fishaudio	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
 plugins/fishaudio	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
 plugins/fishaudio	TTS.updateOptions(opts: { model?: TTSModels | string; voiceId?: string; latencyMode?: LatencyMode; chunkLength?: number; }): void
+plugins/fishaudio	class ChunkedStream.label: <inferred>
+plugins/fishaudio	class SynthesizeStream.label: <inferred>
+plugins/fishaudio	class TTS.label: <inferred>
+plugins/fishaudio	interface ResolvedTTSOptions.apiKey: string
+plugins/fishaudio	interface ResolvedTTSOptions.baseURL: string
+plugins/fishaudio	interface ResolvedTTSOptions.chunkLength: number
+plugins/fishaudio	interface ResolvedTTSOptions.latencyMode: LatencyMode
+plugins/fishaudio	interface ResolvedTTSOptions.model: TTSModels | string
+plugins/fishaudio	interface ResolvedTTSOptions.sampleRate: number
+plugins/fishaudio	interface ResolvedTTSOptions.tokenizer: tokenize.SentenceTokenizer
+plugins/fishaudio	interface ResolvedTTSOptions.voiceId?: string
+plugins/fishaudio	interface TTSOptions.apiKey?: string
+plugins/fishaudio	interface TTSOptions.baseURL?: string
+plugins/fishaudio	interface TTSOptions.chunkLength?: number
+plugins/fishaudio	interface TTSOptions.latencyMode?: LatencyMode
+plugins/fishaudio	interface TTSOptions.model?: TTSModels | string
+plugins/fishaudio	interface TTSOptions.sampleRate?: number
+plugins/fishaudio	interface TTSOptions.tokenizer?: tokenize.SentenceTokenizer
+plugins/fishaudio	interface TTSOptions.voiceId?: string
+plugins/fishaudio	type LatencyMode = 'normal' | 'balanced' | 'low'
+plugins/fishaudio	type TTSModels = 's1' | 's2-pro'
 plugins/google	AIPlatformLLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, parallelToolCalls, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): inference.LLMStream
 plugins/google	AIPlatformLLM.label(): string
 plugins/google	AIPlatformLLM.model(): string
@@ -273,11 +650,80 @@ plugins/google	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OP
 plugins/google	LLM.label(): string
 plugins/google	LLM.model(): string
 plugins/google	LLM.provider(): string
+plugins/google	interface AIPlatformLLMOptions.accessToken?: string
+plugins/google	interface AIPlatformLLMOptions.apiVersion?: ApiVersion
+plugins/google	interface AIPlatformLLMOptions.client?: OpenAI
+plugins/google	interface AIPlatformLLMOptions.credentials?: GoogleCredentials
+plugins/google	interface AIPlatformLLMOptions.endpointId: string
+plugins/google	interface AIPlatformLLMOptions.endpointURL: string
+plugins/google	interface AIPlatformLLMOptions.extraBody?: Record<string, unknown>
+plugins/google	interface AIPlatformLLMOptions.extraHeaders?: Record<string, string>
+plugins/google	interface AIPlatformLLMOptions.extraQuery?: Record<string, string>
+plugins/google	interface AIPlatformLLMOptions.location?: string
+plugins/google	interface AIPlatformLLMOptions.maxCompletionTokens?: number
+plugins/google	interface AIPlatformLLMOptions.model?: string
+plugins/google	interface AIPlatformLLMOptions.parallelToolCalls?: boolean
+plugins/google	interface AIPlatformLLMOptions.project: string
+plugins/google	interface AIPlatformLLMOptions.strictToolSchema?: boolean
+plugins/google	interface AIPlatformLLMOptions.temperature?: number
+plugins/google	interface AIPlatformLLMOptions.timeoutMs?: number
+plugins/google	interface AIPlatformLLMOptions.tokenProvider?: AccessTokenProvider
+plugins/google	interface AIPlatformLLMOptions.toolChoice?: llm.ToolChoice
+plugins/google	interface AIPlatformLLMOptions.topP?: number
+plugins/google	interface LLMOptions.apiKey?: string
+plugins/google	interface LLMOptions.automaticFunctionCallingConfig?: types.AutomaticFunctionCallingConfig
+plugins/google	interface LLMOptions.frequencyPenalty?: number
+plugins/google	interface LLMOptions.geminiTools?: LLMTools
+plugins/google	interface LLMOptions.httpOptions?: types.HttpOptions
+plugins/google	interface LLMOptions.location?: string
+plugins/google	interface LLMOptions.maxOutputTokens?: number
+plugins/google	interface LLMOptions.mediaResolution?: types.MediaResolution
+plugins/google	interface LLMOptions.model: string | ChatModels
+plugins/google	interface LLMOptions.presencePenalty?: number
+plugins/google	interface LLMOptions.project?: string
+plugins/google	interface LLMOptions.seed?: number
+plugins/google	interface LLMOptions.serviceTier?: types.ServiceTier
+plugins/google	interface LLMOptions.temperature?: number
+plugins/google	interface LLMOptions.thinkingConfig?: types.ThinkingConfig
+plugins/google	interface LLMOptions.toolChoice?: llm.ToolChoice
+plugins/google	interface LLMOptions.topK?: number
+plugins/google	interface LLMOptions.topP?: number
+plugins/google	interface LLMOptions.vertexai?: boolean
+plugins/google	type AccessTokenProvider = () => string | Promise<string>
+plugins/google	type ApiVersion = 'v1' | 'v1beta1'
+plugins/google	type ChatModels = | 'gemini-3.5-flash' | 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro-preview-05-06' | 'gemini-2.5-flash-preview-04-17' | 'gemini-2.5-flash-preview-05-20' | 'gemini-2.0-flash-001' | 'gemini-2.0-flash-lite-preview-02-05' | 'gemini-2.0-pro-exp-02-05' | 'gemini-1.5-pro'
+plugins/google	type GeminiTTSModels = | 'gemini-3.1-flash-tts-preview' | 'gemini-2.5-flash-tts' | 'gemini-2.5-flash-lite-preview-tts' | 'gemini-2.5-pro-tts'
+plugins/google	type Gender = 'male' | 'female' | 'neutral'
+plugins/google	type GoogleCredentials = { getAccessToken: () => Promise<string | null | undefined | { token?: string | null }>; }
+plugins/google	type SpeechLanguages = | 'en-US' | 'ja-JP' | 'en-IN' | 'en-GB' | 'hi-IN' | 'af-ZA' | 'sq-AL' | 'am-ET' | 'ar-EG' | 'hy-AM' | 'ast-ES' | 'az-AZ' | 'eu-ES' | 'be-BY' | 'bs-BA' | 'bg-BG' | 'my-MM' | 'ca-ES' | 'ceb-PH' | 'ckb-IQ' | 'zh-Hans-CN' | 'yue-Hant-HK' | 'zh-TW' | 'hr-HR' | 'cs-CZ' | 'da-DK' | 'nl-NL' | 'en-AU' | 'et-EE' | 'fil-PH' | 'fi-FI' | 'fr-CA' | 'fr-FR' | 'gl-ES' | 'ka-GE' | 'de-DE' | 'el-GR' | 'gu-IN' | 'ha-NG' | 'iw-IL' | 'hu-HU' | 'is-IS' | 'id-ID' | 'it-IT' | 'jv-ID' | 'kea-CV' | 'kam-KE' | 'kn-IN' | 'kk-KZ' | 'km-KH' | 'ko-KR' | 'ky-KG' | 'lo-LA' | 'lv-LV' | 'ln-CD' | 'lt-LT' | 'luo-KE' | 'lb-LU' | 'mk-MK' | 'no-NO' | 'pl-PL' | 'pt-BR' | 'pt-PT' | 'ro-RO' | 'ru-RU' | 'es-CO' | 'es-MX' | 'es-US' | 'th-TH' | 'tr-TR' | 'uk-UA' | 'vi-VN'
+plugins/google	type SpeechModels = | 'long' | 'short' | 'telephony' | 'medical_dictation' | 'medical_conversation' | 'chirp' | 'chirp_2' | 'latest_long' | 'latest_short'
 plugins/hume	TTS.model(): string
 plugins/hume	TTS.provider(): string
 plugins/hume	TTS.stream(): tts.SynthesizeStream
 plugins/hume	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/hume	TTS.updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseUrl'>>): void
+plugins/hume	class ChunkedStream.label: <inferred>
+plugins/hume	class TTS.label: <inferred>
+plugins/hume	enum HumeVoiceProvider { Hume = 'HUME_AI', Custom = 'CUSTOM_VOICE' }
+plugins/hume	interface TTSOptions.apiKey?: string
+plugins/hume	interface TTSOptions.baseUrl?: string
+plugins/hume	interface TTSOptions.context?: string | Utterance[]
+plugins/hume	interface TTSOptions.description?: string
+plugins/hume	interface TTSOptions.instantMode?: boolean
+plugins/hume	interface TTSOptions.modelVersion?: ModelVersion
+plugins/hume	interface TTSOptions.speed?: number
+plugins/hume	interface TTSOptions.trailingSilence?: number
+plugins/hume	interface TTSOptions.voice?: VoiceById | VoiceByName
+plugins/hume	interface Utterance.description?: string
+plugins/hume	interface Utterance.speed?: number
+plugins/hume	interface Utterance.text: string
+plugins/hume	interface Utterance.trailing_silence?: number
+plugins/hume	interface Utterance.voice?: VoiceById | VoiceByName
+plugins/hume	interface VoiceById.id: string
+plugins/hume	interface VoiceById.provider?: HumeVoiceProvider
+plugins/hume	interface VoiceByName.name: string
+plugins/hume	interface VoiceByName.provider?: HumeVoiceProvider
+plugins/hume	type ModelVersion = '1' | '2'
 plugins/inworld	STT._recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent>
 plugins/inworld	STT.close(): Promise<void>
 plugins/inworld	STT.model(): string
@@ -296,9 +742,100 @@ plugins/inworld	WSConnectionPool.close(): void
 plugins/inworld	WSConnectionPool.getConnection(): Promise<WebSocket>
 plugins/inworld	WSConnectionPool.registerListener(contextId: string, cb: (msg: InworldMessage) => void): void
 plugins/inworld	WSConnectionPool.unregisterListener(contextId: string): void
+plugins/inworld	class STT.label: <inferred>
+plugins/inworld	class SpeechStream.label: <inferred>
+plugins/inworld	class TTS.label: <inferred>
+plugins/inworld	interface AudioChunk.audioContent?: string
+plugins/inworld	interface AudioChunk.timestampInfo?: TimestampInfo
+plugins/inworld	interface CharacterAlignment.characterEndTimeSeconds: number[]
+plugins/inworld	interface CharacterAlignment.characterStartTimeSeconds: number[]
+plugins/inworld	interface CharacterAlignment.characters: string[]
+plugins/inworld	interface InworldMessage.contextId?: string
+plugins/inworld	interface InworldMessage.error?: { message: string }
+plugins/inworld	interface InworldMessage.result?: InworldResult
+plugins/inworld	interface InworldResult.audioChunk?: AudioChunk
+plugins/inworld	interface InworldResult.audioContent?: string
+plugins/inworld	interface InworldResult.contextClosed?: boolean
+plugins/inworld	interface InworldResult.contextCreated?: boolean
+plugins/inworld	interface InworldResult.contextId?: string
+plugins/inworld	interface InworldResult.flushCompleted?: boolean
+plugins/inworld	interface InworldResult.status?: { code: number; message: string }
+plugins/inworld	interface STTOptions.apiKey?: string
+plugins/inworld	interface STTOptions.baseURL: string
+plugins/inworld	interface STTOptions.enableVoiceProfile: boolean
+plugins/inworld	interface STTOptions.endOfTurnConfidenceThreshold: number
+plugins/inworld	interface STTOptions.language: string
+plugins/inworld	interface STTOptions.minEndOfTurnSilenceWhenConfident: number
+plugins/inworld	interface STTOptions.model: STTModels
+plugins/inworld	interface STTOptions.numChannels: number
+plugins/inworld	interface STTOptions.sampleRate: number
+plugins/inworld	interface STTOptions.vadThreshold?: number
+plugins/inworld	interface STTOptions.voiceProfileTopN: number
+plugins/inworld	interface STTOptions.wsURL: string
+plugins/inworld	interface TTSOptions.apiKey?: string
+plugins/inworld	interface TTSOptions.baseURL: string
+plugins/inworld	interface TTSOptions.bitRate: number
+plugins/inworld	interface TTSOptions.bufferCharThreshold: number
+plugins/inworld	interface TTSOptions.deliveryMode?: DeliveryMode
+plugins/inworld	interface TTSOptions.encoding: Encoding
+plugins/inworld	interface TTSOptions.language?: string
+plugins/inworld	interface TTSOptions.maxBufferDelayMs: number
+plugins/inworld	interface TTSOptions.model: TTSModels | string
+plugins/inworld	interface TTSOptions.sampleRate: number
+plugins/inworld	interface TTSOptions.speakingRate: number
+plugins/inworld	interface TTSOptions.temperature: number
+plugins/inworld	interface TTSOptions.textNormalization?: TextNormalization
+plugins/inworld	interface TTSOptions.timestampTransportStrategy?: TimestampTransportStrategy
+plugins/inworld	interface TTSOptions.timestampType?: TimestampType
+plugins/inworld	interface TTSOptions.tokenizer?: tokenize.SentenceTokenizer
+plugins/inworld	interface TTSOptions.voice: string
+plugins/inworld	interface TTSOptions.wsURL: string
+plugins/inworld	interface TimestampInfo.characterAlignment?: CharacterAlignment
+plugins/inworld	interface TimestampInfo.wordAlignment?: WordAlignment
+plugins/inworld	interface TranscriptionUsage.modelId?: string
+plugins/inworld	interface TranscriptionUsage.transcribedAudioMs?: number
+plugins/inworld	interface Voice.description: string
+plugins/inworld	interface Voice.displayName: string
+plugins/inworld	interface Voice.languages: string[]
+plugins/inworld	interface Voice.tags: string[]
+plugins/inworld	interface Voice.voiceId: string
+plugins/inworld	interface VoiceProfile.accent?: { label: string; confidence: number }[]
+plugins/inworld	interface VoiceProfile.age?: { label: string; confidence: number }[]
+plugins/inworld	interface VoiceProfile.emotion?: { label: string; confidence: number }[]
+plugins/inworld	interface VoiceProfile.pitch?: { label: string; confidence: number }[]
+plugins/inworld	interface VoiceProfile.vocalStyle?: { label: string; confidence: number }[]
+plugins/inworld	interface WordAlignment.wordEndTimeSeconds: number[]
+plugins/inworld	interface WordAlignment.wordStartTimeSeconds: number[]
+plugins/inworld	interface WordAlignment.words: string[]
+plugins/inworld	interface WordTimestamp.confidence?: number
+plugins/inworld	interface WordTimestamp.endTime?: number
+plugins/inworld	interface WordTimestamp.endTimeMs?: number
+plugins/inworld	interface WordTimestamp.startTime?: number
+plugins/inworld	interface WordTimestamp.startTimeMs?: number
+plugins/inworld	interface WordTimestamp.word: string
+plugins/inworld	type DeliveryMode = 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE'
+plugins/inworld	type Encoding = 'PCM' | 'LINEAR16'
+plugins/inworld	type STTModels = 'inworld/inworld-stt-1' | string
+plugins/inworld	type TTSModels = 'inworld-tts-2' | 'inworld-tts-1.5-max'
+plugins/inworld	type TextNormalization = 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF'
+plugins/inworld	type TimestampTransportStrategy = | 'TIMESTAMP_TRANSPORT_STRATEGY_UNSPECIFIED' | 'SYNC' | 'ASYNC'
+plugins/inworld	type TimestampType = 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER'
 plugins/lemonslice	AvatarSession.avatarIdentity(): string
 plugins/lemonslice	AvatarSession.provider(): string
 plugins/lemonslice	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<string>
+plugins/lemonslice	interface AvatarSessionOptions.agentId?: string | null
+plugins/lemonslice	interface AvatarSessionOptions.agentImageUrl?: string | null
+plugins/lemonslice	interface AvatarSessionOptions.agentPrompt?: string | null
+plugins/lemonslice	interface AvatarSessionOptions.apiKey?: string
+plugins/lemonslice	interface AvatarSessionOptions.apiUrl?: string
+plugins/lemonslice	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/lemonslice	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/lemonslice	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/lemonslice	interface AvatarSessionOptions.extraPayload?: Record<string, unknown> | null
+plugins/lemonslice	interface AvatarSessionOptions.idleTimeout?: number | null
+plugins/lemonslice	interface StartOptions.livekitApiKey?: string
+plugins/lemonslice	interface StartOptions.livekitApiSecret?: string
+plugins/lemonslice	interface StartOptions.livekitUrl?: string
 plugins/liveavatar	AvatarSession.aclose(): Promise<void>
 plugins/liveavatar	AvatarSession.avatarIdentity(): string
 plugins/liveavatar	AvatarSession.provider(): string
@@ -307,6 +844,34 @@ plugins/liveavatar	AvatarSession.start(agentSession: voice.AgentSession, room: R
 plugins/liveavatar	LiveAvatarAPI.createStreamingSession(opts: CreateStreamingSessionOptions): Promise<SessionResponse>
 plugins/liveavatar	LiveAvatarAPI.startStreamingSession(sessionId: string, sessionToken: string): Promise<StartSessionResponse>
 plugins/liveavatar	LiveAvatarAPI.stopStreamingSession(sessionId: string, sessionToken: string): Promise<StopSessionResponse>
+plugins/liveavatar	const DEFAULT_API_URL: <inferred>
+plugins/liveavatar	interface AvatarSessionOptions.apiKey?: string
+plugins/liveavatar	interface AvatarSessionOptions.apiUrl?: string
+plugins/liveavatar	interface AvatarSessionOptions.avatarId?: string
+plugins/liveavatar	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/liveavatar	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/liveavatar	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/liveavatar	interface AvatarSessionOptions.isSandbox?: boolean
+plugins/liveavatar	interface AvatarSessionOptions.videoQuality?: VideoQuality
+plugins/liveavatar	interface CreateStreamingSessionOptions.avatarId: string
+plugins/liveavatar	interface CreateStreamingSessionOptions.isSandbox?: boolean
+plugins/liveavatar	interface CreateStreamingSessionOptions.livekitToken: string
+plugins/liveavatar	interface CreateStreamingSessionOptions.livekitUrl: string
+plugins/liveavatar	interface CreateStreamingSessionOptions.roomName: string
+plugins/liveavatar	interface CreateStreamingSessionOptions.videoQuality?: VideoQuality | null
+plugins/liveavatar	interface LiveAvatarAPIOptions.apiKey?: string
+plugins/liveavatar	interface LiveAvatarAPIOptions.apiUrl?: string
+plugins/liveavatar	interface LiveAvatarAPIOptions.connOptions?: APIConnectOptions
+plugins/liveavatar	interface SessionResponse.code: number
+plugins/liveavatar	interface SessionResponse.data: { session_id: string; session_token: string; [key: string]: unknown; }
+plugins/liveavatar	interface StartOptions.livekitApiKey?: string
+plugins/liveavatar	interface StartOptions.livekitApiSecret?: string
+plugins/liveavatar	interface StartOptions.livekitUrl?: string
+plugins/liveavatar	interface StartSessionResponse.code: number
+plugins/liveavatar	interface StartSessionResponse.data: { ws_url: string; [key: string]: unknown; }
+plugins/liveavatar	interface StopSessionResponse.code: number
+plugins/liveavatar	interface StopSessionResponse.data: Record<string, unknown>
+plugins/liveavatar	type VideoQuality = 'very_high' | 'high' | 'medium' | 'low'
 plugins/livekit	exported function downloadFileToCacheDir(params: { repo: RepoDesignation; path: string; raw?: boolean; revision?: string; hubUrl?: string; cacheDir?: string; fetch?: typeof fetch; localFileOnly?: boolean; } & Partial<CredentialsParams>): Promise<string>
 plugins/minimax	SynthesizeStream.close(): void
 plugins/minimax	TTS.model(): string
@@ -314,6 +879,49 @@ plugins/minimax	TTS.provider(): string
 plugins/minimax	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
 plugins/minimax	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
 plugins/minimax	TTS.updateOptions(opts: Partial< Pick< TTSOptions, | 'model' | 'voice' | 'emotion' | 'speed' | 'vol' | 'pitch' | 'textNormalization' | 'pronunciationDict' | 'intensity' | 'timbre' | 'languageBoost' > >): void
+plugins/minimax	class ChunkedStream.label: <inferred>
+plugins/minimax	class SynthesizeStream.label: <inferred>
+plugins/minimax	class TTS.label: <inferred>
+plugins/minimax	const DEFAULT_BASE_URL: <inferred>
+plugins/minimax	const DEFAULT_MODEL: TTSModel
+plugins/minimax	const DEFAULT_VOICE_ID: TTSVoice
+plugins/minimax	interface ResolvedTTSOptions.apiKey: string
+plugins/minimax	interface ResolvedTTSOptions.baseUrl: string
+plugins/minimax	interface ResolvedTTSOptions.bitrate: number
+plugins/minimax	interface ResolvedTTSOptions.emotion?: TTSEmotion
+plugins/minimax	interface ResolvedTTSOptions.intensity?: number
+plugins/minimax	interface ResolvedTTSOptions.languageBoost?: TTSLanguageBoost
+plugins/minimax	interface ResolvedTTSOptions.model: TTSModel | string
+plugins/minimax	interface ResolvedTTSOptions.pitch: number
+plugins/minimax	interface ResolvedTTSOptions.pronunciationDict?: Record<string, string[]>
+plugins/minimax	interface ResolvedTTSOptions.sampleRate: TTSSampleRate
+plugins/minimax	interface ResolvedTTSOptions.speed: number
+plugins/minimax	interface ResolvedTTSOptions.textNormalization: boolean
+plugins/minimax	interface ResolvedTTSOptions.timbre?: number
+plugins/minimax	interface ResolvedTTSOptions.tokenizer: tokenize.SentenceTokenizer
+plugins/minimax	interface ResolvedTTSOptions.voice: TTSVoice | string
+plugins/minimax	interface ResolvedTTSOptions.vol: number
+plugins/minimax	interface TTSOptions.apiKey?: string
+plugins/minimax	interface TTSOptions.baseUrl?: string
+plugins/minimax	interface TTSOptions.bitrate?: number
+plugins/minimax	interface TTSOptions.emotion?: TTSEmotion
+plugins/minimax	interface TTSOptions.intensity?: number
+plugins/minimax	interface TTSOptions.languageBoost?: TTSLanguageBoost
+plugins/minimax	interface TTSOptions.model?: TTSModel | string
+plugins/minimax	interface TTSOptions.pitch?: number
+plugins/minimax	interface TTSOptions.pronunciationDict?: Record<string, string[]>
+plugins/minimax	interface TTSOptions.sampleRate?: TTSSampleRate
+plugins/minimax	interface TTSOptions.speed?: number
+plugins/minimax	interface TTSOptions.textNormalization?: boolean
+plugins/minimax	interface TTSOptions.timbre?: number
+plugins/minimax	interface TTSOptions.tokenizer?: tokenize.SentenceTokenizer
+plugins/minimax	interface TTSOptions.voice?: TTSVoice | string
+plugins/minimax	interface TTSOptions.vol?: number
+plugins/minimax	type TTSEmotion = | 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'neutral' | 'fluent'
+plugins/minimax	type TTSLanguageBoost = | 'auto' | 'Chinese' | 'Chinese,Yue' | 'English' | 'Arabic' | 'Russian' | 'Spanish' | 'French' | 'Portuguese' | 'German' | 'Turkish' | 'Dutch' | 'Ukrainian' | 'Vietnamese' | 'Indonesian' | 'Japanese' | 'Italian' | 'Korean' | 'Thai' | 'Polish' | 'Romanian' | 'Greek' | 'Czech' | 'Finnish' | 'Hindi' | 'Bulgarian' | 'Danish' | 'Hebrew' | 'Malay' | 'Persian' | 'Slovak' | 'Swedish' | 'Croatian' | 'Filipino' | 'Hungarian' | 'Norwegian' | 'Slovenian' | 'Catalan' | 'Nynorsk' | 'Tamil' | 'Afrikaans'
+plugins/minimax	type TTSModel = | 'speech-2.8-hd' | 'speech-2.8-turbo' | 'speech-2.6-hd' | 'speech-2.6-turbo' | 'speech-2.5-hd-preview' | 'speech-2.5-turbo-preview' | 'speech-02-hd' | 'speech-02-turbo' | 'speech-01-hd' | 'speech-01-turbo'
+plugins/minimax	type TTSSampleRate = 8000 | 16000 | 22050 | 24000 | 32000 | 44100
+plugins/minimax	type TTSVoice = | 'socialmedia_female_2_v1' | 'socialmedia_female_1_v1' | 'voice_agent_Female_Phone_4' | 'voice_agent_Male_Phone_1' | 'voice_agent_Male_Phone_2' | 'English_StressedLady' | 'English_SentimentalLady' | 'English_radiant_girl' | 'English_WiseScholar' | 'English_Persuasive_Man' | 'English_Explanatory_Man' | 'English_Insightful_Speaker' | 'japanese_male_social_media_1_v2' | 'japanese_female_social_media_1_v2' | 'French_CasualMan' | 'French_Female Journalist' | 'Spanish_Narrator' | 'Spanish_WiseScholar' | 'Spanish_ThoughtfulMan' | 'Arabic_CalmWoman' | 'Arabic_FriendlyGuy' | 'Portuguese_ThoughtfulLady' | 'German_PlayfulMan' | 'German_SweetLady' | 'moss_audio_7c7e7ae2-7356-11f0-9540-7ef9b4b62566' | 'moss_audio_b118f320-78c0-11f0-bbeb-26e8167c4779' | 'moss_audio_84f32de9-2363-11f0-b7ab-d255fae1f27b' | 'moss_audio_82ebf67c-78c8-11f0-8e8e-36b92fbb4f95'
 plugins/mistralai	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): LLMStream
 plugins/mistralai	LLM.label(): string
 plugins/mistralai	LLM.model(): string
@@ -330,8 +938,56 @@ plugins/mistralai	TTS.provider(): string
 plugins/mistralai	TTS.stream(): tts.SynthesizeStream
 plugins/mistralai	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/mistralai	TTS.updateOptions(opts: { model?: MistralTTSModels | string; voice?: MistralTTSVoices | string; refAudio?: string; }): void
+plugins/mistralai	class ChunkedStream.label: <inferred>
+plugins/mistralai	class STT.label: <inferred>
+plugins/mistralai	class SpeechStream.label: <inferred>
+plugins/mistralai	class TTS.label: <inferred>
+plugins/mistralai	interface LLMOptions.apiKey?: string
+plugins/mistralai	interface LLMOptions.client?: Mistral
+plugins/mistralai	interface LLMOptions.frequencyPenalty?: number
+plugins/mistralai	interface LLMOptions.maxCompletionTokens?: number
+plugins/mistralai	interface LLMOptions.model?: MistralChatModels | string
+plugins/mistralai	interface LLMOptions.presencePenalty?: number
+plugins/mistralai	interface LLMOptions.randomSeed?: number
+plugins/mistralai	interface LLMOptions.temperature?: number
+plugins/mistralai	interface LLMOptions.toolChoice?: llm.ToolChoice
+plugins/mistralai	interface LLMOptions.topP?: number
+plugins/mistralai	interface LLMOpts.frequencyPenalty: number | null
+plugins/mistralai	interface LLMOpts.maxCompletionTokens: number | null
+plugins/mistralai	interface LLMOpts.model: MistralChatModels | string
+plugins/mistralai	interface LLMOpts.presencePenalty: number | null
+plugins/mistralai	interface LLMOpts.randomSeed: number | null
+plugins/mistralai	interface LLMOpts.temperature: number | null
+plugins/mistralai	interface LLMOpts.toolChoice: llm.ToolChoice | null
+plugins/mistralai	interface LLMOpts.topP: number | null
+plugins/mistralai	interface STTOptions.apiKey?: string
+plugins/mistralai	interface STTOptions.client?: Mistral
+plugins/mistralai	interface STTOptions.contextBias?: string[]
+plugins/mistralai	interface STTOptions.language?: string
+plugins/mistralai	interface STTOptions.model: MistralSTTModels | string
+plugins/mistralai	interface STTOptions.targetStreamingDelayMs?: number
+plugins/mistralai	interface STTOptions.vad?: VAD
+plugins/mistralai	interface TTSOptions.apiKey?: string
+plugins/mistralai	interface TTSOptions.client?: Mistral
+plugins/mistralai	interface TTSOptions.model: MistralTTSModels | string
+plugins/mistralai	interface TTSOptions.refAudio?: string
+plugins/mistralai	interface TTSOptions.voice?: MistralTTSVoices | string
+plugins/mistralai	type MistralChatModels = | 'mistral-large-latest' | 'mistral-large-2512' | 'mistral-large-2411' | 'mistral-medium-latest' | 'mistral-medium-2508' | 'mistral-medium-2505' | 'mistral-small-latest' | 'mistral-small-2603' | 'mistral-small-2506' | 'ministral-14b-latest' | 'ministral-14b-2512' | 'ministral-8b-latest' | 'ministral-8b-2512' | 'ministral-3b-latest' | 'ministral-3b-2512'
+plugins/mistralai	type MistralSTTModels = | 'voxtral-mini-transcribe-realtime-2602' | 'voxtral-mini-latest' | 'voxtral-mini-2602' | 'voxtral-mini-2507'
+plugins/mistralai	type MistralTTSModels = 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603'
+plugins/mistralai	type MistralTTSVoices = | 'gb_jane_confident' | 'gb_jane_confused' | 'gb_jane_curious' | 'gb_jane_frustrated' | 'gb_jane_jealousy' | 'gb_jane_neutral' | 'gb_jane_sad' | 'gb_jane_sarcasm' | 'gb_jane_shameful' | 'fr_marie_angry' | 'fr_marie_curious' | 'fr_marie_excited' | 'fr_marie_happy' | 'fr_marie_neutral' | 'fr_marie_sad' | 'gb_oliver_angry' | 'gb_oliver_cheerful' | 'gb_oliver_confident' | 'gb_oliver_curious' | 'gb_oliver_excited' | 'gb_oliver_neutral' | 'gb_oliver_sad' | 'en_paul_angry' | 'en_paul_cheerful' | 'en_paul_confident' | 'en_paul_excited' | 'en_paul_frustrated' | 'en_paul_happy' | 'en_paul_neutral' | 'en_paul_sad'
 plugins/neuphonic	TTS.stream(): tts.SynthesizeStream
 plugins/neuphonic	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/neuphonic	class ChunkedStream.label: <inferred>
+plugins/neuphonic	class SynthesizeStream.label: <inferred>
+plugins/neuphonic	class TTS.label: <inferred>
+plugins/neuphonic	interface TTSOptions.apiKey?: string
+plugins/neuphonic	interface TTSOptions.encoding: TTSEncodings | string
+plugins/neuphonic	interface TTSOptions.langCode: TTSLangCodes | string
+plugins/neuphonic	interface TTSOptions.model: TTSModels | string
+plugins/neuphonic	interface TTSOptions.sampleRate: number
+plugins/neuphonic	interface TTSOptions.speed?: number
+plugins/neuphonic	interface TTSOptions.voiceId?: string
 plugins/openai	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, parallelToolCalls, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): LLMStream
 plugins/openai	LLM.label(): string
 plugins/openai	LLM.model(): string
@@ -364,21 +1020,137 @@ plugins/openai	TTS.provider(): string
 plugins/openai	TTS.stream(): tts.SynthesizeStream
 plugins/openai	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/openai	TTS.updateOptions(opts: { model?: TTSModels | string; voice?: TTSVoices; speed?: number }): void
+plugins/openai	class ChunkedStream.label: <inferred>
+plugins/openai	class STT.label: <inferred>
+plugins/openai	class TTS.label: <inferred>
 plugins/openai	exported function supportsReasoningEffort(model: ChatModels | string): boolean
+plugins/openai	interface LLMOptions.apiKey?: string
+plugins/openai	interface LLMOptions.baseURL?: string
+plugins/openai	interface LLMOptions.client?: OpenAI
+plugins/openai	interface LLMOptions.maxCompletionTokens?: number
+plugins/openai	interface LLMOptions.metadata?: Record<string, string>
+plugins/openai	interface LLMOptions.model: string | ChatModels
+plugins/openai	interface LLMOptions.parallelToolCalls?: boolean
+plugins/openai	interface LLMOptions.serviceTier?: string
+plugins/openai	interface LLMOptions.store?: boolean
+plugins/openai	interface LLMOptions.strictToolSchema?: boolean
+plugins/openai	interface LLMOptions.temperature?: number
+plugins/openai	interface LLMOptions.toolChoice?: llm.ToolChoice
+plugins/openai	interface LLMOptions.topP?: number
+plugins/openai	interface LLMOptions.user?: string
+plugins/openai	interface STTOptions.apiKey?: string
+plugins/openai	interface STTOptions.baseURL?: string
+plugins/openai	interface STTOptions.client?: OpenAI
+plugins/openai	interface STTOptions.detectLanguage: boolean
+plugins/openai	interface STTOptions.language: string
+plugins/openai	interface STTOptions.model: WhisperModels | string
+plugins/openai	interface STTOptions.noiseReductionType?: api_proto.NoiseReductionType
+plugins/openai	interface STTOptions.prompt?: string
+plugins/openai	interface STTOptions.turnDetection?: api_proto.TurnDetectionType | null
+plugins/openai	interface STTOptions.useRealtime: boolean
+plugins/openai	interface STTOptions.vad?: VAD
+plugins/openai	interface TTSOptions.apiKey?: string
+plugins/openai	interface TTSOptions.baseURL?: string
+plugins/openai	interface TTSOptions.client?: OpenAI
+plugins/openai	interface TTSOptions.instructions?: string
+plugins/openai	interface TTSOptions.model: TTSModels | string
+plugins/openai	interface TTSOptions.speed: number
+plugins/openai	interface TTSOptions.voice: TTSVoices
+plugins/openai	type AssistantTools = 'code_interpreter' | 'file_search' | 'function'
+plugins/openai	type CerebrasChatModels = | 'llama3.1-8b' | 'llama-3.3-70b' | 'llama-4-scout-17b-16e-instruct' | 'llama-4-maverick-17b-128e-instruct' | 'qwen-3-32b' | 'qwen-3-235b-a22b-instruct-2507' | 'qwen-3-235b-a22b-thinking-2507' | 'qwen-3-coder-480b' | 'gpt-oss-120b'
+plugins/openai	type ChatModels = | 'gpt-5.4' | 'gpt-5.3-chat-latest' | 'gpt-5.2' | 'gpt-5.2-chat-latest' | 'gpt-5.1' | 'gpt-5.1-chat-latest' | 'gpt-5' | 'gpt-5-mini' | 'gpt-5-nano' | 'gpt-4.1' | 'gpt-4.1-mini' | 'gpt-4.1-nano' | 'gpt-4o' | 'gpt-4o-2024-05-13' | 'gpt-4o-mini' | 'gpt-4o-mini-2024-07-18' | 'gpt-4-turbo' | 'gpt-4-turbo-2024-04-09' | 'gpt-4-turbo-preview' | 'gpt-4-0125-preview' | 'gpt-4-1106-preview' | 'gpt-4-vision-preview' | 'gpt-4-1106-vision-preview' | 'gpt-4' | 'gpt-4-0314' | 'gpt-4-0613' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-4-32k-0613' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-16k' | 'gpt-3.5-turbo-0301' | 'gpt-3.5-turbo-0613' | 'gpt-3.5-turbo-1106' | 'gpt-3.5-turbo-16k-0613'
+plugins/openai	type DalleModels = 'dall-e-2' | 'dall-e-3'
+plugins/openai	type DeepSeekChatModels = 'deepseek-coder' | 'deepseek-chat'
+plugins/openai	type EmbeddingModels = | 'text-embedding-ada-002' | 'text-embedding-3-small' | 'text-embedding-3-large'
+plugins/openai	type GroqAudioModels = 'whisper-large-v3' | 'whisper-large-v3-turbo'
+plugins/openai	type GroqChatModels = | 'llama-3.1-8b-instant' | 'llama-3.3-70b-versatile' | 'openai/gpt-oss-120b' | 'openai/gpt-oss-20b'
+plugins/openai	type MetaChatModels = | 'Llama-4-Scout-17B-16E-Instruct-FP8' | 'Llama-4-Maverick-17B-128E-Instruct-FP8' | 'Llama-3.3-70B-Instruct' | 'Llama-3.3-8B-Instruct'
+plugins/openai	type OctoChatModels = | 'meta-llama-3-70b-instruct' | 'meta-llama-3.1-405b-instruct' | 'meta-llama-3.1-70b-instruct' | 'meta-llama-3.1-8b-instruct' | 'mistral-7b-instruct' | 'mixtral-8x7b-instruct' | 'wizardlm-2-8x22bllamaguard-2-7b'
+plugins/openai	type PerplexityChatModels = | 'llama-3.1-sonar-small-128k-online' | 'llama-3.1-sonar-small-128k-chat' | 'llama-3.1-sonar-large-128k-online' | 'llama-3.1-sonar-large-128k-chat' | 'llama-3.1-8b-instruct' | 'llama-3.1-70b-instruct'
+plugins/openai	type ResolvedSTTOptions = Omit<STTOptions, 'apiKey'> & { apiKey: string }
+plugins/openai	type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts'
+plugins/openai	type TTSVoices = | 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'fable' | 'nova' | 'onyx' | 'sage' | 'shimmer'
+plugins/openai	type TelnyxChatModels = | 'meta-llama/Meta-Llama-3.1-8B-Instruct' | 'meta-llama/Meta-Llama-3.1-70B-Instruct'
+plugins/openai	type TogetherChatModels = | 'Austism/chronos-hermes-13b' | 'Gryphe/MythoMax-L2-13b' | 'NousResearch/Nous-Capybara-7B-V1p9' | 'NousResearch/Nous-Hermes-2-Mistral-7B-DPO' | 'NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO' | 'NousResearch/Nous-Hermes-2-Mixtral-8x7B-SFT' | 'NousResearch/Nous-Hermes-2-Yi-34B' | 'NousResearch/Nous-Hermes-Llama2-13b' | 'NousResearch/Nous-Hermes-llama-2-7b' | 'Open-Orca/Mistral-7B-OpenOrca' | 'Qwen/Qwen1.5-0.5B-Chat' | 'Qwen/Qwen1.5-1.8B-Chat' | 'Qwen/Qwen1.5-110B-Chat' | 'Qwen/Qwen1.5-14B-Chat' | 'Qwen/Qwen1.5-32B-Chat' | 'Qwen/Qwen1.5-4B-Chat' | 'Qwen/Qwen1.5-72B-Chat' | 'Qwen/Qwen1.5-7B-Chat' | 'Qwen/Qwen2-72B-Instruct' | 'Snowflake/snowflake-arctic-instruct' | 'Undi95/ReMM-SLERP-L2-13B' | 'Undi95/Toppy-M-7B' | 'WizardLM/WizardLM-13B-V1.2' | 'allenai/OLMo-7B' | 'allenai/OLMo-7B-Instruct' | 'allenai/OLMo-7B-Twin-2T' | 'codellama/CodeLlama-13b-Instruct-hf' | 'codellama/CodeLlama-34b-Instruct-hf' | 'codellama/CodeLlama-70b-Instruct-hf' | 'codellama/CodeLlama-7b-Instruct-hf' | 'cognitivecomputations/dolphin-2.5-mixtral-8x7b' | 'databricks/dbrx-instruct' | 'deepseek-ai/deepseek-coder-33b-instruct' | 'deepseek-ai/deepseek-llm-67b-chat' | 'garage-bAInd/Platypus2-70B-instruct' | 'google/gemma-2-27b-it' | 'google/gemma-2-9b-it' | 'google/gemma-2b-it' | 'google/gemma-7b-it' | 'lmsys/vicuna-13b-v1.5' | 'lmsys/vicuna-7b-v1.5' | 'meta-llama/Llama-2-13b-chat-hf' | 'meta-llama/Llama-2-70b-chat-hf' | 'meta-llama/Llama-2-7b-chat-hf' | 'meta-llama/Llama-3-70b-chat-hf' | 'meta-llama/Llama-3-8b-chat-hf' | 'meta-llama/Meta-Llama-3-70B-Instruct-Lite' | 'meta-llama/Meta-Llama-3-70B-Instruct-Turbo' | 'meta-llama/Meta-Llama-3-8B-Instruct-Lite' | 'meta-llama/Meta-Llama-3-8B-Instruct-Turbo' | 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo' | 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo' | 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo' | 'meta-llama/Llama-3.3-70B-Instruct-Turbo' | 'mistralai/Mistral-7B-Instruct-v0.1' | 'mistralai/Mistral-7B-Instruct-v0.2' | 'mistralai/Mistral-7B-Instruct-v0.3' | 'mistralai/Mixtral-8x22B-Instruct-v0.1' | 'mistralai/Mixtral-8x7B-Instruct-v0.1' | 'openchat/openchat-3.5-1210' | 'snorkelai/Snorkel-Mistral-PairRM-DPO' | 'teknium/OpenHermes-2-Mistral-7B' | 'teknium/OpenHermes-2p5-Mistral-7B' | 'togethercomputer/Llama-2-7B-32K-Instruct' | 'togethercomputer/RedPajama-INCITE-7B-Chat' | 'togethercomputer/RedPajama-INCITE-Chat-3B-v1' | 'togethercomputer/StripedHyena-Nous-7B' | 'togethercomputer/alpaca-7b' | 'upstage/SOLAR-10.7B-Instruct-v1.0' | 'zero-one-ai/Yi-34B-Chat'
+plugins/openai	type VertexModels = | 'google/gemini-2.0-flash-exp' | 'google/gemini-1.5-flash' | 'google/gemini-1.5-pro' | 'google/gemini-1.0-pro-vision' | 'google/gemini-1.0-pro-vision-001' | 'google/gemini-1.0-pro-002' | 'google/gemini-1.0-pro-001' | 'google/gemini-1.0-pro'
+plugins/openai	type WhisperModels = 'whisper-1'
+plugins/openai	type XAIChatModels = | 'grok-3' | 'grok-3-fast' | 'grok-3-mini' | 'grok-3-mini-fast' | 'grok-2-vision-1212' | 'grok-2-image-1212' | 'grok-2-1212'
 plugins/perplexity	LLM.label(): string
 plugins/perplexity	LLM.provider(): string
+plugins/perplexity	const PERPLEXITY_BASE_URL: <inferred>
+plugins/perplexity	interface LLMOptions.apiKey?: string
+plugins/perplexity	interface LLMOptions.baseURL?: string
+plugins/perplexity	interface LLMOptions.client?: OpenAI
+plugins/perplexity	interface LLMOptions.model: string | PerplexityChatModels
+plugins/perplexity	interface LLMOptions.parallelToolCalls?: boolean
+plugins/perplexity	interface LLMOptions.temperature?: number
+plugins/perplexity	interface LLMOptions.toolChoice?: llm.ToolChoice
+plugins/perplexity	interface LLMOptions.topP?: number
+plugins/perplexity	interface LLMOptions.user?: string
+plugins/perplexity	type PerplexityChatModels = 'sonar-pro'
+plugins/perplexity	type PerplexityResponsesModels = 'perplexity/sonar'
 plugins/resemble	SynthesizeStream.close(): void
 plugins/resemble	TTS.stream(): tts.SynthesizeStream
 plugins/resemble	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/resemble	class ChunkedStream.label: <inferred>
+plugins/resemble	class SynthesizeStream.label: <inferred>
+plugins/resemble	class TTS.label: <inferred>
+plugins/resemble	const TTSDefaultVoiceId: <inferred>
+plugins/resemble	interface TTSOptions.apiKey?: string
+plugins/resemble	interface TTSOptions.model?: ResembleModel
+plugins/resemble	interface TTSOptions.outputFormat?: OutputFormat
+plugins/resemble	interface TTSOptions.precision: Precision
+plugins/resemble	interface TTSOptions.sampleRate: number
+plugins/resemble	interface TTSOptions.voiceUuid: string
+plugins/resemble	type OutputFormat = 'wav'
+plugins/resemble	type Precision = 'PCM_16'
+plugins/resemble	type ResembleModel = 'chatterbox' | 'chatterbox-turbo'
 plugins/rime	TTS.model(): string
 plugins/rime	TTS.provider(): string
 plugins/rime	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
 plugins/rime	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/rime	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/rime	class ChunkedStream.label: <inferred>
+plugins/rime	class SynthesizeStream.label: <inferred>
+plugins/rime	class TTS.label: <inferred>
+plugins/rime	interface TTSOptions.apiKey?: string
+plugins/rime	interface TTSOptions.baseURL?: string
+plugins/rime	interface TTSOptions.inlineSpeedAlpha?: string
+plugins/rime	interface TTSOptions.lang?: DefaultLanguages | string
+plugins/rime	interface TTSOptions.max_tokens?: number
+plugins/rime	interface TTSOptions.modelId: TTSModels | string
+plugins/rime	interface TTSOptions.noTextNormalization?: boolean
+plugins/rime	interface TTSOptions.pauseBetweenBrackets?: boolean
+plugins/rime	interface TTSOptions.phonemizeBetweenBrackets?: boolean
+plugins/rime	interface TTSOptions.reduceLatency?: boolean
+plugins/rime	interface TTSOptions.repetition_penalty?: number
+plugins/rime	interface TTSOptions.samplingRate?: number
+plugins/rime	interface TTSOptions.saveOovs?: boolean
+plugins/rime	interface TTSOptions.segment?: string
+plugins/rime	interface TTSOptions.speaker: string
+plugins/rime	interface TTSOptions.speedAlpha?: number
+plugins/rime	interface TTSOptions.temperature?: number
+plugins/rime	interface TTSOptions.timeScaleFactor?: number
+plugins/rime	interface TTSOptions.tokenizer?: tokenize.SentenceTokenizer
+plugins/rime	interface TTSOptions.top_p?: number
+plugins/rime	interface TTSOptions.useWebsocket?: boolean
+plugins/rime	type DefaultLanguages = 'eng' | 'spa' | 'fra' | 'ger'
+plugins/rime	type TTSModels = 'arcana' | 'coda' | 'mistv2' | 'mistv3'
 plugins/runway	AvatarSession.aclose(): Promise<void>
 plugins/runway	AvatarSession.avatarIdentity(): string
 plugins/runway	AvatarSession.provider(): string
 plugins/runway	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/runway	interface AvatarSessionOptions.apiKey?: string
+plugins/runway	interface AvatarSessionOptions.apiUrl?: string
+plugins/runway	interface AvatarSessionOptions.avatarId?: string
+plugins/runway	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/runway	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/runway	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/runway	interface AvatarSessionOptions.maxDuration?: number
+plugins/runway	interface AvatarSessionOptions.presetId?: string
+plugins/runway	interface StartOptions.livekitApiKey?: string
+plugins/runway	interface StartOptions.livekitApiSecret?: string
+plugins/runway	interface StartOptions.livekitUrl?: string
 plugins/sarvam	STT._recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>
 plugins/sarvam	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
 plugins/sarvam	STT.updateOptions(opts: Partial<STTOptions>): void
@@ -386,21 +1158,163 @@ plugins/sarvam	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
 plugins/sarvam	TTS.stream(): tts.SynthesizeStream
 plugins/sarvam	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
 plugins/sarvam	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/sarvam	class ChunkedStream.label: <inferred>
+plugins/sarvam	class STT.label: <inferred>
+plugins/sarvam	class SpeechStream.label: <inferred>
+plugins/sarvam	class SynthesizeStream.label: <inferred>
+plugins/sarvam	class TTS.label: <inferred>
+plugins/sarvam	interface ResolvedSTTOptions.apiKey: string
+plugins/sarvam	interface ResolvedSTTOptions.firstTurnMinSpeechFrames?: number
+plugins/sarvam	interface ResolvedSTTOptions.flushSignal?: boolean
+plugins/sarvam	interface ResolvedSTTOptions.highVadSensitivity?: boolean
+plugins/sarvam	interface ResolvedSTTOptions.interruptMinSpeechFrames?: number
+plugins/sarvam	interface ResolvedSTTOptions.languageCode?: STTLanguages | string
+plugins/sarvam	interface ResolvedSTTOptions.minSpeechFrames?: number
+plugins/sarvam	interface ResolvedSTTOptions.mode?: STTModes | string
+plugins/sarvam	interface ResolvedSTTOptions.model: STTModels
+plugins/sarvam	interface ResolvedSTTOptions.negativeFramesCount?: number
+plugins/sarvam	interface ResolvedSTTOptions.negativeFramesWindow?: number
+plugins/sarvam	interface ResolvedSTTOptions.negativeSpeechThreshold?: number
+plugins/sarvam	interface ResolvedSTTOptions.numInitialIgnoredFrames?: number
+plugins/sarvam	interface ResolvedSTTOptions.positiveSpeechThreshold?: number
+plugins/sarvam	interface ResolvedSTTOptions.preSpeechPadFrames?: number
+plugins/sarvam	interface ResolvedSTTOptions.prompt?: string
+plugins/sarvam	interface ResolvedSTTOptions.startSpeechVolumeThreshold?: number
+plugins/sarvam	interface ResolvedSTTOptions.streaming: boolean
+plugins/sarvam	interface ResolvedSTTOptions.withTimestamps?: boolean
+plugins/sarvam	interface ResolvedTTSOptions.apiKey: string
+plugins/sarvam	interface ResolvedTTSOptions.baseURL: string
+plugins/sarvam	interface ResolvedTTSOptions.dictId?: string
+plugins/sarvam	interface ResolvedTTSOptions.enablePreprocessing?: boolean
+plugins/sarvam	interface ResolvedTTSOptions.loudness?: number
+plugins/sarvam	interface ResolvedTTSOptions.model: TTSModels
+plugins/sarvam	interface ResolvedTTSOptions.outputAudioCodec: TTSOutputAudioCodec
+plugins/sarvam	interface ResolvedTTSOptions.pace: number
+plugins/sarvam	interface ResolvedTTSOptions.pitch?: number
+plugins/sarvam	interface ResolvedTTSOptions.sampleRate: number
+plugins/sarvam	interface ResolvedTTSOptions.sentenceTokenizer: tokenize.SentenceTokenizer
+plugins/sarvam	interface ResolvedTTSOptions.speaker: TTSSpeakers | string
+plugins/sarvam	interface ResolvedTTSOptions.streaming: boolean
+plugins/sarvam	interface ResolvedTTSOptions.targetLanguageCode: string
+plugins/sarvam	interface ResolvedTTSOptions.temperature?: number
+plugins/sarvam	interface STTBaseOptions.apiKey?: string
+plugins/sarvam	interface STTBaseOptions.flushSignal?: boolean
+plugins/sarvam	interface STTBaseOptions.highVadSensitivity?: boolean
+plugins/sarvam	interface STTBaseOptions.streaming?: boolean
+plugins/sarvam	interface STTTranslateOptions.mode?: STTModes | string
+plugins/sarvam	interface STTTranslateOptions.model: 'saaras:v2.5'
+plugins/sarvam	interface STTTranslateOptions.prompt?: string
+plugins/sarvam	interface STTV2Options.languageCode?: STTV2Languages | string
+plugins/sarvam	interface STTV2Options.model: 'saarika:v2.5'
+plugins/sarvam	interface STTV2Options.withTimestamps?: boolean
+plugins/sarvam	interface STTV3Options.firstTurnMinSpeechFrames?: number
+plugins/sarvam	interface STTV3Options.interruptMinSpeechFrames?: number
+plugins/sarvam	interface STTV3Options.languageCode?: STTV3Languages | string
+plugins/sarvam	interface STTV3Options.minSpeechFrames?: number
+plugins/sarvam	interface STTV3Options.mode?: STTModes | string
+plugins/sarvam	interface STTV3Options.model?: 'saaras:v3'
+plugins/sarvam	interface STTV3Options.negativeFramesCount?: number
+plugins/sarvam	interface STTV3Options.negativeFramesWindow?: number
+plugins/sarvam	interface STTV3Options.negativeSpeechThreshold?: number
+plugins/sarvam	interface STTV3Options.numInitialIgnoredFrames?: number
+plugins/sarvam	interface STTV3Options.positiveSpeechThreshold?: number
+plugins/sarvam	interface STTV3Options.preSpeechPadFrames?: number
+plugins/sarvam	interface STTV3Options.prompt?: string
+plugins/sarvam	interface STTV3Options.startSpeechVolumeThreshold?: number
+plugins/sarvam	interface STTV3Options.withTimestamps?: boolean
+plugins/sarvam	interface TTSBaseOptions.apiKey?: string
+plugins/sarvam	interface TTSBaseOptions.baseURL?: string
+plugins/sarvam	interface TTSBaseOptions.outputAudioCodec?: TTSOutputAudioCodec
+plugins/sarvam	interface TTSBaseOptions.pace?: number
+plugins/sarvam	interface TTSBaseOptions.sampleRate?: TTSSampleRates | number
+plugins/sarvam	interface TTSBaseOptions.sentenceTokenizer?: tokenize.SentenceTokenizer
+plugins/sarvam	interface TTSBaseOptions.streaming?: boolean
+plugins/sarvam	interface TTSBaseOptions.targetLanguageCode?: TTSLanguages | string
+plugins/sarvam	interface TTSV2Options.enablePreprocessing?: boolean
+plugins/sarvam	interface TTSV2Options.loudness?: number
+plugins/sarvam	interface TTSV2Options.model?: 'bulbul:v2'
+plugins/sarvam	interface TTSV2Options.pitch?: number
+plugins/sarvam	interface TTSV2Options.speaker?: TTSV2Speakers | string
+plugins/sarvam	interface TTSV3Options.dictId?: string
+plugins/sarvam	interface TTSV3Options.model: 'bulbul:v3'
+plugins/sarvam	interface TTSV3Options.speaker?: TTSV3Speakers | string
+plugins/sarvam	interface TTSV3Options.temperature?: number
+plugins/sarvam	type STTLanguages = STTV2Languages | STTV3Languages
+plugins/sarvam	type STTModels = 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5'
+plugins/sarvam	type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix'
+plugins/sarvam	type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options
+plugins/sarvam	type STTV2Languages = | 'unknown' | 'hi-IN' | 'bn-IN' | 'kn-IN' | 'ml-IN' | 'mr-IN' | 'od-IN' | 'pa-IN' | 'ta-IN' | 'te-IN' | 'en-IN' | 'gu-IN'
+plugins/sarvam	type STTV3Languages = | STTV2Languages | 'as-IN' | 'ur-IN' | 'ne-IN' | 'kok-IN' | 'ks-IN' | 'sd-IN' | 'sa-IN' | 'sat-IN' | 'mni-IN' | 'brx-IN' | 'mai-IN' | 'doi-IN'
+plugins/sarvam	type TTSLanguages = | 'bn-IN' | 'en-IN' | 'gu-IN' | 'hi-IN' | 'kn-IN' | 'ml-IN' | 'mr-IN' | 'od-IN' | 'pa-IN' | 'ta-IN' | 'te-IN'
+plugins/sarvam	type TTSModels = 'bulbul:v2' | 'bulbul:v3'
+plugins/sarvam	type TTSOptions = TTSV2Options | TTSV3Options
+plugins/sarvam	type TTSOutputAudioCodec = 'wav' | 'linear16' | 'mulaw' | 'alaw'
+plugins/sarvam	type TTSSampleRates = 8000 | 16000 | 22050 | 24000 | 32000 | 44100 | 48000
+plugins/sarvam	type TTSSpeakers = TTSV2Speakers | TTSV3Speakers
+plugins/sarvam	type TTSV2Speakers = | 'anushka' | 'manisha' | 'vidya' | 'arya' | 'abhilash' | 'karun' | 'hitesh'
+plugins/sarvam	type TTSV3Speakers = | 'shubh' | 'aditya' | 'ritu' | 'priya' | 'neha' | 'rahul' | 'pooja' | 'rohan' | 'simran' | 'kavya' | 'amit' | 'dev' | 'ishita' | 'shreya' | 'ratan' | 'varun' | 'manan' | 'sumit' | 'roopa' | 'kabir' | 'aayan' | 'ashutosh' | 'advait' | 'amelia' | 'sophia' | 'anand' | 'tanya' | 'tarun' | 'sunny' | 'mani' | 'gokul' | 'vijay' | 'shruti' | 'suhani' | 'mohit' | 'kavitha' | 'rehan' | 'soham' | 'rupali'
 plugins/silero	VAD.load(opts: Partial<VADOptions>): Promise<VAD>
 plugins/silero	VAD.stream(): VADStream
 plugins/silero	VAD.updateOptions(opts: Partial<VADOptions>): void
 plugins/silero	VADStream.updateOptions(opts: Partial<VADOptions>): void
+plugins/silero	class VAD.label: <inferred>
+plugins/silero	interface VADOptions.activationThreshold: number
+plugins/silero	interface VADOptions.forceCPU: boolean
+plugins/silero	interface VADOptions.maxBufferedSpeech: number
+plugins/silero	interface VADOptions.minSilenceDuration: number
+plugins/silero	interface VADOptions.minSpeechDuration: number
+plugins/silero	interface VADOptions.prefixPaddingDuration: number
+plugins/silero	interface VADOptions.sampleRate: SampleRate
 plugins/tavus	AvatarSession.avatarIdentity(): string
 plugins/tavus	AvatarSession.provider(): string
 plugins/tavus	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
 plugins/tavus	TavusAPI.createConversation(options: CreateConversationOptions): Promise<string>
 plugins/tavus	TavusAPI.createPersona(options: CreatePersonaOptions): Promise<string>
+plugins/tavus	class AvatarSession.conversationId: string | null
+plugins/tavus	const DEFAULT_API_URL: <inferred>
+plugins/tavus	interface AvatarSessionOptions.apiKey?: string
+plugins/tavus	interface AvatarSessionOptions.apiUrl?: string
+plugins/tavus	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/tavus	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/tavus	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/tavus	interface AvatarSessionOptions.personaId?: string
+plugins/tavus	interface AvatarSessionOptions.replicaId?: string
+plugins/tavus	interface CreateConversationOptions.extraPayload?: Record<string, unknown>
+plugins/tavus	interface CreateConversationOptions.personaId?: string
+plugins/tavus	interface CreateConversationOptions.properties?: Record<string, unknown>
+plugins/tavus	interface CreateConversationOptions.replicaId?: string
+plugins/tavus	interface CreatePersonaOptions.extraPayload?: Record<string, unknown>
+plugins/tavus	interface CreatePersonaOptions.name?: string
+plugins/tavus	interface StartOptions.livekitApiKey?: string
+plugins/tavus	interface StartOptions.livekitApiSecret?: string
+plugins/tavus	interface StartOptions.livekitUrl?: string
+plugins/tavus	interface TavusAPIOptions.apiKey?: string
+plugins/tavus	interface TavusAPIOptions.apiUrl?: string
+plugins/tavus	interface TavusAPIOptions.connOptions?: APIConnectOptions
 plugins/trugen	AvatarSession.avatarIdentity(): string
 plugins/trugen	AvatarSession.provider(): string
 plugins/trugen	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/trugen	interface AvatarSessionOptions.apiKey?: string
+plugins/trugen	interface AvatarSessionOptions.apiUrl?: string
+plugins/trugen	interface AvatarSessionOptions.avatarId?: string | null
+plugins/trugen	interface AvatarSessionOptions.avatarParticipantIdentity?: string
+plugins/trugen	interface AvatarSessionOptions.avatarParticipantName?: string
+plugins/trugen	interface AvatarSessionOptions.connOptions?: APIConnectOptions
+plugins/trugen	interface StartOptions.livekitApiKey?: string
+plugins/trugen	interface StartOptions.livekitApiSecret?: string
+plugins/trugen	interface StartOptions.livekitUrl?: string
 plugins/xai	STT._recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent>
 plugins/xai	STT.close(): Promise<void>
 plugins/xai	STT.provider(): string
 plugins/xai	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
 plugins/xai	STT.updateOptions(opts: Partial<STTOptions>): void
 plugins/xai	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/xai	class STT.label: <inferred>
+plugins/xai	class SpeechStream.label: <inferred>
+plugins/xai	interface STTOptions.apiKey?: string
+plugins/xai	interface STTOptions.enableDiarization: boolean
+plugins/xai	interface STTOptions.endpointing: number
+plugins/xai	interface STTOptions.interimResults: boolean
+plugins/xai	interface STTOptions.language: STTLanguages | string
+plugins/xai	interface STTOptions.sampleRate: number
+plugins/xai	type STTLanguages = | 'ar' | 'cs' | 'da' | 'nl' | 'en' | 'fil' | 'fr' | 'de' | 'hi' | 'id' | 'it' | 'ja' | 'ko' | 'mk' | 'ms' | 'fa' | 'pl' | 'pt' | 'ro' | 'ru' | 'es' | 'sv' | 'th' | 'tr' | 'vi'
