@@ -111,7 +111,7 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
-import { createEndpointing } from './turn_config/endpointing.js';
+import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -784,13 +784,14 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({
-    toolChoice,
-    turnDetection,
-  }: {
+  updateOptions(options: {
+    endpointing?: EndpointingOptions;
     toolChoice?: ToolChoice | null;
-    turnDetection?: TurnDetectionMode;
+    turnDetection?: TurnDetectionMode | null;
   }): void {
+    const { endpointing, toolChoice, turnDetection } = options;
+    const hasTurnDetection = turnDetection !== undefined;
+
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
@@ -799,8 +800,8 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
 
-    if (turnDetection !== undefined) {
-      this.turnDetectionMode = turnDetection;
+    if (hasTurnDetection) {
+      this.turnDetectionMode = turnDetection ?? undefined;
       this.isDefaultInterruptionByAudioActivityEnabled =
         this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
 
@@ -812,7 +813,17 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.audioRecognition) {
-      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+      const recognitionOptions: Parameters<AudioRecognition['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        recognitionOptions.endpointing = createEndpointing({
+          ...endpointing,
+          ...(this.agent.turnHandling?.endpointing ?? {}),
+        });
+      }
+      if (hasTurnDetection) {
+        recognitionOptions.turnDetection = turnDetection;
+      }
+      this.audioRecognition.updateOptions(recognitionOptions);
     }
   }
 

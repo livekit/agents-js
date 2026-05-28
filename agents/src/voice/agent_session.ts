@@ -88,12 +88,13 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
-import { migrateLegacyOptions } from './turn_config/utils.js';
+import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface AgentSessionUsage {
@@ -222,6 +223,30 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+};
+
+export type AgentSessionUpdateOptions = {
+  /** Configuration updates for turn handling. */
+  turnHandling?: {
+    /**
+     * Strategy for deciding when the user has finished speaking.
+     *
+     * - `undefined`: leave the current turn detection setting unchanged.
+     * - `null`: clear the current turn detection setting and return to automatic selection.
+     * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+     */
+    turnDetection?: TurnDetectionMode | null;
+    /** Endpointing options to merge into the current session defaults. */
+    endpointing?: Partial<EndpointingOptions>;
+  };
+  /**
+   * @deprecated use turnHandling.turnDetection instead.
+   *
+   * - `undefined`: leave the current turn detection setting unchanged.
+   * - `null`: clear the current turn detection setting and return to automatic selection.
+   * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+   */
+  turnDetection?: TurnDetectionMode | null;
 };
 
 type ActivityTransitionOptions = {
@@ -751,6 +776,39 @@ export class AgentSession<
     }
 
     this.activity.resumeReplyAuthorization();
+  }
+
+  updateOptions(options: AgentSessionUpdateOptions): void {
+    const endpointing = options.turnHandling?.endpointing;
+    const turnDetection =
+      options.turnHandling?.turnDetection !== undefined
+        ? options.turnHandling.turnDetection
+        : options.turnDetection;
+    const hasTurnDetection = turnDetection !== undefined;
+    const normalizedTurnDetection = turnDetection ?? undefined;
+
+    if (endpointing !== undefined) {
+      this.sessionOptions.turnHandling.endpointing = {
+        ...this.sessionOptions.turnHandling.endpointing,
+        ...stripUndefined(endpointing),
+      };
+    }
+
+    if (hasTurnDetection) {
+      this.turnDetection = normalizedTurnDetection;
+      this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+    }
+
+    if (this.activity) {
+      const activityOptions: Parameters<AgentActivity['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        activityOptions.endpointing = this.sessionOptions.turnHandling.endpointing;
+      }
+      if (hasTurnDetection) {
+        activityOptions.turnDetection = turnDetection;
+      }
+      this.activity.updateOptions(activityOptions);
+    }
   }
 
   generateReply(options?: {

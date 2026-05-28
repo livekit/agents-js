@@ -393,8 +393,16 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  updateOptions(options: { turnDetection: TurnDetectionMode | undefined }): void {
-    this.turnDetectionMode = options.turnDetection;
+  updateOptions(options: {
+    endpointing?: BaseEndpointing;
+    turnDetection?: TurnDetectionMode | null;
+  }): void {
+    if (options.endpointing !== undefined) {
+      this.endpointing = options.endpointing;
+    }
+    if (options.turnDetection !== undefined) {
+      this.turnDetectionMode = options.turnDetection ?? undefined;
+    }
   }
 
   async start(options?: { sttPipeline?: STTPipeline }) {
