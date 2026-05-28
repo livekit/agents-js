@@ -125,7 +125,7 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 Plugin capabilities by type:
 
 - **LLM**: openai, google, baseten, mistralai
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
