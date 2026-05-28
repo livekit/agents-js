@@ -395,13 +395,13 @@ export class AudioRecognition {
   /** @internal */
   updateOptions(options: {
     endpointing?: BaseEndpointing;
-    turnDetection?: TurnDetectionMode | undefined;
+    turnDetection?: TurnDetectionMode | null;
   }): void {
-    if (Object.hasOwn(options, 'endpointing') && options.endpointing !== undefined) {
+    if (options.endpointing !== undefined) {
       this.endpointing = options.endpointing;
     }
-    if (Object.hasOwn(options, 'turnDetection')) {
-      this.turnDetectionMode = options.turnDetection;
+    if (options.turnDetection !== undefined) {
+      this.turnDetectionMode = options.turnDetection ?? undefined;
     }
   }
 

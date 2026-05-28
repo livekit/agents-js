@@ -787,10 +787,10 @@ export class AgentActivity implements RecognitionHooks {
   updateOptions(options: {
     endpointing?: EndpointingOptions;
     toolChoice?: ToolChoice | null;
-    turnDetection?: TurnDetectionMode;
+    turnDetection?: TurnDetectionMode | null;
   }): void {
     const { endpointing, toolChoice, turnDetection } = options;
-    const hasTurnDetection = Object.hasOwn(options, 'turnDetection');
+    const hasTurnDetection = turnDetection !== undefined;
 
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
@@ -800,8 +800,8 @@ export class AgentActivity implements RecognitionHooks {
       this.realtimeSession.updateOptions({ toolChoice: this.toolChoice });
     }
 
-    if (turnDetection !== undefined) {
-      this.turnDetectionMode = turnDetection;
+    if (hasTurnDetection) {
+      this.turnDetectionMode = turnDetection ?? undefined;
       this.isDefaultInterruptionByAudioActivityEnabled =
         this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
 
@@ -821,7 +821,7 @@ export class AgentActivity implements RecognitionHooks {
         });
       }
       if (hasTurnDetection) {
-        recognitionOptions.turnDetection = this.turnDetectionMode;
+        recognitionOptions.turnDetection = turnDetection;
       }
       this.audioRecognition.updateOptions(recognitionOptions);
     }

@@ -229,12 +229,12 @@ export type AgentSessionUpdateOptions = {
   /** Configuration updates for turn handling. */
   turnHandling?: {
     /** Strategy for deciding when the user has finished speaking. */
-    turnDetection?: TurnDetectionMode;
+    turnDetection?: TurnDetectionMode | null;
     /** Endpointing options to merge into the current session defaults. */
     endpointing?: Partial<EndpointingOptions>;
   };
   /** @deprecated use turnHandling.turnDetection instead */
-  turnDetection?: TurnDetectionMode;
+  turnDetection?: TurnDetectionMode | null;
 };
 
 type ActivityTransitionOptions = {
@@ -768,13 +768,12 @@ export class AgentSession<
 
   updateOptions(options: AgentSessionUpdateOptions): void {
     const endpointing = options.turnHandling?.endpointing;
-    const hasTurnDetection =
-      Object.hasOwn(options, 'turnDetection') ||
-      (options.turnHandling !== undefined && Object.hasOwn(options.turnHandling, 'turnDetection'));
     const turnDetection =
-      options.turnHandling !== undefined && Object.hasOwn(options.turnHandling, 'turnDetection')
+      options.turnHandling?.turnDetection !== undefined
         ? options.turnHandling.turnDetection
         : options.turnDetection;
+    const hasTurnDetection = turnDetection !== undefined;
+    const normalizedTurnDetection = turnDetection ?? undefined;
 
     if (endpointing !== undefined) {
       this.sessionOptions.turnHandling.endpointing = {
@@ -784,8 +783,8 @@ export class AgentSession<
     }
 
     if (hasTurnDetection) {
-      this.turnDetection = turnDetection;
-      this.sessionOptions.turnHandling.turnDetection = turnDetection;
+      this.turnDetection = normalizedTurnDetection;
+      this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
     }
 
     if (this.activity) {
