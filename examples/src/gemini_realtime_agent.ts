@@ -28,8 +28,7 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 const getWeatherDelayMs = 4000;
 
-const toolBehavior: google.realtime.Behavior | undefined =
-  google.realtime.Behavior.NON_BLOCKING;
+const toolBehavior: google.realtime.Behavior | undefined = google.realtime.Behavior.NON_BLOCKING;
 const toolResponseScheduling: google.realtime.FunctionResponseScheduling | undefined =
   google.realtime.FunctionResponseScheduling.WHEN_IDLE;
 
