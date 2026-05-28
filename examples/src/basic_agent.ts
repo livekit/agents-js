@@ -71,11 +71,7 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        // VAD and turn detection determine when the user is speaking and when the agent
-        // should respond. See https://docs.livekit.io/agents/build/turns
-        //
-        // Cloud audio EOT detector pointed at the staging gateway. Requires
-        // LIVEKIT_API_KEY_STAGING / LIVEKIT_API_SECRET_STAGING in the env.
+        // turn detection determines when the agent should respond. See https://docs.livekit.io/agents/build/turns
         turnDetection: new inference.AudioTurnDetector(),
         // To use the local on-device text turn detector instead, re-enable the
         // `@livekit/agents-plugin-livekit` import above and use:
@@ -128,7 +124,7 @@ export default defineAgent({
     });
 
     session.on(AgentSessionEventTypes.OverlappingSpeech, (ev) => {
-      logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
+      logger.info({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
     await session.start({
