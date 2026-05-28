@@ -4,6 +4,8 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
+  APIStatusError,
   APITimeoutError,
   type AudioBuffer,
   log,
@@ -143,7 +145,7 @@ export class SpeechStream extends stt.SpeechStream {
       ws = await this.#connectWS();
       await this.#runWS(ws);
     } catch (error) {
-      if (error instanceof APITimeoutError || error instanceof APIConnectionError) {
+      if (error instanceof APIError) {
         throw error;
       }
       throw new APIConnectionError({
@@ -228,9 +230,16 @@ export class SpeechStream extends stt.SpeechStream {
             this.#put(event);
           }
           if (content.error_code || content.error_message) {
-            this.#logger.error(
-              `WebSocket error: ${content.error_code ?? ''} - ${content.error_message ?? ''}`,
+            const statusCode = parseStatusCode(content.error_code);
+            const errorMessage = content.error_message ?? 'Unknown Soniox STT error';
+            this.#logger.error(`WebSocket error: ${content.error_code ?? ''} - ${errorMessage}`);
+            reject(
+              new APIStatusError({
+                message: `Soniox STT error: ${content.error_code ?? ''} - ${errorMessage}`,
+                options: { statusCode, body: content },
+              }),
             );
+            return;
           }
           if (content.finished) {
             resolve();
@@ -301,4 +310,10 @@ const serializeTranslation = (translation: TranslationConfig): Record<string, st
     language_a: translation.languageA,
     language_b: translation.languageB,
   };
+};
+
+const parseStatusCode = (errorCode: string | number | undefined): number => {
+  if (typeof errorCode === 'number') return Number.isInteger(errorCode) ? errorCode : -1;
+  if (typeof errorCode === 'string' && /^\d+$/.test(errorCode)) return Number(errorCode);
+  return -1;
 };
