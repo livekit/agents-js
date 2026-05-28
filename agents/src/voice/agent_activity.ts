@@ -111,7 +111,7 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
-import { createEndpointing } from './turn_config/endpointing.js';
+import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -784,13 +784,14 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  updateOptions({
-    toolChoice,
-    turnDetection,
-  }: {
+  updateOptions(options: {
+    endpointing?: EndpointingOptions;
     toolChoice?: ToolChoice | null;
     turnDetection?: TurnDetectionMode;
   }): void {
+    const { endpointing, toolChoice, turnDetection } = options;
+    const hasTurnDetection = Object.hasOwn(options, 'turnDetection');
+
     if (toolChoice !== undefined) {
       this.toolChoice = toolChoice;
     }
@@ -812,7 +813,17 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.audioRecognition) {
-      this.audioRecognition.updateOptions({ turnDetection: this.turnDetectionMode });
+      const recognitionOptions: Parameters<AudioRecognition['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        recognitionOptions.endpointing = createEndpointing({
+          ...endpointing,
+          ...(this.agent.turnHandling?.endpointing ?? {}),
+        });
+      }
+      if (hasTurnDetection) {
+        recognitionOptions.turnDetection = this.turnDetectionMode;
+      }
+      this.audioRecognition.updateOptions(recognitionOptions);
     }
   }
 

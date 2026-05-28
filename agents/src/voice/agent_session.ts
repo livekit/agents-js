@@ -88,12 +88,13 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
-import { migrateLegacyOptions } from './turn_config/utils.js';
+import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface AgentSessionUsage {
@@ -222,6 +223,18 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+};
+
+export type AgentSessionUpdateOptions = {
+  /** Configuration updates for turn handling. */
+  turnHandling?: {
+    /** Strategy for deciding when the user has finished speaking. */
+    turnDetection?: TurnDetectionMode;
+    /** Endpointing options to merge into the current session defaults. */
+    endpointing?: Partial<EndpointingOptions>;
+  };
+  /** @deprecated use turnHandling.turnDetection instead */
+  turnDetection?: TurnDetectionMode;
 };
 
 type ActivityTransitionOptions = {
@@ -751,6 +764,40 @@ export class AgentSession<
     }
 
     this.activity.resumeReplyAuthorization();
+  }
+
+  updateOptions(options: AgentSessionUpdateOptions): void {
+    const endpointing = options.turnHandling?.endpointing;
+    const hasTurnDetection =
+      Object.hasOwn(options, 'turnDetection') ||
+      (options.turnHandling !== undefined && Object.hasOwn(options.turnHandling, 'turnDetection'));
+    const turnDetection =
+      options.turnHandling !== undefined && Object.hasOwn(options.turnHandling, 'turnDetection')
+        ? options.turnHandling.turnDetection
+        : options.turnDetection;
+
+    if (endpointing !== undefined) {
+      this.sessionOptions.turnHandling.endpointing = {
+        ...this.sessionOptions.turnHandling.endpointing,
+        ...stripUndefined(endpointing),
+      };
+    }
+
+    if (hasTurnDetection) {
+      this.turnDetection = turnDetection;
+      this.sessionOptions.turnHandling.turnDetection = turnDetection;
+    }
+
+    if (this.activity) {
+      const activityOptions: Parameters<AgentActivity['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        activityOptions.endpointing = this.sessionOptions.turnHandling.endpointing;
+      }
+      if (hasTurnDetection) {
+        activityOptions.turnDetection = turnDetection;
+      }
+      this.activity.updateOptions(activityOptions);
+    }
   }
 
   generateReply(options?: {
