@@ -1834,8 +1834,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
-      const statusDetails = event.response.status_details;
+    const statusDetails = event.response.status_details;
+    if (event.response.status === 'failed') {
+      const errorBody = statusDetails?.type === 'failed' ? statusDetails.error : undefined;
+      const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
+      const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
+
+      this.emitError({
+        error: new APIError(`OpenAI Realtime API response failed with error type: ${errorType}`, {
+          body: errorBody ?? null,
+          retryable: true,
+        }),
+        recoverable: true,
+      });
+    } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
       const statusType = statusDetails?.type;
       const statusReason =
         statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
@@ -1849,6 +1861,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
       );
+    } else {
+      this.#logger.debug({ eventResponseStatus: event.response.status }, 'Unknown response status');
     }
   }
 
@@ -1881,6 +1895,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
     // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
     this.emit('error', {
+      type: 'realtime_model_error',
       timestamp: Date.now(),
       // TODO(brian): add label
       label: '',
