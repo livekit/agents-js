@@ -1826,7 +1826,30 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     this.emit('metrics_collected', realtimeMetrics);
-    // TODO(brian): handle response done but not complete
+    this.handleResponseDoneButNotComplete(_event);
+  }
+
+  private handleResponseDoneButNotComplete(event: api_proto.ResponseDoneEvent): void {
+    if (event.response.status === 'completed') {
+      return;
+    }
+
+    if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
+      const statusDetails = event.response.status_details;
+      const statusType = statusDetails?.type;
+      const statusReason =
+        statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+
+      this.#logger.debug(
+        {
+          eventId: event.response.id,
+          eventResponseStatus: event.response.status,
+          eventResponseStatusType: statusType,
+          eventResponseStatusReason: statusReason,
+        },
+        `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
+      );
+    }
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
