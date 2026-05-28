@@ -341,6 +341,11 @@ export class AgentSession<
     return this.started;
   }
 
+  /** @internal - Whether the session is closing/draining. */
+  get _closing(): boolean {
+    return this.closing;
+  }
+
   /** @internal - Current run state for testing */
   _globalRunState?: RunResult;
 
@@ -638,6 +643,10 @@ export class AgentSession<
     if (!this.started) {
       return;
     }
+
+    // immediately block the old activity from accepting new user turns
+    // during the transition window (before drain() formally pauses scheduling)
+    this.activity?.blockNewTurns();
 
     const _updateActivityTask = async (oldTask: Task<void> | undefined, agent: Agent) => {
       if (oldTask) {
