@@ -98,7 +98,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
     chatCtx: ChatContext;
     /**
      * Tools to advertise to the LLM. Accepts either a `ToolContext` instance or a raw
-     * `(FunctionTool | ProviderDefinedTool)[]` array — the array form is normalized into a
+     * `(FunctionTool | ProviderTool)[]` array — the array form is normalized into a
      * `ToolContext` internally so callers don't have to construct one themselves.
      */
     toolCtx?: ToolCtxInput;

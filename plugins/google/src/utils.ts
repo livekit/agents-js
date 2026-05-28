@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type * as types from '@google/genai';
 import type { FunctionDeclaration, Schema } from '@google/genai';
 import { llm } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
+import { GeminiTool, type LLMTools } from './tools.js';
 
 /**
  * JSON Schema v7
@@ -140,7 +142,7 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
   const functionDeclarations: FunctionDeclaration[] = [];
 
   for (const tool of toolCtx.flatten()) {
-    // TODO: support provider-defined tools in the Gemini schema.
+    // TODO: support provider tools in the Gemini schema.
     if (!llm.isFunctionTool(tool)) continue;
     const { name, description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
@@ -156,4 +158,58 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
   }
 
   return functionDeclarations;
+}
+
+export function toToolsConfig({
+  toolCtx,
+  geminiTools,
+  toolBehavior,
+  onlySingleType = false,
+}: {
+  toolCtx?: llm.ToolContext;
+  geminiTools?: LLMTools;
+  toolBehavior?: types.Behavior;
+  onlySingleType?: boolean;
+}): types.Tool[] | undefined {
+  const tools: types.Tool[] = [];
+  const providerTools: types.Tool[] = [];
+
+  if (toolCtx) {
+    const functionDeclarations = toFunctionDeclarations(toolCtx);
+    if (functionDeclarations.length > 0) {
+      tools.push({
+        functionDeclarations:
+          toolBehavior !== undefined
+            ? functionDeclarations.map((declaration) => ({
+                ...declaration,
+                behavior: toolBehavior,
+              }))
+            : functionDeclarations,
+      });
+    }
+  }
+
+  if (geminiTools !== undefined) {
+    providerTools.push(geminiTools);
+  }
+
+  if (toolCtx) {
+    for (const tool of toolCtx.providerTools) {
+      if (tool instanceof GeminiTool) {
+        providerTools.push(tool.toToolConfig());
+      }
+    }
+  }
+
+  if (tools.length > 0 && providerTools.length > 0) {
+    throw new Error('Gemini does not support mixing function tools and provider tools');
+  }
+
+  if (onlySingleType && tools.length > 0) {
+    return tools;
+  }
+
+  tools.push(...providerTools);
+
+  return tools.length > 0 ? tools : undefined;
 }

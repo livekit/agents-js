@@ -213,7 +213,7 @@ export class LLMStream extends llm.LLMStream {
       const toolsList: any[] = [];
       if (this.toolCtx) {
         for (const t of this.toolCtx.flatten()) {
-          // TODO: support provider-defined tools in the Mistral schema.
+          // TODO: support provider tools in the Mistral schema.
           if (!llm.isFunctionTool(t)) continue;
           toolsList.push({
             type: 'function' as const,

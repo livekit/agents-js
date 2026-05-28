@@ -42,6 +42,7 @@ import {
   ToolFlag,
   Toolset,
   isFunctionTool,
+  isToolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';
@@ -1751,7 +1752,7 @@ export class AgentActivity implements RecognitionHooks {
             this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
               const keepFn = (fn: Tool): boolean =>
                 !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
-              if (t instanceof Toolset) {
+              if (isToolset(t)) {
                 return t.tools.filter(keepFn) as ToolContextEntry[];
               }
               return keepFn(t) ? [t] : [];

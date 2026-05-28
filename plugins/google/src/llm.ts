@@ -13,7 +13,7 @@ import {
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTools } from './tools.js';
-import { toFunctionDeclarations } from './utils.js';
+import { toToolsConfig } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -355,11 +355,11 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools =
-        functionDeclarations && functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined;
+      const tools = toToolsConfig({
+        toolCtx: this.toolCtx,
+        geminiTools: this.#geminiTools,
+        onlySingleType: true,
+      });
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {

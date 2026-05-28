@@ -368,7 +368,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = tools.copy();
-    // TODO: support provider-defined tools in the Phonic schema.
+    // TODO: support provider tools in the Phonic schema.
     this.toolDefinitions = tools
       .flatten()
       .filter(llm.isFunctionTool)
@@ -406,7 +406,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (tools !== undefined) {
       this._tools = tools.copy();
-      // TODO: support provider-defined tools in the Phonic schema.
+      // TODO: support provider tools in the Phonic schema.
       this.toolDefinitions = tools
         .flatten()
         .filter(llm.isFunctionTool)
