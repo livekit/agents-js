@@ -18,6 +18,7 @@ import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
+import { ToolContext } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
@@ -270,15 +271,16 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
 
   const fakeChatCtx = { copy: () => fakeChatCtx } as unknown as ChatContext;
 
+  const emptyToolCtx = ToolContext.empty();
   const fakeActivity = {
     _preemptiveGenerationCount: 0,
     _preemptiveGeneration: undefined,
     _currentSpeech: undefined as SpeechHandle | undefined,
     schedulingPaused: false,
     llm: new FakePreemptiveLLM(),
-    tools: {},
+    tools: emptyToolCtx,
     toolChoice: null,
-    agent: { chatCtx: fakeChatCtx },
+    agent: { chatCtx: fakeChatCtx, _toolCtx: emptyToolCtx },
     agentSession: {
       sessionOptions: {
         turnHandling: { preemptiveGeneration: preemptiveOpts },

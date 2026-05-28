@@ -260,8 +260,9 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
         super({
           instructions:
             'Extract the user name from the latest user message. Call recordName immediately.',
-          tools: {
-            recordName: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'recordName',
               description: 'Record the user name',
               parameters: z.object({ name: z.string().describe('The user name') }),
               execute: async ({ name }) => {
@@ -269,7 +270,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
                 return 'recorded';
               },
             }),
-          },
+          ],
         });
       }
 
@@ -283,8 +284,9 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
         super({
           instructions:
             'Extract an email address from the latest user message. Call recordEmail immediately.',
-          tools: {
-            recordEmail: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'recordEmail',
               description: 'Record the user email',
               parameters: z.object({ email: z.string().describe('The email address') }),
               execute: async ({ email }) => {
@@ -292,7 +294,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
                 return 'recorded';
               },
             }),
-          },
+          ],
         });
       }
 
@@ -400,8 +402,9 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
         super({
           instructions:
             'Extract the user favorite color from the latest message. Call recordColor immediately.',
-          tools: {
-            recordColor: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'recordColor',
               description: 'Record favorite color',
               parameters: z.object({ color: z.string() }),
               execute: async ({ color }) => {
@@ -409,7 +412,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
                 return 'recorded';
               },
             }),
-          },
+          ],
         });
       }
 
@@ -423,8 +426,9 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
         super({
           instructions:
             'Extract the user favorite food from the latest message. Call recordFood immediately.',
-          tools: {
-            recordFood: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'recordFood',
               description: 'Record favorite food',
               parameters: z.object({ food: z.string() }),
               execute: async ({ food }) => {
@@ -432,7 +436,7 @@ describe('TaskGroup', { timeout: 120_000 }, () => {
                 return 'recorded';
               },
             }),
-          },
+          ],
         });
       }
 

@@ -249,7 +249,7 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
@@ -258,7 +258,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -266,6 +266,7 @@ export class LLM extends llm.LLM {
     // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
@@ -273,7 +274,11 @@ export class LLM extends llm.LLM {
         ? parallelToolCalls
         : this.opts.modelOptions.parallel_tool_calls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -379,26 +384,32 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              function: {
-                name,
-                description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
-              } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
-            };
-
-            if (this.strictToolSchema) {
-              oaiParams.function.strict = true;
-            }
-
-            return oaiParams;
-          })
+        ? this.toolCtx
+            .flatten()
+            .map((t) => {
+              if (llm.isFunctionTool(t)) {
+                const oaiParams = {
+                  type: 'function' as const,
+                  function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: llm.toJsonSchema(
+                      t.parameters,
+                      true,
+                      this.strictToolSchema,
+                    ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+                  } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
+                };
+                if (this.strictToolSchema) {
+                  oaiParams.function.strict = true;
+                }
+                return oaiParams;
+              }
+              // Provider-defined tools are not yet supported by the inference adapter; skip them
+              // here rather than emitting a malformed tool definition. See AJS-112.
+              return undefined;
+            })
+            .filter((t): t is NonNullable<typeof t> => t !== undefined)
         : undefined;
 
       const requestOptions: Record<string, unknown> = dropUnsupportedParams(

@@ -29,12 +29,14 @@ describe('Agent', () => {
 
     // Create mock tools using the tool function
     const mockTool1 = tool({
+      name: 'getTool1',
       description: 'First test tool',
       parameters: z.object({}),
       execute: async () => 'tool1 result',
     });
 
     const mockTool2 = tool({
+      name: 'getTool2',
       description: 'Second test tool',
       parameters: z.object({
         input: z.string().describe('Input parameter'),
@@ -44,17 +46,14 @@ describe('Agent', () => {
 
     const agent = new Agent({
       instructions,
-      tools: {
-        getTool1: mockTool1,
-        getTool2: mockTool2,
-      },
+      tools: [mockTool1, mockTool2],
     });
 
     expect(agent).toBeDefined();
     expect(agent.instructions).toBe(instructions);
 
     // Assert tools are set correctly
-    const agentTools = agent.toolCtx;
+    const agentTools = agent.toolCtx.functionTools;
     expect(Object.keys(agentTools)).toHaveLength(2);
     expect(agentTools).toHaveProperty('getTool1');
     expect(agentTools).toHaveProperty('getTool2');
@@ -64,27 +63,21 @@ describe('Agent', () => {
     expect(agentTools.getTool2?.description).toBe('Second test tool');
   });
 
-  it('should return a copy of tools, not the original reference', () => {
+  it('toolCtx returns a defensive copy that exposes the same tools', () => {
     const instructions = 'You are a helpful assistant';
     const mockTool = tool({
+      name: 'testTool',
       description: 'Test tool',
       parameters: z.object({}),
       execute: async () => 'result',
     });
 
-    const tools = { testTool: mockTool };
-    const agent = new Agent({ instructions, tools });
+    const agent = new Agent({ instructions, tools: [mockTool] });
 
-    const tools1 = agent.toolCtx;
-    const tools2 = agent.toolCtx;
-
-    // Should return different object references
-    expect(tools1).not.toBe(tools2);
-    expect(tools1).not.toBe(tools);
-
-    // Should contain the same set of tools
-    expect(tools1).toEqual(tools2);
-    expect(tools1).toEqual(tools);
+    // Each call returns a fresh ToolContext so external mutation can't escape into the agent's
+    // internal state.
+    expect(agent.toolCtx).not.toBe(agent.toolCtx);
+    expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
   });
 
   it('should require AgentTask to run inside task context', async () => {

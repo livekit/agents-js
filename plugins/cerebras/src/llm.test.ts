@@ -88,8 +88,9 @@ class WeatherAgent extends voice.Agent {
   constructor() {
     super({
       instructions: 'You are a helpful assistant.',
-      tools: {
-        get_weather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'get_weather',
           description: 'Get the current weather for a location.',
           parameters: z.object({
             location: z.string().describe('The city name'),
@@ -98,7 +99,7 @@ class WeatherAgent extends voice.Agent {
             return `The weather in ${location} is sunny, 72°F.`;
           },
         }),
-      },
+      ],
     });
   }
 }

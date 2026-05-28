@@ -20,7 +20,8 @@ import {
   LLM,
   RealtimeModel,
   type ToolChoice,
-  type ToolContext,
+  ToolContext,
+  type ToolContextEntry,
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
@@ -119,7 +120,7 @@ export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
   chatCtx?: ChatContext;
-  tools?: ToolContext<UserData>;
+  tools?: readonly ToolContextEntry<UserData>[];
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -157,7 +158,7 @@ export class Agent<UserData = any> {
   _instructions: string | Instructions;
 
   /** @internal */
-  _tools?: ToolContext<UserData>;
+  _toolCtx: ToolContext<UserData>;
 
   constructor({
     id,
@@ -190,10 +191,10 @@ export class Agent<UserData = any> {
     }
 
     this._instructions = instructions;
-    this._tools = { ...tools };
+    this._toolCtx = new ToolContext<UserData>(tools ?? []);
     this._chatCtx = chatCtx
       ? chatCtx.copy({
-          toolCtx: this._tools,
+          toolCtx: this._toolCtx,
         })
       : ChatContext.empty();
 
@@ -269,7 +270,7 @@ export class Agent<UserData = any> {
   }
 
   get toolCtx(): ToolContext<UserData> {
-    return { ...this._tools };
+    return this._toolCtx.copy();
   }
 
   get session(): AgentSession<UserData> {
@@ -345,10 +346,10 @@ export class Agent<UserData = any> {
   }
 
   // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
-  async updateTools(tools: ToolContext): Promise<void> {
+  async updateTools(tools: readonly ToolContextEntry<UserData>[]): Promise<void> {
     if (!this._agentActivity) {
-      this._tools = { ...tools };
-      this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+      this._toolCtx = new ToolContext<UserData>(tools);
+      this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });
       return;
     }
 

@@ -21,8 +21,9 @@ class InfoTask extends voice.AgentTask<string> {
     super({
       instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
       tts: 'elevenlabs/eleven_turbo_v2_5',
-      tools: {
-        saveUserInfo: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'saveUserInfo',
           description: `Save the user's ${info} to database`,
           parameters: z.object({
             [info]: z.string(),
@@ -32,7 +33,7 @@ class InfoTask extends voice.AgentTask<string> {
             return `Thanks, collected ${info} successfully: ${args[info]}`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -48,8 +49,9 @@ class SurveyAgent extends voice.Agent {
     super({
       instructions:
         'You orchestrate a short intro survey. Speak naturally and keep the interaction brief.',
-      tools: {
-        collectUserInfo: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'collectUserInfo',
           description: 'Call this when user want to provide some information to you',
           parameters: z.object({
             key: z
@@ -63,15 +65,17 @@ class SurveyAgent extends voice.Agent {
             return `Collected ${key} successfully: ${value}`;
           },
         }),
-        transferToWeatherAgent: llm.tool({
+        llm.tool({
+          name: 'transferToWeatherAgent',
           description: 'Call this immediately after user want to know the weather',
           execute: async () => {
             const agent = new voice.Agent({
               instructions:
                 'You are a weather agent. You are responsible for providing the weather information to the user.',
               tts: 'deepgram/aura-2',
-              tools: {
-                getWeather: llm.tool({
+              tools: [
+                llm.tool({
+                  name: 'getWeather',
                   description: 'Get the weather for a given location',
                   parameters: z.object({
                     location: z.string().describe('The location to get the weather for'),
@@ -80,7 +84,8 @@ class SurveyAgent extends voice.Agent {
                     return `The weather in ${location} is sunny today.`;
                   },
                 }),
-                finishWeatherConversation: llm.tool({
+                llm.tool({
+                  name: 'finishWeatherConversation',
                   description: 'Call this when you want to finish the weather conversation',
                   execute: async () => {
                     return llm.handoff({
@@ -89,13 +94,13 @@ class SurveyAgent extends voice.Agent {
                     });
                   },
                 }),
-              },
+              ],
             });
 
             return llm.handoff({ agent, returns: "Let's start the weather conversation!" });
           },
         }),
-      },
+      ],
     });
   }
 

@@ -817,6 +817,7 @@ export class MessageAssert extends EventAssert {
 
     // Create the check_intent tool
     const checkIntentTool = tool({
+      name: 'check_intent',
       description:
         'Determines whether the message correctly fulfills the given intent. ' +
         'Returns success=true if the message satisfies the intent, false otherwise. ' +
@@ -853,7 +854,7 @@ export class MessageAssert extends EventAssert {
 
     const stream = llm.chat({
       chatCtx,
-      toolCtx: { check_intent: checkIntentTool },
+      toolCtx: [checkIntentTool],
       toolChoice: { type: 'function', function: { name: 'check_intent' } },
       extraKwargs: { temperature: 0 },
     });

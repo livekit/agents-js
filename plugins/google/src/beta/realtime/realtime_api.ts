@@ -451,7 +451,7 @@ export class RealtimeModel extends llm.RealtimeModel {
  * supporting both text and audio modalities with function calling capabilities.
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeOptions;
@@ -780,7 +780,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   get manualActivityDetection(): boolean {

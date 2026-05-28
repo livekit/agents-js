@@ -44,6 +44,7 @@ export default defineAgent({
   },
   entry: async (ctx: JobContext) => {
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -55,6 +56,7 @@ export default defineAgent({
     });
 
     const toggleLight = llm.tool({
+      name: 'toggleLight',
       description: 'Called when the user asks to turn on or off the light.',
       parameters: z.object({
         room: roomNameSchema.describe('The room to turn the light in'),
@@ -70,6 +72,7 @@ export default defineAgent({
     });
 
     const getNumber = llm.tool({
+      name: 'getNumber',
       description:
         'Called when the user wants to get a number value, None if user want a random value',
       parameters: z.object({
@@ -87,6 +90,7 @@ export default defineAgent({
     });
 
     const checkStoredNumber = llm.tool({
+      name: 'checkStoredNumber',
       description: 'Called when the user wants to check the stored number.',
       execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
         return `The stored number is ${ctx.userData.number}.`;
@@ -94,6 +98,7 @@ export default defineAgent({
     });
 
     const updateStoredNumber = llm.tool({
+      name: 'updateStoredNumber',
       description: 'Called when the user wants to update the stored number.',
       parameters: z.object({
         number: z.number().describe('The number to update the stored number to'),
@@ -106,31 +111,33 @@ export default defineAgent({
 
     const routerAgent = new RouterAgent({
       instructions: 'You are a helpful assistant.',
-      tools: {
+      tools: [
         getWeather,
         toggleLight,
-        playGame: llm.tool({
+        llm.tool({
+          name: 'playGame',
           description: 'Called when the user wants to play a game (transfer user to a game agent).',
           execute: async (): Promise<llm.AgentHandoff> => {
             return llm.handoff({ agent: gameAgent, returns: 'The game is now playing.' });
           },
         }),
-      },
+      ],
     });
 
     const gameAgent = new GameAgent({
       instructions: 'You are a game agent. You are playing a game with the user.',
-      tools: {
+      tools: [
         getNumber,
         checkStoredNumber,
         updateStoredNumber,
-        finishGame: llm.tool({
+        llm.tool({
+          name: 'finishGame',
           description: 'Called when the user wants to finish the game.',
           execute: async () => {
             return llm.handoff({ agent: routerAgent, returns: 'The game is now finished.' });
           },
         }),
-      },
+      ],
     });
 
     const vad = ctx.proc.userData.vad! as silero.VAD;

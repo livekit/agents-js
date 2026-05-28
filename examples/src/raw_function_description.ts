@@ -18,8 +18,9 @@ import { fileURLToPath } from 'node:url';
 function createRawFunctionAgent() {
   return new voice.Agent({
     instructions: 'You are a helpful assistant.',
-    tools: {
-      openGate: llm.tool({
+    tools: [
+      llm.tool({
+        name: 'openGate',
         description: 'Opens a specified gate from a predefined set of access points.',
         parameters: {
           type: 'object',
@@ -43,7 +44,7 @@ function createRawFunctionAgent() {
           return `The gate ${gateId} is now open.`;
         },
       }),
-    },
+    ],
   });
 }
 

@@ -25,8 +25,9 @@ export default defineAgent({
     const agent = new voice.Agent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it, end the call when the user asks you to.",
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -35,7 +36,8 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-        endCall: llm.tool({
+        llm.tool({
+          name: 'endCall',
           description: 'End the call.',
           parameters: z.object({
             reason: z
@@ -56,7 +58,7 @@ export default defineAgent({
             session.shutdown({ reason });
           },
         }),
-      },
+      ],
     });
 
     const session = new voice.AgentSession({
