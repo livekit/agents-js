@@ -1077,7 +1077,7 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (this.schedulingPaused) {
+    if (this.schedulingPaused || this.newTurnsBlocked) {
       // TODO(shubhra): should we "forward" this new turn to the next agent?
       this.logger.warn('skipping new realtime generation, the speech scheduling is not running');
       return;
@@ -1370,6 +1370,7 @@ export class AgentActivity implements RecognitionHooks {
     if (
       !preemptiveOpts.enabled ||
       this.schedulingPaused ||
+      this.newTurnsBlocked ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
       !(this.llm instanceof LLM)
     ) {
@@ -1424,14 +1425,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onUserTurnExceeded(ev: UserTurnExceededEvent): void {
-    if (this.schedulingPaused || this.newTurnsBlocked) {
-      this.logger.warn(
-        { numWords: ev.accumulatedWordCount, duration: ev.duration },
-        'skipping user turn exceeded, speech scheduling is paused',
-      );
-      return;
-    }
-
     if (this.userTurnExceededLocked) {
       return;
     }
@@ -1493,10 +1486,6 @@ export class AgentActivity implements RecognitionHooks {
       if (!waitInactiveTask.done) {
         waitInactiveTask.cancel();
       }
-    }
-
-    if (this.schedulingPaused || this.newTurnsBlocked) {
-      return;
     }
 
     this.logger.debug(
@@ -1581,7 +1570,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
-    if (this.schedulingPaused) {
+    if (this.schedulingPaused || this.newTurnsBlocked) {
       this.cancelPreemptiveGeneration();
       this.logger.warn(
         { user_input: info.newTranscript },
@@ -2021,6 +2010,18 @@ export class AgentActivity implements RecognitionHooks {
       transcriptConfidence: info.transcriptConfidence,
     });
 
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      this.logger.warn(
+        { user_input: info.newTranscript },
+        'skipping onUserTurnCompleted, speech scheduling is paused',
+      );
+      if (this.agentSession._closing) {
+        this.agent._chatCtx.items.push(userMessage);
+        this.agentSession._conversationItemAdded(userMessage);
+      }
+      return;
+    }
+
     // create a temporary mutable chat context to pass to onUserTurnCompleted
     // the user can edit it for the current generation, but changes will not be kept inside the
     // Agent.chatCtx
@@ -2042,6 +2043,18 @@ export class AgentActivity implements RecognitionHooks {
       // ignore stt transcription for realtime model
       userMessage = undefined;
     } else if (this.llm === undefined) {
+      return;
+    }
+
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      this.logger.warn(
+        { user_input: info.newTranscript },
+        'skipping reply to user input, speech scheduling is paused',
+      );
+      if (userMessage && this.agentSession._closing) {
+        this.agent._chatCtx.items.push(userMessage);
+        this.agentSession._conversationItemAdded(userMessage);
+      }
       return;
     }
 
