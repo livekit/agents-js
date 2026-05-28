@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { llm } from '@livekit/agents';
+import { APIError, Future, Task, llm, stream } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as api_proto from './api_proto.js';
 import {
@@ -18,12 +18,34 @@ type RealtimeSessionInternals = {
   textModeRecoveryRetries: number;
 };
 
+type ResponseDoneSessionInternals = {
+  handleResponseDone: (event: api_proto.ResponseDoneEvent) => void;
+  on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
+  currentGeneration: {
+    messageChannel: stream.StreamChannel<llm.MessageGeneration>;
+    functionChannel: stream.StreamChannel<llm.FunctionCall>;
+    messages: Map<string, never>;
+    _doneFut: Future;
+    _createdTimestamp: number;
+    _firstTokenTimestamp?: number;
+  };
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
   session.sendEvent = vi.fn();
   session.textModeRecoveryRetries = 0;
   return session;
+}
+
+function stubTaskRuntime(): void {
+  // Prevent background realtime tasks from opening network connections in unit tests.
+  vi.spyOn(Task, 'from').mockReturnValue({
+    cancel: vi.fn(),
+    done: true,
+    result: Promise.resolve(undefined),
+  } as unknown as Task<void>);
 }
 
 describe('RealtimeSession.generateReply', () => {
@@ -40,6 +62,62 @@ describe('RealtimeSession.generateReply', () => {
       expect.objectContaining({ type: 'response.create' }),
     );
     expect(session.sendEvent).toHaveBeenCalledWith({ type: 'response.cancel' });
+  });
+});
+
+describe('RealtimeSession response.done status handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createResponseDoneSession(): ResponseDoneSessionInternals {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as ResponseDoneSessionInternals;
+    session.currentGeneration = {
+      messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
+      functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
+      messages: new Map<string, never>(),
+      _doneFut: new Future(),
+      _createdTimestamp: Date.now(),
+    };
+    return session;
+  }
+
+  it('emits a recoverable APIError when response.done reports failed', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleResponseDone({
+      type: 'response.done',
+      event_id: 'evt_response_failed',
+      response: {
+        id: 'resp_failed',
+        object: 'realtime.response',
+        status: 'failed',
+        status_details: {
+          type: 'failed',
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'rate limited',
+          },
+        },
+        output: [],
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
+    expect(errors[0]!.error).toBeInstanceOf(APIError);
+    expect(errors[0]!.error.message).toBe(
+      'OpenAI Realtime API response failed with error type: unknown',
+    );
+    expect((errors[0]!.error as APIError).body).toEqual({
+      code: 'rate_limit_exceeded',
+      message: 'rate limited',
+    });
   });
 });
 
@@ -526,17 +604,6 @@ describe('RealtimeSession.updateOptions', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
-  const stubTaskRuntime = () => {
-    // Prevent background realtime tasks from opening network connections in unit tests.
-    vi.spyOn(llm, 'RealtimeSession', 'get');
-    const agentsModule = require('@livekit/agents') as typeof import('@livekit/agents'); // eslint-disable-line @typescript-eslint/no-var-requires
-    vi.spyOn(agentsModule.Task, 'from').mockReturnValue({
-      cancel: vi.fn(),
-      done: true,
-      result: Promise.resolve(undefined),
-    } as unknown as import('@livekit/agents').Task<void>);
-  };
 
   it('emits session.update when toolChoice changes', () => {
     stubTaskRuntime();
