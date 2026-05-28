@@ -46,7 +46,7 @@ pnpm api:update             # Refresh the CodeQL API snapshots
 > existing debt is tracked and regressions are blocked. The checks are: public API surface,
 > public API signatures (params + return types), forgotten exports, missing return types on
 > the public API, `any`/`unknown` in public signatures, and public APIs that leak an
-> undeclared dependency. See `scripts/codeql-api-check.mjs`.
+> undeclared dependency. See `scripts/codeql-api-check.ts` (run with Node ≥ 24).
 
 ### Running an example agent
 

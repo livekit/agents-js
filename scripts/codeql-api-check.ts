@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// @ts-check
 
 /**
  * Public-API checks backed by CodeQL, replacing API Extractor. Runs several queries
@@ -23,9 +22,10 @@
  *                                    return can smuggle an internal type into the public API.
  *
  * Requires the CodeQL CLI (`codeql`) on PATH: https://github.com/github/codeql-cli-binaries
+ * Run via Node ≥ 24 (native TS support — no compile step):
  *
- *   node scripts/codeql-api-check.mjs            # check (fails on drift from snapshots)
- *   node scripts/codeql-api-check.mjs --update   # refresh all snapshots
+ *   node scripts/codeql-api-check.ts            # check (fails on drift from snapshots)
+ *   node scripts/codeql-api-check.ts --update   # refresh all snapshots
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -37,11 +37,21 @@ const queriesDir = path.join(repoRoot, 'codeql', 'queries');
 const dbDir = path.join(repoRoot, '.codeql', 'db');
 const workDir = path.join(repoRoot, '.codeql');
 
+interface QueryEntry {
+  label: string;
+  file: string;
+  snapshot: string;
+}
+
+interface ProblemQueryEntry extends QueryEntry {
+  name: string;
+}
+
 /**
  * `@kind table` queries that emit a deterministic snapshot of public-API state. Each row of the
  * CSV is joined with tabs and sorted lexicographically before diffing.
  */
-const tableQueries = [
+const tableQueries: QueryEntry[] = [
   {
     label: 'api-surface',
     file: 'api-surface.ql',
@@ -55,7 +65,7 @@ const signaturesSnapshot = path.join(repoRoot, 'codeql', 'api-signatures.snapsho
  * `@kind problem` queries, keyed by the `@name` they emit in the analyze CSV. Each is
  * snapshotted to its own baseline and diffed independently.
  */
-const problemQueries = [
+const problemQueries: ProblemQueryEntry[] = [
   {
     name: 'Forgotten export',
     label: 'forgotten-exports',
@@ -84,13 +94,12 @@ const problemQueries = [
 
 const update = process.argv.includes('--update');
 
-/** @param {string} msg */
-const fail = (msg) => {
+const fail = (msg: string): never => {
   console.error(`\n✖ ${msg}`);
   process.exit(1);
 };
 
-const ensureCodeql = () => {
+const ensureCodeql = (): string => {
   const r = spawnSync('codeql', ['version', '--format=terse'], { encoding: 'utf8' });
   if (r.status !== 0) {
     fail(
@@ -102,11 +111,10 @@ const ensureCodeql = () => {
   return r.stdout.trim();
 };
 
-/** @param {string[]} args */
-const codeql = (args) =>
+const codeql = (args: string[]): Buffer =>
   execFileSync('codeql', args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
 
-const createDatabase = () => {
+const createDatabase = (): void => {
   // Remove any prior database; `--overwrite` alone has been observed to reuse stale extraction.
   fs.rmSync(dbDir, { recursive: true, force: true });
   fs.mkdirSync(workDir, { recursive: true });
@@ -141,15 +149,13 @@ const createDatabase = () => {
 /**
  * Parse full CodeQL CSV content into rows of fields, honoring quoted commas, escaped quotes,
  * and quoted fields that span multiple physical lines (CodeQL embeds newlines in descriptions).
- * @param {string} content
- * @returns {string[][]}
  */
-const parseCsvRows = (content) => {
-  const rows = [];
-  let row = [];
+const parseCsvRows = (content: string): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
   let cur = '';
   let inQuotes = false;
-  const endRow = () => {
+  const endRow = (): void => {
     row.push(cur);
     cur = '';
     if (row.length > 1 || row[0] !== '') rows.push(row);
@@ -177,18 +183,29 @@ const parseCsvRows = (content) => {
 };
 
 /** Maps a repo-relative file path to its owning package root, e.g. `plugins/cartesia`. */
-const packageRoot = (file) => {
+const packageRoot = (file: string): string => {
   const p = file.replace(/^\//, '');
   const m = p.match(/^(agents|plugins\/[^/]+)\//);
-  return m ? m[1] : p;
+  return m ? m[1]! : p;
 };
+
+interface SignatureSlot {
+  slot: string;
+  text: string;
+}
+
+interface SignatureGroup {
+  package: string;
+  qname: string;
+  slots: SignatureSlot[];
+}
 
 /**
  * Runs the api-signatures query (which emits AST locations rather than text, since CodeQL's
  * `TypeExpr.toString()` truncates long types) and reconstructs full signature strings by
  * slicing each annotation out of the source file. Returns sorted `package<TAB>signature` lines.
  */
-const computeApiSignatures = () => {
+const computeApiSignatures = (): string[] => {
   const bqrs = path.join(workDir, 'api-signatures.bqrs');
   const csv = path.join(workDir, 'api-signatures.csv');
   codeql([
@@ -201,9 +218,8 @@ const computeApiSignatures = () => {
   ]);
   codeql(['bqrs', 'decode', '--format=csv', '--no-titles', `--output=${csv}`, bqrs]);
   const rows = parseCsvRows(fs.readFileSync(csv, 'utf8'));
-  /** @type {Map<string, string[]>} */
-  const fileCache = new Map();
-  const readFileLines = (relPath) => {
+  const fileCache = new Map<string, string[]>();
+  const readFileLines = (relPath: string): string[] => {
     let lines = fileCache.get(relPath);
     if (!lines) {
       const abs = path.join(repoRoot, relPath.replace(/^\//, ''));
@@ -213,44 +229,71 @@ const computeApiSignatures = () => {
     return lines;
   };
   // CodeQL locations are 1-based with end column inclusive — convert to JS slice indices.
-  const sliceRange = (file, sLine, sCol, eLine, eCol) => {
+  const sliceRange = (
+    file: string,
+    sLine: number,
+    sCol: number,
+    eLine: number,
+    eCol: number,
+  ): string => {
     const lines = readFileLines(file);
-    if (sLine === eLine) return lines[sLine - 1].slice(sCol - 1, eCol);
-    const parts = [lines[sLine - 1].slice(sCol - 1)];
-    for (let i = sLine; i < eLine - 1; i++) parts.push(lines[i]);
-    parts.push(lines[eLine - 1].slice(0, eCol));
+    if (sLine === eLine) return lines[sLine - 1]!.slice(sCol - 1, eCol);
+    const parts = [lines[sLine - 1]!.slice(sCol - 1)];
+    for (let i = sLine; i < eLine - 1; i++) parts.push(lines[i]!);
+    parts.push(lines[eLine - 1]!.slice(0, eCol));
     return parts.join('\n');
   };
-  /** @type {Map<string, { package: string, qname: string, slots: Array<{slot:string,text:string}> }>} */
-  const groups = new Map();
-  const sliceOrEmpty = (file, sLine, sCol, eLine, eCol) =>
+  const sliceOrEmpty = (
+    file: string,
+    sLine: number,
+    sCol: number,
+    eLine: number,
+    eCol: number,
+  ): string =>
     file === ''
       ? ''
-      : sliceRange(file, +sLine, +sCol, +eLine, +eCol)
+      : sliceRange(file, sLine, sCol, eLine, eCol)
           // strip block comments (e.g. JSDoc inside an inline type literal) and line comments
           .replace(/\/\*[\s\S]*?\*\//g, ' ')
           .replace(/\/\/[^\n]*/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
+  const groups = new Map<string, SignatureGroup>();
   // Group by (package, qname, funcKey) so overloaded methods (same qname, distinct source
   // location) stay separate signatures instead of collapsing into one merged row.
   for (const cols of rows) {
     const [
-      pkg, qname, funcKey, slot, flags,
-      bFile, bSLine, bSCol, bELine, bECol,
-      tFile, tSLine, tSCol, tELine, tECol,
-    ] = cols;
+      pkg,
+      qname,
+      funcKey,
+      slot,
+      flags,
+      bFile,
+      bSLine,
+      bSCol,
+      bELine,
+      bECol,
+      tFile,
+      tSLine,
+      tSCol,
+      tELine,
+      tECol,
+    ] = cols as [
+      string, string, string, string, string,
+      string, string, string, string, string,
+      string, string, string, string, string,
+    ];
     const key = pkg + '|' + qname + '|' + funcKey;
     let group = groups.get(key);
     if (!group) {
       group = { package: pkg, qname, slots: [] };
       groups.set(key, group);
     }
-    let text;
+    let text: string;
     if (slot === 'return') {
-      text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, tSLine, tSCol, tELine, tECol);
+      text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
     } else {
-      const binding = sliceOrEmpty(bFile, bSLine, bSCol, bELine, bECol);
+      const binding = sliceOrEmpty(bFile, +bSLine, +bSCol, +bELine, +bECol);
       const isRest = flags.includes('rest');
       const isOpt = flags.includes('opt');
       const restPrefix = isRest && !binding.startsWith('...') ? '...' : '';
@@ -258,15 +301,15 @@ const computeApiSignatures = () => {
       const typeSuffix =
         tFile === ''
           ? ': <unannotated>'
-          : ': ' + sliceOrEmpty(tFile, tSLine, tSCol, tELine, tECol);
+          : ': ' + sliceOrEmpty(tFile, +tSLine, +tSCol, +tELine, +tECol);
       text = restPrefix + binding + optMark + typeSuffix;
     }
     group.slots.push({ slot, text });
   }
-  const out = [];
+  const out: string[] = [];
   for (const g of groups.values()) {
     g.slots.sort((a, b) => a.slot.localeCompare(b.slot));
-    const params = [];
+    const params: string[] = [];
     let ret = '<inferred>';
     for (const s of g.slots) {
       if (s.slot === 'return') ret = s.text;
@@ -278,7 +321,7 @@ const computeApiSignatures = () => {
 };
 
 /** Runs a `@kind table` query and returns its CSV rows joined with tabs and sorted. */
-const computeTable = (file, label) => {
+const computeTable = (file: string, label: string): string[] => {
   const bqrs = path.join(workDir, `${label}.bqrs`);
   const csv = path.join(workDir, `${label}.csv`);
   codeql([
@@ -295,13 +338,17 @@ const computeTable = (file, label) => {
     .sort();
 };
 
+interface ProblemResult {
+  snapshot: string[];
+  printable: string[];
+}
+
 /**
  * Runs every `@kind problem` query in one analyze pass and groups results by `@name`.
  * Each group yields location-independent snapshot lines (`package<TAB>message`,
  * sorted/unique) plus a printable `file:line — message` list.
- * @returns {Map<string, { snapshot: string[], printable: string[] }>}
  */
-const runProblemQueries = () => {
+const runProblemQueries = (): Map<string, ProblemResult> => {
   const out = path.join(workDir, 'problems.csv');
   codeql([
     'database',
@@ -314,15 +361,14 @@ const runProblemQueries = () => {
     '--threads=0',
     '--quiet',
   ]);
-  /** @type {Map<string, { snapshot: Set<string>, printable: string[] }>} */
-  const byName = new Map();
+  const byName = new Map<string, { snapshot: Set<string>; printable: string[] }>();
   for (const cols of parseCsvRows(fs.readFileSync(out, 'utf8'))) {
     // columns: name, description, severity, message, path, startLine, ...
-    const [name, , , message, file, line] = cols;
-    if (!byName.has(name)) byName.set(name, { snapshot: new Set(), printable: [] });
-    const g = byName.get(name);
-    g.snapshot.add(`${packageRoot(file)}\t${message}`);
-    g.printable.push(`${file.replace(/^\//, '')}:${line} — ${message}`);
+    const [name, , , message, file, line] = cols as string[];
+    if (!byName.has(name!)) byName.set(name!, { snapshot: new Set(), printable: [] });
+    const g = byName.get(name!)!;
+    g.snapshot.add(`${packageRoot(file!)}\t${message}`);
+    g.printable.push(`${file!.replace(/^\//, '')}:${line} — ${message}`);
   }
   return new Map(
     [...byName].map(([name, g]) => [
@@ -332,11 +378,8 @@ const runProblemQueries = () => {
   );
 };
 
-/**
- * Compares computed lines against a committed snapshot file.
- * @returns {boolean} true if they match
- */
-const diffSnapshot = (label, file, lines) => {
+/** Compares computed lines against a committed snapshot file. Returns true if they match. */
+const diffSnapshot = (label: string, file: string, lines: string[]): boolean => {
   const current = lines.join('\n') + (lines.length ? '\n' : '');
   if (update) {
     fs.writeFileSync(file, current);
@@ -359,7 +402,7 @@ const diffSnapshot = (label, file, lines) => {
   return false;
 };
 
-const main = () => {
+const main = (): void => {
   console.log(`Using ${ensureCodeql()}`);
   createDatabase();
 

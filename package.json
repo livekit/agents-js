@@ -18,8 +18,8 @@
     "test:watch": "vitest",
     "test:examples": "vitest run examples",
     "throws:check": "turbo throws:check",
-    "api:check": "node scripts/codeql-api-check.mjs",
-    "api:update": "node scripts/codeql-api-check.mjs --update",
+    "api:check": "node scripts/codeql-api-check.ts",
+    "api:update": "node scripts/codeql-api-check.ts --update",
     "doc": "typedoc && mkdir -p docs/assets/github && cp .github/*.png docs/assets/github/ && find docs -name '*.html' -type f -exec sed -i.bak 's|=\"/.github/|=\"assets/github/|g' {} + && find docs -name '*.bak' -delete"
   },
   "devDependencies": {
