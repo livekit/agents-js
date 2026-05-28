@@ -24,12 +24,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import type { AudioTurnDetectorStream } from '../../voice/turn_config/audio_turn_detector.js';
+import type { AudioTurnDetectorStream } from './base.js';
 import {
   type AudioTurnDetectionTransport,
   type FlushSentinel,
   type TurnDetectorOptions,
-} from '../../voice/turn_config/audio_turn_detector.js';
+} from './base.js';
 import { AudioTurnDetector, AudioTurnDetectorStreamImpl } from './detector.js';
 import { CLOUD_LANGUAGES, LOCAL_LANGUAGES, materializeThresholds } from './languages.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
@@ -59,11 +59,8 @@ class ScriptedTransport implements AudioTurnDetectionTransport {
     this.runExc = opts.runExc;
   }
 
-  bind(stream: AudioTurnDetectorStream): void {
+  attach(stream: AudioTurnDetectorStream): void {
     this._stream = stream;
-  }
-  transportReady(): boolean {
-    return true;
   }
   async run(): Promise<void> {
     this.runCalls += 1;
@@ -286,40 +283,23 @@ describe('Fallback', () => {
   });
 });
 
-describe('SingleStreamOwnership', () => {
-  it('second stream rejected until the first is retired', async () => {
+describe('MultiStreamOwnership', () => {
+  it('multiple streams can coexist', async () => {
     let detector!: AudioTurnDetector;
     withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
       detector = new AudioTurnDetector({ backend: 'local' });
     });
+    // Detector no longer enforces single-stream ownership; fallback state lives
+    // on the stream itself so multiple streams off the same detector are safe.
     const s1 = detector.stream();
-    // The detector drives one stream at a time.
-    expect(() => detector.stream()).toThrow();
-
-    // Synchronous detach alone frees the slot (what updateTurnDetector does
-    // before scheduling the old stream's async aclose).
-    (s1 as AudioTurnDetectorStreamImpl).detach();
     const s2 = detector.stream();
     await s1.aclose();
-    await s2.aclose();
-  });
-
-  it('aclose releases the slot', async () => {
-    let detector!: AudioTurnDetector;
-    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      detector = new AudioTurnDetector({ backend: 'local' });
-    });
-    const s1 = detector.stream();
-    await s1.aclose();
-    expect(detector._activeStream()).toBeUndefined();
-    // A fresh stream is accepted once the previous one closed.
-    const s2 = detector.stream();
     await s2.aclose();
   });
 });
 
-describe('DetectorViewAfterFallback', () => {
-  it('detector model/backend/threshold follow the active stream after fallback', async () => {
+describe('DetectorViewReflectsConstructionDefaults', () => {
+  it('detector model/backend/threshold stay at construction-time defaults across fallbacks', async () => {
     let detector!: AudioTurnDetector;
     await withEnv(
       {
@@ -330,6 +310,7 @@ describe('DetectorViewAfterFallback', () => {
       async () => {
         detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
         expect(detector.model).toBe('eot-audio');
+        expect(detector.backend).toBe('cloud');
         expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
       },
     );
@@ -345,12 +326,6 @@ describe('DetectorViewAfterFallback', () => {
       backend: 'cloud',
       transport,
     });
-    // Register as the detector's active stream (what stream() does) so the
-    // detector's model/backend/threshold views resolve through it. The
-    // fallback state lives on the stream, never written back to the detector.
-    (
-      detector as unknown as { _activeStreamRef: WeakRef<AudioTurnDetectorStreamImpl> }
-    )._activeStreamRef = new WeakRef(stream);
     await waitFor(() => stream.backend === 'local');
 
     // The stream reflects the fallback...
@@ -359,10 +334,12 @@ describe('DetectorViewAfterFallback', () => {
     const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(expected);
 
-    // ...and the detector delegates to it, so its views follow the fallback.
-    expect(detector.model).toBe('eot-audio-mini');
-    expect(detector.backend).toBe('local');
-    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(expected);
+    // ...but the detector still reports the construction-time defaults: the
+    // fallback state lives on the stream, never written back to the detector,
+    // so other streams off the same detector aren't corrupted.
+    expect(detector.model).toBe('eot-audio');
+    expect(detector.backend).toBe('cloud');
+    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
     await stream.aclose();
   });
 });

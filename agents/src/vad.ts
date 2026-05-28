@@ -66,7 +66,6 @@ export type VADCallbacks = {
 
 export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCallbacks>) {
   #capabilities: VADCapabilities;
-  #isDefault = false;
   abstract label: string;
 
   constructor(capabilities: VADCapabilities) {
@@ -76,26 +75,6 @@ export abstract class VAD extends (EventEmitter as new () => TypedEmitter<VADCal
 
   get capabilities(): VADCapabilities {
     return this.#capabilities;
-  }
-
-  /**
-   * True iff this VAD instance was auto-provisioned by `AgentSession`.
-   *
-   * Set by the framework when constructing the default VAD; never set by user
-   * code. The framework treats a default-VAD instance as absent at sites that
-   * would otherwise activate behavior just because a VAD is present:
-   * - realtime LLM turn-detection fallback to `mode='vad'`
-   * - adaptive interruption detector eligibility
-   * - the audio-recognition VAD pipeline when the realtime LLM already runs
-   *   server-side turn detection
-   */
-  get isDefault(): boolean {
-    return this.#isDefault;
-  }
-
-  /** @internal Framework-only; flips the `isDefault` marker. */
-  _markAsDefault(): void {
-    this.#isDefault = true;
   }
 
   /**

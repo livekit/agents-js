@@ -22,7 +22,7 @@ import {
   DEFAULT_SAMPLE_RATE,
   type FlushSentinel,
   type TurnDetectorOptions,
-} from '../../voice/turn_config/audio_turn_detector.js';
+} from './base.js';
 import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import type { AudioTurnDetector } from './detector.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
@@ -158,12 +158,8 @@ export class LocalTransport implements AudioTurnDetectionTransport {
     this._buf = new PcmRingBuffer(CLIENT_BUFFER_SAMPLES);
   }
 
-  bind(stream: AudioTurnDetectorStream): void {
+  attach(stream: AudioTurnDetectorStream): void {
     this._streamRef = new WeakRef(stream);
-  }
-
-  transportReady(): boolean {
-    return true;
   }
 
   startInference(requestId: string): void {
@@ -294,10 +290,12 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     return this._numRetries;
   }
 
-  bind(stream: AudioTurnDetectorStream): void {
+  attach(stream: AudioTurnDetectorStream): void {
     this._streamRef = new WeakRef(stream);
   }
 
+  /** @internal Test-visible: true once the WS handshake is open. Not part of
+   * the transport interface — the stream FSM no longer gates on this. */
   transportReady(): boolean {
     return this._ws !== undefined && this._ws.readyState === WS_OPEN;
   }
@@ -347,6 +345,11 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   }
 
   private _enqueue(msg: ClientMsg): void {
+    // The WS handle is cleared synchronously by `detach()` while
+    // `_sendChannel.close()` is still in flight (its `closed` flag flips
+    // asynchronously). Gate on `_ws` to drop late control hooks that the
+    // stream FSM may fire after the transport is being torn down.
+    if (this._ws === undefined || this._ws.readyState !== WS_OPEN) return;
     const channel = this._sendChannel;
     if (channel === undefined || channel.closed) return;
     void channel.write(msg).catch(() => {});

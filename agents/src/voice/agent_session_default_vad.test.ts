@@ -9,7 +9,7 @@
  *
  * - `test_default_vad_is_auto_provisioned`
  * - `test_explicit_vad_none_opts_out`
- * - `test_user_supplied_vad_keeps_is_default_false`
+ * - `test_user_supplied_vad_keeps_using_default_false`
  */
 import { describe, expect, it } from 'vitest';
 import type { VADStream } from '../vad.js';
@@ -31,7 +31,7 @@ describe('AgentSession default VAD', () => {
     const session = new AgentSession();
     try {
       expect(session.vad).toBeDefined();
-      expect(session.vad?.isDefault).toBe(true);
+      expect(session._usingDefaultVad).toBe(true);
     } finally {
       await session.close().catch(() => {});
     }
@@ -41,18 +41,18 @@ describe('AgentSession default VAD', () => {
     const session = new AgentSession({ vad: null });
     try {
       expect(session.vad).toBeUndefined();
+      expect(session._usingDefaultVad).toBe(false);
     } finally {
       await session.close().catch(() => {});
     }
   });
 
-  it('user-supplied VAD keeps isDefault false', async () => {
+  it('user-supplied VAD keeps _usingDefaultVad false', async () => {
     const userVad = new FakeVAD();
-    expect(userVad.isDefault).toBe(false);
     const session = new AgentSession({ vad: userVad });
     try {
       expect(session.vad).toBe(userVad);
-      expect(session.vad?.isDefault).toBe(false);
+      expect(session._usingDefaultVad).toBe(false);
     } finally {
       await session.close().catch(() => {});
     }

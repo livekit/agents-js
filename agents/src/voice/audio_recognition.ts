@@ -47,7 +47,7 @@ import {
   AudioTurnDetectorStream,
   MIN_SILENCE_DURATION_MS,
   type TurnDetectionEvent,
-} from './turn_config/audio_turn_detector.js';
+} from '../inference/eot/base.js';
 import {
   type BaseEndpointing,
   createEndpointing,
@@ -206,6 +206,13 @@ export interface AudioRecognitionOptions {
   stt?: STTNode;
   /** Voice activity detection. */
   vad?: VAD;
+  /**
+   * True iff the wired VAD was auto-provisioned by `AgentSession` rather than
+   * supplied by the caller. Read at every "is VAD configured?" call site so
+   * a framework-default VAD behaves like no VAD for downstream eligibility
+   * decisions (e.g. STT-hook `speaking=` payload).
+   */
+  usingDefaultVad?: boolean;
   /** Turn detector for end-of-turn prediction. Accepts text-based detectors
    * via `_TurnDetector` (e.g. plugins/livekit) or audio-based detectors via
    * `AudioTurnDetector` (e.g. `inference.AudioTurnDetector`). */
@@ -256,6 +263,7 @@ export class AudioRecognition {
   private stt?: STTNode;
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
+  private usingDefaultVad: boolean;
   private turnDetector?: _TurnDetector | AudioTurnDetector;
   private turnDetectorStream?: AudioTurnDetectorStream;
   /**
@@ -356,13 +364,12 @@ export class AudioRecognition {
     this.hooks = opts.recognitionHooks;
     this.stt = opts.stt;
     this.vad = opts.vad;
+    this.usingDefaultVad = opts.usingDefaultVad ?? false;
     this.turnDetector = opts.turnDetector;
     this.checkVadSilenceRequirement();
-    // If the caller passed an `AudioTurnDetector`, wire up its FSM stream
-    // here so audio frames + VAD events route into it from this turn.
-    if (this.turnDetector instanceof AudioTurnDetector) {
-      this.turnDetectorStream = this.turnDetector.stream();
-    }
+    // The FSM stream is opened on `start()` so callers can hand off the
+    // previous activity's stream (cloud↔local fallback state, in-flight
+    // inference) instead of forcing a cold restart.
     this.turnDetectionMode = opts.turnDetectionMode;
     this.userTurnLimit = opts.userTurnLimit;
     this.endpointing =
@@ -511,25 +518,35 @@ export class AudioRecognition {
 
   /** True iff the user supplied their own VAD (default-VAD is treated as
    * absent at sites that decide between "use VAD signal" and "STT-derived
-   * speaking"). Mirrors Python `_has_user_vad`. */
+   * speaking"). */
   private get hasUserVad(): boolean {
-    return this.vad !== undefined && !this.vad.isDefault;
+    return this.vad !== undefined && !this.usingDefaultVad;
   }
 
   /**
    * Swap the active turn detector at runtime. When an `AudioTurnDetector`
    * is provided, opens a per-turn FSM stream after retiring the prior one.
+   *
+   * When `stream` is provided it is adopted as-is (handoff reuse) instead of
+   * opening a fresh stream on `detector`; the live transport stream — and its
+   * per-session cloud→local fallback state — survives the handoff.
    */
-  updateTurnDetector(detector: _TurnDetector | AudioTurnDetector | undefined): void {
+  updateTurnDetector(
+    detector: _TurnDetector | AudioTurnDetector | undefined,
+    options?: { stream?: AudioTurnDetectorStream },
+  ): void {
+    // Validate against the incoming detector before swapping in so the error
+    // — when raised — names the configuration that failed.
+    this.checkVadSilenceRequirement(detector);
     this.turnDetector = detector;
-    this.checkVadSilenceRequirement();
 
+    const reuseStream = options?.stream;
     // Retire the prior stream before creating the new one. `detach()` frees
     // the detector's single-stream slot synchronously (so `stream()` below
     // won't throw if the same detector is reused), while the network teardown
     // runs in the background.
     const oldStream = this.turnDetectorStream;
-    if (oldStream !== undefined) {
+    if (oldStream !== undefined && oldStream !== reuseStream) {
       oldStream.detach();
       void oldStream.aclose().catch(() => undefined);
     }
@@ -537,7 +554,27 @@ export class AudioRecognition {
     // from the prior detector's turn must not race the new detector's
     // first bounce.
     this.userSpeakingEvent.clear();
-    this.turnDetectorStream = detector instanceof AudioTurnDetector ? detector.stream() : undefined;
+    if (reuseStream !== undefined) {
+      this.turnDetectorStream = reuseStream;
+    } else {
+      this.turnDetectorStream =
+        detector instanceof AudioTurnDetector ? detector.stream() : undefined;
+    }
+  }
+
+  /**
+   * Detach the turn detector stream for handoff to another AudioRecognition.
+   *
+   * Returns the live stream (transport run loop intact) without closing it.
+   * The caller passes it to the new AudioRecognition via
+   * `start({ turnDetectorStream })`. The stream stays attached to its
+   * detector, retaining the detector's single-stream slot, so the new
+   * AudioRecognition must adopt it rather than open a second stream.
+   */
+  detachTurnDetector(): AudioTurnDetectorStream | undefined {
+    const stream = this.turnDetectorStream;
+    this.turnDetectorStream = undefined;
+    return stream;
   }
 
   /**
@@ -546,8 +583,10 @@ export class AudioRecognition {
    * configure it: raise if the bound VAD exposes `minSilenceDuration` and it
    * is below the floor. VADs that don't expose the knob are left untouched.
    */
-  private checkVadSilenceRequirement(): void {
-    if (!(this.turnDetector instanceof AudioTurnDetector) || this.vad === undefined) {
+  private checkVadSilenceRequirement(
+    detector: _TurnDetector | AudioTurnDetector | undefined = this.turnDetector,
+  ): void {
+    if (!(detector instanceof AudioTurnDetector) || this.vad === undefined) {
       return;
     }
     const current = this.vad.minSilenceDuration;
@@ -557,9 +596,8 @@ export class AudioRecognition {
     const required = MIN_SILENCE_DURATION_MS + 50;
     if (current < required) {
       throw new Error(
-        `vad minSilenceDuration=${current}ms is too low for the audio ` +
-          `end-of-turn detector. Raise the VAD's minSilenceDuration to at ` +
-          `least ${required}ms.`,
+        `vad minSilenceDuration=${current}ms is too low for the AudioTurnDetector. ` +
+          `Raise the VAD's minSilenceDuration to at least ${required}ms.`,
       );
     }
   }
@@ -615,7 +653,10 @@ export class AudioRecognition {
     }
   }
 
-  async start(options?: { sttPipeline?: STTPipeline }) {
+  async start(options?: {
+    sttPipeline?: STTPipeline;
+    turnDetectorStream?: AudioTurnDetectorStream;
+  }) {
     this.startSttTasks(options?.sttPipeline);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
@@ -629,6 +670,14 @@ export class AudioRecognition {
     this.interruptionTask.result.catch((err) => {
       this.logger.error(`Error running interruption task: ${err}`);
     });
+
+    // Open (or adopt) the audio EOT detector stream now that the activity is
+    // running. We only call `updateTurnDetector` for AudioTurnDetector /
+    // undefined detectors — plugin-based `_TurnDetector` instances are
+    // text-only and don't carry a stream.
+    if (this.turnDetector instanceof AudioTurnDetector || this.turnDetector === undefined) {
+      this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
+    }
   }
 
   async stop() {
@@ -1044,7 +1093,7 @@ export class AudioRecognition {
         const transcript = ev.alternatives?.[0]?.text;
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
         this.lastLanguage = ev.alternatives?.[0]?.language;
-        this.turnDetectorStream?.setLanguage(this.lastLanguage);
+        this.turnDetectorStream?.updateLanguage(this.lastLanguage);
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -1118,7 +1167,7 @@ export class AudioRecognition {
           (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
         ) {
           this.lastLanguage = preflightLanguage;
-          this.turnDetectorStream?.setLanguage(this.lastLanguage);
+          this.turnDetectorStream?.updateLanguage(this.lastLanguage);
         }
 
         if (!preflightTranscript) {
@@ -1708,7 +1757,7 @@ export class AudioRecognition {
 
             // Audio EOT FSM: re-arm the predict guard and tear down any
             // in-flight inference for the now-stale prior window.
-            this.turnDetectorStream?.onSpeechStarted();
+            this.turnDetectorStream?.deactivate('vad sos');
 
             // Capture sample rate from the first VAD event if not already set
             if (ev.frames.length > 0 && ev.frames[0]) {

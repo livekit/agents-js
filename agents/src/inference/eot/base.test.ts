@@ -28,13 +28,13 @@ import {
   type FlushSentinel,
   Status,
   type TurnDetectorOptions,
-} from './audio_turn_detector.js';
+} from './base.js';
 
 class FakeTransport implements AudioTurnDetectionTransport {
   events: Array<[string, string]> = [];
   private _stream: AudioTurnDetectorStream | undefined;
 
-  bind(stream: AudioTurnDetectorStream): void {
+  attach(stream: AudioTurnDetectorStream): void {
     this._stream = stream;
   }
   async run(): Promise<void> {
@@ -42,9 +42,6 @@ class FakeTransport implements AudioTurnDetectionTransport {
       throw new Error('stream not bound');
     }
     await this._stream._drainAudioChannel();
-  }
-  transportReady(): boolean {
-    return true;
   }
   startInference(requestId: string): void {
     this.events.push(['start_inference', requestId]);
@@ -330,11 +327,11 @@ describe('PredictOnSilenceGuard', () => {
     }
   });
 
-  it('predict runs after onSpeechStarted', async () => {
+  it('predict runs after deactivate("vad sos")', async () => {
     const s = makeStream();
     try {
       s.flush('turn committed');
-      s.onSpeechStarted();
+      s.deactivate('vad sos');
       const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 10 });
       expect(prob).toBe(1.0); // timed out
       expect(countStartInference(s.events)).toBe(1);
@@ -356,14 +353,14 @@ describe('PredictOnSilenceGuard', () => {
     }
   });
 
-  it('onSpeechStarted deactivates in-flight inference', async () => {
+  it('deactivate("vad sos") stops in-flight inference', async () => {
     const s = makeStream();
     try {
       s.warmup();
       s.activate();
       expect(s.isInferenceRunning).toBe(true);
 
-      s.onSpeechStarted();
+      s.deactivate('vad sos');
 
       expect(s.isInferenceRunning).toBe(false);
       expect(s.status).toBe(Status.IDLE);

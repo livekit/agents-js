@@ -14,6 +14,7 @@ import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
 import {
   LLM as InferenceLLM,
+  AudioTurnDetector as InferenceAudioTurnDetector,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   VAD as InferenceVAD,
@@ -92,7 +93,7 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
-import type { AudioTurnDetector } from './turn_config/audio_turn_detector.js';
+import type { AudioTurnDetector } from '../inference/eot/base.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
@@ -378,6 +379,15 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
+  /**
+   * True iff this session auto-provisioned the bundled silero VAD because the
+   * caller passed no `vad=`. Set once in the constructor; immutable from then
+   * on. Read it via `AgentActivity.usingDefaultVad` from voice-pipeline code.
+   *
+   * @internal
+   */
+  _usingDefaultVad: boolean = false;
+
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
@@ -454,13 +464,14 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
-    // VAD: undefined → auto-provision bundled inference.VAD (silero) and
-    // mark it as the default. null → leave VAD off entirely. Otherwise use
-    // what the caller supplied.
+    // VAD: undefined → auto-provision bundled inference.VAD (silero). The
+    // `_usingDefaultVad` marker is the single source of truth for "this VAD
+    // was framework-provisioned" — code paths that should ignore a default
+    // VAD read it via `AgentActivity.usingDefaultVad`. null → leave VAD off
+    // entirely. Otherwise use what the caller supplied.
+    this._usingDefaultVad = vad === undefined;
     if (vad === undefined) {
-      const defaultVad = new InferenceVAD({ model: 'silero' });
-      defaultVad._markAsDefault();
-      this.vad = defaultVad;
+      this.vad = new InferenceVAD({ model: 'silero' });
     } else if (vad === null) {
       this.vad = undefined;
     } else {
@@ -485,7 +496,11 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    // Default turn_detection: when the caller didn't pin a mode or supply a
+    // detector instance, fall back to a fresh inference.AudioTurnDetector so
+    // every session ships with multimodal EOT out of the box.
+    this.turnDetection =
+      resolvedSessionOptions.turnHandling.turnDetection ?? new InferenceAudioTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
 
