@@ -4,18 +4,21 @@
 // @ts-check
 
 /**
- * Public-API checks backed by CodeQL, replacing API Extractor. Runs three queries
+ * Public-API checks backed by CodeQL, replacing API Extractor. Runs several queries
  * (see `codeql/queries/`) and compares each against a committed snapshot, failing only
  * on drift — so the existing surface/debt is tracked and regressions are blocked, much
  * like API Extractor's `.api.md` report:
  *
  *   1. api-surface                 — names exported from each published package entry point
  *                                    (`codeql/api-surface.snapshot.txt`).
- *   2. forgotten-exports           — types referenced by the public API but not themselves
+ *   2. api-signatures              — parameter list + return-type annotation of every public
+ *                                    callable, so signature drift shows up as a diff
+ *                                    (`codeql/api-signatures.snapshot.txt`).
+ *   3. forgotten-exports           — types referenced by the public API but not themselves
  *                                    exported (`codeql/forgotten-exports.snapshot.txt`).
- *   3. implicit-public-return-types — exported functions / public methods with no explicit
+ *   4. implicit-public-return-types — exported functions / public methods with no explicit
  *                                    return type (`codeql/implicit-public-return-types.snapshot.txt`).
- *                                    These are the blind spot for #2: CodeQL's TS resolver
+ *                                    These are the blind spot for #3: CodeQL's TS resolver
  *                                    can't see compiler-inferred types, so an un-annotated
  *                                    return can smuggle an internal type into the public API.
  *
@@ -31,9 +34,22 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const queriesDir = path.join(repoRoot, 'codeql', 'queries');
-const surfaceSnapshot = path.join(repoRoot, 'codeql', 'api-surface.snapshot.txt');
 const dbDir = path.join(repoRoot, '.codeql', 'db');
 const workDir = path.join(repoRoot, '.codeql');
+
+/**
+ * `@kind table` queries that emit a deterministic snapshot of public-API state. Each row of the
+ * CSV is joined with tabs and sorted lexicographically before diffing.
+ */
+const tableQueries = [
+  {
+    label: 'api-surface',
+    file: 'api-surface.ql',
+    snapshot: path.join(repoRoot, 'codeql', 'api-surface.snapshot.txt'),
+  },
+];
+
+const signaturesSnapshot = path.join(repoRoot, 'codeql', 'api-signatures.snapshot.txt');
 
 /**
  * `@kind problem` queries, keyed by the `@name` they emit in the analyze CSV. Each is
@@ -167,17 +183,111 @@ const packageRoot = (file) => {
   return m ? m[1] : p;
 };
 
-/** Runs the api-surface query and returns sorted "package<TAB>name" lines. */
-const computeApiSurface = () => {
-  const bqrs = path.join(workDir, 'api-surface.bqrs');
-  const csv = path.join(workDir, 'api-surface.csv');
+/**
+ * Runs the api-signatures query (which emits AST locations rather than text, since CodeQL's
+ * `TypeExpr.toString()` truncates long types) and reconstructs full signature strings by
+ * slicing each annotation out of the source file. Returns sorted `package<TAB>signature` lines.
+ */
+const computeApiSignatures = () => {
+  const bqrs = path.join(workDir, 'api-signatures.bqrs');
+  const csv = path.join(workDir, 'api-signatures.csv');
   codeql([
     'query',
     'run',
     `--database=${dbDir}`,
     `--output=${bqrs}`,
     '--threads=0',
-    path.join(queriesDir, 'api-surface.ql'),
+    path.join(queriesDir, 'api-signatures.ql'),
+  ]);
+  codeql(['bqrs', 'decode', '--format=csv', '--no-titles', `--output=${csv}`, bqrs]);
+  const rows = parseCsvRows(fs.readFileSync(csv, 'utf8'));
+  /** @type {Map<string, string[]>} */
+  const fileCache = new Map();
+  const readFileLines = (relPath) => {
+    let lines = fileCache.get(relPath);
+    if (!lines) {
+      const abs = path.join(repoRoot, relPath.replace(/^\//, ''));
+      lines = fs.readFileSync(abs, 'utf8').split('\n');
+      fileCache.set(relPath, lines);
+    }
+    return lines;
+  };
+  // CodeQL locations are 1-based with end column inclusive — convert to JS slice indices.
+  const sliceRange = (file, sLine, sCol, eLine, eCol) => {
+    const lines = readFileLines(file);
+    if (sLine === eLine) return lines[sLine - 1].slice(sCol - 1, eCol);
+    const parts = [lines[sLine - 1].slice(sCol - 1)];
+    for (let i = sLine; i < eLine - 1; i++) parts.push(lines[i]);
+    parts.push(lines[eLine - 1].slice(0, eCol));
+    return parts.join('\n');
+  };
+  /** @type {Map<string, { package: string, qname: string, slots: Array<{slot:string,text:string}> }>} */
+  const groups = new Map();
+  const sliceOrEmpty = (file, sLine, sCol, eLine, eCol) =>
+    file === ''
+      ? ''
+      : sliceRange(file, +sLine, +sCol, +eLine, +eCol)
+          // strip block comments (e.g. JSDoc inside an inline type literal) and line comments
+          .replace(/\/\*[\s\S]*?\*\//g, ' ')
+          .replace(/\/\/[^\n]*/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+  // Group by (package, qname, funcKey) so overloaded methods (same qname, distinct source
+  // location) stay separate signatures instead of collapsing into one merged row.
+  for (const cols of rows) {
+    const [
+      pkg, qname, funcKey, slot, flags,
+      bFile, bSLine, bSCol, bELine, bECol,
+      tFile, tSLine, tSCol, tELine, tECol,
+    ] = cols;
+    const key = pkg + '|' + qname + '|' + funcKey;
+    let group = groups.get(key);
+    if (!group) {
+      group = { package: pkg, qname, slots: [] };
+      groups.set(key, group);
+    }
+    let text;
+    if (slot === 'return') {
+      text = tFile === '' ? '<inferred>' : sliceOrEmpty(tFile, tSLine, tSCol, tELine, tECol);
+    } else {
+      const binding = sliceOrEmpty(bFile, bSLine, bSCol, bELine, bECol);
+      const isRest = flags.includes('rest');
+      const isOpt = flags.includes('opt');
+      const restPrefix = isRest && !binding.startsWith('...') ? '...' : '';
+      const optMark = isOpt ? '?' : '';
+      const typeSuffix =
+        tFile === ''
+          ? ': <unannotated>'
+          : ': ' + sliceOrEmpty(tFile, tSLine, tSCol, tELine, tECol);
+      text = restPrefix + binding + optMark + typeSuffix;
+    }
+    group.slots.push({ slot, text });
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    g.slots.sort((a, b) => a.slot.localeCompare(b.slot));
+    const params = [];
+    let ret = '<inferred>';
+    for (const s of g.slots) {
+      if (s.slot === 'return') ret = s.text;
+      else params.push(s.text);
+    }
+    out.push(`${g.package}\t${g.qname}(${params.join(', ')}): ${ret}`);
+  }
+  return out.sort();
+};
+
+/** Runs a `@kind table` query and returns its CSV rows joined with tabs and sorted. */
+const computeTable = (file, label) => {
+  const bqrs = path.join(workDir, `${label}.bqrs`);
+  const csv = path.join(workDir, `${label}.csv`);
+  codeql([
+    'query',
+    'run',
+    `--database=${dbDir}`,
+    `--output=${bqrs}`,
+    '--threads=0',
+    path.join(queriesDir, file),
   ]);
   codeql(['bqrs', 'decode', '--format=csv', '--no-titles', `--output=${csv}`, bqrs]);
   return parseCsvRows(fs.readFileSync(csv, 'utf8'))
@@ -253,10 +363,14 @@ const main = () => {
   console.log(`Using ${ensureCodeql()}`);
   createDatabase();
 
-  const surface = computeApiSurface();
   const problems = runProblemQueries();
 
-  let ok = diffSnapshot('api-surface', surfaceSnapshot, surface);
+  let ok = true;
+  for (const q of tableQueries) {
+    const lines = computeTable(q.file, q.label);
+    ok = diffSnapshot(q.label, q.snapshot, lines) && ok;
+  }
+  ok = diffSnapshot('api-signatures', signaturesSnapshot, computeApiSignatures()) && ok;
 
   for (const q of problemQueries) {
     const result = problems.get(q.name) ?? { snapshot: [], printable: [] };

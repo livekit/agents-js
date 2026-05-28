@@ -1,0 +1,395 @@
+agents	APIError.toString(): string
+agents	APIStatusError.toString(): string
+agents	AgentServer.activeJobs(): RunningJobInfo[]
+agents	AgentServer.close(): Promise<void>
+agents	AgentServer.drain(timeout?: number): Promise<Throws<void, WorkerError | Error>>
+agents	AgentServer.id(): string
+agents	AgentServer.run(): Promise<void>
+agents	AgentServer.simulateJob(roomName: string, participantIdentity?: string): Promise<void>
+agents	AsyncIterableQueue.close(): void
+agents	AsyncIterableQueue.closed(): boolean
+agents	AsyncIterableQueue.next(): Promise<IteratorResult<T>>
+agents	AsyncIterableQueue.put(item: T): void
+agents	AudioByteStream.flush(): AudioFrame[]
+agents	AudioByteStream.write(data: ArrayBufferLike | ArrayBufferView): AudioFrame[]
+agents	AudioEnergyFilter.pushFrame(frame: AudioFrame): boolean
+agents	CancellablePromise.cancel(): void
+agents	CancellablePromise.catch(onrejected?: ((reason: E) => TResult | Promise<TResult>) | null): Promise<Throws<T | TResult | undefined, E>>
+agents	CancellablePromise.error(): Error | null
+agents	CancellablePromise.finally(onfinally?: (() => void) | null): Promise<Throws<T, E>>
+agents	CancellablePromise.from(promise: Promise<T>): CancellablePromise<T>
+agents	CancellablePromise.from(promise: Promise<T>): CancellablePromise<T>
+agents	CancellablePromise.from(promise: Promise<Throws<T, E>>): CancellablePromise<T, E>
+agents	CancellablePromise.isCancelled(): boolean
+agents	CancellablePromise.then(onfulfilled?: ((value: T) => TResult1 | Promise<TResult1>) | null, onrejected?: ((reason: E) => TResult2 | Promise<TResult2>) | null): Promise<TResult1 | TResult2>
+agents	ConnectionPool.close(): Promise<void>
+agents	ConnectionPool.get(timeout?: number): Promise<T>
+agents	ConnectionPool.invalidate(): void
+agents	ConnectionPool.prewarm(): void
+agents	ConnectionPool.put(conn: T): void
+agents	ConnectionPool.remove(conn: T): void
+agents	ConnectionPool.withConnection(fn: (conn: T) => Promise<R>, options?: { timeout?: number; signal?: AbortSignal; }): Promise<R>
+agents	Event.clear(): void
+agents	Event.isSet(): boolean
+agents	Event.set(): void
+agents	Event.wait(): Promise<boolean>
+agents	ExpFilter.apply(exp: number, sample: number): number
+agents	ExpFilter.filtered(): number | undefined
+agents	ExpFilter.reset(alphaOrOpts?: number | { alpha?: number; initial?: number; minVal?: number; maxVal?: number }): void
+agents	ExpFilter.value(): number | undefined
+agents	Future.await(): ThrowsPromise<T, E>
+agents	Future.done(): boolean
+agents	Future.reject(error: E): void
+agents	Future.rejected(): boolean
+agents	Future.resolve(value: T): void
+agents	Future.result(): T
+agents	InferenceRunner.close(): Promise<void>
+agents	InferenceRunner.initialize(): Promise<void>
+agents	InferenceRunner.registerRunner(method: string, importPath: string): void
+agents	InferenceRunner.run(data: InputType): Promise<OutputType>
+agents	JobContext._onSessionEnd(): Promise<void>
+agents	JobContext.addParticipantEntrypoint(callback: (job: JobContext<ProcessUserData>, p: RemoteParticipant) => Promise<void>): void
+agents	JobContext.addShutdownCallback(callback: () => Promise<void>): void
+agents	JobContext.agent(): LocalParticipant | undefined
+agents	JobContext.connect(e2ee?: E2EEOptions, autoSubscribe: AutoSubscribe, rtcConfig?: RtcConfiguration): Promise<void>
+agents	JobContext.deleteRoom(roomName?: string): Promise<void>
+agents	JobContext.inferenceExecutor(): InferenceExecutor
+agents	JobContext.info(): RunningJobInfo
+agents	JobContext.initRecording(): Promise<void>
+agents	JobContext.job(): proto.Job
+agents	JobContext.makeSessionReport(session?: AgentSession): SessionReport
+agents	JobContext.onParticipantConnected(p: RemoteParticipant): void
+agents	JobContext.proc(): JobProcess<ProcessUserData>
+agents	JobContext.room(): Room
+agents	JobContext.sessionDirectory(): string
+agents	JobContext.shutdown(reason: <unannotated>): void
+agents	JobContext.waitForParticipant(identity?: string): Promise<RemoteParticipant>
+agents	JobContext.workerId(): string
+agents	JobProcess.pid(): number
+agents	JobRequest.accept(name: <unannotated>, identity: <unannotated>, metadata: <unannotated>, attributes?: { [key: string]: string }): Promise<void>
+agents	JobRequest.agentName(): string
+agents	JobRequest.id(): string
+agents	JobRequest.job(): proto.Job
+agents	JobRequest.publisher(): proto.ParticipantInfo | undefined
+agents	JobRequest.reject(): Promise<void>
+agents	JobRequest.room(): proto.Room | undefined
+agents	Plugin.downloadFiles(): void
+agents	Plugin.package(): string
+agents	Plugin.registerPlugin(plugin: Plugin): void
+agents	Plugin.title(): string
+agents	Plugin.version(): string
+agents	Queue.get(options: { signal?: AbortSignal }): Promise<T>
+agents	Queue.put(item: T): Promise<void>
+agents	Task.addDoneCallback(callback: () => void): void
+agents	Task.cancel(): void
+agents	Task.cancelAndWait(timeout?: number): Promise< | TaskResult.Completed | TaskResult.Aborted | (TaskResult.Completed & { __throws?(error: never): void; }) | (TaskResult.Aborted & { __throws?(error: never): void; }) >
+agents	Task.current(): Task<unknown> | undefined
+agents	Task.done(): boolean
+agents	Task.from(fn: (controller: AbortController) => Promise<T>, controller?: AbortController, name?: string): Task<T>
+agents	Task.removeDoneCallback(callback: () => void): void
+agents	Task.result(): Promise<T>
+agents	TextAudioSynchronizer.close(interrupt: boolean): Promise<void>
+agents	TextAudioSynchronizer.markAudioSegmentEnd(): void
+agents	TextAudioSynchronizer.markTextSegmentEnd(): void
+agents	TextAudioSynchronizer.playedText(): string
+agents	TextAudioSynchronizer.pushAudio(frame: AudioFrame): void
+agents	TextAudioSynchronizer.pushText(text: string): void
+agents	TextAudioSynchronizer.segmentPlayoutFinished(): void
+agents	TextAudioSynchronizer.segmentPlayoutStarted(): void
+agents	VAD.capabilities(): VADCapabilities
+agents	VAD.close(): Promise<void>
+agents	VAD.stream(): VADStream
+agents	VADStream.close(): void
+agents	VADStream.detachInputStream(): void
+agents	VADStream.endInput(): void
+agents	VADStream.flush(): void
+agents	VADStream.next(): Promise<IteratorResult<VADEvent>>
+agents	VADStream.pushFrame(frame: AudioFrame): void
+agents	VADStream.updateInputStream(audioStream: ReadableStream<AudioFrame>): void
+agents	exported function areLanguagesEquivalent(left: string | null | undefined, right: string | null | undefined): boolean
+agents	exported function asError(maybeError: unknown): Error
+agents	exported function asLanguageCode(language: string): LanguageCode
+agents	exported function audioFramesFromFile(filePath: string, options: AudioDecodeOptions): ReadableStream<AudioFrame>
+agents	exported function calculateAudioDurationSeconds(frame: AudioBuffer): number
+agents	exported function cancelAndWait(tasks: Task<any>[], timeout?: number): Promise<void>
+agents	exported function combineSignals(a: AbortSignal, b: AbortSignal): AbortSignal
+agents	exported function createImmutableArray(array: T[], additionalErrorMessage: string): T[]
+agents	exported function createTimedString(opts: { text: string; startTime?: number; endTime?: number; confidence?: number; startTimeOffset?: number; speakerId?: string | null; }): TimedString
+agents	exported function dedent(strings: TemplateStringsArray, ...values: unknown[]): string
+agents	exported function defaultInitializeProcessFunc(_: JobProcess): JobProcess<Record<string, unknown>>
+agents	exported function defineAgent(agent: Agent<ProcessUserData>): Agent<ProcessUserData>
+agents	exported function delay(ms: number, options: DelayOptions): Promise<void>
+agents	exported function enableOtelLogging(): void
+agents	exported function getBaseLanguage(language: string): string
+agents	exported function getIsoLanguage(language: string): string
+agents	exported function getJobContext(required: <unannotated>): JobContext<ProcessUserData> | undefined
+agents	exported function getJobContext(required: false): JobContext<ProcessUserData> | undefined
+agents	exported function getJobContext(required?: true): JobContext<ProcessUserData>
+agents	exported function getLanguageRegion(language: string): string | undefined
+agents	exported function gracefullyCancel(promise: CancellablePromise<T>): Promise<void>
+agents	exported function initializeLogger({ pretty, level }: LoggerOptions): void
+agents	exported function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number
+agents	exported function isAPIError(error: unknown): error is APIError
+agents	exported function isAgent(obj: unknown): obj is Agent
+agents	exported function isCloud(url: URL): boolean
+agents	exported function isDevMode(): boolean
+agents	exported function isFfmpegTeardownError(error: unknown): boolean
+agents	exported function isHosted(): boolean
+agents	exported function isImmutableArray(array: unknown): boolean
+agents	exported function isPending(promise: Promise<unknown>): Promise<Throws<boolean, Error>>
+agents	exported function isStreamClosedError(error: unknown): boolean
+agents	exported function isTimedString(value: unknown): value is TimedString
+agents	exported function isWritableStreamClosedError(error: unknown): boolean
+agents	exported function log(): Logger
+agents	exported function loggerOptions(): LoggerOptions | undefined
+agents	exported function loopAudioFramesFromFile(filePath: string, options: AudioDecodeOptions): AsyncGenerator<AudioFrame, void, unknown>
+agents	exported function mergeFrames(buffer: AudioBuffer): AudioFrame
+agents	exported function noop(): void
+agents	exported function normalizeLanguage(language: string): LanguageCode
+agents	exported function readStream(stream: ReadableStream<T>, signal?: AbortSignal): AsyncGenerator<T>
+agents	exported function rejectOnAbort(signal: AbortSignal): Promise<never>
+agents	exported function resampleStream({ stream, outputRate, }: { stream: ReadableStream<AudioFrame>; outputRate: number; }): ReadableStream<AudioFrame>
+agents	exported function runWithJobContext(context: JobContext, fn: () => T): T
+agents	exported function runWithJobContextAsync(context: JobContext, fn: () => Promise<T>): Promise<T>
+agents	exported function shortuuid(prefix: string): string
+agents	exported function startSoon(func: () => void): void
+agents	exported function toError(error: unknown): Error
+agents	exported function toLanguageName(language: string): string | undefined
+agents	exported function waitFor(tasks: Task<void>[]): Promise<void>
+agents	exported function waitForAbort(signal: AbortSignal): Promise<Throws<void, Error>>
+agents	exported function waitForParticipant({ room, identity, kind, includeLocal = false, signal, }: { room: Room; identity?: string; kind?: ParticipantKind | ParticipantKind[]; includeLocal?: boolean; signal?: AbortSignal; }): Promise<Participant>
+agents	exported function waitForParticipant({ room, identity, kind, includeLocal, signal, }: { room: Room; identity?: string; kind?: ParticipantKind | ParticipantKind[]; includeLocal: true; signal?: AbortSignal; }): Promise<Participant>
+agents	exported function waitForParticipant({ room, identity, kind, includeLocal, signal, }: { room: Room; identity?: string; kind?: ParticipantKind | ParticipantKind[]; includeLocal?: false; signal?: AbortSignal; }): Promise<RemoteParticipant>
+agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription = false, signal, includeLocal = false, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal?: boolean; }): Promise<RemoteTrackPublication | LocalTrackPublication>
+agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription, signal, includeLocal, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal: true; }): Promise<RemoteTrackPublication | LocalTrackPublication>
+agents	exported function waitForTrackPublication({ room, identity, kind, waitForSubscription, signal, includeLocal, }: { room: Room; identity?: string; kind: TrackKind; waitForSubscription?: boolean; signal?: AbortSignal; includeLocal?: false; }): Promise<RemoteTrackPublication>
+agents	exported function waitUntilTimeout(promise: Promise<T>, timeoutMs: number, throwError?: () => E): Promise<Throws<T, E | IdleTimeoutError>>
+agents	exported function withResolvers(): { promise: ThrowsPromise<T, Error>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason: Error) => void; }
+plugins/anam	AnamAPI.createSessionToken(params: { personaConfig: PersonaConfig; livekitUrl?: string; livekitToken?: string; }): Promise<{ sessionToken: string }>
+plugins/anam	AnamAPI.startEngineSession(params: { sessionToken: string }): Promise<{ sessionId: string }>
+plugins/anam	AvatarSession.avatarIdentity(): string
+plugins/anam	AvatarSession.provider(): string
+plugins/anam	AvatarSession.start(agentSession: voice.AgentSession, room: Room, params?: { livekitUrl?: string; livekitApiKey?: string; livekitApiSecret?: string; }): Promise<void>
+plugins/anam	exported function mintAvatarJoinToken({ roomName, avatarIdentity, publishOnBehalf, apiKey = process.env.LIVEKIT_API_KEY!, apiSecret = process.env.LIVEKIT_API_SECRET!, ttl = '60s', }: { roomName: string; avatarIdentity: string; publishOnBehalf: string; apiKey?: string; apiSecret?: string; ttl?: string | number; }): Promise<string>
+plugins/assemblyai	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
+plugins/assemblyai	STT.model(): string
+plugins/assemblyai	STT.provider(): string
+plugins/assemblyai	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/assemblyai	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/assemblyai	SpeechStream.expiresAt(): number | null
+plugins/assemblyai	SpeechStream.forceEndpoint(): void
+plugins/assemblyai	SpeechStream.sessionId(): string | null
+plugins/assemblyai	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/baseten	LLM.label(): string
+plugins/baseten	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
+plugins/baseten	STT.stream(): SpeechStream
+plugins/baseten	STT.updateOptions(opts: Partial<BasetenSttOptions>): void
+plugins/baseten	TTS.close(): Promise<void>
+plugins/baseten	TTS.stream(): tts.SynthesizeStream
+plugins/baseten	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/baseten	TTS.updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>): void
+plugins/bey	AvatarSession.avatarIdentity(): string
+plugins/bey	AvatarSession.provider(): string
+plugins/bey	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/cartesia	STT.label(): string
+plugins/cartesia	STT.model(): string
+plugins/cartesia	STT.provider(): string
+plugins/cartesia	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/cartesia	SpeechStream.close(): void
+plugins/cartesia	SpeechStream.label(): string
+plugins/cartesia	SynthesizeStream.updateOptions(opts: Partial<TTSOptions>): void
+plugins/cartesia	TTS.model(): string
+plugins/cartesia	TTS.provider(): string
+plugins/cartesia	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
+plugins/cartesia	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/cartesia	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/cerebras	LLM.label(): string
+plugins/deepgram	STT._recognize(_: AudioBuffer): Promise<stt.SpeechEvent>
+plugins/deepgram	STT.close(): Promise<void>
+plugins/deepgram	STT.model(): string
+plugins/deepgram	STT.provider(): string
+plugins/deepgram	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/deepgram	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/deepgram	STTv2.model(): string
+plugins/deepgram	STTv2.provider(): string
+plugins/deepgram	STTv2.stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream
+plugins/deepgram	STTv2.updateOptions(opts: Partial<STTv2Options>): void
+plugins/deepgram	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/deepgram	TTS.model(): string
+plugins/deepgram	TTS.provider(): string
+plugins/deepgram	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
+plugins/deepgram	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/elevenlabs	Connection.close(): Promise<void>
+plugins/elevenlabs	Connection.closeContext(contextId: string): void
+plugins/elevenlabs	Connection.closed(): boolean
+plugins/elevenlabs	Connection.connect(): Promise<void>
+plugins/elevenlabs	Connection.isCurrent(): boolean
+plugins/elevenlabs	Connection.markNonCurrent(): void
+plugins/elevenlabs	Connection.registerStream(stream: SynthesizeStream, waiter: { resolve: (value: void) => void; reject: (error: Error) => void }): void
+plugins/elevenlabs	Connection.sendContent(content: SynthesizeContent): void
+plugins/elevenlabs	Connection.voiceId(): string
+plugins/elevenlabs	STT.model(): string
+plugins/elevenlabs	STT.provider(): string
+plugins/elevenlabs	STT.recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>
+plugins/elevenlabs	STT.recognize(buffer: AudioBuffer, options?: STTRecognizeOptions): Promise<stt.SpeechEvent>
+plugins/elevenlabs	STT.recognize(buffer: AudioBuffer, optionsOrAbortSignal?: AbortSignal | STTRecognizeOptions): Promise<stt.SpeechEvent>
+plugins/elevenlabs	STT.stream(options?: { language?: string; connOptions?: APIConnectOptions }): SpeechStream
+plugins/elevenlabs	STT.updateOptions(opts: { tagAudioEvents?: boolean; serverVad?: VADOptions | null; keyterms?: string[]; }): void
+plugins/elevenlabs	SpeechStream.updateOptions(opts: { serverVad?: VADOptions | null }): void
+plugins/elevenlabs	SynthesizeStream.close(): void
+plugins/elevenlabs	SynthesizeStream.contextId(): string
+plugins/elevenlabs	SynthesizeStream.markDone(): void
+plugins/elevenlabs	SynthesizeStream.pushAudio(data: Buffer): void
+plugins/elevenlabs	SynthesizeStream.pushTimedTranscript(timedWords: TimedString[]): void
+plugins/elevenlabs	TTS.close(): Promise<void>
+plugins/elevenlabs	TTS.currentConnection(): Promise<Connection>
+plugins/elevenlabs	TTS.listVoices(): Promise<Voice[]>
+plugins/elevenlabs	TTS.model(): string
+plugins/elevenlabs	TTS.provider(): string
+plugins/elevenlabs	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
+plugins/elevenlabs	TTS.synthesize(text: string): ChunkedStream
+plugins/elevenlabs	TTS.updateOptions(opts: { voiceId?: string; voiceSettings?: VoiceSettings; model?: TTSModels | string; language?: string; pronunciationDictionaryLocators?: PronunciationDictionaryLocator[]; }): void
+plugins/fishaudio	TTS.model(): string
+plugins/fishaudio	TTS.provider(): string
+plugins/fishaudio	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
+plugins/fishaudio	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/fishaudio	TTS.updateOptions(opts: { model?: TTSModels | string; voiceId?: string; latencyMode?: LatencyMode; chunkLength?: number; }): void
+plugins/google	AIPlatformLLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, parallelToolCalls, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): inference.LLMStream
+plugins/google	AIPlatformLLM.label(): string
+plugins/google	AIPlatformLLM.model(): string
+plugins/google	AIPlatformLLM.provider(): string
+plugins/google	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, toolChoice, extraKwargs, geminiTools, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; geminiTools?: LLMTools; }): LLMStream
+plugins/google	LLM.label(): string
+plugins/google	LLM.model(): string
+plugins/google	LLM.provider(): string
+plugins/hume	TTS.model(): string
+plugins/hume	TTS.provider(): string
+plugins/hume	TTS.stream(): tts.SynthesizeStream
+plugins/hume	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/hume	TTS.updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseUrl'>>): void
+plugins/inworld	STT._recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent>
+plugins/inworld	STT.close(): Promise<void>
+plugins/inworld	STT.model(): string
+plugins/inworld	STT.provider(): string
+plugins/inworld	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/inworld	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/inworld	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/inworld	TTS.authorization(): string
+plugins/inworld	TTS.close(): Promise<void>
+plugins/inworld	TTS.listVoices(language?: string): Promise<Voice[]>
+plugins/inworld	TTS.pool(): WSConnectionPool
+plugins/inworld	TTS.stream(): tts.SynthesizeStream
+plugins/inworld	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/inworld	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/inworld	WSConnectionPool.close(): void
+plugins/inworld	WSConnectionPool.getConnection(): Promise<WebSocket>
+plugins/inworld	WSConnectionPool.registerListener(contextId: string, cb: (msg: InworldMessage) => void): void
+plugins/inworld	WSConnectionPool.unregisterListener(contextId: string): void
+plugins/lemonslice	AvatarSession.avatarIdentity(): string
+plugins/lemonslice	AvatarSession.provider(): string
+plugins/lemonslice	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<string>
+plugins/liveavatar	AvatarSession.aclose(): Promise<void>
+plugins/liveavatar	AvatarSession.avatarIdentity(): string
+plugins/liveavatar	AvatarSession.provider(): string
+plugins/liveavatar	AvatarSession.sendEvent(msg: Record<string, unknown>): void
+plugins/liveavatar	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/liveavatar	LiveAvatarAPI.createStreamingSession(opts: CreateStreamingSessionOptions): Promise<SessionResponse>
+plugins/liveavatar	LiveAvatarAPI.startStreamingSession(sessionId: string, sessionToken: string): Promise<StartSessionResponse>
+plugins/liveavatar	LiveAvatarAPI.stopStreamingSession(sessionId: string, sessionToken: string): Promise<StopSessionResponse>
+plugins/livekit	exported function downloadFileToCacheDir(params: { repo: RepoDesignation; path: string; raw?: boolean; revision?: string; hubUrl?: string; cacheDir?: string; fetch?: typeof fetch; localFileOnly?: boolean; } & Partial<CredentialsParams>): Promise<string>
+plugins/minimax	SynthesizeStream.close(): void
+plugins/minimax	TTS.model(): string
+plugins/minimax	TTS.provider(): string
+plugins/minimax	TTS.stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream
+plugins/minimax	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/minimax	TTS.updateOptions(opts: Partial< Pick< TTSOptions, | 'model' | 'voice' | 'emotion' | 'speed' | 'vol' | 'pitch' | 'textNormalization' | 'pronunciationDict' | 'intensity' | 'timbre' | 'languageBoost' > >): void
+plugins/mistralai	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): LLMStream
+plugins/mistralai	LLM.label(): string
+plugins/mistralai	LLM.model(): string
+plugins/mistralai	LLM.provider(): string
+plugins/mistralai	LLM.updateOptions(opts: { model?: MistralChatModels | string; maxCompletionTokens?: number; temperature?: number; topP?: number; presencePenalty?: number; frequencyPenalty?: number; randomSeed?: number; toolChoice?: llm.ToolChoice; }): void
+plugins/mistralai	STT._recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>
+plugins/mistralai	STT.close(): Promise<void>
+plugins/mistralai	STT.model(): string
+plugins/mistralai	STT.provider(): string
+plugins/mistralai	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/mistralai	STT.updateOptions(opts: { language?: string; contextBias?: string[]; targetStreamingDelayMs?: number; }): void
+plugins/mistralai	TTS.model(): string
+plugins/mistralai	TTS.provider(): string
+plugins/mistralai	TTS.stream(): tts.SynthesizeStream
+plugins/mistralai	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/mistralai	TTS.updateOptions(opts: { model?: MistralTTSModels | string; voice?: MistralTTSVoices | string; refAudio?: string; }): void
+plugins/neuphonic	TTS.stream(): tts.SynthesizeStream
+plugins/neuphonic	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/openai	LLM.chat({ chatCtx, toolCtx, connOptions = DEFAULT_API_CONNECT_OPTIONS, parallelToolCalls, toolChoice, extraKwargs, }: { chatCtx: llm.ChatContext; toolCtx?: llm.ToolContext; connOptions?: APIConnectOptions; parallelToolCalls?: boolean; toolChoice?: llm.ToolChoice; extraKwargs?: Record<string, unknown>; }): LLMStream
+plugins/openai	LLM.label(): string
+plugins/openai	LLM.model(): string
+plugins/openai	LLM.provider(): string
+plugins/openai	LLM.withAzure(opts: { model: string | ChatModels; azureEndpoint?: string; azureDeployment?: string; apiVersion?: string; apiKey?: string; azureAdToken?: string; azureAdTokenProvider?: () => Promise<string>; organization?: string; project?: string; baseURL?: string; user?: string; temperature?: number; }): LLM
+plugins/openai	LLM.withCerebras(opts: Partial<{ model: string | CerebrasChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withDeepSeek(opts: Partial<{ model: string | DeepSeekChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withFireworks(opts: Partial<LLMOptions>): LLM
+plugins/openai	LLM.withGroq(opts: Partial<{ model: string | GroqChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withMeta(opts: Partial<{ apiKey?: string; baseURL?: string; client?: OpenAI; model?: string | MetaChatModels; temperature?: number; user?: string; }>): LLM
+plugins/openai	LLM.withOVHcloud(opts: Partial<LLMOptions>): LLM
+plugins/openai	LLM.withOcto(opts: Partial<{ model: string | OctoChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withOllama(opts: Partial<{ model: string; baseURL?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withPerplexity(opts: Partial<{ model: string | PerplexityChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withTelnyx(opts: Partial<{ model: string | TelnyxChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withTogether(opts: Partial<{ model: string | TogetherChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	LLM.withXAI(opts: Partial<{ model: string | XAIChatModels; apiKey?: string; baseURL?: string; user?: string; temperature?: number; client: OpenAI; }>): LLM
+plugins/openai	STT._recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>
+plugins/openai	STT.close(): Promise<void>
+plugins/openai	STT.model(): string
+plugins/openai	STT.provider(): string
+plugins/openai	STT.stream(options: { connOptions?: APIConnectOptions }): stt.SpeechStream
+plugins/openai	STT.turnDetection(): api_proto.TurnDetectionType | null | undefined
+plugins/openai	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/openai	STT.withGroq(opts: Partial<{ model: string | GroqAudioModels; apiKey?: string; baseURL?: string; client: OpenAI; language: string; detectLanguage: boolean; }>): STT
+plugins/openai	STT.withOVHcloud(opts: Partial<{ model: string; apiKey?: string; baseURL?: string; client: OpenAI; language: string; detectLanguage: boolean; }>): STT
+plugins/openai	TTS.close(): Promise<void>
+plugins/openai	TTS.model(): string
+plugins/openai	TTS.provider(): string
+plugins/openai	TTS.stream(): tts.SynthesizeStream
+plugins/openai	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/openai	TTS.updateOptions(opts: { model?: TTSModels | string; voice?: TTSVoices; speed?: number }): void
+plugins/openai	exported function supportsReasoningEffort(model: ChatModels | string): boolean
+plugins/perplexity	LLM.label(): string
+plugins/perplexity	LLM.provider(): string
+plugins/resemble	SynthesizeStream.close(): void
+plugins/resemble	TTS.stream(): tts.SynthesizeStream
+plugins/resemble	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream
+plugins/rime	TTS.model(): string
+plugins/rime	TTS.provider(): string
+plugins/rime	TTS.stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream
+plugins/rime	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/rime	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/runway	AvatarSession.aclose(): Promise<void>
+plugins/runway	AvatarSession.avatarIdentity(): string
+plugins/runway	AvatarSession.provider(): string
+plugins/runway	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/sarvam	STT._recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>
+plugins/sarvam	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/sarvam	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/sarvam	SpeechStream.updateOptions(opts: Partial<STTOptions>): void
+plugins/sarvam	TTS.stream(): tts.SynthesizeStream
+plugins/sarvam	TTS.synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream
+plugins/sarvam	TTS.updateOptions(opts: Partial<TTSOptions>): void
+plugins/silero	VAD.load(opts: Partial<VADOptions>): Promise<VAD>
+plugins/silero	VAD.stream(): VADStream
+plugins/silero	VAD.updateOptions(opts: Partial<VADOptions>): void
+plugins/silero	VADStream.updateOptions(opts: Partial<VADOptions>): void
+plugins/tavus	AvatarSession.avatarIdentity(): string
+plugins/tavus	AvatarSession.provider(): string
+plugins/tavus	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/tavus	TavusAPI.createConversation(options: CreateConversationOptions): Promise<string>
+plugins/tavus	TavusAPI.createPersona(options: CreatePersonaOptions): Promise<string>
+plugins/trugen	AvatarSession.avatarIdentity(): string
+plugins/trugen	AvatarSession.provider(): string
+plugins/trugen	AvatarSession.start(agentSession: voice.AgentSession, room: Room, options: StartOptions): Promise<void>
+plugins/xai	STT._recognize(buffer: AudioBuffer): Promise<stt.SpeechEvent>
+plugins/xai	STT.close(): Promise<void>
+plugins/xai	STT.provider(): string
+plugins/xai	STT.stream(options?: { connOptions?: APIConnectOptions }): SpeechStream
+plugins/xai	STT.updateOptions(opts: Partial<STTOptions>): void
+plugins/xai	SpeechStream.updateOptions(opts: Partial<STTOptions>): void

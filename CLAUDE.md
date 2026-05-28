@@ -44,8 +44,9 @@ pnpm api:update             # Refresh the CodeQL API snapshots
 > on `PATH` (`brew install codeql`). The queries live in `codeql/queries/` and each is compared
 > against a committed snapshot in `codeql/*.snapshot.txt`; `api:check` fails only on drift, so
 > existing debt is tracked and regressions are blocked. The checks are: public API surface,
-> forgotten exports, missing return types on the public API, `any`/`unknown` in public
-> signatures, and public APIs that leak an undeclared dependency. See `scripts/codeql-api-check.mjs`.
+> public API signatures (params + return types), forgotten exports, missing return types on
+> the public API, `any`/`unknown` in public signatures, and public APIs that leak an
+> undeclared dependency. See `scripts/codeql-api-check.mjs`.
 
 ### Running an example agent
 
