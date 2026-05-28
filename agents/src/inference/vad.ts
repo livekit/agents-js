@@ -164,7 +164,7 @@ class InferenceVADStream extends BaseVADStream {
         return new AudioFrame(new Int16Array(0), this._inputSampleRate, 1, 0);
       }
       return new AudioFrame(
-        this._speechBuffer.subarray(this._prefixPaddingSamples, speechBufferIndex),
+        this._speechBuffer.subarray(0, speechBufferIndex),
         this._inputSampleRate,
         1,
         speechBufferIndex,
