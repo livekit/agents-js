@@ -75,14 +75,13 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
  * `stream._handlePrediction(requestId, probability, ...)`.
  */
 export interface AudioTurnDetectionTransport {
-  bind(stream: AudioTurnDetectorStream): void;
+  attach(stream: AudioTurnDetectorStream): void;
   run(): Promise<void>;
   startInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
   flush(sentinel: FlushSentinel): Promise<void>;
   stopInference(reason?: string): void;
   detach(): void;
-  transportReady(): boolean;
 }
 
 export type AudioTurnDetectorCallbacks = {
@@ -159,8 +158,6 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
  * - `flush(reason, keepTailMs)` deactivates and signals turn boundary to
  *   the transport via a `FlushSentinel`. Clears the cached prediction so
  *   it can't leak into the next turn.
- * - `onSpeechStarted()` re-arms the predict guard (so the next
- *   `predictEndOfTurn` runs warmup/activate again).
  * - `predictEndOfTurn(chatCtx?, { timeoutMs })` returns a probability,
  *   defaulting to 1.0 on timeout.
  */
@@ -198,11 +195,12 @@ export class AudioTurnDetectorStream {
    */
   protected _lastLanguage: LanguageCode | undefined;
   /**
-   * True between `onSpeechStarted()` and the next `flush()` — i.e. a user
-   * turn is open and `predictEndOfTurn` should run. When false, predict
-   * short-circuits to a positive default (the audio EOT model has already
-   * committed; an STT final arriving after has nothing fresh to evaluate).
-   * Initialized true so the first turn isn't gated before any flush.
+   * True between VAD start-of-speech (when `deactivate('vad sos')` re-arms it)
+   * and the next `flush()` — i.e. a user turn is open and `predictEndOfTurn`
+   * should run. When false, predict short-circuits to a positive default (the
+   * audio EOT model has already committed; an STT final arriving after has
+   * nothing fresh to evaluate). Initialized true so the first turn isn't
+   * gated before any flush.
    */
   protected _userTurnStarted = true;
   /** Warn once per stream when predict is called after a commit. */
@@ -227,7 +225,7 @@ export class AudioTurnDetectorStream {
     this._detector = args.detector;
     this._opts = args.opts;
     this._transport = args.transport;
-    this._transport.bind(this);
+    this._transport.attach(this);
 
     this._mainTask = Task.from((controller) => this._mainTaskBody(controller));
   }
@@ -256,7 +254,7 @@ export class AudioTurnDetectorStream {
    * check can resolve the unlikely-EOT threshold. Pushed by `AudioRecognition`
    * on each STT transcript.
    */
-  setLanguage(language: LanguageCode | undefined): void {
+  updateLanguage(language: LanguageCode | undefined): void {
     this._lastLanguage = language;
   }
 
@@ -315,7 +313,7 @@ export class AudioTurnDetectorStream {
   }
 
   activate(_trigger?: string): void {
-    if (!this._transport.transportReady() || this._status === Status.ACTIVE) {
+    if (this._status === Status.ACTIVE) {
       return;
     }
     if (this._preemptiveRequestId === undefined) {
@@ -338,9 +336,10 @@ export class AudioTurnDetectorStream {
   }
 
   deactivate(trigger?: string): void {
-    if (!this._transport.transportReady()) {
-      return;
-    }
+    // Mirror Python: clear the "turn committed" guard at the top so a VAD
+    // start-of-speech (which calls `deactivate('vad sos')`) re-arms the
+    // user turn even if the FSM was already idle.
+    this._userTurnStarted = true;
     if (this._preemptiveRequestId === undefined && this._status === Status.IDLE) {
       return;
     }
@@ -372,19 +371,11 @@ export class AudioTurnDetectorStream {
     // Turn boundary — the cached prediction belongs to the turn we just
     // closed and must not leak into the next one.
     this._lastPrediction = undefined;
-    // Close the user turn: until the next `onSpeechStarted()` signal,
-    // `predictEndOfTurn` short-circuits.
-    this._userTurnStarted = false;
     this.deactivate(reason);
-  }
-
-  /** Signal that a fresh user utterance has started. Opens the user turn so
-   * `predictEndOfTurn` runs normally again and deactivates any in-flight
-   * inference for the now-stale prior window — the next VAD silence /
-   * end-of-speech will warm up and activate a fresh one. */
-  onSpeechStarted(): void {
-    this._userTurnStarted = true;
-    this.deactivate('vad sos');
+    // Close the user turn AFTER deactivate (which re-arms the guard on its
+    // way out): until the next VAD start-of-speech calls `deactivate('vad sos')`
+    // to flip it back on, `predictEndOfTurn` short-circuits.
+    this._userTurnStarted = false;
   }
 
   // endregion

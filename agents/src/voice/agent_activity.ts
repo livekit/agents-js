@@ -44,6 +44,7 @@ import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
+  EOTInferenceMetrics,
   EOUMetrics,
   InterruptionMetrics,
   LLMMetrics,
@@ -116,6 +117,7 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import { AudioTurnDetector, type AudioTurnDetectorStream } from '../inference/eot/base.js';
 import { createEndpointing } from './turn_config/endpointing.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
@@ -130,6 +132,7 @@ interface OnEnterData {
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
   rtSession?: RealtimeSession;
+  turnDetectorStream?: AudioTurnDetectorStream;
 }
 
 export class SchedulingPausedError extends Error {
@@ -155,6 +158,10 @@ export async function cleanupReusableResources(
   if (resources.rtSession) {
     tasks.push(resources.rtSession.close());
     resources.rtSession = undefined;
+  }
+  if (resources.turnDetectorStream) {
+    tasks.push(resources.turnDetectorStream.aclose());
+    resources.turnDetectorStream = undefined;
   }
 
   if (tasks.length > 0) {
@@ -226,6 +233,14 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
+  /**
+   * Validated turn detection for this activity. Equals `this.turnDetection`
+   * except when an `AudioTurnDetector` instance fails the runtime preconditions
+   * (no VAD, or RealtimeModel with server-side turn detection enabled), in
+   * which case it is downgraded to `undefined` and a warning is logged.
+   */
+  private _resolvedTurnDetection: TurnDetectionMode | undefined;
+
   // for false interruption handling
   private pausedSpeech?: PausedSpeechInfo;
   private falseInterruptionTimer?: NodeJS.Timeout;
@@ -292,8 +307,9 @@ export class AgentActivity implements RecognitionHooks {
     });
     this.q_updated = new Future();
 
+    this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
     this.turnDetectionMode =
-      typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
+      typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
 
     if (this.turnDetectionMode === 'vad' && this.vad === undefined) {
       this.logger.warn(
@@ -348,7 +364,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         !this.llm.capabilities.turnDetection &&
         this.vad &&
-        !this.vad.isDefault &&
+        !this.usingDefaultVad &&
         this.turnDetectionMode === undefined
       ) {
         this.turnDetectionMode = 'vad';
@@ -519,22 +535,27 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.on('metrics_collected', this.onMetricsCollected);
     }
 
-    // Bundled-default VAD ("isDefault") is treated as absent when the
-    // RealtimeModel does its own server-side turn detection — the realtime
-    // session is already canonical and an extra audio pipeline would just
-    // pay the native model load for no behavioral gain. User-supplied VADs
-    // still flow through (e.g. when the user wants adaptive interruption).
-    const isBundledDefaultVad = this.vad?.isDefault === true;
+    if (this._resolvedTurnDetection instanceof AudioTurnDetector) {
+      this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
+    }
+
+    // Bundled-default VAD is treated as absent when the RealtimeModel does
+    // its own server-side turn detection — the realtime session is already
+    // canonical and an extra audio pipeline would just pay the native model
+    // load for no behavioral gain. User-supplied VADs still flow through
+    // (e.g. when the user wants adaptive interruption).
     const realtimeUsesServerVad =
       this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
-    const recognitionVad = isBundledDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
+    const recognitionVad = this.usingDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
 
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
       vad: recognitionVad,
-      turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
+      usingDefaultVad: this.usingDefaultVad,
+      turnDetector:
+        typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
       backchannelBoundary:
@@ -551,12 +572,19 @@ export class AgentActivity implements RecognitionHooks {
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
     });
 
-    if (reuseResources?.sttPipeline) {
+    const sttPipeline = reuseResources?.sttPipeline;
+    const turnDetectorStream = reuseResources?.turnDetectorStream;
+    if (sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
-      await this.audioRecognition.start({ sttPipeline: reuseResources.sttPipeline });
-      reuseResources.sttPipeline = undefined; // ownership transferred
-    } else {
-      await this.audioRecognition.start();
+    }
+    if (turnDetectorStream) {
+      this.logger.debug('reusing turn detector stream from previous activity');
+    }
+    await this.audioRecognition.start({ sttPipeline, turnDetectorStream });
+    if (reuseResources) {
+      // ownership transferred to the new AudioRecognition
+      reuseResources.sttPipeline = undefined;
+      reuseResources.turnDetectorStream = undefined;
     }
 
     this.started = true;
@@ -593,6 +621,15 @@ export class AgentActivity implements RecognitionHooks {
           Object.getPrototypeOf(newActivity.agent).sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
+      }
+
+      // reuse the turn detector stream during a handoff whenever we can
+      if (
+        this.audioRecognition &&
+        this._resolvedTurnDetection instanceof AudioTurnDetector &&
+        this._resolvedTurnDetection === newActivity._resolvedTurnDetection
+      ) {
+        resources.turnDetectorStream = this.audioRecognition.detachTurnDetector();
       }
 
       // rt session
@@ -656,6 +693,18 @@ export class AgentActivity implements RecognitionHooks {
 
   get vad(): VAD | undefined {
     return this.agent.vad || this.agentSession.vad;
+  }
+
+  /**
+   * True iff the effective VAD for this activity is the framework-auto-provisioned
+   * default. False when the user passed `vad=` to either the agent or the
+   * session, even if the value happens to be the same silero model.
+   */
+  get usingDefaultVad(): boolean {
+    if (this.agent.vad !== undefined) {
+      return false;
+    }
+    return this.agentSession._usingDefaultVad;
   }
 
   get stt(): STT | undefined {
@@ -967,7 +1016,13 @@ export class AgentActivity implements RecognitionHooks {
   // -- Metrics and errors --
 
   private onMetricsCollected = (
-    ev: STTMetrics | TTSMetrics | VADMetrics | LLMMetrics | RealtimeModelMetrics,
+    ev:
+      | STTMetrics
+      | TTSMetrics
+      | VADMetrics
+      | LLMMetrics
+      | RealtimeModelMetrics
+      | EOTInferenceMetrics,
   ) => {
     const speechHandle = speechHandleStorage.getStore();
     if (speechHandle && (ev.type === 'llm_metrics' || ev.type === 'tts_metrics')) {
@@ -1023,7 +1078,7 @@ export class AgentActivity implements RecognitionHooks {
     // session's own server-side turn detection drives the user-state /
     // overlap-detection update, identical to a session that didn't
     // configure any VAD.
-    if (!this.vad || this.vad.isDefault) {
+    if (!this.vad || this.usingDefaultVad) {
       this.agentSession._updateUserState('speaking');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfOverlapSpeech(
@@ -1049,7 +1104,7 @@ export class AgentActivity implements RecognitionHooks {
   onInputSpeechStopped(ev: InputSpeechStoppedEvent): void {
     this.logger.info(ev, 'onInputSpeechStopped');
 
-    if (!this.vad || this.vad.isDefault) {
+    if (!this.vad || this.usingDefaultVad) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
@@ -3688,20 +3743,38 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  private _resolveTurnDetection(
+    turnDetection: TurnDetectionMode | undefined,
+  ): TurnDetectionMode | undefined {
+    if (turnDetection !== undefined && typeof turnDetection !== 'string') {
+      if (turnDetection instanceof AudioTurnDetector) {
+        if (this.vad === undefined) {
+          this.logger.warn(
+            'AudioTurnDetector requires a VAD model. Pass vad=inference.VAD() to AgentSession/Agent or turnDetection=null to disable the default AudioTurnDetector',
+          );
+          return undefined;
+        }
+        if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+          this.logger.warn(
+            'turnDetection is an AudioTurnDetector, but the LLM is a RealtimeModel with server-side turn detection enabled, ignoring the turnDetection setting',
+          );
+          return undefined;
+        }
+      }
+      return turnDetection;
+    }
+    return turnDetection;
+  }
+
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
-    // The bundled-default VAD does not auto-enable adaptive interruption;
-    // the opt-in stays opt-in (the PR matrix's "Adaptive interruption
-    // detection eligibility: No change" row). Only a user-supplied VAD
-    // counts as "VAD present" here.
-    const userSuppliedVad = this.vad && !this.vad.isDefault;
     if (
       !(
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
         this.stt.capabilities.streaming &&
-        userSuppliedVad &&
+        this.vad !== undefined &&
         this.turnDetection !== 'manual' &&
         this.turnDetection !== 'realtime_llm' &&
         !(this.llm instanceof RealtimeModel)
@@ -3953,6 +4026,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.vad instanceof VAD) {
       this.vad.off('metrics_collected', this.onMetricsCollected);
+    }
+
+    if (this._resolvedTurnDetection instanceof AudioTurnDetector) {
+      this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
 
     this.detachAudioInput();

@@ -21,10 +21,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import {
-  AudioTurnDetector,
-  type TurnDetectorOptions,
-} from '../../voice/turn_config/audio_turn_detector.js';
+import { AudioTurnDetector, type TurnDetectorOptions } from './base.js';
 import { AudioTurnDetectorStreamImpl } from './detector.js';
 import { CloudTransport, type CloudWebSocket } from './transports.js';
 

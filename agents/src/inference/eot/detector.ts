@@ -12,7 +12,7 @@ import { getJobContext } from '../../job.js';
 import type { LanguageCode } from '../../language.js';
 import { log } from '../../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { isHosted, resolveEnvVar } from '../../utils.js';
+import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
 import {
   type AudioTurnDetectionTransport,
   AudioTurnDetector as AudioTurnDetectorBase,
@@ -20,7 +20,7 @@ import {
   DEFAULT_SAMPLE_RATE,
   SwapAbortError,
   type TurnDetectorOptions,
-} from '../../voice/turn_config/audio_turn_detector.js';
+} from './base.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import { type Backend, materializeThresholds, rescaleForLocalFallback } from './languages.js';
 import { CloudTransport, type CloudTransportOptions, LocalTransport } from './transports.js';
@@ -54,21 +54,13 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
   protected _backend: Backend;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
-  /**
-   * Active-backend views (`model`/`backend`/`unlikelyThreshold`, read by
-   * metrics + `AudioRecognition`) are computed from the active stream rather
-   * than written back here, so a per-stream cloud→local fallback never mutates
-   * this shared detector. The detector drives a single stream at a time (see
-   * `stream()`); this holds that stream while it is open. `_backend` is the
-   * construction-time default, used only before any stream exists.
-   */
-  private _activeStreamRef: WeakRef<AudioTurnDetectorStreamImpl> | undefined;
 
   constructor(opts: AudioTurnDetectorOptions = {}) {
     // auto = caller didn't pin a backend; missing cloud creds warn-and-
     // fall-back instead of raising.
     const auto = opts.backend === undefined;
-    let resolvedBackend: Backend = opts.backend ?? (isHosted() ? 'cloud' : 'local');
+    let resolvedBackend: Backend =
+      opts.backend ?? (isHosted() || isDevMode() ? 'cloud' : 'local');
 
     let cloudOpts: CloudTransportOptions | undefined;
     if (resolvedBackend === 'cloud') {
@@ -130,53 +122,19 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
     }
   }
 
-  /** @internal The detector's single live stream, or `undefined`. */
-  _activeStream(): AudioTurnDetectorStreamImpl | undefined {
-    return this._activeStreamRef?.deref();
-  }
-
   override get model(): string {
-    return WIRE_MODEL[this.backend];
+    return WIRE_MODEL[this._backend];
   }
 
-  /**
-   * The active backend. After a per-session cloud→local fallback the active
-   * stream holds the swapped backend, so this delegates to it; before any
-   * stream exists it reports the construction-time default. The fallback state
-   * lives on the stream, never written back here, so the detector reflects the
-   * active backend without mutating shared state.
-   */
+  /** Construction-time backend. Per-stream cloud→local fallback state lives on
+   * the stream itself (`AudioTurnDetectorStreamImpl.backend`) and is never
+   * written back here, so a fallback on one stream can't corrupt another stream
+   * spun off the same detector. */
   get backend(): Backend {
-    const stream = this._activeStream();
-    return stream !== undefined ? stream.backend : this._backend;
-  }
-
-  /**
-   * Mirror the active-backend view: after a fallback the active stream holds
-   * the rescaled local thresholds, so consult it rather than this detector's
-   * construction-time `_opts` (which is never written back).
-   */
-  override async unlikelyThreshold(
-    language: LanguageCode | undefined,
-  ): Promise<number | undefined> {
-    const stream = this._activeStream();
-    if (stream !== undefined) {
-      return stream.unlikelyThreshold(language);
-    }
-    return super.unlikelyThreshold(language);
+    return this._backend;
   }
 
   override stream(opts: { connOptions?: APIConnectOptions } = {}): AudioTurnDetectorStream {
-    // Single-stream ownership: the detector exposes the active stream's
-    // backend/threshold view, so it drives one stream at a time. Callers
-    // replacing a stream must retire the previous one first (`detach()` +
-    // `aclose()`); see audio_recognition's `updateTurnDetector`.
-    if (this._activeStream() !== undefined) {
-      throw new Error(
-        'AudioTurnDetector already has an active stream; close (or detach) it ' +
-          'before creating another.',
-      );
-    }
     const cloudOpts =
       this._cloudOpts !== undefined
         ? { ...this._cloudOpts, connOptions: opts.connOptions ?? this._cloudOpts.connOptions }
@@ -189,15 +147,7 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
       executor: this._executor,
     });
     this._streams.add(stream);
-    this._activeStreamRef = new WeakRef(stream);
     return stream;
-  }
-
-  /** @internal Clear the active-stream slot if it still points at `stream`. */
-  _clearActiveStream(stream: AudioTurnDetectorStreamImpl): void {
-    if (this._activeStream() === stream) {
-      this._activeStreamRef = undefined;
-    }
   }
 }
 
@@ -295,7 +245,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     const rescaled = rescaleForLocalFallback(this._opts.thresholds);
     this._opts = { ...this._opts, thresholds: rescaled };
     this._transport = new LocalTransport({ opts: this._opts, executor: this._executor });
-    this._transport.bind(this);
+    this._transport.attach(this);
     this._backend = 'local';
     this._isFallback = true;
     // The fallback view is owned by this stream (`backend`/`model`/`_opts`);
@@ -323,20 +273,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     }
   }
 
-  /**
-   * Release the detector's single-stream slot if it still points at us, so a
-   * replacement stream can register while our async teardown finishes.
-   * Idempotent: once cleared, `_activeStream()` no longer returns us.
-   */
-  override detach(): void {
-    const detector = this._detector;
-    if (detector instanceof AudioTurnDetector) {
-      detector._clearActiveStream(this);
-    }
-  }
-
   override async aclose(): Promise<void> {
-    this.detach();
     // Detach the transport first so the cloud send channel closes and its
     // background sender/recv tasks tear down, then run the base teardown
     // (which closes the audio channel and cancels the main task).
