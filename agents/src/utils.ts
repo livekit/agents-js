@@ -13,8 +13,11 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  TransformStream,
+  type TransformStreamDefaultController,
+} from 'node:stream/web';
 import { log } from './log.js';
 
 /**
@@ -1127,15 +1130,21 @@ export async function* readStream<T>(
       const abortPromise = waitForAbort(signal);
       while (true) {
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
-        if (!result) break;
+        if (!result) {
+          break;
+        }
         const { done, value } = result;
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     } else {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     }
@@ -1146,6 +1155,39 @@ export async function* readStream<T>(
       // stream cleanup errors are expected (releasing reader, controller closed, etc.)
     }
   }
+}
+
+export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
+  let iterator: AsyncIterator<T> | undefined;
+  let cancelled = false;
+
+  return new ReadableStream<T>({
+    async start(controller) {
+      iterator = iterable[Symbol.asyncIterator]();
+
+      try {
+        while (true) {
+          const { done, value } = await iterator.next();
+          if (done || cancelled) {
+            break;
+          }
+          controller.enqueue(value);
+        }
+
+        if (!cancelled) {
+          controller.close();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          controller.error(error);
+        }
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      void iterator?.return?.(reason).catch(() => {});
+    },
+  });
 }
 
 export async function waitForAbort(signal: AbortSignal) {

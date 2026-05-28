@@ -78,7 +78,7 @@ class IntroAgent extends voice.Agent<StoryData> {
     });
   }
 
-  static create() {
+  static createIntroAgent() {
     return new IntroAgent({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
       tools: [
@@ -94,7 +94,7 @@ class IntroAgent extends voice.Agent<StoryData> {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
+            const storyAgent = StoryAgent.createStoryAgent(name, location);
             return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
           },
         }),
@@ -110,7 +110,7 @@ class StoryAgent extends voice.Agent<StoryData> {
     this.session.generateReply();
   }
 
-  static create(name: string, location: string) {
+  static createStoryAgent(name: string, location: string) {
     return new StoryAgent({
       instructions: dedent`
         You are a storyteller. Use the user's information in order to make the story personalized.
@@ -142,7 +142,7 @@ export default defineAgent({
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: IntroAgent.createIntroAgent(),
       room: ctx.room,
     });
 

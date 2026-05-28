@@ -34,10 +34,25 @@ import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentCreateOptions,
+  type AgentTaskCreateOptions,
+  createAgentTaskV2,
+  createAgentV2,
+} from './agent_v2.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
+
+export type {
+  AgentContext,
+  AgentCreateOptions,
+  AgentHookNodeResult,
+  AgentHooks,
+  AgentTaskContext,
+  AgentTaskCreateOptions,
+} from './agent_v2.js';
 
 // speechHandle identifies which SpeechHandle owns the current tool call, enabling
 // SpeechHandle.waitForPlayout() to distinguish self-wait (deadlock) from waiting
@@ -159,6 +174,10 @@ export class Agent<UserData = any> {
 
   /** @internal */
   _toolCtx: ToolContext<UserData>;
+
+  static create<UserData = unknown>(options: AgentCreateOptions<UserData>): Agent<UserData> {
+    return createAgentV2(Agent, options);
+  }
 
   constructor({
     id,
@@ -659,6 +678,12 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
   private _preserveFunctionCallHistory: boolean;
 
   #logger = log();
+
+  static create<ResultT = unknown, UserData = unknown>(
+    options: AgentTaskCreateOptions<ResultT, UserData>,
+  ): AgentTask<ResultT, UserData> {
+    return createAgentTaskV2<ResultT, UserData>(AgentTask, options);
+  }
 
   constructor(options: AgentTaskOptions<UserData>) {
     const { preserveFunctionCallHistory = false, ...rest } = options;
