@@ -34,22 +34,21 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     const {
       maxAudioDurationInS,
       baseUrl,
-      apiKey,
-      apiSecret,
       audioPrefixDurationInS,
       threshold,
       detectionIntervalInS,
       inferenceTimeout,
       minInterruptionDurationInS,
     } = { ...interruptionOptionDefaults, ...options };
+    const { apiKey, apiSecret } = options;
 
     if (maxAudioDurationInS > 3.0) {
       throw new RangeError('maxAudioDurationInS must be less than or equal to 3.0 seconds');
     }
 
     const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? getDefaultInferenceUrl();
-    let lkApiKey = apiKey ?? '';
-    let lkApiSecret = apiSecret ?? '';
+    let lkApiKey = apiKey || '';
+    let lkApiSecret = apiSecret || '';
     let useProxy: boolean;
 
     // Use LiveKit credentials if using the inference service (production or staging)
@@ -57,7 +56,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       lkBaseUrl === DEFAULT_INFERENCE_URL || lkBaseUrl === STAGING_INFERENCE_URL;
     if (isInferenceUrl) {
       lkApiKey =
-        apiKey ?? process.env.LIVEKIT_INFERENCE_API_KEY ?? process.env.LIVEKIT_API_KEY ?? '';
+        apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || '';
       if (!lkApiKey) {
         throw new TypeError(
           'apiKey is required, either as argument or set LIVEKIT_API_KEY environmental variable',
@@ -65,9 +64,9 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       }
 
       lkApiSecret =
-        apiSecret ??
-        process.env.LIVEKIT_INFERENCE_API_SECRET ??
-        process.env.LIVEKIT_API_SECRET ??
+        apiSecret ||
+        process.env.LIVEKIT_INFERENCE_API_SECRET ||
+        process.env.LIVEKIT_API_SECRET ||
         '';
       if (!lkApiSecret) {
         throw new TypeError(

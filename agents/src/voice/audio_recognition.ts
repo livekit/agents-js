@@ -495,8 +495,16 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  updateOptions(options: { turnDetection: TurnDetectionMode | undefined }): void {
-    this.turnDetectionMode = options.turnDetection;
+  updateOptions(options: {
+    endpointing?: BaseEndpointing;
+    turnDetection?: TurnDetectionMode | null;
+  }): void {
+    if (options.endpointing !== undefined) {
+      this.endpointing = options.endpointing;
+    }
+    if (options.turnDetection !== undefined) {
+      this.turnDetectionMode = options.turnDetection ?? undefined;
+    }
   }
 
   /** True iff the user supplied their own VAD (default-VAD is treated as
@@ -1978,6 +1986,7 @@ export class AudioRecognition {
     this.lastSpeakingTime = undefined;
     this.speaking = false;
     this.userTurnCommitted = false;
+    this.userTurnTracker = { words: 0, transcript: '' };
     // Clear the speaking event so a stale `set()` from the just-finished
     // turn doesn't immediately trip the next speaking-guard race.
     this.userSpeakingEvent.clear();

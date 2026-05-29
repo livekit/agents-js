@@ -261,6 +261,30 @@ describe('Zod Utils', () => {
       });
     });
 
+    it('should preserve constraints on tool argument schemas', async () => {
+      const schema = z.object({
+        count: z.number().min(1).max(10).describe('how many'),
+      });
+
+      const jsonSchema = zodSchemaToJsonSchema(schema);
+      const properties = jsonSchema.properties as JSONSchemaProperties;
+      const count = properties.count!;
+
+      expect(count.minimum).toBe(1);
+      expect(count.maximum).toBe(10);
+      expect(count.description).toBe('how many');
+
+      await expect(parseZodSchema(schema, { count: 5 })).resolves.toMatchObject({
+        success: true,
+      });
+
+      for (const bad of [0, 11]) {
+        await expect(parseZodSchema(schema, { count: bad })).resolves.toMatchObject({
+          success: false,
+        });
+      }
+    });
+
     describe('strict parameter', () => {
       it('should produce strict JSON schema with strict: true', () => {
         const schema = z4.object({

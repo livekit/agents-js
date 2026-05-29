@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import type { JSONSchema7 } from 'json-schema';
+import { jsonrepair } from 'jsonrepair';
 import sharp from 'sharp';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
@@ -183,17 +184,93 @@ export const oaiBuildFunctionInfo = (
   });
 };
 
+const templateTokenPatterns = [
+  /<\|[^<>|]{0,40}\|>/g,
+  /<\|[^<>a-zA-Z0-9_]{0,10}/g,
+  /[^<>a-zA-Z0-9_]{0,10}\|>/g,
+  /<(?:start|end)_of_turn>/g,
+];
+
+function stripTemplateTokens(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return templateTokenPatterns.reduce((out, pattern) => out.replace(pattern, ''), value).trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(stripTemplateTokens).filter((item) => item !== '' && item !== null);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, stripTemplateTokens(nestedValue)]),
+    );
+  }
+
+  return value;
+}
+
+export function parseFunctionArguments(
+  rawArgs: string | Record<string, unknown>,
+): Record<string, unknown> {
+  let args: unknown;
+  const rawForError = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
+
+  if (typeof rawArgs === 'string') {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch (strictError) {
+      let repaired: unknown;
+      try {
+        repaired = JSON.parse(jsonrepair(rawArgs));
+      } catch {
+        throw new Error(
+          `could not parse function arguments as JSON: ${strictError}: ${rawForError.slice(0, 200)}`,
+        );
+      }
+
+      args = stripTemplateTokens(repaired);
+    }
+  } else {
+    args = rawArgs;
+  }
+
+  while (typeof args === 'string') {
+    const stringArgs = args;
+    try {
+      args = JSON.parse(stringArgs);
+    } catch {
+      throw new Error(
+        `function arguments decoded to a non-JSON string: ${stringArgs.slice(0, 200)}`,
+      );
+    }
+  }
+
+  if (args === null) {
+    return {};
+  }
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error(`expected object from function arguments: ${rawForError.slice(0, 200)}`);
+  }
+
+  return args as Record<string, unknown>;
+}
+
 export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
-  let args: object | undefined;
+  let args: Record<string, unknown> | undefined;
   let params: object | undefined;
 
   // Ensure valid JSON
   try {
-    args = JSON.parse(toolCall.args);
+    const rawArgs = toolCall.args || '{}';
+    args = parseFunctionArguments(rawArgs);
+    const canonicalArgs = JSON.stringify(args);
+    if (canonicalArgs !== rawArgs) {
+      toolCall.args = canonicalArgs;
+    }
   } catch (error) {
     return FunctionCallOutput.create({
       callId: toolCall.callId,

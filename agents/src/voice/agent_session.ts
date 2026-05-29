@@ -92,12 +92,13 @@ import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
 import type { AudioTurnDetector } from '../inference/eot/base.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
-import { migrateLegacyOptions } from './turn_config/utils.js';
+import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface AgentSessionUsage {
@@ -241,6 +242,30 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   ttsTextTransforms?: readonly TextTransform[] | null;
 };
 
+export type AgentSessionUpdateOptions = {
+  /** Configuration updates for turn handling. */
+  turnHandling?: {
+    /**
+     * Strategy for deciding when the user has finished speaking.
+     *
+     * - `undefined`: leave the current turn detection setting unchanged.
+     * - `null`: clear the current turn detection setting and return to automatic selection.
+     * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+     */
+    turnDetection?: TurnDetectionMode | null;
+    /** Endpointing options to merge into the current session defaults. */
+    endpointing?: Partial<EndpointingOptions>;
+  };
+  /**
+   * @deprecated use turnHandling.turnDetection instead.
+   *
+   * - `undefined`: leave the current turn detection setting unchanged.
+   * - `null`: clear the current turn detection setting and return to automatic selection.
+   * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+   */
+  turnDetection?: TurnDetectionMode | null;
+};
+
 type ActivityTransitionOptions = {
   previousActivity?: 'close' | 'pause';
   newActivity?: 'start' | 'resume';
@@ -340,6 +365,11 @@ export class AgentSession<
   /** @internal - Whether `start()` has been called and completed. */
   get _started(): boolean {
     return this.started;
+  }
+
+  /** @internal - Whether the session is closing/draining. */
+  get _closing(): boolean {
+    return this.closing;
   }
 
   /** @internal - Current run state for testing */
@@ -656,6 +686,10 @@ export class AgentSession<
       return;
     }
 
+    // immediately block the old activity from accepting new user turns
+    // during the transition window (before drain() formally pauses scheduling)
+    this.activity?.blockNewTurns();
+
     const _updateActivityTask = async (oldTask: Task<void> | undefined, agent: Agent) => {
       if (oldTask) {
         try {
@@ -793,6 +827,39 @@ export class AgentSession<
     }
 
     this.activity.resumeReplyAuthorization();
+  }
+
+  updateOptions(options: AgentSessionUpdateOptions): void {
+    const endpointing = options.turnHandling?.endpointing;
+    const turnDetection =
+      options.turnHandling?.turnDetection !== undefined
+        ? options.turnHandling.turnDetection
+        : options.turnDetection;
+    const hasTurnDetection = turnDetection !== undefined;
+    const normalizedTurnDetection = turnDetection ?? undefined;
+
+    if (endpointing !== undefined) {
+      this.sessionOptions.turnHandling.endpointing = {
+        ...this.sessionOptions.turnHandling.endpointing,
+        ...stripUndefined(endpointing),
+      };
+    }
+
+    if (hasTurnDetection) {
+      this.turnDetection = normalizedTurnDetection;
+      this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+    }
+
+    if (this.activity) {
+      const activityOptions: Parameters<AgentActivity['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        activityOptions.endpointing = this.sessionOptions.turnHandling.endpointing;
+      }
+      if (hasTurnDetection) {
+        activityOptions.turnDetection = turnDetection;
+      }
+      this.activity.updateOptions(activityOptions);
+    }
   }
 
   generateReply(options?: {

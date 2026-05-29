@@ -18,7 +18,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const logger = log();
     const session = new voice.AgentSession({
-      llm: new google.beta.realtime.RealtimeModel({
+      llm: new google.realtime.RealtimeModel({
         thinkingConfig: { includeThoughts: false },
       }),
     });

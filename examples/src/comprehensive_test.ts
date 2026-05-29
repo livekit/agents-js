@@ -49,7 +49,7 @@ const llmOptions = {
 
 const realtimeLlmOptions = {
   openai: () => new openai.realtime.RealtimeModel(),
-  gemini: () => new google.beta.realtime.RealtimeModel(),
+  gemini: () => new google.realtime.RealtimeModel(),
 };
 
 const sttChoices = Object.keys(sttOptions);
