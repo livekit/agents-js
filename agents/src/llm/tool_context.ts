@@ -190,10 +190,9 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools in the future)
 export type ToolContext<UserData = UnknownUserData> = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
-  [name: string]: FunctionTool<any, UserData, any>;
+  [name: string]: FunctionTool<any, UserData, any> | ProviderDefinedTool;
 };
 
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
@@ -216,8 +215,18 @@ export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean
       return false;
     }
 
-    if (tool1.description !== tool2.description) {
+    if (tool1.type !== tool2.type) {
       return false;
+    }
+
+    if (isFunctionTool(tool1) && isFunctionTool(tool2)) {
+      if (tool1.description !== tool2.description) {
+        return false;
+      }
+    } else if (isProviderDefinedTool(tool1) && isProviderDefinedTool(tool2)) {
+      if (tool1.id !== tool2.id || JSON.stringify(tool1.config) !== JSON.stringify(tool2.config)) {
+        return false;
+      }
     }
   }
 

@@ -15,6 +15,7 @@ import {
   type ImageContent,
 } from './chat_context.js';
 import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import { isFunctionTool } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
@@ -173,7 +174,7 @@ export const oaiBuildFunctionInfo = (
   rawArgs: string,
 ): FunctionCall => {
   const tool = toolCtx[toolName];
-  if (!tool) {
+  if (!tool || !isFunctionTool(tool)) {
     throw new Error(`AI tool ${toolName} not found`);
   }
 
@@ -260,6 +261,13 @@ export async function executeToolCall(
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
   const tool = toolCtx[toolCall.name]!;
+  if (!isFunctionTool(tool)) {
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      output: `Tool ${toolCall.name} is not a function tool`,
+      isError: true,
+    });
+  }
   let args: Record<string, unknown> | undefined;
   let params: object | undefined;
 

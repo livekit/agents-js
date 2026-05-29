@@ -181,26 +181,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
-      const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              name: name,
-              description: func.description,
-              parameters: llm.toJsonSchema(
-                func.parameters,
-                true,
-                this.strictToolSchema,
-              ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-            } as OpenAI.Responses.FunctionTool;
-
-            if (this.strictToolSchema) {
-              oaiParams.strict = true;
-            }
-
-            return oaiParams;
-          })
-        : undefined;
+      const tools = buildResponsesTools(this.toolCtx, this.strictToolSchema);
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
       if (!tools) {
@@ -337,6 +318,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private handleResponseCompleted(
     event: OpenAI.Responses.ResponseCompletedEvent,
   ): llm.ChatChunk | undefined {
+    logProviderToolExecutions(event.response.output);
+
     if (event.response.usage) {
       return {
         id: this.responseId,
@@ -350,6 +333,56 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       };
     }
     return undefined;
+  }
+}
+
+function buildResponsesTools(
+  toolCtx: llm.ToolContext | undefined,
+  strictToolSchema: boolean,
+): OpenAI.Responses.Tool[] | undefined {
+  if (!toolCtx) return undefined;
+
+  const tools: OpenAI.Responses.Tool[] = [];
+  for (const [name, tool] of Object.entries(toolCtx)) {
+    if (llm.isProviderDefinedTool(tool)) {
+      tools.push(tool.config as unknown as OpenAI.Responses.Tool);
+      continue;
+    }
+
+    if (!llm.isFunctionTool(tool)) continue;
+
+    const oaiParams = {
+      type: 'function' as const,
+      name,
+      description: tool.description,
+      parameters: llm.toJsonSchema(
+        tool.parameters,
+        true,
+        strictToolSchema,
+      ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
+    } as OpenAI.Responses.FunctionTool;
+
+    if (strictToolSchema) {
+      oaiParams.strict = true;
+    }
+
+    tools.push(oaiParams);
+  }
+
+  return tools.length > 0 ? tools : undefined;
+}
+
+function logProviderToolExecutions(output: OpenAI.Responses.ResponseOutputItem[]): void {
+  for (const item of output) {
+    if (!['message', 'reasoning', 'function_call', 'function_call_output'].includes(item.type)) {
+      log().info(
+        {
+          tool_type: item.type,
+          result: item,
+        },
+        'provider tool executed',
+      );
+    }
   }
 }
 

@@ -399,35 +399,38 @@ export class LLMStream extends llm.LLMStream {
         this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
-      const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              function: {
-                name,
-                description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
-              } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
-            };
+      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [];
+      if (this.toolCtx) {
+        for (const [name, func] of Object.entries(this.toolCtx)) {
+          if (!llm.isFunctionTool(func)) continue;
 
-            if (this.strictToolSchema) {
-              oaiParams.function.strict = true;
-            }
+          const oaiParams = {
+            type: 'function' as const,
+            function: {
+              name,
+              description: func.description,
+              parameters: llm.toJsonSchema(
+                func.parameters,
+                true,
+                this.strictToolSchema,
+              ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+            } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
+          };
 
-            return oaiParams;
-          })
-        : undefined;
+          if (this.strictToolSchema) {
+            oaiParams.function.strict = true;
+          }
+
+          tools.push(oaiParams);
+        }
+      }
 
       const requestOptions: Record<string, unknown> = dropUnsupportedParams(
         this.model,
         { ...this.modelOptions },
-        tools,
+        tools.length > 0 ? tools : undefined,
       );
-      if (!tools) {
+      if (tools.length === 0) {
         delete requestOptions.tool_choice;
       }
 
@@ -459,7 +462,7 @@ export class LLMStream extends llm.LLMStream {
         {
           model: this.model,
           messages,
-          tools,
+          tools: tools.length > 0 ? tools : undefined,
           stream: true,
           stream_options: { include_usage: true },
           ...requestOptions,
