@@ -196,21 +196,17 @@ export type ToolContext<UserData = UnknownUserData> = {
   [name: string]: FunctionTool<any, UserData, any>;
 };
 
-function compareToolNames(nameA: string, nameB: string): number {
-  return nameA.localeCompare(nameB);
-}
-
 /** @internal */
 export function sortedToolEntries<UserData = UnknownUserData>(
   toolCtx: ToolContext<UserData>,
 ): Array<[string, ToolContext<UserData>[string]]> {
-  return Object.entries(toolCtx).sort(([nameA], [nameB]) => compareToolNames(nameA, nameB));
+  return Object.entries(toolCtx).sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
 }
 
 /** @internal */
 export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
   if (!toolCtx) return [];
-  return Object.keys(toolCtx).sort(compareToolNames);
+  return Object.keys(toolCtx).sort((nameA, nameB) => nameA.localeCompare(nameB));
 }
 
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
