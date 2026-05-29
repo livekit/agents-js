@@ -36,6 +36,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const queriesDir = path.join(repoRoot, 'codeql', 'queries');
 const dbDir = path.join(repoRoot, '.codeql', 'db');
 const workDir = path.join(repoRoot, '.codeql');
+// Committed compile-cache so CI doesn't pay the ~20s/query cold JS QL library compile.
+// CodeQL's `--compilation-cache=<dir>` is additive: it reads compiled artifacts from this
+// dir if present, and writes any newly-compiled artifacts back so `pnpm api:update` keeps
+// the committed copy fresh. Directory contains hashed binary blobs (~1 MB total).
+const compileCacheDir = path.join(repoRoot, 'codeql', '.compile-cache');
+fs.mkdirSync(compileCacheDir, { recursive: true });
 
 interface QueryEntry {
   label: string;
@@ -125,8 +131,25 @@ const ensureCodeql = (): string => {
   return r.stdout.trim();
 };
 
-const codeql = (args: string[]): Buffer =>
-  execFileSync('codeql', args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
+// Subcommands that compile QL accept `--compilation-cache=<dir>` to read/write a custom
+// cache; we inject the committed `codeql/.compile-cache` here so every codeql process
+// reads precompiled artifacts and writes any new ones back to the repo dir.
+const subcommandsWithCompileCache = new Set([
+  'database analyze',
+  'database run-queries',
+  'query run',
+  'query compile',
+]);
+const codeql = (args: string[]): Buffer => {
+  const sub2 = `${args[0]} ${args[1]}`;
+  const augmented = subcommandsWithCompileCache.has(sub2)
+    ? [args[0]!, args[1]!, `--compilation-cache=${compileCacheDir}`, ...args.slice(2)]
+    : args;
+  return execFileSync('codeql', augmented, {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+};
 
 const createDatabase = (): void => {
   // Remove any prior database; `--overwrite` alone has been observed to reuse stale extraction.

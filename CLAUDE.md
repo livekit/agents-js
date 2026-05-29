@@ -37,7 +37,7 @@ pnpm lint:fix               # ESLint with auto-fix
 pnpm format:check           # Prettier check
 pnpm format:write           # Prettier format
 pnpm api:check              # CodeQL public-API checks (see below)
-pnpm api:update             # Refresh the CodeQL API snapshots
+pnpm api:update             # Refresh the CodeQL snapshots + compile cache (commit both)
 ```
 
 > `api:check`/`api:update` require the [CodeQL CLI](https://github.com/github/codeql-cli-binaries)

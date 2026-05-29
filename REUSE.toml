@@ -55,8 +55,8 @@ path = ["**/README.md"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
-# CodeQL API checks (generated lockfile + snapshots)
+# CodeQL API checks (generated lockfile, snapshots, compile cache)
 [[annotations]]
-path = ["codeql/codeql-pack.lock.yml", "codeql/*.snapshot.txt"]
+path = ["codeql/codeql-pack.lock.yml", "codeql/*.snapshot.txt", "codeql/.compile-cache/**"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
