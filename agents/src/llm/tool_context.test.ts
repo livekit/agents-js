@@ -675,50 +675,6 @@ describe('Toolset', () => {
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
-  it('Toolset.create() resolves a tools factory at setup with the live context', async () => {
-    const a = makeFn('a');
-    const b = makeFn('b');
-    let calls = 0;
-    let received: ToolsetContext | undefined;
-    const ts = Toolset.create({
-      id: 'dynamic',
-      tools: (ctx) => {
-        calls += 1;
-        received = ctx;
-        return [a, b];
-      },
-    });
-
-    // The factory isn't run — and tools aren't enumerable — until activation.
-    expect(ts.tools).toEqual([]);
-    expect(calls).toBe(0);
-
-    const ctx = fakeToolsetContext();
-    await ts.setup(ctx);
-    expect(ts.tools).toEqual([a, b]);
-    expect(calls).toBe(1);
-    expect(received).toBe(ctx);
-  });
-
-  it('runs setup once before resolving the tools factory', async () => {
-    const a = makeFn('a');
-    const events: string[] = [];
-    const ts = Toolset.create({
-      id: 'with-setup',
-      setup: async () => {
-        events.push('setup');
-      },
-      tools: () => {
-        events.push('resolve');
-        return [a];
-      },
-    });
-
-    await ts.setup(fakeToolsetContext());
-    expect(events).toEqual(['setup', 'resolve']);
-    expect(ts.tools).toEqual([a]);
-  });
-
   it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
@@ -738,32 +694,6 @@ describe('Toolset', () => {
     // A dynamic source (e.g. an MCP server) pushes its tools after connecting.
     push([a, b]);
     expect(ts.tools).toEqual([a, b]);
-  });
-
-  it('runs the factory once and pushes later changes via ctx.updateTools', async () => {
-    const a = makeFn('a');
-    const b = makeFn('b');
-    let calls = 0;
-    let push!: (tools: readonly Tool[]) => void;
-    const ts = Toolset.create({
-      id: 'dynamic',
-      tools: ({ updateTools }) => {
-        calls += 1;
-        push = updateTools;
-        return [a];
-      },
-    });
-
-    // Mimic the runtime: ctx.updateTools writes the toolset's current tools.
-    await ts.setup(fakeToolsetContext((tools) => ts._setTools(tools)));
-    expect(ts.tools).toEqual([a]);
-    expect(calls).toBe(1);
-
-    // The source changes (e.g. an MCP server adds a tool) and pushes the new list — without
-    // re-running the factory.
-    push([a, b]);
-    expect(ts.tools).toEqual([a, b]);
-    expect(calls).toBe(1);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {

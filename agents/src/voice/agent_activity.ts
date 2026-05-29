@@ -783,8 +783,8 @@ export class AgentActivity implements RecognitionHooks {
     const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
     const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
 
-    // Resolve added factory toolsets before re-flattening, so their tools are included in the
-    // advertised set (newToolNames is computed below, after resolution).
+    // Run setup() on added toolsets before re-flattening, so tools they push via updateTools are
+    // included in the advertised set (newToolNames is computed below, after setup).
     await this.setupToolsetList(addedToolsets);
     newToolCtx.updateTools(newToolCtx.tools);
     const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
@@ -3760,7 +3760,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
     await this.setupToolsetList(this.agent.toolCtx.toolsets);
-    // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
+    // Re-flatten in case setup() pushed tools via updateTools, so they're advertised.
     this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
 
