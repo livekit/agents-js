@@ -447,24 +447,26 @@ export class WSLLMStream extends llm.LLMStream {
     )) as OpenAI.Responses.ResponseInputItem[];
 
     const tools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => {
-          const oaiParams = {
-            type: 'function' as const,
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-              true,
-              this.#strictToolSchema,
-            ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-          } as OpenAI.Responses.FunctionTool;
+      ? Object.entries(this.toolCtx)
+          .filter(([, func]) => llm.isFunctionTool(func))
+          .map(([name, func]) => {
+            const oaiParams = {
+              type: 'function' as const,
+              name,
+              description: func.description,
+              parameters: llm.toJsonSchema(
+                func.parameters,
+                true,
+                this.#strictToolSchema,
+              ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
+            } as OpenAI.Responses.FunctionTool;
 
-          if (this.#strictToolSchema) {
-            oaiParams.strict = true;
-          }
+            if (this.#strictToolSchema) {
+              oaiParams.strict = true;
+            }
 
-          return oaiParams;
-        })
+            return oaiParams;
+          })
       : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
