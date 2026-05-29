@@ -196,7 +196,11 @@ export interface _TurnDetector {
   readonly provider: string;
   unlikelyThreshold: (language?: LanguageCode) => Promise<number | undefined>;
   supportsLanguage: (language?: LanguageCode) => Promise<boolean>;
-  predictEndOfTurn(chatCtx: ChatContext, timeout?: number): Promise<number>;
+  /**
+   * @param timeoutMs - Optional inference wait budget in milliseconds. The audio
+   *   EOT detector honors it; text-based detectors currently ignore it.
+   */
+  predictEndOfTurn(chatCtx: ChatContext, timeoutMs?: number): Promise<number>;
 }
 
 export interface AudioRecognitionOptions {

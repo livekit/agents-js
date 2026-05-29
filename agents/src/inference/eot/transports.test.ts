@@ -122,6 +122,13 @@ async function drainSendQueue(_transport: CloudTransport, ticks = 50): Promise<v
   }
 }
 
+async function waitForCond(predicate: () => boolean, ticks = 50): Promise<void> {
+  for (let i = 0; i < ticks; i++) {
+    if (predicate()) return;
+    await tick();
+  }
+}
+
 function pcmFrame(samples = 320): AudioFrame {
   return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
 }
@@ -138,6 +145,38 @@ describe('CloudStreamRetry', () => {
       // Two attempts: first raised (counter 0→1), second succeeded → reset to 0.
       expect(transport.connectCalls).toBe(2);
       expect(transport.numRetries).toBe(0);
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('CloudToLocalFallback', () => {
+  it('releases the shared audio reader lock on fallback (regression)', async () => {
+    const { stream, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      // Drive a frame so the cloud drain task is actively parked on
+      // `reader.read()`, holding the audio channel's single reader lock.
+      stream.pushAudio(pcmFrame());
+      await tick();
+
+      // Predict timeout triggers a cloud→local fallback. The orphaned cloud
+      // drain must release the shared reader lock before the real
+      // `LocalTransport.run()` re-acquires it — otherwise `getReader()` throws
+      // "ReadableStream is locked", which the FSM mis-reports as a local
+      // failure.
+      const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
+      expect(prob).toBe(1.0);
+
+      await waitForCond(() => stream.model === 'turn-detector-mini');
+      expect(stream.isFallback).toBe(true);
+
+      // Let the swapped-in LocalTransport.run() re-acquire the reader and start
+      // draining. A freed lock ⇒ no "ReadableStream is locked" TypeError ⇒ no
+      // local failure flagged.
+      for (let i = 0; i < 10; i++) await tick();
+      expect(stream.warnedLocalFailure).toBe(false);
     } finally {
       await stream.aclose();
     }

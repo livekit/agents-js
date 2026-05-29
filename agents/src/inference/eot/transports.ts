@@ -263,6 +263,12 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   protected _connectCalls = 0;
   /** Outbound FIFO for the active connection; recreated per `_runOnce`. */
   protected _sendChannel: StreamChannel<ClientMsg> | undefined;
+  /** Set by `detach()`; stops the retry loop and suppresses the
+   * connection-closed throw so a teardown can't trigger a reconnect. */
+  protected _detached = false;
+  /** Aborted by `detach()` to release the audio-drain reader lock so a
+   * swapped-in transport can re-acquire the shared audio stream. */
+  protected _runAbort: AbortController | undefined;
   protected _logger = log();
   /** Optional connect override for tests; defaults to a real WS handshake. */
   private _connectImpl: (() => Promise<CloudWebSocket>) | undefined;
@@ -340,8 +346,19 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   }
 
   detach(): void {
+    this._detached = true;
+    // Abort the active run: this releases the audio-drain reader lock (held by
+    // `stream._drainAudioChannel`) so a swapped-in transport can re-acquire the
+    // shared audio stream, and unblocks the recv/send tasks below.
+    this._runAbort?.abort();
     void this._sendChannel?.close();
+    const ws = this._ws;
     this._ws = undefined;
+    try {
+      ws?.close();
+    } catch {
+      // ignore
+    }
   }
 
   private _enqueue(msg: ClientMsg): void {
@@ -418,11 +435,14 @@ export class CloudTransport implements AudioTurnDetectionTransport {
 
   async run(): Promise<void> {
     const maxRetries = this._connOptions.maxRetry;
-    while (this._numRetries <= maxRetries) {
+    while (!this._detached && this._numRetries <= maxRetries) {
       try {
         await this._runOnce();
         return;
       } catch (err) {
+        // A detach (e.g. cloud→local fallback) tears the session down; don't
+        // surface that as a connection error or retry into a reconnect.
+        if (this._detached) return;
         if (!(err instanceof APIError) || maxRetries === 0 || !err.retryable) throw err;
         if (this._numRetries === maxRetries) {
           throw new APIConnectionError({
@@ -444,8 +464,23 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     const stream = this._streamRef?.deref();
     if (stream === undefined) return;
 
+    // Per-run abort: `detach()` fires it to release the audio-drain reader
+    // lock and stop the recv/send tasks without a spurious "closed" throw.
+    const runAbort = new AbortController();
+    this._runAbort = runAbort;
+
     this._connectCalls += 1;
     const ws = await (this._connectImpl ?? this._defaultConnect.bind(this))();
+
+    // Detached while the handshake was in flight — don't revive the session.
+    if (this._detached) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
 
     // Successful connect — reset transient-failure counter so drops across
     // the session lifetime don't accumulate toward maxRetry.
@@ -497,7 +532,10 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     });
 
     const drainAudioTask = Task.from(async () => {
-      await stream._drainAudioChannel();
+      await stream._drainAudioChannel(runAbort.signal);
+      // Detached mid-drain (fallback/teardown): the lock is already released;
+      // skip the graceful sessionClose — the session is being abandoned.
+      if (runAbort.signal.aborted) return;
       closingWs = true;
       this._enqueue(
         new ClientMessageCtor({ message: { case: 'sessionClose', value: new SessionClose() } }),
@@ -536,12 +574,13 @@ export class CloudTransport implements AudioTurnDetectionTransport {
       } finally {
         reader.releaseLock();
       }
-      if (socketErr !== undefined && !closingWs) {
+      // A detach-driven ws close is expected teardown, not a failure.
+      if (socketErr !== undefined && !closingWs && !runAbort.signal.aborted) {
         throw new APIConnectionError({
           message: `turn detector connection error: ${socketErr.message}`,
         });
       }
-      if (!closingWs) {
+      if (!closingWs && !runAbort.signal.aborted) {
         throw new APIStatusError({
           message: 'turn detector connection closed unexpectedly',
           options: { statusCode: -1 },
