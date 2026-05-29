@@ -135,6 +135,19 @@ jobs:
         run: echo "$RUNNER_TEMP/codeql" >> "$GITHUB_PATH"
       - name: Install query pack dependencies
         run: codeql pack install codeql
+      # ~/.codeql/compile-cache holds compiled QL artifacts (most importantly, the JS QL
+      # standard library). The single-job workflow used to amortize this across query
+      # invocations via the on-disk cache; with the matrix split each leg starts cold, so
+      # `[1/1 comp]` jumped from ~25s to ~55s per query. Caching the compile-cache between
+      # workflow runs (keyed on bundle version + query content) restores the warm path on
+      # every PR after the first that touches a query.
+      - name: Cache CodeQL compile cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.codeql/compile-cache
+          key: codeql-compile-${{ env.CODEQL_BUNDLE }}-${{ hashFiles('codeql/queries/**', 'codeql/qlpack.yml', 'codeql/codeql-pack.lock.yml') }}
+          restore-keys: |
+            codeql-compile-${{ env.CODEQL_BUNDLE }}-
       - name: Download CodeQL database
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
