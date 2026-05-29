@@ -182,26 +182,24 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       )) as OpenAI.Responses.ResponseInputItem[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx)
-            .sort(([nameA], [nameB]) => (nameA < nameB ? -1 : nameA > nameB ? 1 : 0))
-            .map(([name, func]) => {
-              const oaiParams = {
-                type: 'function' as const,
-                name: name,
-                description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-              } as OpenAI.Responses.FunctionTool;
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+            const oaiParams = {
+              type: 'function' as const,
+              name: name,
+              description: func.description,
+              parameters: llm.toJsonSchema(
+                func.parameters,
+                true,
+                this.strictToolSchema,
+              ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
+            } as OpenAI.Responses.FunctionTool;
 
-              if (this.strictToolSchema) {
-                oaiParams.strict = true;
-              }
+            if (this.strictToolSchema) {
+              oaiParams.strict = true;
+            }
 
-              return oaiParams;
-            })
+            return oaiParams;
+          })
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };

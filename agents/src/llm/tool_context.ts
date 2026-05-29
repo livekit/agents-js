@@ -196,6 +196,23 @@ export type ToolContext<UserData = UnknownUserData> = {
   [name: string]: FunctionTool<any, UserData, any>;
 };
 
+function compareToolNames(nameA: string, nameB: string): number {
+  return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+}
+
+/** @internal */
+export function sortedToolEntries<UserData = UnknownUserData>(
+  toolCtx: ToolContext<UserData>,
+): Array<[string, ToolContext<UserData>[string]]> {
+  return Object.entries(toolCtx).sort(([nameA], [nameB]) => compareToolNames(nameA, nameB));
+}
+
+/** @internal */
+export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
+  if (!toolCtx) return [];
+  return Object.keys(toolCtx).sort(compareToolNames);
+}
+
 export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
   const toolNames = new Set(Object.keys(ctx1));
   const toolNames2 = new Set(Object.keys(ctx2));
