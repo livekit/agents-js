@@ -6,7 +6,7 @@
 
 feat(core): multimodal end-of-turn detection with cloud → local fallback (AGT-2520)
 
-- New `inference.AudioTurnDetector`: WebSocket cloud EOT transport (`eot-audio`) with automatic fallback to the local native model (`eot-audio-mini`) via `@livekit/local-inference`. Auto-selects cloud when `LIVEKIT_REMOTE_EOT_URL` is set, local otherwise.
+- New `inference.AudioTurnDetector`: WebSocket cloud EOT transport (`model: 'turn-detector'`) with automatic fallback to the local native model (`model: 'turn-detector-mini'`) via `@livekit/local-inference`. Auto-selects `'turn-detector'` when `LIVEKIT_REMOTE_EOT_URL` is set, `'turn-detector-mini'` otherwise.
 - The local EOT model runs in the shared inference process (the same `InferenceProcExecutor` the text turn detector uses), loaded once per worker host (~138 MB) instead of in every job worker. The runner is registered by default when the native binding is available, so the inference process spawns on worker startup; on platforms where the binding can't load, local EOT degrades to a positive-default prediction and the worker still starts. (This is a JS-specific divergence from Python, which keeps EOT in-process and relies on forkserver COW sharing.)
 - No prewarm helpers: EOT auto-warms in the inference process; the in-process silero VAD lazy-loads on first stream. (The `inference.prewarm*` helpers added during development were removed before release.)
 - New `inference.VAD` (local-only streaming VAD via `@livekit/local-inference`).

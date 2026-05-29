@@ -17,8 +17,8 @@ export {
   materializeThresholds,
   rescaleForLocalFallback,
   type AudioTurnDetectorOptions,
-  type Backend,
   type CloudTransportOptions,
+  type TurnDetectorModel,
 } from './eot/index.js';
 
 export { VAD, type VADOptions, type VADModels } from './vad.js';

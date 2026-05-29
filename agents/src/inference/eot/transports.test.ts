@@ -23,6 +23,7 @@ import { APIConnectionError } from '../../_exceptions.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AudioTurnDetector, type TurnDetectorOptions } from './base.js';
 import { AudioTurnDetectorStreamImpl } from './detector.js';
+import type { TurnDetectorModel } from './languages.js';
 import { CloudTransport, type CloudWebSocket } from './transports.js';
 
 const { ClientMessage } = AgentInference;
@@ -48,8 +49,8 @@ class FakeWS implements CloudWebSocket {
 }
 
 class FakeDetector extends AudioTurnDetector {
-  get model(): string {
-    return 'eot-audio-cloud';
+  get model(): TurnDetectorModel {
+    return 'turn-detector';
   }
   stream(): never {
     throw new Error('unused');
@@ -96,7 +97,7 @@ function makeStream(opts: {
     detector,
     opts: turnOpts,
     cloudOpts,
-    backend: 'cloud',
+    model: 'turn-detector',
     transport,
   });
   return { stream, fakeWs, transport };

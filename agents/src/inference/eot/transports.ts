@@ -131,7 +131,7 @@ class PcmRingBuffer {
 }
 
 /**
- * Transport for the local `eot-audio-mini` model.
+ * Transport for the local `turn-detector-mini` model.
  *
  * The native model runs in the shared `InferenceProcExecutor` (one load per
  * host, ~138 MB) rather than in every job worker. Audio is buffered locally
@@ -241,7 +241,7 @@ export class LocalTransport implements AudioTurnDetectionTransport {
 }
 
 /**
- * WebSocket transport for `eot-audio`.
+ * WebSocket transport for the `turn-detector` (cloud) model.
  *
  * Maintains one inference session against the LiveKit Agent Gateway:
  * connect → `SessionCreate` → three concurrent tasks (drain audio, send,

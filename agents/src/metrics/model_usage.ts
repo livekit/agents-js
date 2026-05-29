@@ -90,7 +90,7 @@ export type EOTModelUsage = {
   type: 'eot_usage';
   /** The provider name (e.g., 'livekit'). */
   provider: string;
-  /** The model name (e.g., 'eot-audio' for cloud, 'eot-audio-mini' for local). */
+  /** The model name (e.g., 'turn-detector' for cloud, 'turn-detector-mini' for local). */
   model: string;
   /** Total number of EOT prediction requests served. */
   totalRequests: number;
