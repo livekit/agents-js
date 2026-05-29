@@ -197,7 +197,7 @@ export type ToolContext<UserData = UnknownUserData> = {
 };
 
 function compareToolNames(nameA: string, nameB: string): number {
-  return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+  return nameA.localeCompare(nameB);
 }
 
 /** @internal */
