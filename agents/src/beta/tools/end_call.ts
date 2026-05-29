@@ -121,19 +121,22 @@ export function EndCallTool<UserData = UnknownUserData>({
 
   return Toolset.create<UserData>({
     id: 'end_call',
-    // `session` and `teardownSignal` are in lexical scope for the tool below — no state is stashed
-    // between activation and a tool call. `teardownSignal` aborts when the toolset is torn down.
-    tools: ({ session, signal: teardownSignal }) => {
-      const endCall = async (ctx: RunContext<UserData>): Promise<string | undefined> => {
+    // `session` is in lexical scope for the tool below — no state is stashed between activation
+    // and a tool call.
+    tools: ({ session }) => {
+      const endCall = async (
+        ctx: RunContext<UserData>,
+        abortSignal: AbortSignal,
+      ): Promise<string | undefined> => {
         log().debug('end_call tool called');
-        const llm = session.currentAgent.getActivityOrThrow().llm;
+        const llm = ctx.session.currentAgent.getActivityOrThrow().llm;
 
-        // Lifetime of this invocation: aborts when the session closes, and also when the toolset
-        // is torn down (via teardownSignal). All listeners/timers below are scoped to it.
+        // Lifetime of this invocation: aborts when the session closes, and also when the tool
+        // call itself is aborted. All listeners/timers below are scoped to it.
         const controller = new AbortController();
-        const signal = AbortSignal.any([teardownSignal, controller.signal]);
+        const signal = AbortSignal.any([abortSignal, controller.signal]);
 
-        void onceEvent(session, AgentSessionEventTypes.Close, { signal }).then((event) => {
+        void onceEvent(ctx.session, AgentSessionEventTypes.Close, { signal }).then((event) => {
           if (!event) return; // signal aborted before close fired (e.g. toolset torn down)
           controller.abort(); // stop the delayed-shutdown race
 
@@ -156,7 +159,7 @@ export function EndCallTool<UserData = UnknownUserData>({
             return;
           }
 
-          void delayedSessionShutdown(session, signal);
+          void delayedSessionShutdown(ctx.session, signal);
         });
 
         if (onToolCalled) {
@@ -181,7 +184,7 @@ export function EndCallTool<UserData = UnknownUserData>({
         tool<UserData>({
           name: 'end_call',
           description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
-          execute: async (_args, { ctx }) => endCall(ctx),
+          execute: async (_args, { ctx, abortSignal }) => endCall(ctx, abortSignal),
         }),
       ];
     },
