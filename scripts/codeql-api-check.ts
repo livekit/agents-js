@@ -94,6 +94,20 @@ const problemQueries: ProblemQueryEntry[] = [
 
 const update = process.argv.includes('--update');
 
+/**
+ * CI splits this check into parallel jobs so each target gets its own runner. The DB is
+ * built once (`--build-db`) and shared via an upload-artifact step; downstream jobs pass
+ * `--target=<name>` to run a single query group against the pre-built DB. With no flags,
+ * the script runs every step in one process (the local-dev path).
+ */
+const buildDbOnly = process.argv.includes('--build-db');
+const targetArg = process.argv.find((a) => a.startsWith('--target='))?.slice('--target='.length);
+const validTargets = new Set(['problems', 'api-surface', 'api-signatures']);
+if (targetArg && !validTargets.has(targetArg)) {
+  console.error(`Unknown --target=${targetArg}. Valid: ${[...validTargets].join(', ')}`);
+  process.exit(2);
+}
+
 const fail = (msg: string): never => {
   console.error(`\n✖ ${msg}`);
   process.exit(1);
@@ -466,19 +480,10 @@ const diffSnapshot = (label: string, file: string, lines: string[]): boolean => 
   return false;
 };
 
-const main = (): void => {
-  console.log(`Using ${ensureCodeql()}`);
-  createDatabase();
-
+/** Returns true on snapshot match, false on drift. */
+const runProblemsTarget = (): boolean => {
   const problems = runProblemQueries();
-
   let ok = true;
-  for (const q of tableQueries) {
-    const lines = computeTable(q.file, q.label);
-    ok = diffSnapshot(q.label, q.snapshot, lines) && ok;
-  }
-  ok = diffSnapshot('api-signatures', signaturesSnapshot, computeApiSignatures()) && ok;
-
   for (const q of problemQueries) {
     const result = problems.get(q.name) ?? { snapshot: [], printable: [] };
     const matched = diffSnapshot(q.label, q.snapshot, result.snapshot);
@@ -488,6 +493,42 @@ const main = (): void => {
     }
     ok = ok && matched;
   }
+  return ok;
+};
+
+const runApiSurfaceTarget = (): boolean => {
+  let ok = true;
+  for (const q of tableQueries) {
+    const lines = computeTable(q.file, q.label);
+    ok = diffSnapshot(q.label, q.snapshot, lines) && ok;
+  }
+  return ok;
+};
+
+const runApiSignaturesTarget = (): boolean =>
+  diffSnapshot('api-signatures', signaturesSnapshot, computeApiSignatures());
+
+const main = (): void => {
+  console.log(`Using ${ensureCodeql()}`);
+
+  if (buildDbOnly) {
+    createDatabase();
+    console.log('\n✓ CodeQL DB built.');
+    return;
+  }
+
+  // Without an explicit target, run the full pipeline (the local-dev path: build DB and
+  // run every check). With `--target=…`, the DB is expected to already exist from a prior
+  // `--build-db` invocation (CI splits the work across jobs).
+  if (!targetArg) createDatabase();
+  else if (!fs.existsSync(dbDir)) {
+    fail(`No CodeQL database at ${dbDir}. Run with --build-db first.`);
+  }
+
+  let ok = true;
+  if (!targetArg || targetArg === 'problems') ok = runProblemsTarget() && ok;
+  if (!targetArg || targetArg === 'api-surface') ok = runApiSurfaceTarget() && ok;
+  if (!targetArg || targetArg === 'api-signatures') ok = runApiSignaturesTarget() && ok;
 
   if (update) return;
   if (!ok) fail('CodeQL API checks failed (snapshot drift).');
