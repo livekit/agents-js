@@ -10,7 +10,7 @@ export interface HealthCheckResult {
   message: string;
 }
 
-interface WorkerResponse {
+export interface WorkerResponse {
   agent_name: string;
   worker_type: string;
   active_jobs: number;

@@ -131,7 +131,7 @@ export class STT extends stt.STT {
     return stream;
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
 
     for (const ref of this.#streams) {
@@ -144,7 +144,7 @@ export class STT extends stt.STT {
     }
   }
 
-  async close() {
+  async close(): Promise<void> {
     // no-op; streams clean up independently
   }
 }
@@ -173,7 +173,7 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
     this.#resetWS.resolve();
   }

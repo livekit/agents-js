@@ -6,7 +6,7 @@ import { extname } from 'node:path';
 import { INFERENCE_METHOD_EN } from './english.js';
 import { INFERENCE_METHOD_MULTILINGUAL } from './multilingual.js';
 
-export { EOUModel } from './base.js';
+export { EOUModel, type EOUOutput, type RawChatItem } from './base.js';
 export { EnglishModel } from './english.js';
 export { MultilingualModel } from './multilingual.js';
 export { getUnicodeCategory, normalizeText } from './utils.js';

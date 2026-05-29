@@ -190,7 +190,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   }
 
   /** Adds a promise to be awaited when {@link JobContext.shutdown | shutdown} is called. */
-  addShutdownCallback(callback: () => Promise<void>) {
+  addShutdownCallback(callback: () => Promise<void>): void {
     this.shutdownCallbacks.push(callback);
   }
 
@@ -244,7 +244,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     e2ee?: E2EEOptions,
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     rtcConfig?: RtcConfiguration,
-  ) {
+  ): Promise<void> {
     if (this.connected) {
       return;
     }
@@ -385,12 +385,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    *
    * @param reason - Optional reason for shutdown
    */
-  shutdown(reason = '') {
+  shutdown(reason = ''): void {
     this.#onShutdown(reason);
   }
 
   /** @internal */
-  onParticipantConnected(p: RemoteParticipant) {
+  onParticipantConnected(p: RemoteParticipant): void {
     for (const callback of this.#participantEntrypoints) {
       if (this.#participantTasks[p.identity!]?.callback == callback) {
         this.#logger.warn(
@@ -411,7 +411,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    */
   addParticipantEntrypoint(
     callback: (job: JobContext<ProcessUserData>, p: RemoteParticipant) => Promise<void>,
-  ) {
+  ): void {
     if (this.#participantEntrypoints.includes(callback)) {
       throw new FunctionExistsError('entrypoints cannot be added more than once');
     }
@@ -419,7 +419,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#participantEntrypoints.push(callback);
   }
 
-  async initRecording() {
+  async initRecording(): Promise<void> {
     const url = new URL(this.#info.url);
     if (!isCloud(url)) {
       return;
@@ -493,12 +493,17 @@ export class JobRequest {
   }
 
   /** Rejects the job. */
-  async reject() {
+  async reject(): Promise<void> {
     await this.#onReject();
   }
 
   /** Accepts the job, launching it on an idle child process. */
-  async accept(name = '', identity = '', metadata = '', attributes?: { [key: string]: string }) {
+  async accept(
+    name = '',
+    identity = '',
+    metadata = '',
+    attributes?: { [key: string]: string },
+  ): Promise<void> {
     if (identity === '') identity = 'agent-' + this.id;
 
     this.#onAccept({ name, identity, metadata, attributes });

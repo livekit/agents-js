@@ -315,7 +315,7 @@ export interface ResponseResource {
 }
 
 // Client Events
-interface BaseClientEvent {
+export interface BaseClientEvent {
   event_id?: string;
   type: ClientEventType;
 }
@@ -446,7 +446,7 @@ export type ClientEvent =
   | ResponseCreateEvent
   | ResponseCancelEvent;
 
-interface BaseServerEvent {
+export interface BaseServerEvent {
   event_id: string;
   type: ServerEventType;
 }

@@ -55,7 +55,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     this.room.on(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
   }
 
-  setParticipant(participant: RemoteParticipant | string | null) {
+  setParticipant(participant: RemoteParticipant | string | null): void {
     this.logger.debug({ participant }, 'setting participant audio input');
     const participantIdentity =
       participant instanceof RemoteParticipant ? participant.identity : participant;
@@ -183,7 +183,7 @@ export class ParticipantAudioInputStream extends AudioInput {
     }) as unknown as ReadableStream<AudioFrame>;
   }
 
-  override async close() {
+  override async close(): Promise<void> {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
     this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);

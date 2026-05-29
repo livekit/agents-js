@@ -51,7 +51,7 @@ interface TextData {
   forwardedSentences: number;
 }
 
-type SyncCallbacks = {
+export type SyncCallbacks = {
   textUpdated: (text: TranscriptionSegment) => void;
 };
 
@@ -84,7 +84,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     this.#speed = opts.speed * STANDARD_SPEECH_RATE;
   }
 
-  pushAudio(frame: AudioFrame) {
+  pushAudio(frame: AudioFrame): void {
     this.#checkNotClosed();
     if (!this.#audioData) {
       this.#audioData = { pushedDuration: 0, done: false };
@@ -94,7 +94,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     this.#audioData.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
   }
 
-  pushText(text: string) {
+  pushText(text: string): void {
     this.#checkNotClosed();
     if (!this.#textData) {
       this.#textData = {
@@ -112,7 +112,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     this.#textData.sentenceStream.pushText(text);
   }
 
-  markAudioSegmentEnd() {
+  markAudioSegmentEnd(): void {
     this.#checkNotClosed();
 
     if (!this.#audioData) {
@@ -124,7 +124,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     this.#audioData = undefined;
   }
 
-  markTextSegmentEnd() {
+  markTextSegmentEnd(): void {
     this.#checkNotClosed();
 
     if (!this.#textData) {
@@ -137,7 +137,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     this.#textData = undefined;
   }
 
-  segmentPlayoutStarted() {
+  segmentPlayoutStarted(): void {
     this.#checkNotClosed();
     this.#playingSegIndex++;
 
@@ -146,7 +146,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     }
   }
 
-  segmentPlayoutFinished() {
+  segmentPlayoutFinished(): void {
     this.#checkNotClosed();
     this.#finishedSegIndex++;
   }
@@ -155,7 +155,7 @@ export class TextAudioSynchronizer extends (EventEmitter as new () => TypedEmitt
     return this.#playedText;
   }
 
-  async close(interrupt: boolean) {
+  async close(interrupt: boolean): Promise<void> {
     if (this.#closed) {
       return;
     }

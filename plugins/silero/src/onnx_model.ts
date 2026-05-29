@@ -6,7 +6,7 @@ import { InferenceSession, Tensor } from 'onnxruntime-node';
 
 export type SampleRate = 8000 | 16000;
 
-export const newInferenceSession = (forceCPU: boolean) => {
+export const newInferenceSession = (forceCPU: boolean): Promise<InferenceSession> => {
   return InferenceSession.create(fileURLToPath(new URL('silero_vad.onnx', import.meta.url).href), {
     interOpNumThreads: 1,
     intraOpNumThreads: 1,

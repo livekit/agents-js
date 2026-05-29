@@ -132,7 +132,35 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
-export function mergeWithDefaults(config: TurnHandlingOptions) {
+export function mergeWithDefaults(config: TurnHandlingOptions): {
+  readonly turnDetection: TurnDetectionMode | undefined;
+  readonly endpointing: {
+    mode: 'fixed' | 'dynamic';
+    minDelay: number;
+    maxDelay: number;
+    alpha: number;
+  };
+  readonly interruption: {
+    enabled: boolean;
+    mode: 'adaptive' | 'vad' | undefined;
+    discardAudioIfUninterruptible: boolean;
+    minDuration: number;
+    minWords: number;
+    falseInterruptionTimeout: number;
+    resumeFalseInterruption: boolean;
+    backchannelBoundary: number | [number, number] | null;
+  };
+  readonly preemptiveGeneration: {
+    enabled: boolean;
+    preemptiveTts: boolean;
+    maxSpeechDuration: number;
+    maxRetries: number;
+  };
+  readonly userTurnLimit: {
+    maxWords: number | null;
+    maxDuration: number | null;
+  };
+} {
   return {
     turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },

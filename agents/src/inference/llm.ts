@@ -53,11 +53,12 @@ export type XAIModels =
   | 'xai/grok-4.20-0309-reasoning'
   | 'xai/grok-4.20-multi-agent-0309';
 
-type ChatCompletionPredictionContentParam =
+export type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
-type WebSearchOptions = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions>;
-type ToolChoice = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice']>;
-type Verbosity = 'low' | 'medium' | 'high';
+export type WebSearchOptions =
+  Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions>;
+export type ToolChoice = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice']>;
+export type Verbosity = 'low' | 'medium' | 'high';
 
 export interface ChatCompletionOptions extends Record<string, unknown> {
   frequency_penalty?: number;

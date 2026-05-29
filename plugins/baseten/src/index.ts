@@ -4,7 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export { LLM } from './llm.js';
-export { STT } from './stt.js';
+export { STT, SpeechStream } from './stt.js';
 export { TTS, ChunkedStream } from './tts.js';
 export type { BasetenLLMOptions, BasetenSttOptions, BasetenTTSOptions } from './types.js';
 class BasetenPlugin extends Plugin {

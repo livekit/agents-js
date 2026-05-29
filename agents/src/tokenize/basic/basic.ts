@@ -8,7 +8,7 @@ import { splitParagraphs } from './paragraph.js';
 import { splitSentences } from './sentence.js';
 import { splitWords } from './word.js';
 
-interface TokenizerOptions {
+export interface TokenizerOptions {
   language: string;
   minSentenceLength: number;
   streamContextLength: number;

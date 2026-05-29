@@ -15,7 +15,7 @@ import { ChunkedStream, SynthesizeStream, TTS, type TTSCapabilities } from './tt
  * Internal status tracking for each TTS instance.
  * @internal
  */
-interface TTSStatus {
+export interface TTSStatus {
   available: boolean;
   recoveringTask: Task<void> | null;
 }

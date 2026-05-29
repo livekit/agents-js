@@ -23,7 +23,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 /**
  * Internal status tracking for each LLM instance.
  */
-interface LLMStatus {
+export interface LLMStatus {
   available: boolean;
   recoveringTask: Promise<void> | null;
 }

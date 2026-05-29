@@ -462,7 +462,7 @@ export class RoomIO {
   }
 
   /** Switch to a different participant */
-  setParticipant(participantIdentity: string | null) {
+  setParticipant(participantIdentity: string | null): void {
     this.logger.debug({ participantIdentity }, 'setting participant');
     if (participantIdentity === null) {
       this.unsetParticipant();
@@ -490,7 +490,7 @@ export class RoomIO {
     });
   }
 
-  unsetParticipant() {
+  unsetParticipant(): void {
     this.participantIdentity = null;
     this.participantAvailableFuture = new Future<RemoteParticipant>();
     this.audioInput?.setParticipant(null);
@@ -500,7 +500,7 @@ export class RoomIO {
     });
   }
 
-  start() {
+  start(): void {
     // -- create inputs --
 
     if (this.inputOptions.textEnabled) {
@@ -591,7 +591,7 @@ export class RoomIO {
     );
   }
 
-  async close() {
+  async close(): Promise<void> {
     this.room.off(RoomEvent.ParticipantConnected, this.onParticipantConnected);
     this.room.off(RoomEvent.ConnectionStateChanged, this.onConnectionStateChanged);
     this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);

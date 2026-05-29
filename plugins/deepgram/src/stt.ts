@@ -135,7 +135,7 @@ export class STT extends stt.STT {
     throw new Error('Recognize is not supported on Deepgram STT');
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = {
       ...this.#opts,
       ...opts,
@@ -148,7 +148,7 @@ export class STT extends stt.STT {
     return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 
-  async close() {
+  async close(): Promise<void> {
     this.abortController.abort();
   }
 }
@@ -249,7 +249,7 @@ export class SpeechStream extends stt.SpeechStream {
     this.closed = true;
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
     this.#resetWS.resolve();
   }

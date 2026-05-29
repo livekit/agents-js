@@ -221,7 +221,7 @@ const defaultSTTOptions: STTOptions = {
   useRealtime: true,
 };
 
-type ResolvedSTTOptions = Omit<STTOptions, 'apiKey'> & { apiKey: string };
+export type ResolvedSTTOptions = Omit<STTOptions, 'apiKey'> & { apiKey: string };
 
 export class STT extends stt.STT {
   #opts: ResolvedSTTOptions;

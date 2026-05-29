@@ -18,8 +18,11 @@ function filterExtra(extra: Record<string, unknown>): Record<string, unknown> {
   return filtered;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function toChatCtx(chatCtx: ChatContext, injectDummyUserMessage: boolean = true) {
+export async function toChatCtx(
+  chatCtx: ChatContext,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  injectDummyUserMessage: boolean = true,
+): Promise<Record<string, any>[]> {
   const itemGroups = groupToolCalls(chatCtx);
   const messages: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -196,7 +199,7 @@ export async function toResponsesChatCtx(
   chatCtx: ChatContext,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   injectDummyUserMessage: boolean = true,
-) {
+): Promise<Record<string, any>[]> {
   const itemGroups = groupToolCalls(chatCtx);
   const messages: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 

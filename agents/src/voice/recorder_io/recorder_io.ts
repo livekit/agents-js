@@ -400,7 +400,7 @@ export class RecorderIO {
   }
 }
 
-class RecorderAudioInput extends AudioInput {
+export class RecorderAudioInput extends AudioInput {
   private source: AudioInput;
   private recorderIO: RecorderIO;
   private accFrames: AudioFrame[] = [];
@@ -531,7 +531,7 @@ class RecorderAudioInput extends AudioInput {
   }
 }
 
-class RecorderAudioOutput extends AudioOutput {
+export class RecorderAudioOutput extends AudioOutput {
   private recorderIO: RecorderIO;
   private writeFn: (buf: AudioFrame[]) => void;
   private accFrames: AudioFrame[] = [];

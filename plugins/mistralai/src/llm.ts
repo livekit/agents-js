@@ -25,7 +25,7 @@ import type { MistralChatModels } from './models.js';
 
 const DEFAULT_MODEL: MistralChatModels = 'ministral-8b-latest';
 
-interface LLMOpts {
+export interface LLMOpts {
   model: MistralChatModels | string;
   maxCompletionTokens: number | null;
   temperature: number | null;

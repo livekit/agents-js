@@ -1,0 +1,43 @@
+ #      Precompiled CodeQL query
+---
+format:
+- 202308110
+creator: 2.25.4
+name: forgotten-exports.ql
+dbscheme: 26a123164be893893e2aa0374d820785decf55af
+stages:
+- cached: 6fa9a6654d92823046a69c8a74713fb2
+  debugInfo: 03ffd70fe0e3bae2c125580469c77379
+- cached: a58f23d3556072b65bc0288c0937a955
+  debugInfo: c7fe66e936914d527d8f1d44d6b9848d
+- cached: e471abcb359cdea2055992a4b4b72f16
+  debugInfo: a64c98da34a7bd523c9159f55ede5496
+- cached: a671da0a139175020c38dc070de3505e
+  debugInfo: 8fa72e60c34a7c06379925527a51df6b
+- cached: aca6014f8ff942cccea2170b532c92c6
+  debugInfo: a260d8722816c95d7cc6b7fa7551ed33
+- cached: 132c60826c0b5477e28c81ea529a96e8
+  debugInfo: 24deb795be62fa727ad1a5bd7fb25e91
+- cached: 4fc40ca116d790bc8aa0bfb2d8d84f6b
+  debugInfo: 5cfd1711cad69447ff91ba2743e0e593
+- cached: df2a7d21e09a0023a5581727a405a6c6
+  debugInfo: ce55d4d1428c078826384ff201d52a30
+- cached: 0825b1bbf76ccf3a5e8a9bbca6d27fed
+  debugInfo: 716dee3ec2e5c98af50bad4b0feb9d5d
+- cached: 30332d72a3cd1aea2f865a3b1f94a1eb
+  debugInfo: d6e5093b2f829267053da995caad75b5
+- cached: 1a8ce7dfaae4425780a36ec46fdb047d
+  debugInfo: 4f327d70d25640b12582fc39ce1880f2
+- cached: ce7bca6b98421b3c1f4e87e6dff7b794
+  debugInfo: 708f0fde78604ae9e4796b52b68b222c
+- cached: 9ad3c2d998c36cf939bc6108400bae95
+  debugInfo: e464128560caba278a34e23a81beb4de
+- cached: 68a722aa7c3b2c7656d026231c79b1fc
+  debugInfo: f646a84c1e69186b7712c58e7811421d
+- cached: 8be0e0bf135dadc7a78e933f3d0c0761
+  debugInfo: f833f90eb0ad2f447cfbc5877dc4cc65
+results:
+  '#select':
+    resultArranger: 2"ta"ei120s
+inputsDigest: 9ed4f153038977d1661425ad4e329a25
+overlayVersion: 4

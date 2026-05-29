@@ -83,7 +83,7 @@ export abstract class RealtimeModel {
     this._capabilities = capabilities;
   }
 
-  get capabilities() {
+  get capabilities(): RealtimeCapabilities {
     return this._capabilities;
   }
 
@@ -116,7 +116,7 @@ export abstract class RealtimeSession extends EventEmitter {
     this._mainTask = Task.from((controller) => this._mainTaskImpl(controller.signal));
   }
 
-  get realtimeModel() {
+  get realtimeModel(): RealtimeModel {
     return this._realtimeModel;
   }
 

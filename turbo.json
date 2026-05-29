@@ -105,13 +105,6 @@
     "lint": {
       "outputs": []
     },
-    "api:check": {
-      "cache": false,
-      "dependsOn": ["^build"]
-    },
-    "api:update": {
-      "dependsOn": ["^build"]
-    },
     "throws:check": {
       "outputs": []
     }

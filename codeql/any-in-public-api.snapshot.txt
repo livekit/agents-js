@@ -1,0 +1,33 @@
+agents	Public API Agent uses 'unknown' in a type annotation.
+agents	Public API InferenceRunner uses 'unknown' in a type annotation.
+agents	Public API InvalidErrorType uses 'unknown' in a type annotation.
+agents	Public API JobContext uses 'unknown' in a type annotation.
+agents	Public API JobProcess uses 'unknown' in a type annotation.
+agents	Public API Task.current uses 'unknown' in a type annotation.
+agents	Public API exported function asError uses 'unknown' in a type annotation.
+agents	Public API exported function cancelAndWait uses 'any' in a type annotation.
+agents	Public API exported function dedent uses 'unknown' in a type annotation.
+agents	Public API exported function defaultInitializeProcessFunc uses 'unknown' in a type annotation.
+agents	Public API exported function defineAgent uses 'unknown' in a type annotation.
+agents	Public API exported function getJobContext uses 'unknown' in a type annotation.
+agents	Public API exported function isAPIError uses 'unknown' in a type annotation.
+agents	Public API exported function isAgent uses 'unknown' in a type annotation.
+agents	Public API exported function isFfmpegTeardownError uses 'unknown' in a type annotation.
+agents	Public API exported function isImmutableArray uses 'unknown' in a type annotation.
+agents	Public API exported function isPending uses 'unknown' in a type annotation.
+agents	Public API exported function isStreamClosedError uses 'unknown' in a type annotation.
+agents	Public API exported function isTimedString uses 'unknown' in a type annotation.
+agents	Public API exported function isWritableStreamClosedError uses 'unknown' in a type annotation.
+agents	Public API exported function loopAudioFramesFromFile uses 'unknown' in a type annotation.
+agents	Public API exported function toError uses 'unknown' in a type annotation.
+agents	Public API exported function withResolvers uses 'unknown' in a type annotation.
+plugins/google	Public API AIPlatformLLM.chat uses 'unknown' in a type annotation.
+plugins/google	Public API AIPlatformLLMOptions uses 'unknown' in a type annotation.
+plugins/google	Public API LLM.chat uses 'unknown' in a type annotation.
+plugins/lemonslice	Public API AvatarSessionOptions uses 'unknown' in a type annotation.
+plugins/liveavatar	Public API AvatarSession.sendEvent uses 'unknown' in a type annotation.
+plugins/liveavatar	Public API StopSessionResponse uses 'unknown' in a type annotation.
+plugins/mistralai	Public API LLM.chat uses 'unknown' in a type annotation.
+plugins/openai	Public API LLM.chat uses 'unknown' in a type annotation.
+plugins/tavus	Public API CreateConversationOptions uses 'unknown' in a type annotation.
+plugins/tavus	Public API CreatePersonaOptions uses 'unknown' in a type annotation.

@@ -80,7 +80,7 @@ function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 /**
  * Internal realtime options for Google Realtime API
  */
-interface RealtimeOptions {
+export interface RealtimeOptions {
   model: LiveAPIModels | string;
   apiKey?: string;
   voice: Voice | string;
@@ -407,7 +407,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session() {
+  session(): RealtimeSession {
     return new RealtimeSession(this);
   }
 
@@ -610,7 +610,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     toolChoice?: llm.ToolChoice;
     toolBehavior?: types.Behavior;
     toolResponseScheduling?: types.FunctionResponseScheduling;
-  }) {
+  }): void {
     let shouldRestart = false;
 
     if (options.voice !== undefined && this.options.voice !== options.voice) {
@@ -935,7 +935,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return Boolean(gen.outputText) || gen._firstTokenTimestamp !== undefined;
   }
 
-  async interrupt() {
+  async interrupt(): Promise<void> {
     // Gemini Live treats activity start as interruption, so we rely on startUserActivity to handle it
     if (this.options.realtimeInputConfig?.activityHandling === ActivityHandling.NO_INTERRUPTION) {
       if (LK_GOOGLE_DEBUG) {
@@ -953,7 +953,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.startUserActivity();
   }
 
-  async truncate(_options: { messageId: string; audioEndMs: number; audioTranscript?: string }) {
+  async truncate(_options: {
+    messageId: string;
+    audioEndMs: number;
+    audioTranscript?: string;
+  }): Promise<void> {
     this.#logger.warn('truncate is not supported by the Google Realtime API.');
   }
 
@@ -1865,9 +1869,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.sessionShouldClose.set();
   }
 
-  async commitAudio() {}
+  async commitAudio(): Promise<void> {}
 
-  async clearAudio() {}
+  async clearAudio(): Promise<void> {}
 
   private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
     if (this.inputResampler) {

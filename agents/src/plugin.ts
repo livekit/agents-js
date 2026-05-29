@@ -25,12 +25,12 @@ export abstract class Plugin {
     this.#package = opts.package;
   }
 
-  static registerPlugin(plugin: Plugin) {
+  static registerPlugin(plugin: Plugin): void {
     Plugin.registeredPlugins.push(plugin);
     Plugin.emitter.emit(PluginEventTypes.PluginRegistered, plugin);
   }
 
-  downloadFiles() {}
+  downloadFiles(): void {}
 
   get package(): string {
     return this.#package;

@@ -69,7 +69,7 @@ export class AvatarSession extends voice.AvatarSession {
       livekitApiKey?: string;
       livekitApiSecret?: string;
     },
-  ) {
+  ): Promise<void> {
     await super.start(agentSession, room);
 
     const logger = log().child({ module: 'AnamAvatar' });

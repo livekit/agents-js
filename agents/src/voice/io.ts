@@ -180,7 +180,7 @@ export abstract class AudioOutput extends EventEmitter {
    * Developers building audio sinks must call this method when a playback/segment is finished.
    * Segments are segmented by calls to flush() or clearBuffer()
    */
-  onPlaybackFinished(options: PlaybackFinishedEvent) {
+  onPlaybackFinished(options: PlaybackFinishedEvent): void {
     if (this.playbackFinishedCount >= this.playbackSegmentsCount) {
       this.logger.warn('playback_finished called more times than playback segments were captured');
       return;

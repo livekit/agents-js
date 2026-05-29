@@ -28,7 +28,7 @@ export class RunContext<UserData = UnknownUserData> {
    * this method only waits for the assistant's spoken response prior to running
    * this tool to finish playing.
    */
-  async waitForPlayout() {
+  async waitForPlayout(): Promise<void> {
     return this.speechHandle._waitForGeneration(this.initialStepIdx);
   }
 }

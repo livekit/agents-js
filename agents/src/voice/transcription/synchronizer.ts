@@ -19,7 +19,7 @@ import {
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
 
-interface TextSyncOptions {
+export interface TextSyncOptions {
   speed: number;
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
@@ -141,7 +141,7 @@ interface AudioData {
   annotatedRate: SpeakingRateData | null;
 }
 
-class SegmentSynchronizerImpl {
+export class SegmentSynchronizerImpl {
   private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
@@ -211,15 +211,15 @@ class SegmentSynchronizerImpl {
     this.captureTask = this.captureTaskImpl();
   }
 
-  get closed() {
+  get closed(): boolean {
     return this.closedFuture.done;
   }
 
-  get audioInputEnded() {
+  get audioInputEnded(): boolean {
     return this.audioData.done;
   }
 
-  get textInputEnded() {
+  get textInputEnded(): boolean {
     return this.textData.done;
   }
 
@@ -246,7 +246,7 @@ class SegmentSynchronizerImpl {
     this.startFuture.resolve();
   }
 
-  pushAudio(frame: AudioFrame) {
+  pushAudio(frame: AudioFrame): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushAudio called after close');
       return;
@@ -267,7 +267,7 @@ class SegmentSynchronizerImpl {
     this.audioData.pushedDuration += frameDuration;
   }
 
-  endAudioInput() {
+  endAudioInput(): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.endAudioInput called after close');
       return;
@@ -276,7 +276,7 @@ class SegmentSynchronizerImpl {
     this.audioData.done = true;
   }
 
-  pushText(text: string | TimedString) {
+  pushText(text: string | TimedString): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.pushText called after close');
       return;
@@ -301,7 +301,7 @@ class SegmentSynchronizerImpl {
     this.textData.pushedText += textStr;
   }
 
-  endTextInput() {
+  endTextInput(): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.endTextInput called after close');
       return;
@@ -346,7 +346,7 @@ class SegmentSynchronizerImpl {
     }
   }
 
-  markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
+  markPlaybackFinished(_playbackPosition: number, interrupted: boolean): void {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.markPlaybackFinished called after close');
       return;
@@ -655,7 +655,7 @@ export class TranscriptionSynchronizer {
     this.rotateSegment();
   }
 
-  rotateSegment() {
+  rotateSegment(): void {
     if (this.closed) {
       return;
     }
@@ -699,7 +699,7 @@ export class TranscriptionSynchronizer {
   }
 }
 
-class SyncedAudioOutput extends AudioOutput {
+export class SyncedAudioOutput extends AudioOutput {
   private pushedDuration: number = 0.0;
 
   constructor(
@@ -766,7 +766,7 @@ class SyncedAudioOutput extends AudioOutput {
     this.synchronizer._impl.pushAudio(frame);
   }
 
-  flush() {
+  flush(): void {
     super.flush();
     this.nextInChainAudio.flush();
 
@@ -791,7 +791,7 @@ class SyncedAudioOutput extends AudioOutput {
     this.synchronizer._impl.endAudioInput();
   }
 
-  clearBuffer() {
+  clearBuffer(): void {
     this.nextInChainAudio.clearBuffer();
   }
 
@@ -804,7 +804,7 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   // this is going to be automatically called by the next_in_chain
-  onPlaybackFinished(ev: PlaybackFinishedEvent) {
+  onPlaybackFinished(ev: PlaybackFinishedEvent): void {
     if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
       return;
@@ -832,7 +832,7 @@ class SyncedAudioOutput extends AudioOutput {
   }
 }
 
-class SyncedTextOutput extends TextOutput {
+export class SyncedTextOutput extends TextOutput {
   private capturing: boolean = false;
   private logger = log();
 
@@ -883,7 +883,7 @@ class SyncedTextOutput extends TextOutput {
     this.synchronizer._impl.pushText(text);
   }
 
-  async flush() {
+  async flush(): Promise<void> {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 

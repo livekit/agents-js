@@ -201,16 +201,16 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     }
   }
 
-  updateInputStream(audioStream: ReadableStream<AudioFrame>) {
+  updateInputStream(audioStream: ReadableStream<AudioFrame>): void {
     this.deferredInputStream.setSource(audioStream);
   }
 
-  detachInputStream() {
+  detachInputStream(): void {
     this.deferredInputStream.detachSource();
   }
 
   /** @deprecated Use `updateInputStream` instead */
-  pushFrame(frame: AudioFrame) {
+  pushFrame(frame: AudioFrame): void {
     // TODO(AJS-395): remove this method
     if (this.inputClosed) {
       throw new Error('Input is closed');
@@ -221,7 +221,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.inputWriter.write(frame);
   }
 
-  flush() {
+  flush(): void {
     if (this.inputClosed) {
       throw new Error('Input is closed');
     }
@@ -231,7 +231,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.inputWriter.write(VADStream.FLUSH_SENTINEL);
   }
 
-  endInput() {
+  endInput(): void {
     if (this.inputClosed) {
       throw new Error('Input is closed');
     }
@@ -251,7 +251,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     });
   }
 
-  close() {
+  close(): void {
     this.outputWriter.releaseLock();
     this.outputReader.cancel();
     this.output.writable.close();

@@ -36,9 +36,17 @@ pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
 pnpm format:check           # Prettier check
 pnpm format:write           # Prettier format
-pnpm api:check              # API Extractor validation
-pnpm api:update             # Update API declarations
+pnpm api:check              # CodeQL public-API checks (see below)
+pnpm api:update             # Refresh the CodeQL snapshots + compile cache (commit both)
 ```
+
+> `api:check`/`api:update` require the [CodeQL CLI](https://github.com/github/codeql-cli-binaries)
+> on `PATH` (`brew install codeql`). The queries live in `codeql/queries/` and each is compared
+> against a committed snapshot in `codeql/*.snapshot.txt`; `api:check` fails only on drift, so
+> existing debt is tracked and regressions are blocked. The checks are: public API surface,
+> public API signatures (params + return types), forgotten exports, missing return types on
+> the public API, `any`/`unknown` in public signatures, and public APIs that leak an
+> undeclared dependency. See `scripts/codeql-api-check.ts` (run with Node ≥ 24).
 
 ### Running an example agent
 
@@ -154,7 +162,6 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **TypeScript**: strict mode, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`, target ES2022, module node16.
 - **Time units**: Use milliseconds for all time-based values by default. Only use seconds when the name explicitly ends with `InS`.
 - **Changesets**: All packages in `agents/` and `plugins/` release together (fixed versioning). Run `pnpm changeset` to add a changeset before PRing. The examples package is ignored.
-- **API Extractor**: Public API surface is tracked. Run `pnpm api:check` after changing exports and `pnpm api:update` to update declarations.
 
 ## Testing
 

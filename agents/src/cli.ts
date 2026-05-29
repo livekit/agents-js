@@ -90,7 +90,7 @@ const runServer = async (args: CliArgs) => {
  * }
  * ```
  */
-export const runApp = (opts: ServerOptions) => {
+export const runApp = (opts: ServerOptions): void => {
   const logLevelOption = (defaultLevel: string) =>
     new Option('--log-level <level>', 'Set the logging level')
       .choices(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])

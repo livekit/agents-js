@@ -166,7 +166,7 @@ export class TTS extends tts.TTS {
    *
    * @param opts - Options to update
    */
-  updateOptions(opts: { voiceName?: GeminiVoices | string }) {
+  updateOptions(opts: { voiceName?: GeminiVoices | string }): void {
     if (opts.voiceName !== undefined) {
       this.#opts.voiceName = opts.voiceName;
     }

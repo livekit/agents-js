@@ -21,7 +21,7 @@ export class AssignmentTimeoutError extends Error {
 /**
  * Interface for API error options
  */
-interface APIErrorOptions {
+export interface APIErrorOptions {
   body?: object | null;
   retryable?: boolean;
 }
@@ -59,7 +59,7 @@ export class APIError extends Error {
 /**
  * Interface for API status error options
  */
-interface APIStatusErrorOptions extends APIErrorOptions {
+export interface APIStatusErrorOptions extends APIErrorOptions {
   statusCode?: number;
   requestId?: string | null;
 }

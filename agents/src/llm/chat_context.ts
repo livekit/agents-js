@@ -4,7 +4,9 @@
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
+import type { GoogleFormatData } from './provider_format/google.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
+import type { MistralFormatData } from './provider_format/mistralai.js';
 import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
 
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
@@ -37,7 +39,7 @@ export interface AudioContent {
   transcript?: string;
 }
 
-type InstructionsOptions = {
+export type InstructionsOptions = {
   /** The audio/voice variant of the instructions. */
   audio: string;
   /** The text variant of the instructions; falls back to `audio` when omitted. */
@@ -352,7 +354,7 @@ export class ChatMessage {
     transcriptConfidence?: number;
     metrics?: MetricsReport;
     extra?: Record<string, unknown>;
-  }) {
+  }): ChatMessage {
     return new ChatMessage(params);
   }
 
@@ -491,7 +493,7 @@ export class FunctionCall {
     extra?: Record<string, unknown>;
     groupId?: string;
     thoughtSignature?: string;
-  }) {
+  }): FunctionCall {
     return new FunctionCall(params);
   }
 
@@ -571,7 +573,7 @@ export class FunctionCallOutput {
     id?: string;
     createdAt?: number;
     name?: string;
-  }) {
+  }): FunctionCallOutput {
     return new FunctionCallOutput(params);
   }
 
@@ -622,7 +624,7 @@ export class AgentHandoffItem {
     newAgentId: string;
     id?: string;
     createdAt?: number;
-  }) {
+  }): AgentHandoffItem {
     return new AgentHandoffItem(params);
   }
 
@@ -687,7 +689,7 @@ export class AgentConfigUpdate {
     toolsAdded?: string[];
     toolsRemoved?: string[];
     createdAt?: number;
-  }) {
+  }): AgentConfigUpdate {
     return new AgentConfigUpdate(params);
   }
 
@@ -983,8 +985,15 @@ export class ChatContext {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async toProviderFormat(format: ProviderFormat, injectDummyUserMessage: boolean = true) {
+  async toProviderFormat(
+    format: ProviderFormat,
+    injectDummyUserMessage: boolean = true,
+  ): Promise<
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | Record<string, any>[]
+    | [Record<string, unknown>[], GoogleFormatData]
+    | [Record<string, unknown>[], MistralFormatData]
+  > {
     return await toChatCtx(format, this, injectDummyUserMessage);
   }
 

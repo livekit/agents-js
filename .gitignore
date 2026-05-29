@@ -205,3 +205,4 @@ examples/src/test_*.ts
 .traces/
 *.traces.json
 .worktrees/
+.codeql/

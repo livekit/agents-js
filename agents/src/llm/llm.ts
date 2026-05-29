@@ -327,7 +327,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this.output.next();
   }
 
-  close() {
+  close(): void {
     this.abortController.abort();
   }
 

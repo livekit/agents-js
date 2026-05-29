@@ -44,7 +44,7 @@ const TELEPHONY_CODECS = new Set<TTSOutputAudioCodec>(['mulaw', 'alaw']);
 // V3 supports temperature (pitch, loudness, enablePreprocessing are NOT supported)
 // ---------------------------------------------------------------------------
 
-interface TTSBaseOptions {
+export interface TTSBaseOptions {
   /** Sarvam API key. Defaults to $SARVAM_API_KEY */
   apiKey?: string;
   /**
@@ -98,7 +98,7 @@ export type TTSOptions = TTSV2Options | TTSV3Options;
 // Resolved (internal) options — flat union of all fields
 // ---------------------------------------------------------------------------
 
-interface ResolvedTTSOptions {
+export interface ResolvedTTSOptions {
   apiKey: string;
   streaming: boolean;
   model: TTSModels;
@@ -338,7 +338,7 @@ export class TTS extends tts.TTS {
    * dictId, enablePreprocessing) are dropped so resolveOptions re-applies
    * the correct defaults for the new model.
    */
-  updateOptions(opts: Partial<TTSOptions>) {
+  updateOptions(opts: Partial<TTSOptions>): void {
     const modelChanging = opts.model != null && opts.model !== this.#opts.model;
 
     const base: Partial<TTSOptions> = modelChanging

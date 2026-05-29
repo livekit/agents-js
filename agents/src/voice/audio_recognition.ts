@@ -105,11 +105,11 @@ export class STTPipeline {
     this._pumpTask.addDoneCallback(() => this._eventChannel.close());
   }
 
-  get audioChannel() {
+  get audioChannel(): StreamChannel<AudioFrame, Error> {
     return this._audioChannel;
   }
 
-  get eventChannel() {
+  get eventChannel(): StreamChannel<SpeechEvent, Error> {
     return this._eventChannel;
   }
 
@@ -388,7 +388,7 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  get inputStartedAt() {
+  get inputStartedAt(): number | undefined {
     return this._inputStartedAt;
   }
 
@@ -405,7 +405,7 @@ export class AudioRecognition {
     }
   }
 
-  async start(options?: { sttPipeline?: STTPipeline }) {
+  async start(options?: { sttPipeline?: STTPipeline }): Promise<void> {
     this.startSttTasks(options?.sttPipeline);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
@@ -421,7 +421,7 @@ export class AudioRecognition {
     });
   }
 
-  async stop() {
+  async stop(): Promise<void> {
     await this.sttConsumerTask?.cancelAndWait();
     await this.sttForwardTask?.cancelAndWait();
     await this.vadTask?.cancelAndWait();
@@ -468,7 +468,7 @@ export class AudioRecognition {
     this.backchannelBoundaryCallback = undefined;
   }
 
-  async onStartOfAgentSpeech(startedAt: number) {
+  async onStartOfAgentSpeech(startedAt: number): Promise<boolean> {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     this.userTurnTracker = { words: 0, transcript: '' };
@@ -485,7 +485,7 @@ export class AudioRecognition {
     return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
   }
 
-  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number): Promise<void> {
     this.cancelBackchannelBoundary();
 
     const now = Date.now();
@@ -536,7 +536,11 @@ export class AudioRecognition {
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
-  async onStartOfOverlapSpeech(speechDuration: number, startedAt: number, userSpeakingSpan?: Span) {
+  async onStartOfOverlapSpeech(
+    speechDuration: number,
+    startedAt: number,
+    userSpeakingSpan?: Span,
+  ): Promise<void> {
     if (this.isAgentSpeaking) {
       if (!this.endpointing.overlapping) {
         this.endpointing.onStartOfSpeech(startedAt, true);
@@ -552,7 +556,10 @@ export class AudioRecognition {
   }
 
   /** End interruption inference when overlap speech ends. */
-  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span) {
+  async onEndOfOverlapSpeech(
+    endedAt: number,
+    userSpeakingSpan?: Span,
+  ): Promise<boolean | undefined> {
     if (!this.isInterruptionEnabled) {
       return;
     }
@@ -1526,11 +1533,11 @@ export class AudioRecognition {
     this.logger.debug('Interruption task closed');
   }
 
-  setInputAudioStream(audioStream: ReadableStream<AudioFrame>) {
+  setInputAudioStream(audioStream: ReadableStream<AudioFrame>): void {
     this.deferredInputStream.setSource(audioStream);
   }
 
-  detachInputAudioStream() {
+  detachInputAudioStream(): void {
     this.deferredInputStream.detachSource();
   }
 
@@ -1565,7 +1572,7 @@ export class AudioRecognition {
     return transform.readable;
   }
 
-  clearUserTurn() {
+  clearUserTurn(): void {
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';
@@ -1627,7 +1634,7 @@ export class AudioRecognition {
     });
   }
 
-  commitUserTurn(audioDetached: boolean) {
+  commitUserTurn(audioDetached: boolean): void {
     const commitUserTurnTask =
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
@@ -1671,7 +1678,7 @@ export class AudioRecognition {
       });
   }
 
-  async close() {
+  async close(): Promise<void> {
     this.closed = true;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();

@@ -153,7 +153,7 @@ export function convertMidConversationInstructions(
  * @param chatCtx - The chat context containing all conversation items
  * @returns A list of ChatItemGroup objects representing the grouped conversation
  */
-export function groupToolCalls(chatCtx: ChatContext) {
+export function groupToolCalls(chatCtx: ChatContext): ChatItemGroup[] {
   const itemGroups: Record<string, ChatItemGroup> = {};
   const insertionOrder: Record<string, number> = {};
   const toolOutputs: FunctionCallOutput[] = [];

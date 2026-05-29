@@ -130,7 +130,7 @@ export class _SanitizedOutput {
     toolCallOutput?: FunctionCallOutput;
     replyRequired?: boolean;
     agentTask?: Agent;
-  }) {
+  }): _SanitizedOutput {
     const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
     return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
   }
@@ -185,7 +185,7 @@ export class ToolExecutionOutput {
     rawOutput: unknown;
     rawException?: Error;
     replyRequired?: boolean;
-  }) {
+  }): ToolExecutionOutput {
     const {
       toolCall,
       toolCallOutput,
@@ -224,7 +224,11 @@ export class _JsOutput {
     this.exception = exception;
   }
 
-  static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
+  static create(params: {
+    toolCall: FunctionCall;
+    output?: unknown;
+    exception?: Error;
+  }): _JsOutput {
     const { toolCall, output = undefined, exception = undefined } = params;
     return new _JsOutput(toolCall, output, exception);
   }
@@ -401,7 +405,7 @@ export function updateInstructions(options: {
   chatCtx: ChatContext;
   instructions: string | Instructions;
   addIfMissing: boolean;
-}) {
+}): void {
   const { chatCtx, instructions, addIfMissing } = options;
 
   const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
@@ -440,7 +444,7 @@ export function updateInstructions(options: {
 export function applyInstructionsModality(
   chatCtx: ChatContext,
   options: { modality: 'audio' | 'text' },
-) {
+): void {
   const { modality } = options;
   const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
   if (idx === undefined) return;
@@ -1227,7 +1231,7 @@ async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Pr
   return await abortFut.await;
 }
 
-export function removeInstructions(chatCtx: ChatContext) {
+export function removeInstructions(chatCtx: ChatContext): void {
   // loop in case there are items with the same id (shouldn't happen!)
   while (true) {
     const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);

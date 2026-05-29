@@ -139,7 +139,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   `-- worker.ts
 |   |-- CHANGELOG.md
 |   |-- README.md
-|   |-- api-extractor.json
 |   |-- package.json
 |   |-- tsconfig.json
 |   `-- tsup.config.ts
@@ -179,7 +178,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- tts.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -192,7 +190,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- stt.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -204,7 +201,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- tts.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -226,7 +222,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- utils.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -246,7 +241,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- onnxruntime.d.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -258,7 +252,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- tts.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -278,7 +271,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- tts.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -290,7 +282,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- tts.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -303,7 +294,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |   |   |   `-- vad.ts
 |   |   |-- CHANGELOG.md
 |   |   |-- README.md
-|   |   |-- api-extractor.json
 |   |   |-- package.json
 |   |   |-- tsconfig.json
 |   |   `-- tsup.config.ts
@@ -327,7 +317,6 @@ Realtime framework for production-grade multimodal and voice AI agents.
 |-- NOTICE
 |-- README.md
 |-- REUSE.toml
-|-- api-extractor-shared.json
 |-- package.json
 |-- pnpm-lock.yaml
 |-- pnpm-workspace.yaml

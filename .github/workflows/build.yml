@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [next, main, 0.x]
 
+permissions:
+  contents: read
+
 jobs:
   reuse:
     name: REUSE-3.2
@@ -50,3 +53,43 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build
+  # Public API drift checks via CodeQL. Compile-cache lives at `codeql/.compile-cache/`
+  # in the repo (passed to `codeql --compilation-cache=`), so the ~20s/query JS QL std
+  # library compile is hit-from-disk every time. `pnpm api:update` regenerates both the
+  # snapshots and the compile-cache, so they stay in sync.
+  api-check:
+    name: Public API (CodeQL)
+    runs-on: ubuntu-latest
+    env:
+      # CodeQL CLI bundle (CLI + standard query packs). Keep in sync with the version used to
+      # regenerate the committed snapshots in codeql/*.snapshot.txt.
+      CODEQL_BUNDLE: codeql-bundle-v2.25.4
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # The api-check script uses only node built-ins + the `codeql` CLI, so we don't need
+      # pnpm or node_modules here. Node ≥ 24's built-in TS loader runs the script directly.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Cache CodeQL CLI
+        id: cache-codeql
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/codeql
+          key: codeql-cli-${{ env.CODEQL_BUNDLE }}-linux64
+      - name: Install CodeQL CLI
+        if: steps.cache-codeql.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$CODEQL_BUNDLE" \
+            --repo github/codeql-action \
+            --pattern codeql-bundle-linux64.tar.gz \
+            --output "$RUNNER_TEMP/codeql.tar.gz"
+          tar -xzf "$RUNNER_TEMP/codeql.tar.gz" -C "$RUNNER_TEMP"
+      - name: Add CodeQL CLI to PATH
+        run: echo "$RUNNER_TEMP/codeql" >> "$GITHUB_PATH"
+      - name: Install query pack dependencies
+        run: codeql pack install codeql
+      - name: Check public API
+        run: node scripts/codeql-api-check.ts

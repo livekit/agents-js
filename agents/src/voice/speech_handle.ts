@@ -119,7 +119,7 @@ export class SpeechHandle {
     stepIndex?: number;
     inputDetails?: InputDetails;
     parent?: SpeechHandle;
-  }) {
+  }): SpeechHandle {
     const {
       allowInterruptions = true,
       stepIndex = 0,
@@ -274,7 +274,7 @@ export class SpeechHandle {
     await ThrowsPromise.race(fs);
   }
 
-  addDoneCallback(callback: (sh: SpeechHandle) => void) {
+  addDoneCallback(callback: (sh: SpeechHandle) => void): void {
     if (this.done()) {
       queueMicrotask(() => callback(this));
       return;
@@ -282,7 +282,7 @@ export class SpeechHandle {
     this.doneCallbacks.add(callback);
   }
 
-  removeDoneCallback(callback: (sh: SpeechHandle) => void) {
+  removeDoneCallback(callback: (sh: SpeechHandle) => void): void {
     this.doneCallbacks.delete(callback);
   }
 

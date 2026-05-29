@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export { VAD, VADStream } from './vad.js';
+export { VAD, VADStream, type VADOptions } from './vad.js';
 
 class SileroPlugin extends Plugin {
   constructor() {

@@ -35,7 +35,7 @@ export abstract class SentenceStream {
   }
 
   /** Push a string of text to the tokenizer */
-  pushText(text: string) {
+  pushText(text: string): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -46,7 +46,7 @@ export abstract class SentenceStream {
   }
 
   /** Flush the tokenizer, causing it to process all pending text */
-  flush() {
+  flush(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -57,7 +57,7 @@ export abstract class SentenceStream {
   }
 
   /** Mark the input as ended and forbid additional pushes */
-  endInput() {
+  endInput(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -72,7 +72,7 @@ export abstract class SentenceStream {
   }
 
   /** Close both the input and output of the tokenizer stream */
-  close() {
+  close(): void {
     this.input.close();
     this.queue.close();
     this.#closed = true;
@@ -103,7 +103,7 @@ export abstract class WordStream {
   }
 
   /** Push a string of text to the tokenizer */
-  pushText(text: string) {
+  pushText(text: string): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -114,7 +114,7 @@ export abstract class WordStream {
   }
 
   /** Flush the tokenizer, causing it to process all pending text */
-  flush() {
+  flush(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -125,7 +125,7 @@ export abstract class WordStream {
   }
 
   /** Mark the input as ended and forbid additional pushes */
-  endInput() {
+  endInput(): void {
     if (this.input.closed) {
       throw new Error('Input is closed');
     }
@@ -140,7 +140,7 @@ export abstract class WordStream {
   }
 
   /** Close both the input and output of the tokenizer stream */
-  close() {
+  close(): void {
     this.input.close();
     this.queue.close();
     this.#closed = true;

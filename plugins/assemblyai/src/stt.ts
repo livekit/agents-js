@@ -144,7 +144,7 @@ export class STT extends stt.STT {
     throw new Error('Non-streaming recognize is not supported on AssemblyAI STT');
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
     for (const ref of this.#streams) {
       const stream = ref.deref();
@@ -199,7 +199,7 @@ export class SpeechStream extends stt.SpeechStream {
     return this.#expiresAt;
   }
 
-  updateOptions(opts: Partial<STTOptions>) {
+  updateOptions(opts: Partial<STTOptions>): void {
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
@@ -222,7 +222,7 @@ export class SpeechStream extends stt.SpeechStream {
   /**
    * Force-finalize the current turn immediately.
    */
-  forceEndpoint() {
+  forceEndpoint(): void {
     this.#pendingConfigMessages.push({ type: 'ForceEndpoint' });
     if (!this.#configMessagePending.done) this.#configMessagePending.resolve();
   }
