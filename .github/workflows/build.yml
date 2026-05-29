@@ -66,14 +66,12 @@ jobs:
       CODEQL_BUNDLE: codeql-bundle-v2.25.4
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-      - name: Setup node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      # The api-check script uses only node built-ins + the `codeql` CLI, so we don't need
+      # pnpm or node_modules here. Pre-installed Node on ubuntu-latest is recent enough for
+      # native TS support (the script uses Node ≥ 24's built-in TS loader).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-          cache: pnpm
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Cache CodeQL CLI
         id: cache-codeql
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -114,14 +112,9 @@ jobs:
       CODEQL_BUNDLE: codeql-bundle-v2.25.4
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-      - name: Setup node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-          cache: pnpm
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Cache CodeQL CLI
         id: cache-codeql
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
