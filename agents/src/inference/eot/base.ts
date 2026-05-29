@@ -608,9 +608,33 @@ export class AudioTurnDetectorStream {
     await this._run();
   }
 
-  async _drainAudioChannel(): Promise<void> {
+  /**
+   * Drain the shared audio channel into the current transport.
+   *
+   * The audio channel exposes a single `ReadableStream` (one underlying
+   * `transform.readable`), so only one reader may hold its lock at a time.
+   * When `signal` aborts (a transport being swapped out — e.g. cloud→local
+   * fallback — fires it via `detach()`), we release the reader lock right
+   * away: on a pending `read()` this rejects that read and frees the lock so
+   * the swapped-in transport's `_drainAudioChannel` can re-acquire it.
+   * Without this an orphaned drain would hold the lock forever and the next
+   * `getReader()` would throw "ReadableStream is locked".
+   */
+  async _drainAudioChannel(signal?: AbortSignal): Promise<void> {
     const stream = this._audioChannel.stream();
     const reader = stream.getReader();
+    const release = () => {
+      try {
+        reader.releaseLock();
+      } catch {
+        // already released
+      }
+    };
+    if (signal?.aborted) {
+      release();
+      return;
+    }
+    signal?.addEventListener('abort', release, { once: true });
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -621,8 +645,14 @@ export class AudioTurnDetectorStream {
           await this._transport.pushFrame(value);
         }
       }
+    } catch (err) {
+      // The pending `read()` rejects when `release()` runs on abort — a clean
+      // swap-driven exit, not a drain failure.
+      if (signal?.aborted) return;
+      throw err;
     } finally {
-      reader.releaseLock();
+      signal?.removeEventListener('abort', release);
+      release();
     }
   }
 
