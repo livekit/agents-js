@@ -124,24 +124,22 @@ async function synthesizeWithMessages(
   }
 }
 
-const hasElevenlabsConfig = Boolean(process.env.ELEVEN_API_KEY && process.env.OPENAI_API_KEY);
+const testPackage = '@livekit/agents-plugins-test';
+const { hasInferenceCredentials } = await import(/* @vite-ignore */ testPackage);
+
+const hasElevenlabsConfig = Boolean(process.env.ELEVEN_API_KEY && hasInferenceCredentials());
 
 if (hasElevenlabsConfig) {
   describe('ElevenLabs', () => {
     it('runs the shared TTS integration tests', async () => {
-      const openaiPackage = '@livekit/agents-plugin-openai';
-      const testPackage = '@livekit/agents-plugins-test';
-      const [{ STT }, { tts }] = await Promise.all([
-        import(/* @vite-ignore */ openaiPackage),
-        import(/* @vite-ignore */ testPackage),
-      ]);
+      const { tts } = await import(/* @vite-ignore */ testPackage);
 
-      await tts(new TTS(), new STT());
+      await tts(new TTS());
     });
   });
 } else {
   describe('ElevenLabs', () => {
-    it.skip('requires ELEVEN_API_KEY and OPENAI_API_KEY', () => {});
+    it.skip('requires ELEVEN_API_KEY and LiveKit cloud credentials', () => {});
   });
 }
 

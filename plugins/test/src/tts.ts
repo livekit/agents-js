@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { stt } from '@livekit/agents';
-import { type AudioBuffer, initializeLogger, tokenize, tts as ttslib } from '@livekit/agents';
+import {
+  type AudioBuffer,
+  inference,
+  initializeLogger,
+  isCloud,
+  tokenize,
+  tts as ttslib,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
 import { ReadableStream } from 'stream/web';
@@ -18,9 +25,22 @@ const validate = async (frames: AudioBuffer, stt: stt.STT, text: string, thresho
   expect(distance(text, eventText) / text.length).toBeLessThanOrEqual(threshold);
 };
 
+export const hasInferenceCredentials = () => {
+  const { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL } = process.env;
+  if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) return false;
+
+  try {
+    return isCloud(new URL(LIVEKIT_URL));
+  } catch {
+    return false;
+  }
+};
+
+export const inferenceSTT = () => new inference.STT({ model: 'deepgram/nova-3' });
+
 export const tts = async (
   tts: ttslib.TTS,
-  stt: stt.STT,
+  stt: stt.STT = inferenceSTT(),
   supports: Partial<{ streaming: boolean }> = {},
 ) => {
   initializeLogger({ pretty: false });

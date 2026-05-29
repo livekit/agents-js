@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger } from '@livekit/agents';
-import { STT } from '@livekit/agents-plugin-openai';
-import { tts } from '@livekit/agents-plugins-test';
+import { hasInferenceCredentials, tts } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TTS } from './tts.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
-const hasRimeConfig = Boolean(process.env.RIME_API_KEY && process.env.OPENAI_API_KEY);
+const hasRimeConfig = Boolean(process.env.RIME_API_KEY && hasInferenceCredentials());
 
 function pcmChunk(byteLength: number): Uint8Array {
   const chunk = new Uint8Array(byteLength);
@@ -85,10 +84,10 @@ describe('Rime TTS streaming', () => {
 
 if (hasRimeConfig) {
   describe('Rime TTS', async () => {
-    await tts(new TTS(), new STT(), { streaming: false });
+    await tts(new TTS(), undefined, { streaming: false });
   });
 } else {
   describe('Rime TTS', () => {
-    it.skip('requires RIME_API_KEY and OPENAI_API_KEY', () => {});
+    it.skip('requires RIME_API_KEY and LiveKit cloud credentials', () => {});
   });
 }

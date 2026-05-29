@@ -1,19 +1,18 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { tts } from '@livekit/agents-plugins-test';
+import { hasInferenceCredentials, tts } from '@livekit/agents-plugins-test';
 import { describe, it } from 'vitest';
-import { STT } from './stt.js';
 import { TTS } from './tts.js';
 
-const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
+const hasOpenAIConfig = Boolean(process.env.OPENAI_API_KEY && hasInferenceCredentials());
 
-if (hasOpenAIApiKey) {
+if (hasOpenAIConfig) {
   describe('OpenAI', async () => {
-    await tts(new TTS(), new STT(), { streaming: false });
+    await tts(new TTS(), undefined, { streaming: false });
   });
 } else {
   describe('OpenAI', () => {
-    it.skip('requires OPENAI_API_KEY', () => {});
+    it.skip('requires OPENAI_API_KEY and LiveKit cloud credentials', () => {});
   });
 }
