@@ -14,6 +14,12 @@ import {
 import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
+import {
+  AudioTurnDetector,
+  AudioTurnDetectorStream,
+  MIN_SILENCE_DURATION_MS,
+  type TurnDetectionEvent,
+} from '../inference/eot/base.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
@@ -42,12 +48,6 @@ import {
   createUserTurnExceededEvent,
 } from './events.js';
 import type { STTNode } from './io.js';
-import {
-  AudioTurnDetector,
-  AudioTurnDetectorStream,
-  MIN_SILENCE_DURATION_MS,
-  type TurnDetectionEvent,
-} from '../inference/eot/base.js';
 import {
   type BaseEndpointing,
   createEndpointing,
@@ -2107,6 +2107,13 @@ export class AudioRecognition {
     await this.vadTask?.cancelAndWait();
     await this.bounceEOUTask?.cancelAndWait();
     await this.interruptionTask?.cancelAndWait();
+
+    if (this.turnDetectorStream !== undefined) {
+      const stream = this.turnDetectorStream;
+      this.turnDetectorStream = undefined;
+      await stream.aclose().catch(() => undefined);
+    }
+
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
   }
