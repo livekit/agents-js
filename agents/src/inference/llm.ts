@@ -400,26 +400,28 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              function: {
-                name,
-                description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
-              } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
-            };
+        ? Object.entries(this.toolCtx)
+            .sort(([nameA], [nameB]) => (nameA < nameB ? -1 : nameA > nameB ? 1 : 0))
+            .map(([name, func]) => {
+              const oaiParams = {
+                type: 'function' as const,
+                function: {
+                  name,
+                  description: func.description,
+                  parameters: llm.toJsonSchema(
+                    func.parameters,
+                    true,
+                    this.strictToolSchema,
+                  ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+                } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
+              };
 
-            if (this.strictToolSchema) {
-              oaiParams.function.strict = true;
-            }
+              if (this.strictToolSchema) {
+                oaiParams.function.strict = true;
+              }
 
-            return oaiParams;
-          })
+              return oaiParams;
+            })
         : undefined;
 
       const requestOptions: Record<string, unknown> = dropUnsupportedParams(
