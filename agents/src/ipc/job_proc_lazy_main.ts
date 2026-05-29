@@ -15,6 +15,7 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
+const SESSION_CLOSE_TIMEOUT = 60 * 1000;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -167,7 +168,28 @@ const startJob = (
 
     // Close the primary agent session if it exists
     if (ctx._primaryAgentSession) {
-      await ctx._primaryAgentSession.close();
+      let sessionCloseTimeout: ReturnType<typeof setTimeout> | undefined;
+      const sessionClosePromise = ctx._primaryAgentSession.close();
+      const sessionCloseTimedOut = await Promise.race([
+        sessionClosePromise.then(() => false),
+        new Promise<true>((resolve) => {
+          sessionCloseTimeout = setTimeout(() => resolve(true), SESSION_CLOSE_TIMEOUT);
+        }),
+      ]).finally(() => {
+        if (sessionCloseTimeout) {
+          clearTimeout(sessionCloseTimeout);
+        }
+      });
+
+      if (sessionCloseTimedOut) {
+        void sessionClosePromise.catch((error) =>
+          logger.debug({ error }, 'AgentSession.close() rejected after shutdown timeout'),
+        );
+        logger.error(
+          { timeout: SESSION_CLOSE_TIMEOUT },
+          'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
+        );
+      }
     }
 
     // Generate and save/upload session report
