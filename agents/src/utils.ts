@@ -1055,6 +1055,81 @@ export async function waitForParticipant({
   }
 }
 
+export async function waitForParticipantAttribute({
+  room,
+  identity,
+  attribute,
+  value,
+  signal,
+}: {
+  room: Room;
+  identity: string;
+  attribute: string;
+  value: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (!room.isConnected) {
+    throw new Error('Room is not connected');
+  }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipantAttribute aborted');
+  }
+
+  const participant = room.remoteParticipants.get(identity);
+  if (!participant) {
+    throw new Error(`Participant ${identity} is not in the room`);
+  }
+
+  const fut = new Future<void>();
+
+  const isMatch = (p: Participant) => p.identity === identity && p.attributes[attribute] === value;
+
+  const onParticipantAttributesChanged = (
+    _changedAttributes: Record<string, string>,
+    p: Participant,
+  ) => {
+    if (!fut.done && isMatch(p)) {
+      fut.resolve();
+    }
+  };
+
+  const onParticipantDisconnected = (p: RemoteParticipant) => {
+    if (!fut.done && p.identity === identity) {
+      fut.reject(new Error(`Participant ${identity} disconnected while waiting for ${attribute}`));
+    }
+  };
+
+  const onDisconnected = () => {
+    if (!fut.done) {
+      fut.reject(new Error(`Room disconnected while waiting for ${identity} ${attribute}`));
+    }
+  };
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipantAttribute aborted'));
+    }
+  };
+
+  room.on(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+  room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+  room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    const current = room.remoteParticipants.get(identity);
+    if (current && current.attributes[attribute] === value) {
+      return;
+    }
+    await fut.await;
+  } finally {
+    room.off(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+    room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+    room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function waitForTrackPublication({
   room,
   identity,
