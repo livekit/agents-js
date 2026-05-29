@@ -225,7 +225,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     this._options = {
       ...DEFAULT_REALTIME_MODEL_OPTIONS,
       ...optionsWithoutModalities,
-      baseURL: options.baseURL || BASE_URL,
+      baseURL: options.baseURL || process.env.OPENAI_BASE_URL || BASE_URL,
       apiKey,
       isAzure,
       model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
