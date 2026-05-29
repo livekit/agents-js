@@ -9,5 +9,5 @@ export {
   materializeThresholds,
   rescaleForLocalFallback,
 } from './languages.js';
-export type { Backend } from './languages.js';
+export type { TurnDetectorModel } from './languages.js';
 export { CloudTransport, LocalTransport, type CloudTransportOptions } from './transports.js';

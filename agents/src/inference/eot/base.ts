@@ -20,6 +20,7 @@ import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, Task, cancelAndWait, shortuuid } from '../../utils.js';
+import type { TurnDetectorModel } from './languages.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
@@ -116,7 +117,7 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
     this._streams.delete(stream);
   }
 
-  abstract get model(): string;
+  abstract get model(): TurnDetectorModel;
 
   get provider(): string {
     return 'livekit';
@@ -232,7 +233,7 @@ export class AudioTurnDetectorStream {
 
   // region: _TurnDetector protocol proxies
 
-  get model(): string {
+  get model(): TurnDetectorModel {
     return this._detector.model;
   }
 

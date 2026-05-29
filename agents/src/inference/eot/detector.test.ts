@@ -98,7 +98,7 @@ function makeOpts(thresholds?: Record<string, number>): TurnDetectorOptions {
 }
 
 interface MakeStreamOpts {
-  backend?: 'cloud' | 'local';
+  model?: 'turn-detector' | 'turn-detector-mini';
   userThreshold?: number | Record<string, number>;
   detector?: AudioTurnDetector;
 }
@@ -107,15 +107,15 @@ function makeStreamWithTransport(
   transport: AudioTurnDetectionTransport,
   opts: MakeStreamOpts = {},
 ): AudioTurnDetectorStreamImpl {
-  const backend = opts.backend ?? 'cloud';
+  const model = opts.model ?? 'turn-detector';
   const detector =
     opts.detector ??
-    makeMockDetector(backend, makeOpts(materializeThresholds(opts.userThreshold, backend)));
+    makeMockDetector(model, makeOpts(materializeThresholds(opts.userThreshold, model)));
   const stream = new AudioTurnDetectorStreamImpl({
     detector,
     opts: detector['_opts'] as TurnDetectorOptions,
     cloudOpts:
-      backend === 'cloud'
+      model === 'turn-detector'
         ? {
             baseUrl: 'ws://test',
             apiKey: 'x',
@@ -123,23 +123,23 @@ function makeStreamWithTransport(
             connOptions: DEFAULT_API_CONNECT_OPTIONS,
           }
         : undefined,
-    backend,
+    model,
     transport,
   });
   return stream;
 }
 
 /** Build an `AudioTurnDetector` for assertions without going through env
- * resolution — useful when we want a specific backend + threshold table for
+ * resolution — useful when we want a specific model + threshold table for
  * a stream we'll build separately. */
 function makeMockDetector(
-  backend: 'cloud' | 'local',
+  model: 'turn-detector' | 'turn-detector-mini',
   opts: TurnDetectorOptions,
 ): AudioTurnDetector {
   // Construct via the public constructor, then override the internal
-  // backend + threshold view to match what we want for the assertion.
+  // model + threshold view to match what we want for the assertion.
   const originalEnv = { ...process.env };
-  if (backend === 'local') {
+  if (model === 'turn-detector-mini') {
     delete process.env.LIVEKIT_REMOTE_EOT_URL;
   } else {
     process.env.LIVEKIT_REMOTE_EOT_URL = 'ws://test';
@@ -148,8 +148,8 @@ function makeMockDetector(
   }
   const det = new AudioTurnDetector();
   process.env = originalEnv;
-  const internals = det as unknown as { _backend: typeof backend; _opts: TurnDetectorOptions };
-  internals._backend = backend;
+  const internals = det as unknown as { _model: typeof model; _opts: TurnDetectorOptions };
+  internals._model = model;
   internals._opts = { ...internals._opts, thresholds: opts.thresholds };
   return det;
 }
@@ -192,7 +192,7 @@ describe('AutoSelect', () => {
   it('selects local when no remote EOT url', () => {
     void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
       const detector = new AudioTurnDetector();
-      expect(detector.backend).toBe('local');
+      expect(detector.model).toBe('turn-detector-mini');
     });
   });
 
@@ -205,7 +205,7 @@ describe('AutoSelect', () => {
       },
       () => {
         const detector = new AudioTurnDetector();
-        expect(detector.backend).toBe('cloud');
+        expect(detector.model).toBe('turn-detector');
       },
     );
   });
@@ -221,13 +221,13 @@ describe('AutoSelect', () => {
       },
       () => {
         const detector = new AudioTurnDetector();
-        expect(detector.backend).toBe('local');
+        expect(detector.model).toBe('turn-detector-mini');
       },
     );
   });
 });
 
-describe('ExplicitBackendErrors', () => {
+describe('ExplicitModelErrors', () => {
   it('explicit cloud missing creds throws', () => {
     void withEnv(
       {
@@ -238,7 +238,7 @@ describe('ExplicitBackendErrors', () => {
         LIVEKIT_INFERENCE_API_SECRET: undefined,
       },
       () => {
-        expect(() => new AudioTurnDetector({ backend: 'cloud' })).toThrow();
+        expect(() => new AudioTurnDetector({ model: 'turn-detector' })).toThrow();
       },
     );
   });
@@ -251,8 +251,8 @@ describe('Fallback', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.backend === 'local');
-    expect(stream.backend).toBe('local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
+    expect(stream.model).toBe('turn-detector-mini');
     expect(stream.isFallback).toBe(true);
     expect(stream.warnedCloudFailure).toBe(true);
     expect(transport.events).toContainEqual(['detach', null]);
@@ -264,7 +264,7 @@ describe('Fallback', () => {
     const stream = makeStreamWithTransport(transport);
     const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
     expect(prob).toBe(1.0);
-    expect(stream.backend).toBe('local');
+    expect(stream.model).toBe('turn-detector-mini');
     expect(stream.isFallback).toBe(true);
     await stream.aclose();
   });
@@ -275,10 +275,10 @@ describe('Fallback', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.backend === 'local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
     expect(transport.runCalls).toBe(1);
     stream.warmup();
-    expect(stream.backend).toBe('local');
+    expect(stream.model).toBe('turn-detector-mini');
     await stream.aclose();
   });
 });
@@ -287,7 +287,7 @@ describe('MultiStreamOwnership', () => {
   it('multiple streams can coexist', async () => {
     let detector!: AudioTurnDetector;
     withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      detector = new AudioTurnDetector({ backend: 'local' });
+      detector = new AudioTurnDetector({ model: 'turn-detector-mini' });
     });
     // Detector no longer enforces single-stream ownership; fallback state lives
     // on the stream itself so multiple streams off the same detector are safe.
@@ -299,7 +299,7 @@ describe('MultiStreamOwnership', () => {
 });
 
 describe('DetectorViewReflectsConstructionDefaults', () => {
-  it('detector model/backend/threshold stay at construction-time defaults across fallbacks', async () => {
+  it('detector model/threshold stay at construction-time defaults across fallbacks', async () => {
     let detector!: AudioTurnDetector;
     await withEnv(
       {
@@ -309,8 +309,7 @@ describe('DetectorViewReflectsConstructionDefaults', () => {
       },
       async () => {
         detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
-        expect(detector.model).toBe('eot-audio');
-        expect(detector.backend).toBe('cloud');
+        expect(detector.model).toBe('turn-detector');
         expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
       },
     );
@@ -323,22 +322,20 @@ describe('DetectorViewReflectsConstructionDefaults', () => {
       detector,
       opts: (detector as unknown as { _opts: TurnDetectorOptions })._opts,
       cloudOpts: undefined,
-      backend: 'cloud',
+      model: 'turn-detector',
       transport,
     });
-    await waitFor(() => stream.backend === 'local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
 
     // The stream reflects the fallback...
-    expect(stream.backend).toBe('local');
-    expect(stream.model).toBe('eot-audio-mini');
+    expect(stream.model).toBe('turn-detector-mini');
     const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(expected);
 
     // ...but the detector still reports the construction-time defaults: the
     // fallback state lives on the stream, never written back to the detector,
     // so other streams off the same detector aren't corrupted.
-    expect(detector.model).toBe('eot-audio');
-    expect(detector.backend).toBe('cloud');
+    expect(detector.model).toBe('turn-detector');
     expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
     await stream.aclose();
   });
@@ -350,9 +347,9 @@ describe('LocalFailureRetry', () => {
       runBehavior: 'raise',
       runExc: new Error('local boom'),
     });
-    const stream = makeStreamWithTransport(transport, { backend: 'local' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-mini' });
     await waitFor(() => stream.warnedLocalFailure);
-    expect(stream.backend).toBe('local');
+    expect(stream.model).toBe('turn-detector-mini');
     expect(stream.isFallback).toBe(false);
     expect(stream.warnedLocalFailure).toBe(true);
     expect(stream.transport).toBe(transport);
@@ -367,7 +364,7 @@ describe('WarningDedupe', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.backend === 'local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
     // Trigger a second fallback path directly.
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom2' }));
     // Across both invocations only one warning was emitted — tracked by
@@ -378,7 +375,7 @@ describe('WarningDedupe', () => {
 
   it('local warning logged once per session', async () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = makeStreamWithTransport(transport, { backend: 'local' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-mini' });
     stream._onLocalFailure(new Error('a'));
     stream._onLocalFailure(new Error('b'));
     expect(stream.warnedLocalFailure).toBe(true);
@@ -396,7 +393,7 @@ describe('ThresholdScaling', () => {
       },
       async () => {
         const detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
-        expect(detector.backend).toBe('cloud');
+        expect(detector.model).toBe('turn-detector');
         const value = await detector.unlikelyThreshold('en');
         expect(value).toBeCloseTo(0.5);
       },
@@ -405,7 +402,10 @@ describe('ThresholdScaling', () => {
 
   it('explicit-local user threshold passes through (no rescale)', async () => {
     await withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, async () => {
-      const detector = new AudioTurnDetector({ backend: 'local', unlikelyThreshold: 0.5 });
+      const detector = new AudioTurnDetector({
+        model: 'turn-detector-mini',
+        unlikelyThreshold: 0.5,
+      });
       const value = await detector.unlikelyThreshold('en');
       expect(value).toBeCloseTo(0.5);
     });
@@ -417,7 +417,7 @@ describe('ThresholdScaling', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport, { userThreshold: 0.5 });
-    await waitFor(() => stream.backend === 'local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
     expect(stream.isFallback).toBe(true);
     const value = await stream.unlikelyThreshold('en');
     const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
@@ -483,7 +483,7 @@ describe('ThresholdDictOverride', () => {
     const stream = makeStreamWithTransport(transport, {
       userThreshold: { en: 0.55, ja: 0.25 },
     });
-    await waitFor(() => stream.backend === 'local');
+    await waitFor(() => stream.model === 'turn-detector-mini');
     expect(stream.isFallback).toBe(true);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
       LOCAL_LANGUAGES.en! * (0.55 / CLOUD_LANGUAGES.en!),
@@ -496,7 +496,7 @@ describe('ThresholdDictOverride', () => {
   });
 });
 
-describe('LocalBackendExecutor', () => {
+describe('LocalModelExecutor', () => {
   function pcmFrame(samples = 320): AudioFrame {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
@@ -508,7 +508,7 @@ describe('LocalBackendExecutor', () => {
       return { probability: 0.7, inferenceDurationMs: 5 };
     });
     const executor: InferenceExecutor = { doInference };
-    const detector = new AudioTurnDetector({ backend: 'local', executor });
+    const detector = new AudioTurnDetector({ model: 'turn-detector-mini', executor });
     const stream = detector.stream();
     try {
       stream.pushAudio(pcmFrame());
@@ -523,7 +523,7 @@ describe('LocalBackendExecutor', () => {
   it('degrades to a positive default when no executor is available', async () => {
     // explicit undefined → constructor falls through to getJobContext()
     // (throws outside a job) → executor stays undefined.
-    const detector = new AudioTurnDetector({ backend: 'local', executor: undefined });
+    const detector = new AudioTurnDetector({ model: 'turn-detector-mini', executor: undefined });
     const stream = detector.stream();
     try {
       const p = await stream.predictEndOfTurn(undefined, { timeoutMs: 1000 });

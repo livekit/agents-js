@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Audio end-of-turn detector with cloud → local fallback.
+ * Audio end-of-turn detector with `turn-detector` → `turn-detector-mini`
+ * (cloud → local) fallback.
  *
  * Port of Python `livekit.agents.inference.eot.detector`.
  */
@@ -22,18 +23,22 @@ import {
   type TurnDetectorOptions,
 } from './base.js';
 import { getDefaultInferenceUrl } from '../utils.js';
-import { type Backend, materializeThresholds, rescaleForLocalFallback } from './languages.js';
+import {
+  type TurnDetectorModel,
+  materializeThresholds,
+  rescaleForLocalFallback,
+} from './languages.js';
 import { CloudTransport, type CloudTransportOptions, LocalTransport } from './transports.js';
 
-// Wire-level model id sent to the gateway. Decoupled from the public `backend`
-// option so we don't leak gateway routing names into the API.
-const WIRE_MODEL: Record<Backend, string> = {
-  cloud: 'eot-audio',
-  local: 'eot-audio-mini',
-};
-
 export interface AudioTurnDetectorOptions {
-  backend?: Backend;
+  /**
+   * Which turn-detector checkpoint to run. `'turn-detector'` is the full
+   * cloud model (served over the inference gateway); `'turn-detector-mini'`
+   * is the local in-process model. When omitted, auto-selects `'turn-detector'`
+   * on hosted/dev environments (falling back to `'turn-detector-mini'` if cloud
+   * creds are missing) and `'turn-detector-mini'` otherwise.
+   */
+  model?: TurnDetectorModel;
   unlikelyThreshold?: number | Record<string, number>;
   baseUrl?: string;
   apiKey?: string;
@@ -42,28 +47,29 @@ export interface AudioTurnDetectorOptions {
   sampleRate?: number;
   connOptions?: APIConnectOptions;
   /**
-   * Inference executor that runs the local EOT model in the shared inference
-   * process. Defaults to the current job's `getJobContext().inferenceExecutor`.
-   * `undefined` (no job context / binding unavailable) degrades the local
-   * backend to a positive-default prediction. Mainly an override seam for tests.
+   * Inference executor that runs the local `turn-detector-mini` model in the
+   * shared inference process. Defaults to the current job's
+   * `getJobContext().inferenceExecutor`. `undefined` (no job context / binding
+   * unavailable) degrades the local model to a positive-default prediction.
+   * Mainly an override seam for tests.
    */
   executor?: InferenceExecutor;
 }
 
 export class AudioTurnDetector extends AudioTurnDetectorBase {
-  protected _backend: Backend;
+  protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
 
   constructor(opts: AudioTurnDetectorOptions = {}) {
-    // auto = caller didn't pin a backend; missing cloud creds warn-and-
+    // auto = caller didn't pin a model; missing cloud creds warn-and-
     // fall-back instead of raising.
-    const auto = opts.backend === undefined;
-    let resolvedBackend: Backend =
-      opts.backend ?? (isHosted() || isDevMode() ? 'cloud' : 'local');
+    const auto = opts.model === undefined;
+    let resolvedModel: TurnDetectorModel =
+      opts.model ?? (isHosted() || isDevMode() ? 'turn-detector' : 'turn-detector-mini');
 
     let cloudOpts: CloudTransportOptions | undefined;
-    if (resolvedBackend === 'cloud') {
+    if (resolvedModel === 'turn-detector') {
       const baseUrl = resolveEnvVar(
         opts.baseUrl,
         ['LIVEKIT_INFERENCE_URL'],
@@ -82,12 +88,12 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
         if (auto) {
           log().warn(
             { missing },
-            'LIVEKIT_INFERENCE_URL is set but creds are missing; falling back to local backend',
+            "LIVEKIT_INFERENCE_URL is set but creds are missing; falling back to 'turn-detector-mini'",
           );
-          resolvedBackend = 'local';
+          resolvedModel = 'turn-detector-mini';
         } else {
           throw new Error(
-            `AudioTurnDetector(backend='cloud') requires ${missing.join(', ')} ` +
+            `AudioTurnDetector(model='turn-detector') requires ${missing.join(', ')} ` +
               '(env or constructor argument).',
           );
         }
@@ -103,14 +109,14 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
 
     const detectorOpts: TurnDetectorOptions = {
       sampleRate: opts.sampleRate ?? DEFAULT_SAMPLE_RATE,
-      thresholds: materializeThresholds(opts.unlikelyThreshold, resolvedBackend),
+      thresholds: materializeThresholds(opts.unlikelyThreshold, resolvedModel),
     };
     super(detectorOpts);
-    this._backend = resolvedBackend;
+    this._model = resolvedModel;
     this._cloudOpts = cloudOpts;
     // Default to the current job's shared inference executor. `getJobContext`
     // throws outside a job (tests, standalone) — degrade to `undefined`
-    // (local backend then resolves a positive default) rather than throwing.
+    // (the local model then resolves a positive default) rather than throwing.
     if (opts.executor !== undefined) {
       this._executor = opts.executor;
     } else {
@@ -122,16 +128,13 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
     }
   }
 
-  override get model(): string {
-    return WIRE_MODEL[this._backend];
-  }
-
-  /** Construction-time backend. Per-stream cloud→local fallback state lives on
-   * the stream itself (`AudioTurnDetectorStreamImpl.backend`) and is never
-   * written back here, so a fallback on one stream can't corrupt another stream
-   * spun off the same detector. */
-  get backend(): Backend {
-    return this._backend;
+  /** Construction-time model. Per-stream `turn-detector`→`turn-detector-mini`
+   * (cloud→local) fallback state lives on the stream itself
+   * (`AudioTurnDetectorStreamImpl.model`) and is never written back here, so a
+   * fallback on one stream can't corrupt another stream spun off the same
+   * detector. */
+  override get model(): TurnDetectorModel {
+    return this._model;
   }
 
   override stream(opts: { connOptions?: APIConnectOptions } = {}): AudioTurnDetectorStream {
@@ -143,7 +146,7 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
       detector: this,
       opts: this._opts,
       cloudOpts,
-      backend: this._backend,
+      model: this._model,
       executor: this._executor,
     });
     this._streams.add(stream);
@@ -155,24 +158,24 @@ export interface AudioTurnDetectorStreamImplArgs {
   detector: AudioTurnDetector;
   opts: TurnDetectorOptions;
   cloudOpts: CloudTransportOptions | undefined;
-  backend: Backend;
-  /** Shared inference executor for the local backend (undefined degrades to
-   * a positive-default prediction). */
+  model: TurnDetectorModel;
+  /** Shared inference executor for the `turn-detector-mini` (local) model
+   * (undefined degrades to a positive-default prediction). */
   executor?: InferenceExecutor;
   /** Optional transport override (for tests). When omitted, a transport is
-   * constructed from `backend` + `cloudOpts`. */
+   * constructed from `model` + `cloudOpts`. */
   transport?: AudioTurnDetectionTransport;
 }
 
 /**
- * Stream that owns the cloud → local fallback FSM. On cloud transport
- * failure (`transport.run()` raises, or `predictEndOfTurn` times out), the
- * stream swaps the transport and rescales per-language thresholds. The
- * fallback state lives on the stream; the detector reads it back through its
- * active-stream delegation rather than being mutated.
+ * Stream that owns the `turn-detector` → `turn-detector-mini` (cloud → local)
+ * fallback FSM. On cloud transport failure (`transport.run()` raises, or
+ * `predictEndOfTurn` times out), the stream swaps the transport and rescales
+ * per-language thresholds. The fallback state lives on the stream; the detector
+ * reads it back through its active-stream delegation rather than being mutated.
  */
 export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
-  protected _backend: Backend;
+  protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
   protected _isFallback = false;
@@ -183,7 +186,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   constructor(args: AudioTurnDetectorStreamImplArgs) {
     const transport =
       args.transport ??
-      (args.backend === 'cloud'
+      (args.model === 'turn-detector'
         ? new CloudTransport({
             detector: args.detector,
             opts: args.opts,
@@ -191,21 +194,17 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
           })
         : new LocalTransport({ opts: args.opts, executor: args.executor }));
     super({ detector: args.detector, opts: args.opts, transport });
-    this._backend = args.backend;
+    this._model = args.model;
     this._cloudOpts = args.cloudOpts;
     this._executor = args.executor;
   }
 
-  get backend(): Backend {
-    return this._backend;
-  }
-
-  /** Wire model id for this stream's *current* backend (flips to the mini
-   * model after a cloud→local fallback). Self-contained: the stream owns its
-   * active backend, so this reports "local" after a fallback while the
-   * detector delegates here for its own view. */
-  override get model(): string {
-    return WIRE_MODEL[this._backend];
+  /** This stream's *current* model (flips to `'turn-detector-mini'` after a
+   * cloud→local fallback). Self-contained: the stream owns its active model,
+   * so this reports `'turn-detector-mini'` after a fallback while the detector
+   * delegates here for its own view. */
+  override get model(): TurnDetectorModel {
+    return this._model;
   }
 
   get isFallback(): boolean {
@@ -246,9 +245,9 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     this._opts = { ...this._opts, thresholds: rescaled };
     this._transport = new LocalTransport({ opts: this._opts, executor: this._executor });
     this._transport.attach(this);
-    this._backend = 'local';
+    this._model = 'turn-detector-mini';
     this._isFallback = true;
-    // The fallback view is owned by this stream (`backend`/`model`/`_opts`);
+    // The fallback view is owned by this stream (`model`/`_opts`);
     // we deliberately don't write it back onto the shared detector, so a
     // fallback here can't corrupt another stream off the same detector.
   }
@@ -297,12 +296,12 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
           // The new transport is mounted; loop and run it. Routing the
           // swap through `SwapAbortError` (rather than through the
           // cloud/local branch below) is what prevents the "timeout
-          // flips backend mid-await" misclassification — the catch
-          // exits early before ever consulting `_backend`.
+          // flips model mid-await" misclassification — the catch
+          // exits early before ever consulting `_model`.
           continue;
         }
         const e = err instanceof Error ? err : new Error(String(err));
-        if (this._backend === 'cloud') {
+        if (this._model === 'turn-detector') {
           this._fallBackToLocal(e);
           continue;
         }
@@ -313,11 +312,11 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   }
 
   protected override _onPredictTimeout(): void {
-    if (this._backend === 'cloud') {
-      // Signal the swap BEFORE mutating backend/transport state. The
+    if (this._model === 'turn-detector') {
+      // Signal the swap BEFORE mutating model/transport state. The
       // race in `_raceWithSwap` is rejected with `SwapAbortError`
       // immediately, so the main loop exits through the
-      // SwapAbortError branch and never consults `_backend` for a
+      // SwapAbortError branch and never consults `_model` for a
       // classification that would race with the assignment below.
       this._signalSwap();
       this._fallBackToLocal(new Error('predict_end_of_turn'));

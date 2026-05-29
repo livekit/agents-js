@@ -7,7 +7,7 @@
  * Calibrated separately per checkpoint — do NOT unify CLOUD and LOCAL tables.
  */
 
-export type Backend = 'cloud' | 'local';
+export type TurnDetectorModel = 'turn-detector' | 'turn-detector-mini';
 
 export const CLOUD_LANGUAGES: Readonly<Record<string, number>> = {
   ar: 0.355,
@@ -43,9 +43,9 @@ export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
   zh: 0.355,
 };
 
-const BASE: Record<Backend, Readonly<Record<string, number>>> = {
-  cloud: CLOUD_LANGUAGES,
-  local: LOCAL_LANGUAGES,
+const BASE: Record<TurnDetectorModel, Readonly<Record<string, number>>> = {
+  'turn-detector': CLOUD_LANGUAGES,
+  'turn-detector-mini': LOCAL_LANGUAGES,
 };
 
 /**
@@ -82,19 +82,19 @@ function normalizeLanguage(input: string): string {
 }
 
 /**
- * Resolve user override + per-backend defaults into a complete per-language
+ * Resolve user override + per-model defaults into a complete per-language
  * threshold map.
  *
- * - `undefined`: returns a copy of the bare backend table.
+ * - `undefined`: returns a copy of the bare model table.
  * - `number`: fills every language with the same value.
  * - object: overrides per-language (keys are normalized so `English` /
  *   `en` / `en-US` all collapse to `en`); unmapped languages keep the default.
  */
 export function materializeThresholds(
   userValue: number | Record<string, number> | undefined,
-  backend: Backend,
+  model: TurnDetectorModel,
 ): Record<string, number> {
-  const base = BASE[backend];
+  const base = BASE[model];
   if (userValue === undefined) {
     return { ...base };
   }

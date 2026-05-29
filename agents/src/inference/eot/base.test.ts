@@ -29,6 +29,7 @@ import {
   Status,
   type TurnDetectorOptions,
 } from './base.js';
+import type { TurnDetectorModel } from './languages.js';
 
 class FakeTransport implements AudioTurnDetectionTransport {
   events: Array<[string, string]> = [];
@@ -61,8 +62,8 @@ class FakeTransport implements AudioTurnDetectionTransport {
 }
 
 class FakeDetector extends AudioTurnDetector {
-  get model(): string {
-    return 'eot-fake';
+  get model(): TurnDetectorModel {
+    return 'turn-detector';
   }
   stream(): AudioTurnDetectorStream {
     throw new Error('unused in FSM tests');
