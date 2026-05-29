@@ -201,6 +201,7 @@ plugins/google/src/index.ts	LLMStream
 plugins/google/src/index.ts	SpeechLanguages
 plugins/google/src/index.ts	SpeechModels
 plugins/google/src/index.ts	beta
+plugins/google/src/index.ts	realtime
 plugins/hedra/src/index.ts	AvatarSession
 plugins/hedra/src/index.ts	HedraException
 plugins/hume/src/index.ts	ChunkedStream
