@@ -23,6 +23,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import type { Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -40,7 +41,6 @@ import {
   ToolContext,
   type ToolContextEntry,
   ToolFlag,
-  Toolset,
   isFunctionTool,
   isToolset,
 } from '../llm/index.js';
@@ -220,7 +220,6 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
   private _toolsetsSetup = false;
-  private _toolsetAbortControllers = new Map<Toolset, AbortController>();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -3788,14 +3787,8 @@ export class AgentActivity implements RecognitionHooks {
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
     const outputs = await Promise.allSettled(
-      toolsets.map((ts) => {
-        // One controller per toolset, aborted in closeToolsetList so listeners/timers wired to
-        // the signal in setup() detach automatically on teardown.
-        const abortController = new AbortController();
-        this._toolsetAbortControllers.set(ts, abortController);
-        return ts.setup({
-          session: this.agentSession,
-          signal: abortController.signal,
+      toolsets.map((ts) =>
+        ts.setup({
           // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
           updateTools: (tools) => {
             ts._setTools(tools);
@@ -3803,8 +3796,8 @@ export class AgentActivity implements RecognitionHooks {
               this.logger.error({ error }, 'error re-advertising toolset tools'),
             );
           },
-        });
-      }),
+        }),
+      ),
     );
     for (const output of outputs) {
       if (output.status === 'rejected') {
@@ -3814,13 +3807,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {
-    const outputs = await Promise.allSettled(
-      toolsets.map((ts) => {
-        this._toolsetAbortControllers.get(ts)?.abort();
-        this._toolsetAbortControllers.delete(ts);
-        return ts.aclose();
-      }),
-    );
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error closing toolset');

@@ -119,7 +119,7 @@ export function createEndCallTool<UserData = UnknownUserData>({
     }
   };
 
-  return Toolset.create<UserData>({
+  return Toolset.create({
     id: 'end_call',
     tools: [
       tool<UserData>({
