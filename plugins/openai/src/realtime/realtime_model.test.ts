@@ -725,8 +725,7 @@ describe('processBaseURL', () => {
   it('preserves custom wss baseURL paths and query params while adding model', () => {
     expect(
       processBaseURL({
-        baseURL:
-          'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true',
+        baseURL: 'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true',
         model: 'gpt-4',
         isAzure: false,
       }),
