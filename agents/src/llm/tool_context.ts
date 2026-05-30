@@ -215,17 +215,18 @@ export interface ToolCompletedEvent<UserData = UnknownUserData> {
 /**
  * The live context a {@link Toolset} is given when it becomes active in an `AgentActivity`.
  *
- * The `setup` hook runs once with this context. Do one-time side effects (connecting, wiring
- * listeners) in `setup`. Scope every listener and timer to `signal` so they detach automatically
- * when the toolset is torn down; `aclose()` then only needs to release awaitable resources (pools,
- * clients).
+ * Both the `setup` hook and the `tools` factory run once with this context, so tools can close over
+ * `session` and `signal` directly. Do one-time side effects (connecting, wiring listeners) in
+ * `setup`; keep the `tools` factory pure. Scope every listener and timer to `signal` so they detach
+ * automatically when the toolset is torn down; `aclose()` then only needs to release awaitable
+ * resources (pools, clients).
  *
  * For a tool list that changes after activation (e.g. an MCP server that adds or removes tools at
  * runtime), call {@link ToolsetContext.updateTools} from a `signal`-scoped listener — the runtime
- * re-advertises the new set immediately.
+ * re-advertises the new set immediately, without re-running the factory.
  */
 export interface ToolsetContext<UserData = UnknownUserData> {
-  /** The session the toolset is now bound to. Guaranteed live during `setup`. */
+  /** The session the toolset is now bound to. Guaranteed live while tools are being built. */
   session: AgentSession<UserData>;
   /**
    * Aborts when the toolset is torn down, immediately before `aclose()` runs. Wire it into every
@@ -240,10 +241,22 @@ export interface ToolsetContext<UserData = UnknownUserData> {
   /**
    * Replace the toolset's tools after activation. The runtime re-flattens the agent's tool context
    * and re-advertises the new set to the session. Call this from a `signal`-scoped listener when a
-   * dynamic source (e.g. an MCP server) changes its tools.
+   * dynamic source (e.g. an MCP server) changes its tools; the factory itself runs only once.
    */
   updateTools(tools: readonly Tool[]): void;
 }
+
+/**
+ * A function that produces a toolset's initial tools, given the live {@link ToolsetContext}.
+ * Returned tools may close over `ctx.session` / `ctx.signal` directly.
+ *
+ * Invoked exactly once at activation, after `setup`. It should be pure — do side effects like
+ * connecting or wiring listeners in {@link ToolsetCreateOptions.setup}. For a tool list that
+ * changes afterwards, push the new set via {@link ToolsetContext.updateTools} from a listener.
+ */
+export type ToolsetFactoryFn<UserData = UnknownUserData> = (
+  ctx: ToolsetContext<UserData>,
+) => readonly Tool[];
 
 /**
  * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
@@ -264,9 +277,10 @@ export class Toolset {
 
   /**
    * Compose a `Toolset` without subclassing. Do one-time async init (connecting, wiring listeners)
-   * in `setup`, and provide the initial tools via `tools`. For a tool list that changes after
-   * activation (e.g. tools discovered from an MCP server that connects or updates its tools), wire
-   * `signal`-scoped listeners in `setup` that call {@link ToolsetContext.updateTools}.
+   * in `setup`, and provide the tools via `tools` — a static list, or a factory (run once after
+   * `setup`) that closes over the session and the teardown `signal`. For a tool list that changes
+   * after activation (e.g. tools discovered from an MCP server that connects or updates its tools),
+   * wire `signal`-scoped listeners in `setup` that call {@link ToolsetContext.updateTools}.
    *
    * @example Static tool list with a shared backing resource
    * ```ts
@@ -337,8 +351,13 @@ export interface ToolsetCreateOptions<UserData = UnknownUserData> {
    * work here rather than in `tools`.
    */
   setup?: (ctx: ToolsetContext<UserData>) => Promise<void>;
-  /** The toolset's initial tools. Push later changes via {@link ToolsetContext.updateTools}. */
-  tools: readonly Tool[];
+  /**
+   * The toolset's initial tools: either a static list, or a factory that produces them when the
+   * toolset activates. The factory receives the live {@link ToolsetContext} so its tools can close
+   * over the session and the teardown `signal`, runs once after `setup`, and should be pure.
+   * Factory-produced tools aren't enumerable until activation.
+   */
+  tools: readonly Tool[] | ToolsetFactoryFn<UserData>;
   /** Invoked when the toolset is being torn down. Release awaitable resources here. */
   aclose?: () => Promise<void>;
 }
@@ -347,16 +366,26 @@ export interface ToolsetCreateOptions<UserData = UnknownUserData> {
 class ToolsetFactory<UserData = UnknownUserData> extends Toolset {
   readonly #setupFn?: (ctx: ToolsetContext<UserData>) => Promise<void>;
 
+  readonly #factory?: ToolsetFactoryFn<UserData>;
+
   readonly #acloseFn?: () => Promise<void>;
 
   constructor({ id, setup, tools, aclose }: ToolsetCreateOptions<UserData>) {
-    super({ id, tools });
+    // A factory's tools aren't known until activation, so start empty and resolve them in setup()
+    // (when the ToolsetContext is available). Static tools are available immediately.
+    super({ id, tools: typeof tools === 'function' ? [] : tools });
     this.#setupFn = setup;
+    if (typeof tools === 'function') {
+      this.#factory = tools;
+    }
     this.#acloseFn = aclose;
   }
 
   override async setup(ctx: ToolsetContext<UserData>): Promise<void> {
+    // One-time init (connect, wire listeners) first, then resolve the factory's initial tools so
+    // they're enumerable for the first flatten.
     if (this.#setupFn) await this.#setupFn(ctx);
+    if (this.#factory) this._setTools(this.#factory(ctx));
   }
 
   override async aclose(): Promise<void> {

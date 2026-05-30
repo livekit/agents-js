@@ -14,7 +14,7 @@ import {
 import { log } from '../../log.js';
 import type { AgentSession, AgentSessionCallbacks } from '../../voice/agent_session.js';
 import { AgentSessionEventTypes } from '../../voice/events.js';
-import type { UnknownUserData } from '../../voice/run_context.js';
+import type { RunContext, UnknownUserData } from '../../voice/run_context.js';
 
 /** How long to wait for the agent's goodbye reply to play out before forcing shutdown. */
 const END_CALL_REPLY_TIMEOUT = 5000;
@@ -121,66 +121,72 @@ export function EndCallTool<UserData = UnknownUserData>({
 
   return Toolset.create<UserData>({
     id: 'end_call',
-    tools: [
-      tool<UserData>({
-        name: 'end_call',
-        description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
-        execute: async (_args, { ctx, abortSignal }) => {
-          log().debug('end_call tool called');
-          const session = ctx.session;
-          const llm = session.currentAgent.getActivityOrThrow().llm;
+    // `session` is in lexical scope for the tool below — no state is stashed between activation
+    // and a tool call.
+    tools: ({ session }) => {
+      const endCall = async (
+        ctx: RunContext<UserData>,
+        abortSignal: AbortSignal,
+      ): Promise<string | undefined> => {
+        log().debug('end_call tool called');
+        const llm = ctx.session.currentAgent.getActivityOrThrow().llm;
 
-          // Lifetime of this invocation: aborts when the session closes, and also when the tool
-          // call itself is aborted. All listeners/timers below are scoped to it.
-          const controller = new AbortController();
-          const signal = abortSignal
-            ? AbortSignal.any([abortSignal, controller.signal])
-            : controller.signal;
+        // Lifetime of this invocation: aborts when the session closes, and also when the tool
+        // call itself is aborted. All listeners/timers below are scoped to it.
+        const controller = new AbortController();
+        const signal = AbortSignal.any([abortSignal, controller.signal]);
 
-          void onceEvent(session, AgentSessionEventTypes.Close, { signal }).then((event) => {
-            if (!event) return; // signal aborted before close fired
-            controller.abort(); // stop the delayed-shutdown race
+        void onceEvent(ctx.session, AgentSessionEventTypes.Close, { signal }).then((event) => {
+          if (!event) return; // signal aborted before close fired (e.g. toolset torn down)
+          controller.abort(); // stop the delayed-shutdown race
 
-            const jobCtx = getJobContext(false);
-            if (!jobCtx) return;
+          const jobCtx = getJobContext(false);
+          if (!jobCtx) return;
 
-            if (deleteRoom) {
-              jobCtx.addShutdownCallback(async () => {
-                log().info('deleting the room because the user ended the call');
-                await jobCtx.deleteRoom();
-              });
-            }
-
-            jobCtx.shutdown(String(event.reason));
-          });
-
-          ctx.speechHandle.addDoneCallback(() => {
-            if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {
-              session.shutdown();
-              return;
-            }
-
-            void delayedSessionShutdown(session, signal);
-          });
-
-          if (onToolCalled) {
-            await onToolCalled({ ctx, arguments: {} });
+          if (deleteRoom) {
+            jobCtx.addShutdownCallback(async () => {
+              log().info('deleting the room because the user ended the call');
+              await jobCtx.deleteRoom();
+            });
           }
 
-          const completedEvent = {
-            ctx,
-            output:
-              endInstructions === null
-                ? undefined
-                : ({ type: 'output', value: endInstructions } as const),
-          };
-          if (onToolCompleted) {
-            await onToolCompleted(completedEvent);
+          jobCtx.shutdown(String(event.reason));
+        });
+
+        ctx.speechHandle.addDoneCallback(() => {
+          if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {
+            session.shutdown();
+            return;
           }
 
-          return endInstructions ?? undefined;
-        },
-      }),
-    ],
+          void delayedSessionShutdown(ctx.session, signal);
+        });
+
+        if (onToolCalled) {
+          await onToolCalled({ ctx, arguments: {} });
+        }
+
+        const completedEvent = {
+          ctx,
+          output:
+            endInstructions === null
+              ? undefined
+              : ({ type: 'output', value: endInstructions } as const),
+        };
+        if (onToolCompleted) {
+          await onToolCompleted(completedEvent);
+        }
+
+        return endInstructions ?? undefined;
+      };
+
+      return [
+        tool<UserData>({
+          name: 'end_call',
+          description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
+          execute: async (_args, { ctx, abortSignal }) => endCall(ctx, abortSignal),
+        }),
+      ];
+    },
   });
 }

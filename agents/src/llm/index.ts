@@ -25,6 +25,7 @@ export {
   type ToolOptions,
   type ToolsetContext,
   type ToolsetCreateOptions,
+  type ToolsetFactoryFn,
   type ToolType,
 } from './tool_context.js';
 
