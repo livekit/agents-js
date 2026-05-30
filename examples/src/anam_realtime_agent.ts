@@ -62,14 +62,14 @@ export default defineAgent({
 
     // Configure the Anam avatar persona (requires avatarId)
     const personaName = process.env.ANAM_PERSONA_NAME ?? 'Agent';
-    const avatarId = process.env.ANAM_AVATAR_ID;
-    if (!avatarId) {
+    const anamAvatarId = process.env.ANAM_AVATAR_ID;
+    if (!anamAvatarId) {
       throw new Error('ANAM_AVATAR_ID is required');
     }
 
     // Start the Anam avatar session and route Agent audio to the avatar
     const avatar = new anam.AvatarSession({
-      personaConfig: { name: personaName, avatarId },
+      personaConfig: { name: personaName, avatarId: anamAvatarId },
       apiUrl: process.env.ANAM_API_URL,
     });
     await avatar.start(session, ctx.room);
