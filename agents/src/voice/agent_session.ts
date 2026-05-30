@@ -416,10 +416,8 @@ export class AgentSession<
     event: K,
     ...args: Parameters<AgentSessionCallbacks[K]>
   ): boolean {
-    if (event !== AgentSessionEventTypes.DebugMessage) {
-      const eventData = args[0] as AgentEvent;
-      this._recordedEvents.push(eventData);
-    }
+    const eventData = args[0] as AgentEvent;
+    this._recordedEvents.push(eventData);
     return super.emit(event, ...args);
   }
 
