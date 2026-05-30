@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
+import { AgentSession as pb } from '@livekit/protocol';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
@@ -153,6 +155,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
+  [AgentSessionEventTypes.DebugMessage]: (ev: pb.DebugMessage) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
@@ -738,6 +741,12 @@ export class AgentSession<
     }
 
     return this.activity.interrupt(options);
+  }
+
+  /** @internal — emit a debug/trace payload to the debugger/recorder. */
+  _emitDebugMessage(payload: JsonObject): void {
+    const debugMessage = new pb.DebugMessage({ payload: Struct.fromJson(payload) });
+    super.emit(AgentSessionEventTypes.DebugMessage, debugMessage);
   }
 
   /**
