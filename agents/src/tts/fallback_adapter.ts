@@ -425,10 +425,15 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
+    let textTokensRead = 0;
+    let inputEnded = false;
     const readInputLLMStream = (async () => {
       try {
         for await (const input of this.input) {
           if (this.abortController.signal.aborted) break;
+          if (typeof input === 'string') {
+            textTokensRead += 1;
+          }
           this.tokenBuffer.push(input);
         }
       } catch (error) {
@@ -436,6 +441,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         throw error;
       } finally {
         this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
+        inputEnded = true;
       }
     })();
 
@@ -462,6 +468,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         const stream = tts.stream({ connOptions });
         let bufferIndex = 0;
+        let tokensPushed = 0;
         let streamOutputCompleted = false;
         const forwardBufferToTTS = async () => {
           while (true) {
@@ -474,6 +481,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 return;
               } else {
                 stream.pushText(token);
+                tokensPushed += 1;
               }
             }
             await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, FORWARD_POLL_MS));
@@ -565,6 +573,12 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // Silent failures must trigger fallback. See `sawRawAudio` above for
         // why we don't check `audioPushed` here.
         if (!sawRawAudio) {
+          if (tokensPushed === 0 && inputEnded && textTokensRead === 0) {
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            await readInputLLMStream.catch(() => {});
+            return;
+          }
+
           throw new APIConnectionError({
             message: 'TTS stream completed but no audio was received',
           });

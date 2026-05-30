@@ -190,6 +190,49 @@ describe('TTS FallbackAdapter', () => {
     await adapter.close();
   });
 
+  it('should end cleanly when the stream input has zero text tokens', async () => {
+    const primary = new MockTTS('primary');
+    const secondary = new MockTTS('secondary');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    );
+
+    const iterate = (async () => {
+      let frameCount = 0;
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+        frameCount++;
+      }
+      return frameCount;
+    })();
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('fallback adapter did not end cleanly')), 3000),
+    );
+
+    const frameCount = await Promise.race([iterate, timeout]);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(frameCount).toBe(0);
+    expect(adapter.status[0]!.available).toBe(true);
+    expect(adapter.status[1]!.available).toBe(true);
+
+    stream.close();
+    await adapter.close();
+  });
+
   it('should fall back in the non-streaming (synthesize) path with mismatched sample rates', async () => {
     // FallbackChunkedStream has the same phantom-flush vulnerability as
     // FallbackSynthesizeStream: when the primary's sample rate differs from
