@@ -9,7 +9,8 @@
 // only, and make SpeechHandle itself awaitable.
 import { describe, expect, it, vi } from 'vitest';
 import { FunctionCall } from '../llm/chat_context.js';
-import { functionCallStorage } from './agent.js';
+import { Task } from '../utils.js';
+import { _setActivityTaskInfo } from './agent.js';
 import { SpeechHandle } from './speech_handle.js';
 
 async function raceTimeout(promise: Promise<unknown>, ms: number): Promise<'resolved' | 'timeout'> {
@@ -30,13 +31,38 @@ function makeFunctionCall(): FunctionCall {
   });
 }
 
+/**
+ * Simulate running `fn` inside a function-tool task. Mirrors what
+ * generation.ts does for real tool executions: it constructs a Task and
+ * attaches the owning function call + speech handle to that task's
+ * activity info, which is what SpeechHandle.waitForPlayout reads to
+ * detect circular waits.
+ */
+function runInToolTask<T>(
+  ctx: { functionCall: FunctionCall; speechHandle: SpeechHandle },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const task = Task.from(async () => {
+    const current = Task.current();
+    if (current) {
+      _setActivityTaskInfo(current, {
+        functionCall: ctx.functionCall,
+        speechHandle: ctx.speechHandle,
+        inlineTask: true,
+      });
+    }
+    return await fn();
+  });
+  return task.result;
+}
+
 describe('SpeechHandle.waitForPlayout - tool-context owner check', () => {
   it('throws only when called on the SpeechHandle that owns the active tool', async () => {
     const owningHandle = SpeechHandle.create();
     const functionCall = makeFunctionCall();
 
     // Simulate: we're inside a function tool owned by `owningHandle`.
-    await functionCallStorage.run({ functionCall, speechHandle: owningHandle }, async () => {
+    await runInToolTask({ functionCall, speechHandle: owningHandle }, async () => {
       await expect(owningHandle.waitForPlayout()).rejects.toThrow(/circular wait/);
     });
   });
@@ -49,7 +75,7 @@ describe('SpeechHandle.waitForPlayout - tool-context owner check', () => {
     // Resolve otherHandle's playout shortly after we start waiting on it.
     setTimeout(() => otherHandle._markDone(), 10);
 
-    await functionCallStorage.run({ functionCall, speechHandle: owningHandle }, async () => {
+    await runInToolTask({ functionCall, speechHandle: owningHandle }, async () => {
       // This used to throw; should now complete without deadlock.
       const outcome = await raceTimeout(otherHandle.waitForPlayout(), 1000);
       expect(outcome).toBe('resolved');
@@ -134,7 +160,7 @@ describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
     // Background "speech queue" resolves the child handle after a short delay,
     // standing in for the real mainTask dequeueing and playing it out.
     const runTool = async () =>
-      functionCallStorage.run({ functionCall, speechHandle: parentHandle }, async () => {
+      runInToolTask({ functionCall, speechHandle: parentHandle }, async () => {
         const childHandle = SpeechHandle.create();
         setTimeout(() => childHandle._markDone(), 20);
 
@@ -154,7 +180,7 @@ describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
     const functionCall = makeFunctionCall();
 
     const runTool = async () =>
-      functionCallStorage.run({ functionCall, speechHandle: parentHandle }, async () => {
+      runInToolTask({ functionCall, speechHandle: parentHandle }, async () => {
         const childHandle = SpeechHandle.create();
         setTimeout(() => childHandle._markDone(), 20);
 
@@ -166,6 +192,37 @@ describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
 
     const outcome = await raceTimeout(runTool(), 2000);
     expect(outcome).toBe('resolved');
+  });
+});
+
+describe('SpeechHandle.waitForPlayout - sub-task isolation (#1264)', () => {
+  // Regression test for https://github.com/livekit/agents-js/issues/1264.
+  //
+  // When a function tool spawns an AgentTask (or any nested Task), the parent
+  // tool's function-call context must not leak into the nested Task. Previously
+  // the owner check read from AsyncLocalStorage, which propagates through
+  // `await`, so a nested Task with no function tool of its own would inherit
+  // the parent's owner and could false-positive on circular-wait detection.
+  // After the fix the check reads per-Task activity info, which is bound to
+  // the tool's own Task and does not leak.
+  it('does not falsely flag a parent tool handle as circular from inside a nested Task without its own functionCall', async () => {
+    const parentHandle = SpeechHandle.create();
+    const functionCall = makeFunctionCall();
+
+    // Resolve the parent handle shortly after the inner wait starts so the
+    // happy path resolves rather than hanging.
+    setTimeout(() => parentHandle._markDone(), 20);
+
+    await runInToolTask({ functionCall, speechHandle: parentHandle }, async () => {
+      // The parent tool spawns a fresh inner Task with no activity info of
+      // its own — this models e.g. an AgentTask's audio-recognition spawning
+      // a turn-handling task. AsyncLocalStorage would propagate into this
+      // inner Task; per-Task info does not.
+      const innerTask = Task.from(async () => {
+        return await raceTimeout(parentHandle.waitForPlayout(), 1000);
+      });
+      expect(await innerTask.result).toBe('resolved');
+    });
   });
 });
 

@@ -4,9 +4,8 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
-import type { Task } from '../utils.js';
-import { Event, Future, dedent, shortuuid } from '../utils.js';
-import { functionCallStorage } from './agent.js';
+import { Event, Future, Task, dedent, shortuuid } from '../utils.js';
+import { _getActivityTaskInfo } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
@@ -221,7 +220,14 @@ export class SpeechHandle {
    * `_markGenerationDone()` before awaiting tool execution.
    */
   async waitForPlayout(): Promise<void> {
-    const store = functionCallStorage.getStore();
+    // Read the owning function call from the current Task's activity info rather
+    // than from functionCallStorage. AsyncLocalStorage propagates through
+    // `await`, so an inherited functionCall from a parent tool could fire a
+    // false-positive circular-wait error when awaiting unrelated handles from
+    // inside a sub-task. The per-Task info is bound to the tool's own task and
+    // does not leak. See https://github.com/livekit/agents-js/issues/1264.
+    const currentTask = Task.current();
+    const store = currentTask ? _getActivityTaskInfo(currentTask) : undefined;
     if (store?.functionCall && store.speechHandle === this) {
       throw new SpeechHandleCircularWaitError(store.functionCall.name);
     }
