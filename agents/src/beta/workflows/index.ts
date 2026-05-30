@@ -7,4 +7,5 @@ export {
   type TaskGroupOptions,
   type TaskGroupResult,
 } from './task_group.js';
-export type { InstructionParts } from './utils.js';
+export { GetDtmfTask, type GetDtmfResult, type GetDtmfTaskOptions } from './dtmf_inputs.js';
+export { DtmfEvent, dtmfEventToCode, formatDtmf, type InstructionParts } from './utils.js';
