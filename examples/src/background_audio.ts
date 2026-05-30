@@ -43,7 +43,7 @@ export default defineAgent({
       execute: async ({ query }) => {
         logger.info('FakeWebSearchAgent thinking...');
         await new Promise((resolve) => setTimeout(resolve, 5000));
-        return `The request failed on ${query}, give the users some information based on your knowledge`;
+        throw new llm.ToolError(`The request failed on ${query}`);
       },
     });
 
