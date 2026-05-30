@@ -11,7 +11,7 @@ export {
 export { Instructions } from '../llm/index.js';
 export {
   END_CALL_DESCRIPTION,
-  EndCallTool,
+  createEndCallTool,
   type EndCallToolCalledEvent,
   type EndCallToolCompletedEvent,
   type EndCallToolOptions,

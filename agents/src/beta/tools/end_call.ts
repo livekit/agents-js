@@ -86,7 +86,7 @@ export type EndCallToolOptions<UserData = UnknownUserData> = {
 /**
  * Allows the agent to end the call and disconnect from the room.
  */
-export function EndCallTool<UserData = UnknownUserData>({
+export function createEndCallTool<UserData = UnknownUserData>({
   extraDescription = '',
   deleteRoom = true,
   endInstructions = 'say goodbye to the user',
