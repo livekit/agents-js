@@ -116,10 +116,11 @@ import {
   type JobProcess,
   WorkerOptions,
   cli,
+  dedent,
   defineAgent,
+  inference,
   llm,
   voice,
-  inference,
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -154,7 +155,10 @@ export default defineAgent({
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
@@ -228,8 +232,10 @@ class IntroAgent extends voice.Agent<StoryData> {
 class StoryAgent extends voice.Agent<StoryData> {
   constructor(name: string, location: string) {
     super({
-      instructions: `You are a storyteller. Use the user's information in order to make the story personalized.
-        The user's name is ${name}, from ${location}`,
+      instructions: dedent`
+        You are a storyteller. Use the user's information in order to make the story personalized.
+        The user's name is ${name}, from ${location}
+      `,
     });
   }
 
@@ -253,7 +259,10 @@ export default defineAgent({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       userData: userdata,
     });
 
@@ -343,6 +352,7 @@ To contribute to this project:
 To test any changes or plugins:
 
 1. Build the project:
+
    ```bash
    pnpm build
    ```
@@ -369,7 +379,9 @@ This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.so
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
 
 <!--BEGIN_REPO_NAV-->
+
 <br/><table>
+
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
 <tr><td>Agents SDKs</td><td><a href="https://github.com/livekit/agents">Python</a> · <b>Node.js</b></td></tr><tr></tr>
