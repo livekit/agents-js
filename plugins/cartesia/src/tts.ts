@@ -240,8 +240,8 @@ export class ChunkedStream extends tts.ChunkedStream {
         if (statusCode < 200 || statusCode >= 300) {
           const chunks: Buffer[] = [];
 
-          res.on('data', (chunk) => {
-            chunks.push(Buffer.from(chunk));
+          res.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
           });
           res.on('close', () => {
             const body = Buffer.concat(chunks).toString('utf8');
