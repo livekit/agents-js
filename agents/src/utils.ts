@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  LocalTrackPublication,
+  Participant,
   ParticipantKind,
   RemoteParticipant,
   RemoteTrackPublication,
@@ -951,18 +953,51 @@ export async function waitForParticipant({
   room,
   identity,
   kind,
+  includeLocal,
+  signal,
 }: {
   room: Room;
   identity?: string;
   kind?: ParticipantKind | ParticipantKind[];
-}): Promise<RemoteParticipant> {
+  includeLocal: true;
+  signal?: AbortSignal;
+}): Promise<Participant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: false;
+  signal?: AbortSignal;
+}): Promise<RemoteParticipant>;
+export async function waitForParticipant({
+  room,
+  identity,
+  kind,
+  includeLocal = false,
+  signal,
+}: {
+  room: Room;
+  identity?: string;
+  kind?: ParticipantKind | ParticipantKind[];
+  includeLocal?: boolean;
+  signal?: AbortSignal;
+}): Promise<Participant> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipant aborted');
+  }
 
-  const fut = new Future<RemoteParticipant>();
+  const fut = new Future<Participant>();
 
-  const kindMatch = (participant: RemoteParticipant) => {
+  const kindMatch = (participant: Participant) => {
     if (kind === undefined) return true;
 
     if (Array.isArray(kind)) {
@@ -984,10 +1019,27 @@ export async function waitForParticipant({
     fut.reject(new Error('Got disconnected from room while waiting for participant'));
   };
 
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipant aborted'));
+    }
+  };
+
   room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity) &&
+      kindMatch(localParticipant)
+    ) {
+      return localParticipant;
+    }
+
     for (const p of room.remoteParticipants.values()) {
       onParticipantConnected(p);
       if (fut.done) {
@@ -999,6 +1051,7 @@ export async function waitForParticipant({
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
     room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -1006,8 +1059,24 @@ export async function waitForTrackPublication({
   room,
   identity,
   kind,
-  waitForSubscription = false,
+  waitForSubscription,
   signal,
+  includeLocal,
+}: {
+  room: Room;
+  identity?: string;
+  kind: TrackKind;
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal: true;
+}): Promise<RemoteTrackPublication | LocalTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription,
+  signal,
+  includeLocal,
 }: {
   room: Room;
   /**
@@ -1029,7 +1098,23 @@ export async function waitForTrackPublication({
    * publication leak listeners until the room disconnects.
    */
   signal?: AbortSignal;
-}): Promise<RemoteTrackPublication> {
+  includeLocal?: false;
+}): Promise<RemoteTrackPublication>;
+export async function waitForTrackPublication({
+  room,
+  identity,
+  kind,
+  waitForSubscription = false,
+  signal,
+  includeLocal = false,
+}: {
+  room: Room;
+  identity?: string;
+  kind: TrackKind;
+  waitForSubscription?: boolean;
+  signal?: AbortSignal;
+  includeLocal?: boolean;
+}): Promise<RemoteTrackPublication | LocalTrackPublication> {
   if (!room.isConnected) {
     throw new Error('Room is not connected');
   }
@@ -1037,7 +1122,7 @@ export async function waitForTrackPublication({
     throw new Error('waitForTrackPublication aborted');
   }
 
-  const fut = new Future<RemoteTrackPublication>();
+  const fut = new Future<RemoteTrackPublication | LocalTrackPublication>();
 
   const kindMatch = (k: TrackKind | undefined) => {
     if (kind === undefined || kind === null) {
@@ -1077,10 +1162,23 @@ export async function waitForTrackPublication({
     }
   };
 
+  const onLocalTrackPublished = (publication: LocalTrackPublication | undefined) => {
+    if (fut.done || !publication) return;
+    const localParticipant = room.localParticipant;
+    if (localParticipant && (identity === undefined || localParticipant.identity === identity)) {
+      if (kindMatch(publication.kind)) {
+        fut.resolve(publication);
+      }
+    }
+  };
+
   if (waitForSubscription) {
     room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
   } else {
     room.on(RoomEvent.TrackPublished, onTrackPublished);
+  }
+  if (includeLocal) {
+    room.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
   }
 
   const onAbort = () => {
@@ -1091,6 +1189,20 @@ export async function waitForTrackPublication({
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    const localParticipant = room.localParticipant;
+    if (
+      includeLocal &&
+      localParticipant &&
+      (identity === undefined || localParticipant.identity === identity)
+    ) {
+      for (const publication of localParticipant.trackPublications.values()) {
+        if (kindMatch(publication.kind)) {
+          fut.resolve(publication);
+          break;
+        }
+      }
+    }
+
     for (const p of room.remoteParticipants.values()) {
       for (const publication of p.trackPublications.values()) {
         if (matches(publication, p)) {
@@ -1107,6 +1219,9 @@ export async function waitForTrackPublication({
       room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
     } else {
       room.off(RoomEvent.TrackPublished, onTrackPublished);
+    }
+    if (includeLocal) {
+      room.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
     }
     signal?.removeEventListener('abort', onAbort);
   }

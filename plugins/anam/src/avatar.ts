@@ -53,6 +53,14 @@ export class AvatarSession extends voice.AvatarSession {
     super();
   }
 
+  override get avatarIdentity(): string {
+    return this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY;
+  }
+
+  override get provider(): string {
+    return 'anam';
+  }
+
   async start(
     agentSession: voice.AgentSession,
     room: Room,
@@ -93,7 +101,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     const jwt = await mintAvatarJoinToken({
       roomName: room.name!,
-      avatarIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
+      avatarIdentity: this.avatarIdentity,
       publishOnBehalf: localIdentity,
       apiKey: lkKey,
       apiSecret: lkSecret,
@@ -116,7 +124,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
-      destinationIdentity: this.opts.avatarParticipantIdentity ?? AVATAR_IDENTITY,
+      destinationIdentity: this.avatarIdentity,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
   }

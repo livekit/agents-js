@@ -19,6 +19,7 @@ function createHooks() {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
 
@@ -193,6 +194,30 @@ describe('AudioRecognition STT pipeline handoff', () => {
       await flushTasks();
 
       expect((recognition as any).sttPipeline).toBeDefined();
+    } finally {
+      await recognition.close();
+    }
+  });
+
+  it('does not accumulate user turn limit state after clearing the user turn', async () => {
+    const hooks = createHooks();
+    const recognition = new AudioRecognition({
+      recognitionHooks: hooks,
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+      userTurnLimit: { maxWords: 5, maxDuration: null },
+    });
+
+    try {
+      (recognition as any).checkUserTurnLimit('one two three');
+      expect((recognition as any).userTurnTracker.words).toBe(3);
+      expect(hooks.onUserTurnExceeded).not.toHaveBeenCalled();
+
+      recognition.clearUserTurn();
+
+      (recognition as any).checkUserTurnLimit('four five six');
+      expect((recognition as any).userTurnTracker.words).toBe(3);
+      expect(hooks.onUserTurnExceeded).not.toHaveBeenCalled();
     } finally {
       await recognition.close();
     }

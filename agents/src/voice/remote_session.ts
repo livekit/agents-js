@@ -63,6 +63,7 @@ export type RemoteSessionEventTypes =
   | 'overlapping_speech'
   | 'amd_prediction'
   | 'session_usage'
+  | 'debug_message'
   | 'error';
 
 /** @experimental */
@@ -75,6 +76,7 @@ export type RemoteSessionCallbacks = {
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
+  debug_message: (ev: pb.DebugMessage) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
 
@@ -522,6 +524,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
+      session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
   }
 
@@ -550,6 +553,7 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
+      this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
 
     if (this.recvTask) {
@@ -711,6 +715,10 @@ export class SessionHost {
       },
       event.createdAt,
     );
+  };
+
+  private onDebugMessage = (event: pb.DebugMessage): void => {
+    this.emitEvent({ case: 'debugMessage', value: event });
   };
 
   /**
@@ -1003,6 +1011,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'sessionUsageUpdated':
         this.emit('session_usage', ev.value);
+        break;
+      case 'debugMessage':
+        this.emit('debug_message', ev.value);
         break;
       case 'error':
         this.emit('error', ev.value);

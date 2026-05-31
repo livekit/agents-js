@@ -367,6 +367,22 @@ function createWav(frame: AudioFrame): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
+function extractConfidence(
+  payload: { language_probability?: unknown },
+  logger: ReturnType<typeof log>,
+): number {
+  const value = payload.language_probability;
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (value != null) {
+    logger.debug(
+      `Unexpected language_probability type: ${typeof value} (value=${JSON.stringify(value)}); falling back to confidence=1.0`,
+    );
+  }
+  return 1;
+}
+
 // ---------------------------------------------------------------------------
 // REST response type
 // ---------------------------------------------------------------------------
@@ -491,6 +507,7 @@ export class STT extends stt.STT {
     }
 
     const data = (await response.json()) as SarvamSTTResponse;
+    const logger = log();
 
     let startTime = 0;
     let endTime = 0;
@@ -510,7 +527,7 @@ export class STT extends stt.STT {
           language: normalizeLanguage(data.language_code ?? this.opts.languageCode ?? 'unknown'),
           startTime,
           endTime,
-          confidence: data.language_probability ?? 0,
+          confidence: extractConfidence(data, logger),
         },
       ],
     };
@@ -768,7 +785,7 @@ export class SpeechStream extends stt.SpeechStream {
                 td.language_code ?? this.#opts.languageCode ?? 'unknown',
               );
               const requestId = td.request_id ?? '';
-              const confidence = td.language_probability ?? 0;
+              const confidence = extractConfidence(td, this.#logger);
               this.#requestId = requestId;
 
               // Log metrics when available

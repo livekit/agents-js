@@ -48,6 +48,9 @@ pnpm build && node ./examples/src/basic_agent.ts dev --log-level=debug
 
 Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus provider keys (e.g. `OPENAI_API_KEY`).
 
+> **Rule (must follow before handing off to the user to run any example/agent file):**
+> Always run `pnpm build` first and iterate on TypeScript / dependency errors until it exits 0. Never tell the user to `node ./examples/src/<file>.ts` (or any `.ts` entrypoint) until the build succeeds — this includes after editing example files, after modifying framework code that breaks `tsc`, and after copy-pasting reproductions from external sources. If the build fails, fix the errors yourself (add missing deps, fix outdated API usage, update types) before asking the user to run anything.
+
 ### Pre-downloading plugin assets (for Docker builds)
 
 `@livekit/agents` ships a `livekit-agents` bin with a `download-files` subcommand that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
@@ -122,7 +125,7 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 Plugin capabilities by type:
 
 - **LLM**: openai, google, baseten, mistralai
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)

@@ -436,7 +436,28 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
           toolCalls: [{ name: 'save_email', args: { email: 'charlie@test.com' } }],
         },
         {
-          input: 'Conversation to summarize:\n\nuser: My name is Charlie.\nuser: charlie@test.com',
+          input: [
+            'Conversation to summarize:',
+            '',
+            '<user>',
+            'My name is Charlie.',
+            '</user>',
+            '<function_call name="save_name" call_id="fake_call_0">',
+            '{"name":"Charlie"}',
+            '</function_call>',
+            '<function_call_output name="save_name" call_id="fake_call_0">',
+            '"Saved name: Charlie"',
+            '</function_call_output>',
+            '<user>',
+            'charlie@test.com',
+            '</user>',
+            '<function_call name="save_email" call_id="fake_call_0">',
+            '{"email":"charlie@test.com"}',
+            '</function_call>',
+            '<function_call_output name="save_email" call_id="fake_call_0">',
+            '"Saved email: charlie@test.com"',
+            '</function_call_output>',
+          ].join('\n'),
           content: 'Summary: name=Charlie, email=charlie@test.com.',
         },
       ]);
@@ -461,7 +482,7 @@ describe('basic_task_group', { timeout: 120_000 }, () => {
       );
       expect(summaryMsg).toBeDefined();
       if (summaryMsg && summaryMsg.type === 'message') {
-        expect(summaryMsg.textContent).toContain('[history summary]');
+        expect(summaryMsg.textContent).toContain('<chat_history_summary>');
       }
     });
   });

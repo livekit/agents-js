@@ -16,7 +16,8 @@ export type AgentMetrics =
   | VADMetrics
   | EOUMetrics
   | RealtimeModelMetrics
-  | InterruptionMetrics;
+  | InterruptionMetrics
+  | AvatarMetrics;
 
 export type LLMMetrics = {
   type: 'llm_metrics';
@@ -211,5 +212,17 @@ export type InterruptionMetrics = {
   numBackchannels: number;
   /** Number of requests sent to the model (incremental). */
   numRequests: number;
+  metadata?: MetricsMetadata;
+};
+
+export type AvatarMetrics = {
+  type: 'avatar_metrics';
+  timestamp: number;
+  /** Delay between forwarding the first audio frame to the avatar and playback start. */
+  playbackLatencyMs?: number;
+  /** Time when the avatar session was started. */
+  sessionStartedAt?: number;
+  /** Time when the avatar participant joined and published a video track. */
+  avatarJoinedAt?: number;
   metadata?: MetricsMetadata;
 };

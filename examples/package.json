@@ -44,6 +44,7 @@
     "@livekit/agents-plugin-rime": "workspace:*",
     "@livekit/agents-plugin-runway": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugin-tavus": "workspace:*",
     "@livekit/agents-plugin-trugen": "workspace:*",
     "@livekit/agents-plugin-minimax": "workspace:*",
     "@livekit/agents-plugin-mistralai": "workspace:*",

@@ -18,6 +18,7 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import { type VAD, VADEventType, type VADStream } from '../vad.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -231,6 +232,45 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
+type VADSource = VAD | (() => Promise<VAD>);
+
+function isSpeechmaticsModel(model: string | undefined): boolean {
+  return model?.startsWith('speechmatics/') ?? false;
+}
+
+function loadSileroVAD(model: string): () => Promise<VAD> {
+  return async () => {
+    try {
+      const dynamicImport = (specifier: string) =>
+        import(specifier) as Promise<{ VAD: { load(): Promise<VAD> } }>;
+      const { VAD: SileroVAD } = await dynamicImport('@livekit/agents-plugin-silero');
+      return SileroVAD.load();
+    } catch (e) {
+      throw new Error(
+        `@livekit/agents-plugin-silero is required: model ${JSON.stringify(
+          model,
+        )} does not handle endpointing server-side.`,
+        { cause: e },
+      );
+    }
+  };
+}
+
+function resolveVADForModel(
+  model: string | undefined,
+  vad: VAD | undefined,
+): VADSource | undefined {
+  const speechmatics = isSpeechmaticsModel(model);
+  if (vad && !speechmatics) {
+    log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
+    return undefined;
+  }
+  if (speechmatics && vad === undefined) {
+    return loadSileroVAD(model!);
+  }
+  return vad;
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -256,6 +296,20 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
+  private vad?: VADSource;
+  private _vadPromise?: Promise<VAD | undefined>;
+
+  /**
+   * Resolves to the VAD instance for the current model, or `undefined` if the model
+   * handles endpointing server-side. Lazily computed on first read so callers that
+   * never need VAD don't pay the cost of loading Silero.
+   */
+  get vadPromise(): Promise<VAD | undefined> {
+    if (this._vadPromise === undefined) {
+      this._vadPromise = typeof this.vad === 'function' ? this.vad() : Promise.resolve(this.vad);
+    }
+    return this._vadPromise;
+  }
 
   #logger = log();
 
@@ -270,6 +324,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     modelOptions?: STTOptions<TModel>;
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
+    vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     super({
@@ -289,6 +344,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiSecret,
       fallback,
       connOptions,
+      vad,
     } = opts || {};
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
@@ -321,6 +377,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       }
     }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+    this.vad = resolveVADForModel(nextModel, vad);
 
     this.opts = {
       model: nextModel as TModel,
@@ -360,25 +417,43 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
+    const nextOpts = { ...opts };
+    if (typeof nextOpts.model === 'string') {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(nextOpts.model);
+      nextOpts.model = parsedModel as TModel;
+      if (parsedLanguage !== undefined && nextOpts.language === undefined) {
+        nextOpts.language = parsedLanguage;
+      }
+    }
+
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
       : this.opts.modelOptions;
 
     this.opts = {
       ...this.opts,
-      ...opts,
-      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+      ...nextOpts,
+      language:
+        nextOpts.language !== undefined ? normalizeLanguage(nextOpts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
 
-    if (opts.modelOptions) {
+    if (nextOpts.model !== undefined) {
+      this.vad = resolveVADForModel(
+        nextOpts.model,
+        this.vad && typeof this.vad !== 'function' ? this.vad : undefined,
+      );
+      this._vadPromise = undefined;
+    }
+
+    if (nextOpts.modelOptions) {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
     }
 
     for (const stream of this.streams) {
-      stream.updateOptions(opts);
+      stream.updateOptions(nextOpts);
     }
   }
 
@@ -493,10 +568,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
   protected async run(): Promise<void> {
     while (true) {
+      const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let closing = false;
       let finalReceived = false;
+      let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
@@ -574,6 +651,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               frames = audioStream.flush();
             } else {
               const frame = ev as AudioFrame;
+              vadStream?.pushFrame(frame);
               frames = audioStream.write(new Int16Array(frame.data).buffer);
             }
 
@@ -586,12 +664,37 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           }
 
           closing = true;
+          vadStream?.endInput();
           socket.send(JSON.stringify({ type: 'session.finalize' }));
         } catch (e) {
           if ((e as Error).message === 'Send aborted') {
             // Expected abort, don't log
             return;
           }
+          throw e;
+        }
+      };
+
+      const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
+        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
+          if (signal.aborted) {
+            return reject(new Error('VAD aborted'));
+          }
+          const onAbort = () => reject(new Error('VAD aborted'));
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+
+        const iterator = stream[Symbol.asyncIterator]();
+        try {
+          while (true) {
+            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
+            if (result.done) break;
+            if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
+            if (socket.readyState !== 1) return;
+            socket.send(JSON.stringify({ type: 'session.finalize' }));
+          }
+        } catch (e) {
+          if ((e as Error).message === 'VAD aborted') return;
           throw e;
         }
       };
@@ -659,6 +762,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
         const connController = new AbortController();
@@ -671,16 +775,20 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           connController,
         );
         const recvTask = Task.from(({ signal }) => recv(signal), connController);
+        const activeVADStream = vadStream;
+        const vadTask = activeVADStream
+          ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
+          : undefined;
         const waitReconnectTask = Task.from(
           ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
           connController,
         );
 
         try {
-          await ThrowsPromise.race([
-            ThrowsPromise.all([sendTask.result, wsListenerTask.result, recvTask.result]),
-            waitReconnectTask.result,
-          ]);
+          const taskResults = [sendTask.result, wsListenerTask.result, recvTask.result];
+          if (vadTask) taskResults.push(vadTask.result);
+
+          await ThrowsPromise.race([ThrowsPromise.all(taskResults), waitReconnectTask.result]);
 
           // If reconnect didn't trigger, tasks finished - exit loop
           if (!waitReconnectTask.done) break;
@@ -690,10 +798,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         } finally {
           connController.abort();
           this.abortController.signal.removeEventListener('abort', onStreamAbort);
-          await cancelAndWait(
-            [sendTask, wsListenerTask, recvTask, waitReconnectTask],
-            DEFAULT_CANCEL_TIMEOUT,
-          );
+          vadStream?.close();
+          const tasks = [sendTask, wsListenerTask, recvTask, waitReconnectTask];
+          if (vadTask) tasks.push(vadTask);
+          await cancelAndWait(tasks, DEFAULT_CANCEL_TIMEOUT);
           resourceCleanup();
         }
 

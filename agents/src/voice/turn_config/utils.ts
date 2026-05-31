@@ -12,6 +12,7 @@ import { defaultEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
+import { defaultUserTurnLimitOptions } from './user_turn_limit.js';
 
 const defaultSessionOptions = {
   maxToolSteps: 3,
@@ -67,6 +68,9 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     },
     preemptiveGeneration: {
       ...sessionOptions.turnHandling?.preemptiveGeneration,
+    },
+    userTurnLimit: {
+      ...sessionOptions.turnHandling?.userTurnLimit,
     },
 
     turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
@@ -136,6 +140,10 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
     preemptiveGeneration: {
       ...defaultPreemptiveGenerationOptions,
       ...stripUndefined(config.preemptiveGeneration ?? {}),
+    },
+    userTurnLimit: {
+      ...defaultUserTurnLimitOptions,
+      ...stripUndefined(config.userTurnLimit ?? {}),
     },
   } as const;
 }

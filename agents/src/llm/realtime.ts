@@ -140,7 +140,10 @@ export abstract class RealtimeSession extends EventEmitter {
   /**
    * @throws RealtimeError on Timeout
    */
-  abstract generateReply(instructions?: string): Promise<GenerationCreatedEvent>;
+  abstract generateReply(
+    instructions?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<GenerationCreatedEvent>;
 
   /**
    * Commit the input audio buffer to the server
