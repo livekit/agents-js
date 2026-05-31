@@ -220,6 +220,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     const baseUrl = new URL(this.#opts.baseUrl);
     const doneFut = new Future<void>();
+    let responseReceived = false;
 
     const req = request(
       {
@@ -234,6 +235,32 @@ export class ChunkedStream extends tts.ChunkedStream {
         signal: this.abortSignal,
       },
       (res) => {
+        responseReceived = true;
+        const statusCode = res.statusCode ?? 0;
+        if (statusCode < 200 || statusCode >= 300) {
+          const chunks: Buffer[] = [];
+
+          res.on('data', (chunk) => {
+            chunks.push(Buffer.from(chunk));
+          });
+          res.on('close', () => {
+            const body = Buffer.concat(chunks).toString('utf8');
+            const statusText = res.statusMessage ? ` ${res.statusMessage}` : '';
+            const message = `Cartesia TTS HTTP request failed: ${statusCode}${statusText}${body ? ` - ${body}` : ''}`;
+            const error =
+              statusCode === 408 || statusCode === 504
+                ? new APITimeoutError({ message })
+                : new APIConnectionError({ message });
+            if (!doneFut.done) doneFut.reject(error);
+          });
+          res.on('error', (err) => {
+            if (err.message === 'aborted') return;
+            this.#logger.error({ err }, 'Cartesia TTS error response read error');
+            if (!doneFut.done) doneFut.reject(err);
+          });
+          return;
+        }
+
         res.on('data', (chunk) => {
           for (const frame of bstream.write(chunk)) {
             this.queue.put({
@@ -270,7 +297,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
-      if (!doneFut.done) doneFut.resolve();
+      if (!responseReceived && !doneFut.done) doneFut.resolve();
     });
     req.write(JSON.stringify(json));
     req.end();
