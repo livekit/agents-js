@@ -39,6 +39,7 @@ import {
   type ToolChoice,
   type ToolContext,
   ToolFlag,
+  isFunctionTool,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
@@ -1878,7 +1879,7 @@ export class AgentActivity implements RecognitionHooks {
       const tools = shouldFilterTools
         ? Object.fromEntries(
             Object.entries(this.agent.toolCtx).filter(
-              ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
+              ([, fnTool]) => !isFunctionTool(fnTool) || !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
             ),
           )
         : this.agent.toolCtx;

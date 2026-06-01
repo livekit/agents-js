@@ -213,6 +213,8 @@ export class LLMStream extends llm.LLMStream {
       const toolsList: any[] = [];
       if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
         for (const [name, func] of Object.entries(this.toolCtx)) {
+          if (!llm.isFunctionTool(func)) continue;
+
           toolsList.push({
             type: 'function' as const,
             function: {

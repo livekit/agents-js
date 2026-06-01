@@ -368,9 +368,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = { ...tools };
-    this.toolDefinitions = Object.entries(tools)
-      .filter(([_, tool]) => llm.isFunctionTool(tool))
-      .map(([name, tool]) => ({
+    this.toolDefinitions = [];
+    for (const [name, tool] of Object.entries(tools)) {
+      if (!llm.isFunctionTool(tool)) continue;
+
+      this.toolDefinitions.push({
         type: 'custom_websocket',
         tool_schema: {
           type: 'function',
@@ -386,7 +388,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         // for ease of implementation within the RealtimeSession generations framework
         wait_for_speech_before_tool_call: true,
         allow_tool_chaining: false,
-      }));
+      });
+    }
 
     this.toolsReady.resolve();
   }
@@ -406,9 +409,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (tools !== undefined) {
       this._tools = { ...tools };
-      this.toolDefinitions = Object.entries(tools)
-        .filter(([, tool]) => llm.isFunctionTool(tool))
-        .map(([name, tool]) => ({
+      this.toolDefinitions = [];
+      for (const [name, tool] of Object.entries(tools)) {
+        if (!llm.isFunctionTool(tool)) continue;
+
+        this.toolDefinitions.push({
           type: 'custom_websocket',
           tool_schema: {
             type: 'function',
@@ -422,7 +427,8 @@ export class RealtimeSession extends llm.RealtimeSession {
           tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
           wait_for_speech_before_tool_call: true,
           allow_tool_chaining: false,
-        }));
+        });
+      }
     }
     if (chatCtx !== undefined) {
       this._chatCtx = chatCtx.copy();

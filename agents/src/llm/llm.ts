@@ -140,7 +140,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   ) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
-    this.#toolCtx = toolCtx;
+    this.#toolCtx = toolCtx
+      ? Object.fromEntries(Object.entries(toolCtx).sort(([a], [b]) => a.localeCompare(b)))
+      : undefined;
     this._connOptions = connOptions;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {

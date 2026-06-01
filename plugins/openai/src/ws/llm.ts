@@ -9,6 +9,7 @@ import {
   ConnectionPool,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   stream,
   toError,
 } from '@livekit/agents';
@@ -16,6 +17,7 @@ import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
 import type { ChatModels } from '../models.js';
 import type {
+  WsOutputItem,
   WsOutputItemDoneEvent,
   WsOutputTextDeltaEvent,
   WsResponseCompletedEvent,
@@ -446,26 +448,7 @@ export class WSLLMStream extends llm.LLMStream {
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    const tools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => {
-          const oaiParams = {
-            type: 'function' as const,
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-              true,
-              this.#strictToolSchema,
-            ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-          } as OpenAI.Responses.FunctionTool;
-
-          if (this.#strictToolSchema) {
-            oaiParams.strict = true;
-          }
-
-          return oaiParams;
-        })
-      : undefined;
+    const tools = buildResponsesTools(this.toolCtx, this.#strictToolSchema);
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {
@@ -476,7 +459,7 @@ export class WSLLMStream extends llm.LLMStream {
       type: 'response.create',
       model: this.#model as string,
       input: messages as unknown[],
-      tools: (tools ?? []) as unknown[],
+      tools: tools ?? [],
       ...(prevResponseId ? { previous_response_id: prevResponseId } : {}),
       ...requestOptions,
     };
@@ -577,7 +560,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
-    if (event.item.type === 'function_call') {
+    if (isWsFunctionCallItem(event.item)) {
       this.#pendingToolCalls.add(event.item.call_id);
       return {
         id: this.#responseId,
@@ -608,6 +591,8 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
+    logProviderToolExecutions(event.response.output ?? []);
+
     this.#llm._setPendingToolCalls(this.#pendingToolCalls);
 
     if (event.response.usage) {
@@ -630,6 +615,70 @@ export class WSLLMStream extends llm.LLMStream {
       message: event.response?.error?.message ?? 'Response failed',
       options: { statusCode: -1, retryable: false },
     });
+  }
+}
+
+function buildResponsesTools(
+  toolCtx: llm.ToolContext | undefined,
+  strictToolSchema: boolean,
+): OpenAI.Responses.Tool[] | undefined {
+  if (!toolCtx) return undefined;
+
+  const tools: OpenAI.Responses.Tool[] = [];
+  for (const [name, tool] of Object.entries(toolCtx)) {
+    if (llm.isProviderDefinedTool(tool)) {
+      tools.push(tool.config as unknown as OpenAI.Responses.Tool);
+      continue;
+    }
+
+    if (!llm.isFunctionTool(tool)) continue;
+
+    const oaiParams = {
+      type: 'function' as const,
+      name,
+      description: tool.description,
+      parameters: llm.toJsonSchema(
+        tool.parameters,
+        true,
+        strictToolSchema,
+      ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
+    } as OpenAI.Responses.FunctionTool;
+
+    if (strictToolSchema) {
+      oaiParams.strict = true;
+    }
+
+    tools.push(oaiParams);
+  }
+
+  return tools.length > 0 ? tools : undefined;
+}
+
+function isWsFunctionCallItem(item: WsOutputItem): item is WsOutputItem & {
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+} {
+  return (
+    item.type === 'function_call' &&
+    typeof item.call_id === 'string' &&
+    typeof item.name === 'string' &&
+    typeof item.arguments === 'string'
+  );
+}
+
+function logProviderToolExecutions(output: { type: string; [key: string]: unknown }[]): void {
+  for (const item of output) {
+    if (!['message', 'reasoning', 'function_call', 'function_call_output'].includes(item.type)) {
+      log().info(
+        {
+          tool_type: item.type,
+          result: item,
+        },
+        'provider tool executed',
+      );
+    }
   }
 }
 

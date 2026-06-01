@@ -4,6 +4,7 @@
 export {
   handoff,
   isFunctionTool,
+  isProviderDefinedTool,
   tool,
   ToolError,
   ToolFlag,

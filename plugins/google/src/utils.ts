@@ -140,6 +140,8 @@ export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclar
   const functionDeclarations: FunctionDeclaration[] = [];
 
   for (const [name, tool] of Object.entries(toolCtx)) {
+    if (!llm.isFunctionTool(tool)) continue;
+
     const { description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 
