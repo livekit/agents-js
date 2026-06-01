@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { APIStatusError, stt } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -384,6 +385,73 @@ describe('SpeechStream server errors', () => {
 
       stream.close();
       await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Graceful end-of-audio: when the audio input ends, the stream sends an empty
+// frame so the server flushes its final transcript before the socket closes,
+// instead of tearing down the moment the input runs dry.
+// ---------------------------------------------------------------------------
+
+function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
+  return new AudioFrame(new Int16Array(samplesPerChannel), sampleRate, 1, samplesPerChannel);
+}
+
+describe('SpeechStream graceful close', () => {
+  it('signals end-of-audio on input end and delivers the flushed final transcript', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let sawEndOfAudioFrame = false;
+
+    // The server withholds the final transcript until it receives the empty
+    // end-of-audio frame — so a passing assertion proves the stream waited for
+    // that response rather than closing as soon as the input drained.
+    wss.on('connection', (ws) => {
+      let configured = false;
+      ws.on('message', (data: Buffer) => {
+        if (!configured) {
+          configured = true; // first message is the JSON config
+          return;
+        }
+        if (data.length === 0) {
+          sawEndOfAudioFrame = true;
+          ws.send(
+            JSON.stringify({
+              tokens: [
+                { text: 'Hello world.', language: 'en', is_final: true },
+                { text: '<end>', is_final: true },
+              ],
+              total_audio_proc_ms: 500,
+            }),
+          );
+          ws.send(JSON.stringify({ finished: true }));
+          ws.close();
+        }
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+
+      stream.pushFrame(makeFrame());
+      stream.endInput();
+
+      const events: stt.SpeechEvent[] = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+      stream.close();
+
+      expect(sawEndOfAudioFrame).toBe(true);
+      const final = events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT);
+      expect(final?.alternatives?.[0]?.text).toBe('Hello world.');
+      expect(events.some((e) => e.type === stt.SpeechEventType.END_OF_SPEECH)).toBe(true);
     } finally {
       await closeWebSocketServer(wss);
     }

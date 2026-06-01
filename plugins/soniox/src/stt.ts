@@ -17,6 +17,9 @@ import { type SonioxMessage, newProcessMessageState, processMessage } from './_i
 
 const BASE_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const KEEPALIVE_MESSAGE = '{"type":"keepalive"}';
+// An empty frame tells Soniox to end the session: it flushes remaining tokens,
+// emits a `finished` response, then closes the connection.
+const END_OF_AUDIO_MESSAGE = '';
 
 /** @public */
 export interface ContextGeneralItem {
@@ -218,10 +221,6 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }, 5000);
 
-    const sendTask = this.#sendAudio(ws, () => {
-      closing = true;
-    });
-
     const listenTask = new Promise<void>((resolve, reject) => {
       ws.on('message', (msg) => {
         try {
@@ -258,8 +257,29 @@ export class SpeechStream extends stt.SpeechStream {
       });
     });
 
+    // Drain the audio input; when it ends gracefully, signal end-of-audio so
+    // the server flushes its remaining tokens, emits `finished`, and closes the
+    // connection (per Soniox protocol: an empty frame ends the session). We then
+    // let `listenTask` observe that final response rather than tearing down the
+    // moment the input runs dry.
+    const sendTask = this.#sendAudio(ws);
+    const finalize = sendTask.then(() => {
+      if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      closing = true;
+      ws.send(END_OF_AUDIO_MESSAGE);
+    });
+
     try {
-      await Promise.race([sendTask, listenTask, waitForAbort(this.abortSignal)]);
+      // `finalize` is raced only so a send-side failure propagates — its normal
+      // completion never wins (input drained → keep listening). Teardown is
+      // driven by the server's `finished`/close (listenTask) or by abort.
+      await Promise.race([
+        listenTask,
+        waitForAbort(this.abortSignal),
+        finalize.then(() => new Promise<void>(() => {})),
+      ]);
     } finally {
       closing = true;
       clearInterval(keepalive);
@@ -267,7 +287,7 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  async #sendAudio(ws: WebSocket, onClosing: () => void): Promise<void> {
+  async #sendAudio(ws: WebSocket): Promise<void> {
     const abortPromise = waitForAbort(this.abortSignal);
     while (!this.closed) {
       const result = await Promise.race([this.input.next(), abortPromise]);
@@ -279,9 +299,12 @@ export class SpeechStream extends stt.SpeechStream {
       if (data === SpeechStream.FLUSH_SENTINEL) {
         continue;
       }
-      ws.send(data.data.buffer);
+      // Send only this frame's bytes. `data.data` may be a view into a larger
+      // ArrayBuffer (non-zero byteOffset / partial span), so `.buffer` alone
+      // would transmit the wrong bytes; honor byteOffset/byteLength (mirrors
+      // Python's `frame.data.tobytes()`).
+      ws.send(Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength));
     }
-    onClosing();
   }
 
   #put(event: stt.SpeechEvent): void {
