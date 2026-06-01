@@ -78,7 +78,7 @@ export interface AMDOptions {
    */
   stt?: STT | string;
   interruptOnMachine?: boolean;
-  /** If no final transcript arrives within this window, settle as MACHINE_UNAVAILABLE. */
+  /** If no speech is heard within this window, settle as UNCERTAIN (not a machine, so no interrupt). */
   noSpeechTimeoutMs?: number;
   /** Hard ceiling for the entire detection. After this, settle with whatever evidence exists. */
   detectionTimeoutMs?: number;
@@ -674,8 +674,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
             signal: this.trackGateAbort?.signal,
           });
         } catch (err) {
-          this._log.debug({ err }, 'AMD SIP answer wait aborted');
-          return;
+          // Abort means cleanup is tearing AMD down — don't start listening.
+          if (this.trackGateAbort?.signal.aborted) {
+            return;
+          }
+          // Otherwise the SIP participant disconnected before going active: no audio
+          // remains, so fall through and let the no-speech timer settle AMD instead
+          // of stranding it until the detection timeout.
+          this._log.debug({ err }, 'AMD SIP answer wait failed; starting to listen');
         }
 
         if (!this.settled) {
