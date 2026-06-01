@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { stt } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { APIStatusError, stt } from '@livekit/agents';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocketServer } from 'ws';
 import {
   type LangSegment,
   type SonioxMessage,
@@ -12,6 +15,7 @@ import {
   newProcessMessageState,
   processMessage,
 } from './_internal.js';
+import { STT } from './stt.js';
 
 // ---------------------------------------------------------------------------
 // TokenAccumulator: language-segment coalescing
@@ -308,5 +312,80 @@ describe('processMessage', () => {
     expect(sd.targetLanguages).toBeUndefined();
     expect(sd.targetTexts).toBeUndefined();
     expect(sd.sourceTexts!.join('')).toBe(sd.text);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server error frames surface as APIStatusError (covers SpeechStream.run /
+// #runWS, which the processMessage-only tests above do not exercise).
+// Mirrors the Python `test_recv_messages_raises_on_server_error_frame`.
+// ---------------------------------------------------------------------------
+
+async function startWebSocketServer(): Promise<{ wss: WebSocketServer; baseUrl: string }> {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(wss, 'listening');
+  const address = wss.address() as AddressInfo;
+  return { wss, baseUrl: `ws://127.0.0.1:${address.port}` };
+}
+
+async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+}
+
+describe('SpeechStream server errors', () => {
+  // SpeechStream.mainTask re-throws after emitting the 'error' event (the
+  // rethrow only drives `.finally()` cleanup; the error is observed via the
+  // event). Suppress the resulting by-design unhandled rejection.
+  const swallowRejection = () => {};
+  beforeAll(() => process.on('unhandledRejection', swallowRejection));
+  afterAll(() => void process.off('unhandledRejection', swallowRejection));
+
+  it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+
+    // Reply to the initial config message after a short delay so the receive
+    // loop's message listener is attached before the error frame arrives.
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        setTimeout(() => {
+          ws.send(
+            JSON.stringify({
+              error_code: 401,
+              error_message: 'Incorrect API key provided',
+              total_audio_proc_ms: 0,
+            }),
+          );
+        }, 20);
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const errorEvent = once(soniox, 'error') as Promise<Parameters<stt.STTCallbacks['error']>>;
+
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      // Drain the stream so it runs to completion; fatal errors surface via the
+      // STT 'error' event rather than through the event iterator.
+      const drain = (async () => {
+        for await (const _ of stream) {
+          /* discard events */
+        }
+      })();
+
+      const [{ error, recoverable }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIStatusError);
+      const statusError = error as APIStatusError;
+      expect(statusError.statusCode).toBe(401);
+      expect(statusError.retryable).toBe(false);
+      expect(statusError.body).not.toBeNull();
+      expect(recoverable).toBe(false);
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
   });
 });
