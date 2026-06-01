@@ -37,6 +37,7 @@ This README reflects the 1.0 release. See the [migration guide](https://docs.liv
 - **Extensive WebRTC clients**: Build client applications using LiveKit's open-source SDK ecosystem, supporting all major platforms.
 - **Exchange data with clients**: Use [RPCs](https://docs.livekit.io/home/client/data/rpc/) and other [Data APIs](https://docs.livekit.io/home/client/data/) to seamlessly exchange data with clients.
 - **Semantic turn detection**: Uses a transformer model to detect when a user is done with their turn, helps to reduce interruptions.
+- **MCP support**: Native support for MCP. Integrate tools provided by MCP servers with one line of code.
 - **Open-source**: Fully open-source, allowing you to run the entire stack on your own servers, including [LiveKit server](https://github.com/livekit/livekit), one of the most widely used WebRTC media servers.
 
 ## Installation
@@ -69,7 +70,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
 | [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
 | [@livekit/agents-plugin-rime](https://www.npmjs.com/package/@livekit/agents-plugin-rime)             | TTS           |
-| [@livekit/agents-plugin-inworld](https://www.npmjs.com/package/@livekit/agents-plugin-inworld)       | TTS           |
+| [@livekit/agents-plugin-inworld](https://www.npmjs.com/package/@livekit/agents-plugin-inworld)       | STT, TTS      |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
 | [@livekit/agents-plugin-anam](https://www.npmjs.com/package/@livekit/agents-plugin-anam)             | Avatar        |

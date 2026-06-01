@@ -32,8 +32,8 @@ import {
 } from '@livekit/agents';
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
-import { type LLMTools } from '../../tools.js';
-import { toFunctionDeclarations } from '../../utils.js';
+import { type LLMTools } from '../tools.js';
+import { toFunctionDeclarations } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 

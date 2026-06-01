@@ -221,6 +221,12 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     this.inputWriter.write(frame);
   }
 
+  /**
+   * Mark the end of the current segment.
+   *
+   * Implementations must treat this as a hard segment boundary: drop any accumulated
+   * speech/silence state so the next pushed frame starts a fresh segment.
+   */
   flush() {
     if (this.inputClosed) {
       throw new Error('Input is closed');

@@ -19,10 +19,12 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
 } from '../llm/tool_context.js';
+import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -1023,7 +1025,12 @@ export function performToolExecutions({
 
       // Ensure valid arguments
       try {
-        const jsonArgs = JSON.parse(toolCall.args);
+        const rawArgs = toolCall.args || '{}';
+        const jsonArgs = parseFunctionArguments(rawArgs);
+        const canonicalArgs = JSON.stringify(jsonArgs);
+        if (canonicalArgs !== rawArgs) {
+          toolCall.args = canonicalArgs;
+        }
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1046,10 +1053,13 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
         toolCompleted(
           createToolOutput({
             toolCall,
-            exception: error,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
           }),
         );
         continue;
