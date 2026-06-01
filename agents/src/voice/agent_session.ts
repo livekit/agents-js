@@ -43,7 +43,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task, asError } from '../utils.js';
+import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -259,6 +259,11 @@ type ActivityTransitionOptions = {
   waitOnEnter?: boolean;
 };
 
+export interface UserTurnClaim {
+  /** Release the programmatic user turn. Safe to call more than once. */
+  release(): void;
+}
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -286,6 +291,12 @@ export class AgentSession<
   private _userData: UserData | undefined;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
+
+  /** @internal */
+  _userTurnClaims = 0;
+
+  /** @internal */
+  _userTurnReleased = new Event();
 
   private _input: AgentInput;
   private _output: AgentOutput;
@@ -407,6 +418,7 @@ export class AgentSession<
     this.sessionOptions = resolvedSessionOptions;
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+    this._userTurnReleased.set();
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
@@ -676,6 +688,42 @@ export class AgentSession<
       // (used to make sure we're correctly adding the AgentHandoffResult before completion)
       runState._watchHandle(this.updateActivityTask);
     }
+  }
+
+  /**
+   * Declare a programmatic user-driven turn.
+   *
+   * Pins `userState` to `"speaking"` and keeps idle detection open until the returned claim is
+   * released. Pass a callback to release automatically when the callback settles.
+   */
+  claimUserTurn<T>(callback: () => T | Promise<T>): Promise<T>;
+  claimUserTurn(): UserTurnClaim;
+  claimUserTurn<T>(callback?: () => T | Promise<T>): UserTurnClaim | Promise<T> {
+    const first = this._userTurnClaims === 0;
+    this._userTurnClaims += 1;
+    if (first) {
+      this._userTurnReleased.clear();
+      this._updateUserState('speaking', { lastSpeakingTime: Date.now() });
+    }
+
+    let released = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this._userTurnClaims -= 1;
+      if (this._userTurnClaims === 0) {
+        this._userTurnReleased.set();
+        this._updateUserState(this.activity?.isUserSpeaking ? 'speaking' : 'listening');
+      }
+    };
+
+    if (callback) {
+      return Promise.resolve().then(callback).finally(release);
+    }
+
+    return { release };
   }
 
   commitUserTurn() {
@@ -1220,6 +1268,10 @@ export class AgentSession<
     state: UserState,
     options?: { lastSpeakingTime?: number; otelContext?: Context },
   ) {
+    if (this._userTurnClaims > 0 && state !== 'speaking') {
+      return;
+    }
+
     if (this._userState === state) {
       return;
     }
