@@ -8,6 +8,7 @@ import {
   APIConnectionError,
   APIStatusError,
   AudioByteStream,
+  log,
   shortuuid,
   tokenize,
   tts,
@@ -34,10 +35,10 @@ export interface TTSOptions {
   /** Model name (e.g. `journey`, `chirp-3-hd`). */
   modelName?: TTSModel | string;
   /** Voice name (e.g. `en-US-Standard-H`). */
-  voiceName?: TTSLanguage | string;
+  voiceName?: string;
   /** Language code (BCP-47, e.g. `en-US`). */
   language?: TTSLanguage | string;
-  /** Voice gender. */
+  /** Voice gender. Overrides `voiceName` when both are provided. */
   gender?: TTSGender;
   /** Output sample rate in Hz. Default: 24000. */
   sampleRate?: number;
@@ -61,7 +62,7 @@ export interface TTSOptions {
 
 interface ResolvedTTSOptions {
   modelName: TTSModel | string;
-  voiceName: TTSLanguage | string;
+  voiceName: string;
   language: TTSLanguage | string;
   sampleRate: number;
   streaming: boolean;
@@ -92,6 +93,11 @@ export class TTS extends tts.TTS {
 
     const gender = opts.gender;
     if (gender) {
+      if (opts.voiceName) {
+        log().warn(
+          `Google Cloud TTS: gender '${gender}' overrides explicit voiceName '${opts.voiceName}'`,
+        );
+      }
       this.#opts.voiceName = buildVoiceName(this.#opts.language, gender);
     }
 
@@ -129,6 +135,23 @@ export class TTS extends tts.TTS {
       );
     }
     return new SynthesizeStream(this, options?.connOptions);
+  }
+
+  /**
+   * Update mutable TTS options without recreating the client.
+   */
+  updateOptions(opts: {
+    modelName?: TTSModel | string;
+    voiceName?: string;
+    language?: TTSLanguage | string;
+    gender?: TTSGender;
+  }): void {
+    if (opts.modelName !== undefined) this.#opts.modelName = opts.modelName;
+    if (opts.voiceName !== undefined) this.#opts.voiceName = opts.voiceName;
+    if (opts.language !== undefined) this.#opts.language = opts.language;
+    if (opts.gender !== undefined) {
+      this.#opts.voiceName = buildVoiceName(this.#opts.language, opts.gender);
+    }
   }
 
   get opts() {
@@ -199,10 +222,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         return;
       }
 
+      if (error instanceof APIConnectionError || error instanceof APIStatusError) {
+        throw error;
+      }
+
       throw toLiveKitTtsError(error);
     } finally {
       this.abortSignal.removeEventListener('abort', abort);
-      this.#tokenizer.close();
       call.destroy();
     }
   }
@@ -315,7 +341,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     this.#tts = ttsProvider;
   }
 
-  protected async run() {
+  protected async run(): Promise<void> {
     const requestId = shortuuid();
     const request: SynthesizeSpeechRequest = {
       input: {
@@ -396,9 +422,11 @@ export class ChunkedStream extends tts.ChunkedStream {
         return;
       }
 
+      if (error instanceof APIConnectionError || error instanceof APIStatusError) {
+        throw error;
+      }
+
       throw toLiveKitTtsError(error);
-    } finally {
-      this.queue.close();
     }
   }
 }

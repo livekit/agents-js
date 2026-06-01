@@ -6,5 +6,5 @@ feat: add Google Cloud Text-to-Speech plugin
 
 Ports the Google Cloud TTS integration from the Python SDK, supporting both
 streaming (via gRPC bidirectional streaming) and non-streaming synthesis.
-Uses @google-cloud/text-to-speech client library with credentials from
-GOOGLE_TTS_CREDENTIALS_JSON env var or Application Default Credentials.
+Uses @google-cloud/text-to-speech client with standard Google Cloud auth
+(credentials object, keyFilename, GOOGLE_APPLICATION_CREDENTIALS, or ADC).
