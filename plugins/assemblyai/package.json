@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-assemblyai",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "description": "AssemblyAI plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
