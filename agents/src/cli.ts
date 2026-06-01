@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
+import { type PluginDownloadFailure, formatDownloadFailureMessage } from './download.js';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
 import { version } from './version.js';
 import { AgentServer, ServerOptions } from './worker.js';
+
+export { formatDownloadFailureMessage };
 
 type CliArgs = {
   opts: ServerOptions;
@@ -17,26 +20,8 @@ type CliArgs = {
   participantIdentity?: string;
 };
 
-type PluginDownloadFailure = {
-  plugin: Plugin;
-  error: unknown;
-};
-
 const formatErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-/** @internal */
-export const formatDownloadFailureMessage = (failures: PluginDownloadFailure[]): string => {
-  const pluginLabel = failures.length === 1 ? 'plugin' : 'plugins';
-  const details = failures
-    .map(
-      ({ plugin, error }) =>
-        `- ${plugin.title} (${plugin.package}@${plugin.version}): ${formatErrorMessage(error)}`,
-    )
-    .join('\n');
-
-  return `Failed to download files for ${failures.length} ${pluginLabel}:\n${details}`;
-};
 
 const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
@@ -217,6 +202,12 @@ export const runApp = (opts: ServerOptions) => {
       const commandOptions = command.opts();
       initializeLogger({ pretty: true, level: commandOptions.logLevel });
       const logger = log();
+
+      logger.warn(
+        '`download-files` via cli.runApp() is deprecated. ' +
+          'Use `npx livekit-agents download-files` instead — it discovers installed ' +
+          'plugins without loading your agent code, enabling better Docker layer caching.',
+      );
 
       const downloadFiles = async () => {
         const failures: PluginDownloadFailure[] = [];
