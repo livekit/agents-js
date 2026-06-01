@@ -545,6 +545,14 @@ class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run() {
+    // The framework's retry loop re-invokes run() on the same instance, so reset
+    // per-attempt state: use a fresh context id (reusing one risks colliding with
+    // the failed attempt's server-side context or being resolved by its stale
+    // contextClosed) and zero the cumulative timestamp offsets.
+    this.#contextId = shortuuid();
+    this.#cumulativeTime = 0;
+    this.#generationEndTime = 0;
+
     const ws = await this.#tts.pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const tokenizerStream = this.#opts.tokenizer!.stream();
@@ -693,10 +701,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
       } else if (result.status && result.status.code !== 0) {
+        // status.code is a gRPC-style code (0-16), not an HTTP status, so
+        // APIStatusError's 4xx heuristic can't classify it. A server status
+        // error here is a request-level rejection (bad voice/params, auth);
+        // transient infra issues surface as connection drops (APIConnectionError,
+        // already retryable). Mark it non-retryable so permanent errors fail fast
+        // instead of being retried.
         rejectProcessing(
           new APIStatusError({
             message: `Inworld stream error: ${result.status.message}`,
-            options: { statusCode: result.status.code },
+            options: { statusCode: result.status.code, retryable: false },
           }),
         );
       }
