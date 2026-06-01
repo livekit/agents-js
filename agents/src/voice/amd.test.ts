@@ -154,6 +154,44 @@ describe('AMD', () => {
     });
   });
 
+  it('should classify call screening as machine without auto-interrupt', async () => {
+    // Screening surfaces as `isMachine: true` so consumers' "did a machine
+    // answer?" checks see it, but `interruptOnMachine: true` does NOT
+    // trigger auto-interrupt — callers handling screening typically need
+    // to play a short identification greeting in response, which an
+    // automatic interrupt would cancel.
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({
+        category: AMDCategory.MACHINE_SCREENING,
+        reason: 'Carrier-injected screening prompt asking for caller identification.',
+      }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 50,
+      interruptOnMachine: true,
+    });
+
+    const promise = amd.execute();
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
+      type: 'user_input_transcribed',
+      transcript:
+        "If you record your name and reason for calling, I'll see if this person is available",
+      isFinal: true,
+      speakerId: null,
+      createdAt: Date.now(),
+      language: null,
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.MACHINE_SCREENING,
+      isMachine: true,
+    });
+    expect(session.interrupt).not.toHaveBeenCalled();
+  });
+
   it('should resume authorization when detection fails', async () => {
     const session = new MockSession();
     const llm = new StaticLLM(new Error('boom'));

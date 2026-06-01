@@ -254,6 +254,10 @@ const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
   [AMDCategory.MACHINE_VM]: pb.AmdCategory.AMD_MACHINE_VM,
   [AMDCategory.MACHINE_UNAVAILABLE]: pb.AmdCategory.AMD_MACHINE_UNAVAILABLE,
   [AMDCategory.UNCERTAIN]: pb.AmdCategory.AMD_UNCERTAIN,
+  // The wire protocol enum has no `AMD_MACHINE_SCREENING` value yet; map to
+  // `AMD_UNKNOWN` so remote peers that predate the new category don't mistake
+  // a screening prompt for voicemail. Update when the protocol package adds it.
+  [AMDCategory.MACHINE_SCREENING]: pb.AmdCategory.AMD_UNKNOWN,
 };
 
 // ===========================================================================
