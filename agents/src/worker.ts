@@ -709,6 +709,25 @@ export class AgentServer {
           const currentlyAvailable = !isFull;
           currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
 
+          if (isFull) {
+            this.#procPool.setTargetIdleProcesses(this.#opts.numIdleProcesses);
+          } else {
+            const activeJobs = this.activeJobs.length;
+            if (activeJobs > 0) {
+              const jobLoad = currentLoad / activeJobs;
+              if (jobLoad > 0) {
+                const availableLoad = Math.max(this.#opts.loadThreshold - currentLoad, 0.0);
+                const availableJob = Math.min(
+                  Math.ceil(availableLoad / jobLoad),
+                  this.#opts.numIdleProcesses,
+                );
+                this.#procPool.setTargetIdleProcesses(availableJob);
+              }
+            } else {
+              this.#procPool.setTargetIdleProcesses(this.#opts.numIdleProcesses);
+            }
+          }
+
           if (oldStatus != currentStatus) {
             const extra = { load: currentLoad, loadThreshold: this.#opts.loadThreshold };
             if (isFull) {
