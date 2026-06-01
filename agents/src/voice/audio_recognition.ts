@@ -33,7 +33,7 @@ import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
-import { type VAD, type VADEvent, VADEventType } from '../vad.js';
+import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import { type UserTurnExceededEvent, createUserTurnExceededEvent } from './events.js';
 import type { STTNode } from './io.js';
@@ -221,6 +221,7 @@ export class AudioRecognition {
   private userTurnStart: number | undefined;
   private userTurnCommitted = false;
   private speaking = false;
+  private vadSpeechStarted = false;
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
@@ -254,6 +255,7 @@ export class AudioRecognition {
   private commitUserTurnTask?: Task<void>;
   private sttForwardTask?: Task<void>;
   private vadTask?: Task<void>;
+  private vadStream?: VADStream;
   private sttConsumerTask?: Task<void>;
   private interruptionTask?: Task<void>;
 
@@ -1013,13 +1015,29 @@ export class AudioRecognition {
         // and user state won't be updated until a new VAD SOS is received.
         // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
         // If user is still speaking (an immediate VAD SOS will interrupt the agent).
-        if (this.vad && this.speaking) {
-          this.logger.warn('stt end of speech received while user is speaking, resetting vad');
-          this.resetVad();
+        if (this.vad && this.vadSpeechStarted) {
+          if (this.vadStream) {
+            this.vadStream.flush();
+          } else {
+            this.resetVad();
+          }
+
+          this.logger.warn(
+            {
+              vadSpeechStartTime: this.speechStartTime,
+              flushed: this.vadStream !== undefined,
+            },
+            'stt end of speech received while vad is still in a speech segment, flushing vad',
+          );
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        this.lastSpeakingTime = Date.now();
+        // When VAD is active it owns lastSpeakingTime (set from VAD inference/EOS).
+        // Only stamp it here if there's no VAD or it hasn't been set yet, so the
+        // "no new speech" guard in the EOU committed block stays reliable.
+        if (!this.vad || this.lastSpeakingTime === undefined) {
+          this.lastSpeakingTime = Date.now();
+        }
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
@@ -1179,9 +1197,13 @@ export class AudioRecognition {
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
           this.finalTranscriptConfidence = [];
-          this.lastSpeakingTime = undefined;
           this.lastFinalTranscriptTime = 0;
-          this.speechStartTime = undefined;
+          // Concurrent user speech might have changed it; only reset if there is no new speech.
+          if (this.lastSpeakingTime === lastSpeakingTime) {
+            this.speechStartTime = undefined;
+            this.vadSpeechStarted = false;
+            this.lastSpeakingTime = undefined;
+          }
         }
 
         this.userTurnCommitted = false;
@@ -1315,6 +1337,7 @@ export class AudioRecognition {
     if (!vad) return;
 
     const vadStream = vad.stream();
+    this.vadStream = vadStream;
     vadStream.updateInputStream(this.vadInputStream);
 
     const abortHandler = () => {
@@ -1333,6 +1356,10 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             {
               const startTime = Date.now() - ev.speechDuration - ev.inferenceDuration;
+              if (!this.vadSpeechStarted) {
+                this.speechStartTime = startTime;
+                this.vadSpeechStarted = true;
+              }
               const span = this.ensureUserTurnSpan(startTime);
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
@@ -1377,6 +1404,7 @@ export class AudioRecognition {
             }
 
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            this.vadSpeechStarted = false;
             this.speaking = false;
 
             if (
@@ -1393,6 +1421,9 @@ export class AudioRecognition {
       this.logger.error(e, 'Error in VAD task');
     } finally {
       this.logger.debug('VAD task closed');
+      if (this.vadStream === vadStream) {
+        this.vadStream = undefined;
+      }
     }
   }
 
@@ -1574,6 +1605,7 @@ export class AudioRecognition {
     this.speechStartTime = undefined;
     this.userTurnStart = undefined;
     this.lastSpeakingTime = undefined;
+    this.vadSpeechStarted = false;
     this.speaking = false;
     this.userTurnCommitted = false;
     this.userTurnTracker = { words: 0, transcript: '' };
