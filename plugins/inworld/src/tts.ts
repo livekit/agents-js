@@ -785,7 +785,11 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
       ws.send(JSON.stringify(data), (err) => {
         if (err) {
-          reject(err);
+          reject(
+            new APIConnectionError({
+              message: `Inworld WebSocket send failed: ${asError(err).message}`,
+            }),
+          );
         } else {
           resolve();
         }
