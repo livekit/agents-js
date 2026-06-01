@@ -157,4 +157,47 @@ describe('ProcPool warmed process lock handling', () => {
       jobProcExecutorSpy.mockRestore();
     }
   });
+
+  it('launchJob throws when all in-flight proc spawns fail to initialize', async (): Promise<
+    Throws<void, Error>
+  > => {
+    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
+    const initUnlock = vi.fn();
+    const procUnlock = vi.fn();
+    const jobInfo = {
+      acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+      job: { id: 'job-id' },
+      url: 'wss://example.com',
+      token: 'token',
+      workerId: 'worker-id',
+    } as unknown as RunningJobInfo;
+
+    const mockProc: JobExecutor = {
+      ...createMockExecutor(),
+      initialize: vi.fn(async () => {
+        throw new Error('simulated initialization failure');
+      }),
+    };
+
+    const jobProcExecutorSpy = vi
+      .spyOn(jobProcExecutorModule, 'JobProcExecutor')
+      .mockImplementation(function MockJobProcExecutor(this: unknown) {
+        return mockProc as unknown as jobProcExecutorModule.JobProcExecutor;
+      } as unknown as typeof jobProcExecutorModule.JobProcExecutor);
+
+    pool.initMutex.lock = vi.fn(async () => initUnlock);
+
+    try {
+      const watchTask = pool.procWatchTask(procUnlock);
+      pool.tasks.push(watchTask);
+
+      await expect(pool.launchJob(jobInfo)).rejects.toThrow('no process became available');
+      await Promise.allSettled(pool.tasks);
+
+      expect(procUnlock).toHaveBeenCalledTimes(1);
+      expect(pool.processes).toHaveLength(0);
+    } finally {
+      jobProcExecutorSpy.mockRestore();
+    }
+  });
 });

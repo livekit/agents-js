@@ -9,6 +9,10 @@ import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
 
+const MAX_PROC_ACQUIRE_ATTEMPTS = 3;
+
+type WarmedProcEntry = { proc: JobExecutor; unlock: () => void };
+
 export class ProcPool {
   agent: string;
   initializeTimeout: number;
@@ -21,7 +25,7 @@ export class ProcPool {
   initMutex = new Mutex();
   procMutex?: MultiMutex;
   // Keep each lock token paired with its warmed process so MultiMutex slots are always released correctly.
-  warmedProcQueue = new Queue<{ proc: JobExecutor; unlock: () => void }>();
+  warmedProcQueue = new Queue<WarmedProcEntry>();
   inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
@@ -54,13 +58,56 @@ export class ProcPool {
     return this.executors.find((x) => x.runningJob && x.runningJob.job.id === id) || null;
   }
 
+  private async acquireProc(): Promise<Throws<JobExecutor, Error>> {
+    for (let attempt = 0; attempt < MAX_PROC_ACQUIRE_ATTEMPTS; attempt++) {
+      const entry = await this.acquireWarmedProcEntry();
+      if (entry) {
+        entry.unlock();
+        return entry.proc;
+      }
+    }
+
+    throw new Error(`no process became available after ${MAX_PROC_ACQUIRE_ATTEMPTS} attempts`);
+  }
+
+  private async acquireWarmedProcEntry(): Promise<Throws<WarmedProcEntry | undefined, Error>> {
+    if (this.warmedProcQueue.items.length > 0) {
+      return this.warmedProcQueue.get();
+    }
+
+    if (this.tasks.length === 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+
+      if (this.warmedProcQueue.items.length > 0) {
+        return this.warmedProcQueue.get();
+      }
+
+      if (this.tasks.length === 0) {
+        return undefined;
+      }
+    }
+
+    const abortController = new AbortController();
+    const queueGet = this.warmedProcQueue
+      .get({ signal: abortController.signal })
+      .then((entry) => ({ entry }));
+    const spawnsDone = Promise.allSettled(this.tasks).then(() => undefined);
+    const result = await Promise.race([queueGet, spawnsDone]);
+
+    if (result) {
+      return result.entry;
+    }
+
+    abortController.abort();
+    return undefined;
+  }
+
   async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
     let proc: JobExecutor;
     if (this.procMutex) {
-      const entry = await this.warmedProcQueue.get();
-      proc = entry.proc;
-      // Release exactly the slot that produced this warmed process.
-      entry.unlock();
+      proc = await this.acquireProc();
     } else {
       proc = new JobProcExecutor(
         this.agent,
