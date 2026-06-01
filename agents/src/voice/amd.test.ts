@@ -401,7 +401,9 @@ describe('AMD', () => {
     speechEnd(amd, 0);
 
     const result = await promise;
-    expect(result.speechDurationMs).toBeGreaterThanOrEqual(80);
+    // setTimeout can fire a hair early, so allow scheduling slack below the 80ms
+    // sleep; the point is that the duration reflects the speech window, not 0.
+    expect(result.speechDurationMs).toBeGreaterThanOrEqual(70);
     expect(result.delayMs).toBeGreaterThanOrEqual(0);
   }, 5_000);
 
