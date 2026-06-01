@@ -14,12 +14,17 @@ export {
   type InferenceLLMOptions,
   type LLMModels,
   type XAIModels,
+  type ZAIModels,
 } from './llm.js';
 
 export {
   normalizeSTTFallback,
   parseSTTModelString,
   STT,
+  type DeepgramFluxModels,
+  type DeepgramFluxOptions,
+  type InworldSTTModels,
+  type InworldSTTOptions,
   type STTFallbackModel,
   type STTFallbackModelType,
   type STTLanguages,
@@ -39,6 +44,8 @@ export {
   type TTSModels,
   type ModelWithVoice as TTSModelString,
   type TTSOptions,
+  type XaiTTSModels,
+  type XaiTTSOptions,
 } from './tts.js';
 
 export { llm, stt, tts };

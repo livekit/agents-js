@@ -14,9 +14,17 @@ export const ttsSessionCreateEventSchema = z.object({
   transcript: z.string().optional(),
 });
 
+export const ttsGenerationConfigSchema = z.object({
+  voice: z.string().optional(),
+  language: z.string().optional(),
+  model: z.string().optional(),
+});
+
 export const ttsInputTranscriptEventSchema = z.object({
   type: z.literal('input_transcript'),
   transcript: z.string(),
+  generation_config: ttsGenerationConfigSchema.optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const ttsSessionFlushEventSchema = z.object({
@@ -109,6 +117,7 @@ export const ttsServerEventSchema = z.union([
   ttsUnknownServerEventSchema,
 ]);
 
+export type TtsGenerationConfig = z.infer<typeof ttsGenerationConfigSchema>;
 export type TtsSessionCreateEvent = z.infer<typeof ttsSessionCreateEventSchema>;
 export type TtsInputTranscriptEvent = z.infer<typeof ttsInputTranscriptEventSchema>;
 export type TtsSessionFlushEvent = z.infer<typeof ttsSessionFlushEventSchema>;
