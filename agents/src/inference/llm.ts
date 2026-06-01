@@ -18,6 +18,9 @@ import {
 
 export type OpenAIModels =
   | 'openai/gpt-5.4'
+  | 'openai/gpt-5.4-mini'
+  | 'openai/gpt-5.4-nano'
+  | 'openai/gpt-5.5'
   | 'openai/gpt-5.3-chat-latest'
   | 'openai/gpt-5.2'
   | 'openai/gpt-5.2-chat-latest'
@@ -31,20 +34,25 @@ export type OpenAIModels =
   | 'openai/gpt-4.1-nano'
   | 'openai/gpt-4o'
   | 'openai/gpt-4o-mini'
+  | 'openai/chat-latest'
   | 'openai/gpt-oss-120b';
 
 export type GoogleModels =
-  | 'google/gemini-3-pro'
+  | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
+  | 'google/gemini-3.1-flash-lite'
+  | 'google/gemini-3.5-flash'
   | 'google/gemini-2.5-pro'
   | 'google/gemini-2.5-flash'
   | 'google/gemini-2.5-flash-lite'
   | 'google/gemini-2.0-flash'
   | 'google/gemini-2.0-flash-lite';
 
-export type MoonshotModels = 'moonshotai/kimi-k2-instruct';
+export type MoonshotModels = 'moonshotai/kimi-k2.5' | 'moonshotai/kimi-k2.6';
 
 export type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
+
+export type ZAIModels = 'zai/glm-5.1';
 
 export type XAIModels =
   | 'xai/grok-4-1-fast-non-reasoning'
@@ -97,6 +105,7 @@ export type LLMModels =
   | GoogleModels
   | MoonshotModels
   | DeepSeekModels
+  | ZAIModels
   | XAIModels
   | AnyString;
 

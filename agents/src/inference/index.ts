@@ -14,6 +14,7 @@ export {
   type InferenceLLMOptions,
   type LLMModels,
   type XAIModels,
+  type ZAIModels,
 } from './llm.js';
 
 export {
@@ -24,6 +25,8 @@ export {
   type STTFallbackModelType,
   type STTLanguages,
   type STTModels,
+  type InworldOptions as InworldSTTOptions,
+  type InworldSTTModels,
   type ModelWithLanguage as STTModelString,
   type STTOptions,
   type XaiSTTModels,
@@ -37,6 +40,8 @@ export {
   type TTSFallbackModel,
   type TTSFallbackModelType,
   type TTSModels,
+  type XaiOptions as XaiTTSOptions,
+  type XaiTTSModels,
   type ModelWithVoice as TTSModelString,
   type TTSOptions,
 } from './tts.js';

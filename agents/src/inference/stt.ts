@@ -30,6 +30,8 @@ import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } 
 
 export type DeepgramModels =
   | 'deepgram/flux-general'
+  | 'deepgram/flux-general-en'
+  | 'deepgram/flux-general-multi'
   | 'deepgram/nova-3'
   | 'deepgram/nova-3-medical'
   | 'deepgram/nova-2'
@@ -37,7 +39,7 @@ export type DeepgramModels =
   | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2-phonecall';
 
-export type CartesiaModels = 'cartesia/ink-whisper';
+export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2' | 'cartesia/ink-2-latest';
 
 export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
@@ -48,6 +50,8 @@ export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+
+export type InworldSTTModels = 'inworld/inworld-stt-1';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Default: not specified. */
@@ -148,6 +152,26 @@ export interface SpeechmaticsOptions {
   transcript_filtering_config?: Record<string, unknown>;
 }
 
+export interface InworldOptions {
+  /** Enable acoustic voice profiling. Default: true. */
+  enable_voice_profile?: boolean;
+  /** Number of top candidates to return per voice profile dimension. Range 1-20, default 10. */
+  voice_profile_top_n?: number;
+  /** Include per-word timestamps. Default: true. */
+  include_word_timestamps?: boolean;
+  /** Audio encoding. Default: LINEAR16. */
+  audio_encoding?: 'LINEAR16' | 'AUTO_DETECT';
+  /** Inactivity timeout in seconds. Non-negative; 0 disables. */
+  inactivity_timeout_seconds?: number;
+  /** End-of-turn confidence threshold. Range 0.0-1.0, default 0.5. */
+  end_of_turn_confidence_threshold?: number;
+  /** Minimum silence in ms before committing end-of-turn when confidence is high. */
+  min_end_of_turn_silence_when_confident?: number;
+  prompts?: string[];
+  /** VAD activity threshold. Range 0.0-1.0, default 0.5. */
+  vad_threshold?: number;
+}
+
 export type STTLanguages =
   | 'multi'
   | 'en'
@@ -177,7 +201,8 @@ type _STTModels =
   | AssemblyaiModels
   | ElevenlabsSTTModels
   | XaiSTTModels
-  | SpeechmaticsModels;
+  | SpeechmaticsModels
+  | InworldSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
@@ -193,7 +218,9 @@ export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
         ? XaiOptions
         : TModel extends SpeechmaticsModels
           ? SpeechmaticsOptions
-          : Record<string, unknown>;
+          : TModel extends InworldSTTModels
+            ? InworldOptions
+            : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
