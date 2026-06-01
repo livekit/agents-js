@@ -1021,7 +1021,12 @@ export class AudioRecognition {
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        this.lastSpeakingTime = Date.now();
+        // When VAD is active it owns lastSpeakingTime (set from VAD inference/EOS).
+        // Only stamp it here if there's no VAD or it hasn't been set yet, so the
+        // "no new speech" guard in the EOU committed block stays reliable.
+        if (!this.vad || this.lastSpeakingTime === undefined) {
+          this.lastSpeakingTime = Date.now();
+        }
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
