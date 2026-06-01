@@ -122,9 +122,9 @@ export interface ToolOptions<UserData = UnknownUserData> {
   toolCallId: string;
 
   /**
-   * An optional abort signal that indicates that the overall operation should be aborted.
+   * An abort signal that indicates that the overall operation should be aborted.
    */
-  abortSignal?: AbortSignal;
+  abortSignal: AbortSignal;
 }
 
 export type ToolExecuteFunction<
