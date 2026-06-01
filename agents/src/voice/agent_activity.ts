@@ -1667,11 +1667,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (toolChoice === undefined) {
-      // when generateReply is called inside a tool on THIS activity, set toolChoice
-      // to 'none' by default. We look up the current task's info (which is per-activity)
-      // rather than `functionCallStorage` (which is AsyncLocalStorage and leaks across
-      // child AgentSessions spawned inside a tool, e.g. WarmTransferTask's supervisor
-      // session) — matches Python's _get_activity_task_info(task).function_call check.
+      // Default to 'none' when generateReply runs inside a tool on this activity.
+      // Uses per-activity task info, not functionCallStorage: the latter is
+      // AsyncLocalStorage and leaks the parent's function-call context into child
+      // sessions spawned inside a tool (e.g. WarmTransferTask's supervisor session).
       const currentTask = Task.current();
       const taskInfo = currentTask ? _getActivityTaskInfo(currentTask) : undefined;
       if (taskInfo?.functionCall) {

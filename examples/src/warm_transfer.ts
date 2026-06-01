@@ -62,7 +62,7 @@ Examples on when the tool should be called:
                 chatCtx: ctx.session.history,
                 // Give up if the supervisor doesn't pick up within 25s with
                 // `ringingTimeout: 25000`.
-                extraInstructions: SUMMARY_INSTRUCTIONS,
+                instructions: { extra: SUMMARY_INSTRUCTIONS },
               }).run();
 
               logger.info(

@@ -78,18 +78,14 @@ export interface WarmTransferTaskOptions {
   llm?: LLM | RealtimeModel | LLMModels | null;
   tts?: TTS | TTSModelString | null;
   allowInterruptions?: boolean;
-  /** @deprecated use `sipCallTo` instead. */
-  targetPhoneNumber?: string;
-  /** @deprecated use `instructions.extra` instead. */
-  extraInstructions?: string;
 }
 
 export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _callerRoom: Room | null = null;
   private _humanAgentRoom: Room | null = null;
   private _humanAgentSession: AgentSession | null = null;
-  // Initialized in the constructor body to avoid ES2022 class-field [[Define]]
-  // semantics wiping the resolver assigned inside the Promise executor.
+  // Assigned in the constructor; a field initializer here would run after the
+  // resolver is captured and clobber it (ES2022 class-field semantics).
   private _humanAgentFailed!: Promise<void>;
   private _resolveHumanAgentFailed!: () => void;
   private _humanAgentIdentity = 'human-agent-sip';
@@ -112,8 +108,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _logger = log();
 
   constructor(options: WarmTransferTaskOptions = {}) {
-    let sipCallTo = options.sipCallTo;
-    const { instructions } = options;
+    const { sipCallTo, instructions } = options;
     const {
       sipTrunkId,
       sipConnection,
@@ -130,21 +125,10 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       llm,
       tts,
       allowInterruptions,
-      targetPhoneNumber,
-      extraInstructions = '',
     } = options;
-
-    if (targetPhoneNumber) {
-      log().warn('`targetPhoneNumber` is deprecated, use `sipCallTo` instead');
-      sipCallTo ??= targetPhoneNumber;
-    }
 
     if (!sipCallTo) {
       throw new Error('`sipCallTo` must be set');
-    }
-
-    if (instructions !== undefined && extraInstructions) {
-      log().warn('`extraInstructions` will be ignored when `instructions` is provided');
     }
 
     const renderPart = (value: Instructions | string): string =>
@@ -156,20 +140,12 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       resolvedInstructions = instructions;
     } else {
       // No instructions or an `InstructionParts` override: fill the built-in template.
-      const parts: InstructionParts = instructions ?? {
-        persona: PERSONA,
-        extra: extraInstructions,
-      };
-      // Substitute all placeholders in a single pass with function
-      // replacements. This avoids two pitfalls of chained `.replace(str, str)`:
-      // (1) special dollar-sign patterns (`$&`, `$\``, `$'`, `$N`) in the
-      // replacement string being interpreted by `replace`, which could corrupt
-      // the prompt if the conversation history contains them; and
-      // (2) earlier substitutions accidentally introducing later placeholder
-      // text (e.g. a user message containing `{extra}` consuming the real
-      // `{extra}` slot).
+      const parts: InstructionParts = instructions ?? { persona: PERSONA };
+      // Single-pass replace via a callback: a chained `.replace(a, b)` would
+      // interpret `$`-patterns in the substituted text and let an earlier
+      // substitution swallow a later `{placeholder}`.
       const replacements: Record<string, string> = {
-        // An unset section preserves its built-in default; an explicit empty string removes it.
+        // Unset preserves the built-in default; an explicit empty string removes the section.
         persona: parts.persona !== undefined ? renderPart(parts.persona) : PERSONA,
         _conversation_history: WarmTransferTask.formatConversationHistory(chatCtx),
         extra: parts.extra !== undefined ? renderPart(parts.extra) : '',
@@ -374,10 +350,9 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     }
 
     if (this._humanAgentSession) {
-      // `deleteRoomOnClose` on the human agent session deletes the supervisor
-      // room when it shuts down, which disconnects the underlying Room and
-      // releases its WebSocket. The human agent has already been moved out
-      // (mergeCalls) or torn down (failure) by the time we reach this point.
+      // shutdown() triggers deleteRoomOnClose, which disconnects the supervisor
+      // room and frees its WebSocket. The human agent is already moved out
+      // (mergeCalls) or torn down (failure) by now.
       this._humanAgentSession.shutdown();
       this._humanAgentSession = null;
       this._humanAgentRoom = null;
@@ -456,9 +431,8 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
             room,
             inputOptions: {
               closeOnDisconnect: true,
-              // Delete the supervisor room when the session shuts down so its
-              // WebSocket does not leak across transfers. The human agent has
-              // already been moved out (mergeCalls) or never joined (failure).
+              // Delete the supervisor room on shutdown so its WebSocket doesn't
+              // leak across transfers.
               deleteRoomOnClose: true,
               participantIdentity: this._humanAgentIdentity,
             },
@@ -480,8 +454,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
               fromNumber: this._sipNumber || undefined,
               headers: this._sipHeaders,
               dtmf: this._dtmf ?? undefined,
-              // The SIP API expects whole seconds (it coerces the value via `BigInt`, which
-              // throws on fractional input), so round the ms value to the nearest second.
+              // SIP API takes whole seconds (BigInt coercion throws on fractional input).
               ringingTimeout:
                 this._ringingTimeout !== null ? Math.round(this._ringingTimeout / 1000) : undefined,
             },
@@ -518,9 +491,8 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       throw new Error('dial cancelled');
     }
 
-    // The underlying room/SIP SDK calls are not AbortSignal-aware. The race only
-    // unblocks this task; cleanup disconnects the room so wait-until-answered SIP
-    // requests resolve promptly against a closed room.
+    // The room/SIP SDK calls aren't AbortSignal-aware, so the race only unblocks
+    // this task; cleanup then disconnects the room to settle a pending dial.
     let onAbort!: () => void;
     const abortPromise = new Promise<never>((_, reject) => {
       onAbort = () => reject(new Error('dial cancelled'));
