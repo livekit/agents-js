@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { llm as llmModule } from '@livekit/agents';
 import {
   type JobContext,
   type JobProcess,
@@ -8,7 +9,6 @@ import {
   cli,
   defineAgent,
   inference,
-  llm as llmModule,
   log,
   metrics,
   voice,

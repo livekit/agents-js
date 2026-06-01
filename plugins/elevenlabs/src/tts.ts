@@ -470,7 +470,7 @@ class Connection {
         if (result.done || this.#closed) break;
 
         const data = result.value;
-        const contextId = data.contextId as string | undefined;
+        const contextId = (data.contextId || data.context_id) as string | undefined;
         const ctx = contextId ? this.#contextData.get(contextId) : undefined;
 
         if (data.error) {
@@ -488,6 +488,14 @@ class Connection {
         }
 
         if (!ctx) {
+          if (data.type === 'flush_done') {
+            this.#logger.debug(
+              { context_id: contextId, data },
+              'ignoring elevenlabs flush_done message for inactive context',
+            );
+            continue;
+          }
+
           this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
           continue;
         }
@@ -961,6 +969,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       waiterReject = reject;
       connection.registerStream(this, { resolve, reject });
     });
+    let contextClosed = false;
+
+    const closeContext = (suppressErrors = false) => {
+      if (contextClosed) {
+        return;
+      }
+
+      if (suppressErrors) {
+        contextClosed = true;
+        try {
+          connection.closeContext(this.#contextId);
+        } catch {
+          // The connection may already be closed during cancellation.
+        }
+        return;
+      }
+
+      connection.closeContext(this.#contextId);
+      contextClosed = true;
+    };
 
     // Handle abort - reject the waiter so Promise.all can complete
     const abortHandler = () => {
@@ -1024,7 +1052,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       // Send final empty text to signal end of input
       connection.sendContent({ contextId: this.#contextId, text: '', flush: true });
-      connection.closeContext(this.#contextId);
+      closeContext();
     };
 
     const audioProcessTask = async () => {
@@ -1101,6 +1129,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
+      closeContext(true);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }
