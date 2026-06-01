@@ -5,7 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ToolContext, type ToolOptions, tool } from './tool_context.js';
+import {
+  ProviderTool,
+  type Tool,
+  ToolContext,
+  type ToolOptions,
+  Toolset,
+  tool,
+} from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -448,7 +455,19 @@ describe('tool() name requirement', () => {
     });
     expect(t.name).toBe('doStuff');
   });
+
+  it('exposes id mirroring the function tool name', () => {
+    const t = tool({
+      name: 'doStuff',
+      description: 'd',
+      execute: async () => 'x',
+    });
+    expect(t.id).toBe('doStuff');
+    expect(t.id).toBe(t.name);
+  });
 });
+
+class TestProviderTool extends ProviderTool {}
 
 describe('ToolContext', () => {
   const makeFn = (name: string) =>
@@ -497,7 +516,7 @@ describe('ToolContext', () => {
 
   it('separates provider tools from function tools', () => {
     const fnA = makeFn('a');
-    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([fnA, provider]);
 
     expect(ctx.functionTools).toEqual({ a: fnA });
@@ -537,7 +556,7 @@ describe('ToolContext', () => {
 
   it('equals() is reflexive', () => {
     const a = makeFn('a');
-    const provider = tool({ id: 'code', config: { language: 'python' } });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([a, provider]);
     expect(ctx.equals(ctx)).toBe(true);
   });
@@ -547,22 +566,22 @@ describe('ToolContext', () => {
     // that hold the same provider-tool identities in different order are still equal so
     // realtime-session / preemptive-generation reuse fast paths are not invalidated.
     const a = makeFn('a');
-    const p1 = tool({ id: 'code', config: { language: 'python' } });
-    const p2 = tool({ id: 'browser', config: {} });
+    const p1 = new TestProviderTool({ id: 'code' });
+    const p2 = new TestProviderTool({ id: 'browser' });
     expect(new ToolContext([a, p1, p2]).equals(new ToolContext([a, p2, p1]))).toBe(true);
   });
 
   it('equals() supports contexts with only provider tools', () => {
-    const p1 = tool({ id: 'code', config: {} });
-    const p2 = tool({ id: 'browser', config: {} });
+    const p1 = new TestProviderTool({ id: 'code' });
+    const p2 = new TestProviderTool({ id: 'browser' });
     expect(new ToolContext([p1, p2]).equals(new ToolContext([p1, p2]))).toBe(true);
-    const p3 = tool({ id: 'code', config: {} }); // distinct identity, same id
+    const p3 = new TestProviderTool({ id: 'code' }); // distinct identity, same id
     expect(new ToolContext([p1]).equals(new ToolContext([p3]))).toBe(false);
   });
 
   it('hasTool() matches function tools by name and provider tools by id', () => {
     const a = makeFn('a');
-    const provider = tool({ id: 'code_runner', config: {} });
+    const provider = new TestProviderTool({ id: 'code_runner' });
     const ctx = new ToolContext([a, provider]);
 
     expect(ctx.hasTool('a')).toBe(true);
@@ -574,9 +593,133 @@ describe('ToolContext', () => {
     // Matches Python's `flatten()`: list(self._fnc_tools_map.values()) + self._provider_tools.
     const a = makeFn('a');
     const b = makeFn('b');
-    const provider = tool({ id: 'code', config: {} });
+    const provider = new TestProviderTool({ id: 'code' });
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);
+  });
+});
+
+describe('Toolset', () => {
+  const makeFn = (name: string) =>
+    tool({
+      name,
+      description: `${name} tool`,
+      execute: async () => name,
+    });
+
+  it('exposes its id and the tools it was constructed with', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set1', tools: [a, b] });
+
+    expect(ts.id).toBe('set1');
+    expect(ts.tools).toEqual([a, b]);
+  });
+
+  it('default setup and aclose are no-ops', async () => {
+    const ts = new Toolset({ id: 'noop', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('lets subclasses override lifecycle hooks', async () => {
+    const events: string[] = [];
+    class Recording extends Toolset {
+      override async setup(): Promise<void> {
+        events.push(`setup:${this.id}`);
+      }
+      override async aclose(): Promise<void> {
+        events.push(`close:${this.id}`);
+      }
+    }
+
+    const ts = new Recording({ id: 'rec', tools: [] });
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup:rec', 'close:rec']);
+  });
+
+  it('Toolset.create() composes lifecycle callbacks without subclassing', async () => {
+    const a = makeFn('a');
+    const events: string[] = [];
+    const ts = Toolset.create({
+      id: 'composed',
+      tools: [a],
+      setup: async () => {
+        events.push('setup');
+      },
+      aclose: async () => {
+        events.push('close');
+      },
+    });
+
+    expect(ts).toBeInstanceOf(Toolset);
+    expect(ts.id).toBe('composed');
+    expect(ts.tools).toEqual([a]);
+
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup', 'close']);
+  });
+
+  it('Toolset.create() defaults setup and aclose to no-ops when callbacks are omitted', async () => {
+    const ts = Toolset.create({ id: 'bare', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('Toolset.create() accepts a tools thunk, re-evaluated on every access (dynamic)', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const current: Tool[] = [a];
+    let calls = 0;
+    const ts = Toolset.create({
+      id: 'dynamic',
+      tools: () => {
+        calls += 1;
+        return current;
+      },
+    });
+    // Each access re-invokes the thunk so the toolset reflects the current source-of-truth.
+    expect(ts.tools).toEqual([a]);
+    expect(calls).toBe(1);
+    current.push(b);
+    expect(ts.tools).toEqual([a, b]);
+    expect(calls).toBe(2);
+  });
+
+  it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const direct = makeFn('direct');
+
+    const ctx = new ToolContext([direct, ts]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b', 'direct']);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('throws when a Toolset contributes a duplicate function name', () => {
+    // Mirrors Python's `add_tool`: a name collision between top-level and toolset-contributed
+    // tools is an error, not silent overwrite.
+    const a1 = makeFn('a');
+    const a2 = makeFn('a');
+    const ts = new Toolset({ id: 'collides', tools: [a2] });
+
+    expect(() => new ToolContext([a1, ts])).toThrow(/duplicate function name: a/);
+  });
+
+  it('equals() compares toolsets as identity sets, not by order', () => {
+    // Matches Python's `{id(ts) for ts in self._tool_sets}` semantics.
+    const ts1 = new Toolset({ id: 'one', tools: [] });
+    const ts2 = new Toolset({ id: 'two', tools: [] });
+
+    expect(new ToolContext([ts1, ts2]).equals(new ToolContext([ts2, ts1]))).toBe(true);
+
+    const ts3 = new Toolset({ id: 'three', tools: [] });
+    expect(new ToolContext([ts1, ts2]).equals(new ToolContext([ts1, ts3]))).toBe(false);
+    expect(new ToolContext([ts1]).equals(new ToolContext([ts1, ts2]))).toBe(false);
   });
 });

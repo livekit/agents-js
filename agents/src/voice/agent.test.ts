@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { tool } from '../llm/index.js';
+import { ChatContext, ChatMessage, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
@@ -14,6 +16,14 @@ import { defaultInterruptionOptions } from './turn_config/interruption.js';
 vi.mock('ofetch', () => ({ ofetch: vi.fn() }));
 
 initializeLogger({ pretty: false, level: 'error' });
+
+async function collectReadableStream<T>(stream: ReadableStream<T>): Promise<T[]> {
+  const chunks: T[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
 
 describe('Agent', () => {
   it('should create agent with basic instructions', () => {
@@ -78,6 +88,258 @@ describe('Agent', () => {
     // internal state.
     expect(agent.toolCtx).not.toBe(agent.toolCtx);
     expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
+  });
+
+  describe('create', () => {
+    it('preserves constructor options and base Agent default id', () => {
+      const mockTool = tool({
+        name: 'testTool',
+        description: 'Test tool',
+        parameters: z.object({}),
+        execute: async () => 'result',
+      });
+
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        tools: [mockTool],
+      });
+
+      expect(agent).toBeInstanceOf(Agent);
+      expect(agent.instructions).toBe('factory instructions');
+      expect(agent.id).toBe('default_agent');
+      expect(agent.toolCtx.getFunctionTool('testTool')).toBe(mockTool);
+    });
+
+    it('passes AgentContext to lifecycle hooks', async () => {
+      const calls: string[] = [];
+      const chatCtx = ChatContext.empty();
+      const newMessage = ChatMessage.create({ role: 'user', content: ['hello'] });
+      const agent = Agent.create({
+        id: 'factory_agent',
+        instructions: 'factory instructions',
+        minConsecutiveSpeechDelay: 12,
+        ttsPronunciationMap: { LiveKit: 'live kit' },
+        onEnter: (ctx) => {
+          expect(ctx.agent).toBe(agent);
+          expect(ctx.id).toBe(agent.id);
+          expect(ctx.instructions).toBe(agent.instructions);
+          expect(ctx.toolCtx.functionTools).toEqual(agent.toolCtx.functionTools);
+          expect(ctx.chatCtx.items).toEqual(agent.chatCtx.items);
+          expect(ctx.minConsecutiveSpeechDelay).toBe(agent.minConsecutiveSpeechDelay);
+          expect(ctx.ttsPronunciationMap).toBe(agent.ttsPronunciationMap);
+          calls.push('enter');
+        },
+        onExit: async (ctx) => {
+          expect(ctx.agent).toBe(agent);
+          calls.push('exit');
+        },
+        onUserTurnCompleted: (ctx, receivedChatCtx, receivedMessage) => {
+          expect(ctx.agent).toBe(agent);
+          expect(receivedChatCtx).toBe(chatCtx);
+          expect(receivedMessage).toBe(newMessage);
+          calls.push('turn');
+        },
+      });
+
+      await agent.onEnter();
+      await agent.onExit();
+      await agent.onUserTurnCompleted(chatCtx, newMessage);
+
+      expect(calls).toEqual(['enter', 'exit', 'turn']);
+    });
+
+    it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async sttNode(ctx, audio) {
+          async function* stream() {
+            expect(ctx.agent).toBe(agent);
+            const frames: AudioFrame[] = [];
+            for await (const frame of audio) {
+              frames.push(frame);
+            }
+            expect(frames).toEqual([audioFrame]);
+            yield 'transcript';
+          }
+
+          return stream();
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+
+      const result = await agent.sttNode(audio, {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['transcript']);
+    });
+
+    it('supports async generator stream node hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *sttNode(ctx, audio) {
+          expect(ctx.agent).toBe(agent);
+          const frames: AudioFrame[] = [];
+          for await (const frame of audio) {
+            frames.push(frame);
+          }
+          expect(frames).toEqual([audioFrame]);
+          yield 'transcript';
+        },
+        async *llmNode(ctx, chatCtx, toolCtx) {
+          expect(ctx.agent).toBe(agent);
+          expect(chatCtx).toBeInstanceOf(ChatContext);
+          expect(toolCtx.equals(agent.toolCtx)).toBe(true);
+          yield 'llm-output';
+        },
+        async *ttsNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          const chunks: string[] = [];
+          for await (const chunk of text) {
+            chunks.push(chunk);
+          }
+          expect(chunks).toEqual(['hello']);
+          yield outputFrame;
+        },
+        async *realtimeAudioOutputNode(ctx, audio) {
+          expect(ctx.agent).toBe(agent);
+          const frames: AudioFrame[] = [];
+          for await (const frame of audio) {
+            frames.push(frame);
+          }
+          expect(frames).toEqual([audioFrame]);
+          yield outputFrame;
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const text = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello');
+          controller.close();
+        },
+      });
+
+      const sttResult = await agent.sttNode(audio, {});
+      const llmResult = await agent.llmNode(ChatContext.empty(), agent.toolCtx, {});
+      const ttsResult = await agent.ttsNode(text, {});
+      const realtimeResult = await agent.realtimeAudioOutputNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+
+      expect(sttResult).not.toBeNull();
+      expect(llmResult).not.toBeNull();
+      expect(ttsResult).not.toBeNull();
+      expect(realtimeResult).not.toBeNull();
+      await expect(collectReadableStream(sttResult!)).resolves.toEqual(['transcript']);
+      await expect(collectReadableStream(llmResult!)).resolves.toEqual(['llm-output']);
+      await expect(collectReadableStream(ttsResult!)).resolves.toEqual([outputFrame]);
+      await expect(collectReadableStream(realtimeResult!)).resolves.toEqual([outputFrame]);
+    });
+
+    it('supports stream node hooks that return async iterables', async () => {
+      function asyncIterableOf<T>(...items: T[]): AsyncIterable<T> {
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (const item of items) {
+              yield item;
+            }
+          },
+        };
+      }
+
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        sttNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf('transcript');
+        },
+        llmNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf('llm-output');
+        },
+        ttsNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf(outputFrame);
+        },
+        realtimeAudioOutputNode(ctx) {
+          expect(ctx.agent).toBe(agent);
+          return asyncIterableOf(outputFrame);
+        },
+      });
+
+      const sttResult = await agent.sttNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+      const llmResult = await agent.llmNode(ChatContext.empty(), agent.toolCtx, {});
+      const ttsResult = await agent.ttsNode(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('hello');
+            controller.close();
+          },
+        }),
+        {},
+      );
+      const realtimeResult = await agent.realtimeAudioOutputNode(
+        new ReadableStream<AudioFrame>({
+          start(controller) {
+            controller.enqueue(audioFrame);
+            controller.close();
+          },
+        }),
+        {},
+      );
+
+      expect(sttResult).not.toBeNull();
+      expect(llmResult).not.toBeNull();
+      expect(ttsResult).not.toBeNull();
+      expect(realtimeResult).not.toBeNull();
+      await expect(collectReadableStream(sttResult!)).resolves.toEqual(['transcript']);
+      await expect(collectReadableStream(llmResult!)).resolves.toEqual(['llm-output']);
+      await expect(collectReadableStream(ttsResult!)).resolves.toEqual([outputFrame]);
+      await expect(collectReadableStream(realtimeResult!)).resolves.toEqual([outputFrame]);
+    });
+
+    it('falls back to existing defaults for missing hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const agent = Agent.create({ instructions: 'factory instructions' });
+
+      const result = await agent.realtimeAudioOutputNode(audio, {});
+
+      expect(result).toBe(audio);
+    });
   });
 
   it('should require AgentTask to run inside task context', async () => {
@@ -145,6 +407,94 @@ describe('Agent', () => {
     });
 
     await expect(wrapper.result).resolves.toBe('ok');
+  });
+
+  describe('AgentTask.create', () => {
+    it('exposes complete on hook context', async () => {
+      const task = AgentTask.create<string>({
+        instructions: 'factory task',
+        onEnter: (ctx) => {
+          expect(ctx.agent).toBe(task);
+          expect(ctx.id).toBe('default_agent');
+          expect(ctx.instructions).toBe('factory task');
+          ctx.complete('ok');
+        },
+      });
+      const oldAgent = new Agent({ instructions: 'old agent' });
+      const mockSession = {
+        currentAgent: oldAgent,
+        _globalRunState: undefined,
+        _updateActivity: async (agent: Agent) => {
+          if (agent === task) {
+            await agent.onEnter();
+          }
+        },
+      };
+      const mockActivity = {
+        agent: oldAgent,
+        agentSession: mockSession,
+        _onEnterTask: undefined,
+        llm: undefined,
+        close: async () => {},
+      };
+
+      const wrapper = Task.from(async () => {
+        const currentTask = Task.current();
+        if (!currentTask) {
+          throw new Error('expected task context');
+        }
+        _setActivityTaskInfo(currentTask, { inlineTask: true });
+        return await agentActivityStorage.run(mockActivity as any, () => task.run());
+      });
+
+      await expect(wrapper.result).resolves.toBe('ok');
+    });
+
+    it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const task = AgentTask.create<string>({
+        instructions: 'factory task',
+        async sttNode(ctx, audio) {
+          async function* stream() {
+            expect(ctx.agent).toBe(task);
+            const frames: AudioFrame[] = [];
+            for await (const frame of audio) {
+              frames.push(frame);
+            }
+            expect(frames).toEqual([audioFrame]);
+            yield 'transcript';
+          }
+
+          return stream();
+        },
+      });
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+
+      const result = await task.sttNode(audio, {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['transcript']);
+    });
+
+    it('falls back to existing defaults for missing hooks', async () => {
+      const audioFrame = 'audio' as unknown as AudioFrame;
+      const audio = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(audioFrame);
+          controller.close();
+        },
+      });
+      const task = AgentTask.create<string>({ instructions: 'factory task' });
+
+      const result = await task.realtimeAudioOutputNode(audio, {});
+
+      expect(result).toBe(audio);
+    });
   });
 
   it('should require AgentTask to run inside AgentActivity context', async () => {
@@ -235,6 +585,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 999 },
           interruption: {},
+          preemptiveGeneration: {},
           turnDetection: 'vad',
         },
         allowInterruptions: false,
@@ -251,6 +602,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 999, maxDelay: 4000 },
           interruption: { enabled: true },
+          preemptiveGeneration: {},
           turnDetection: 'vad',
         },
         allowInterruptions: false,
@@ -268,6 +620,7 @@ describe('Agent', () => {
         turnHandling: {
           interruption: { mode: 'adaptive' },
           endpointing: {},
+          preemptiveGeneration: {},
           turnDetection: undefined,
         },
       });
@@ -280,6 +633,7 @@ describe('Agent', () => {
         turnHandling: {
           endpointing: { minDelay: 111, maxDelay: 222 },
           interruption: { enabled: false },
+          preemptiveGeneration: {},
           turnDetection: 'manual',
         },
       });

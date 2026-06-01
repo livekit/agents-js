@@ -13,6 +13,7 @@ import {
 } from '@livekit/agents';
 import OpenAI from 'openai';
 import type { ChatModels } from '../models.js';
+import { toResponsesTools } from '../tool_utils.js';
 import { WSLLM } from '../ws/llm.js';
 
 export interface LLMOptions {
@@ -187,24 +188,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       )) as OpenAI.Responses.ResponseInputItem[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx.functionTools).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              name: name,
-              description: func.description,
-              parameters: llm.toJsonSchema(
-                func.parameters,
-                true,
-                this.strictToolSchema,
-              ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-            } as OpenAI.Responses.FunctionTool;
-
-            if (this.strictToolSchema) {
-              oaiParams.strict = true;
-            }
-
-            return oaiParams;
-          })
+        ? toResponsesTools(this.toolCtx, this.strictToolSchema)
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };

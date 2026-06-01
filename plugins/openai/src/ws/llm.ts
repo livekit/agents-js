@@ -15,6 +15,7 @@ import {
 import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
 import type { ChatModels } from '../models.js';
+import { toResponsesTools } from '../tool_utils.js';
 import type {
   WsOutputItemDoneEvent,
   WsOutputTextDeltaEvent,
@@ -429,26 +430,7 @@ export class WSLLMStream extends llm.LLMStream {
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    const tools = this.toolCtx
-      ? Object.entries(this.toolCtx.functionTools).map(([name, func]) => {
-          const oaiParams = {
-            type: 'function' as const,
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-              true,
-              this.#strictToolSchema,
-            ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-          } as OpenAI.Responses.FunctionTool;
-
-          if (this.#strictToolSchema) {
-            oaiParams.strict = true;
-          }
-
-          return oaiParams;
-        })
-      : undefined;
+    const tools = this.toolCtx ? toResponsesTools(this.toolCtx, this.#strictToolSchema) : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {

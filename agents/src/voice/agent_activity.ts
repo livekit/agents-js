@@ -35,10 +35,14 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
+  type Tool,
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
   ToolFlag,
+  Toolset,
+  isFunctionTool,
+  isToolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';
@@ -215,6 +219,7 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
+  private _toolsetsSetup = false;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -420,6 +425,8 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     this.agent._agentActivity = this;
+
+    await this.setupToolsets();
 
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
@@ -767,13 +774,20 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.agent._toolCtx.functionTools));
+    const oldToolCtx = this.agent._toolCtx;
+    const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
+    const oldToolsets = oldToolCtx.toolsets;
     const newToolCtx = new ToolContext(tools);
     const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
+    const newToolsets = newToolCtx.toolsets;
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+    const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
+    const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
 
+    await this.setupToolsetList(addedToolsets);
     this.agent._toolCtx = newToolCtx;
+    await this.closeToolsetList(removedToolsets);
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -1735,11 +1749,13 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
-            this.agent.toolCtx.tools.filter((t) => {
-              if (t.type === 'function') {
-                return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
+            this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
+              const keepFn = (fn: Tool): boolean =>
+                !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
+              if (isToolset(t)) {
+                return t.tools.filter(keepFn) as ToolContextEntry[];
               }
-              return true;
+              return keepFn(t) ? [t] : [];
             }),
           )
         : this.agent.toolCtx;
@@ -3728,8 +3744,41 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSpans?.clear();
     await this.realtimeSession?.close();
     await this.audioRecognition?.close();
+    await this.closeToolsets();
     this.realtimeSession = undefined;
     this.audioRecognition = undefined;
+  }
+
+  private async setupToolsets(): Promise<void> {
+    // Guard against resume() re-entering _startSession on an activity whose toolsets are
+    // already initialized.
+    if (this._toolsetsSetup) return;
+    this._toolsetsSetup = true;
+    await this.setupToolsetList(this.agent.toolCtx.toolsets);
+  }
+
+  private async closeToolsets(): Promise<void> {
+    if (!this._toolsetsSetup) return;
+    this._toolsetsSetup = false;
+    await this.closeToolsetList(this.agent.toolCtx.toolsets);
+  }
+
+  private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.setup()));
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error setting up toolset');
+      }
+    }
+  }
+
+  private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error closing toolset');
+      }
+    }
   }
 }
 
