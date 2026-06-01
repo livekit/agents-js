@@ -5,7 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
-import { ProviderTool, ToolContext, type ToolOptions, Toolset, tool } from './tool_context.js';
+import {
+  ProviderTool,
+  type Tool,
+  ToolContext,
+  type ToolOptions,
+  Toolset,
+  tool,
+} from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
 
 describe('Tool Context', () => {
@@ -631,6 +638,55 @@ describe('Toolset', () => {
     await ts.setup();
     await ts.aclose();
     expect(events).toEqual(['setup:rec', 'close:rec']);
+  });
+
+  it('Toolset.create() composes lifecycle callbacks without subclassing', async () => {
+    const a = makeFn('a');
+    const events: string[] = [];
+    const ts = Toolset.create({
+      id: 'composed',
+      tools: [a],
+      setup: async () => {
+        events.push('setup');
+      },
+      aclose: async () => {
+        events.push('close');
+      },
+    });
+
+    expect(ts).toBeInstanceOf(Toolset);
+    expect(ts.id).toBe('composed');
+    expect(ts.tools).toEqual([a]);
+
+    await ts.setup();
+    await ts.aclose();
+    expect(events).toEqual(['setup', 'close']);
+  });
+
+  it('Toolset.create() defaults setup and aclose to no-ops when callbacks are omitted', async () => {
+    const ts = Toolset.create({ id: 'bare', tools: [] });
+    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.aclose()).resolves.toBeUndefined();
+  });
+
+  it('Toolset.create() accepts a tools thunk, re-evaluated on every access (dynamic)', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const current: Tool[] = [a];
+    let calls = 0;
+    const ts = Toolset.create({
+      id: 'dynamic',
+      tools: () => {
+        calls += 1;
+        return current;
+      },
+    });
+    // Each access re-invokes the thunk so the toolset reflects the current source-of-truth.
+    expect(ts.tools).toEqual([a]);
+    expect(calls).toBe(1);
+    current.push(b);
+    expect(ts.tools).toEqual([a, b]);
+    expect(calls).toBe(2);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {

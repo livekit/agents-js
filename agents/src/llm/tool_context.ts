@@ -228,6 +228,41 @@ export class Toolset {
     this.#tools = [...tools];
   }
 
+  /**
+   * Compose a `Toolset` with inline `setup` / `aclose` hooks instead of subclassing. `tools`
+   * may also be a thunk that is re-evaluated on every `.tools` access, so the toolset can
+   * expose a dynamic list that changes after `setup()` runs.
+   *
+   * @example Static tool list with a shared backing resource
+   * ```ts
+   * function createPostgresToolset(connectionUrl: string): Toolset {
+   *   const pool = new pg.Pool({ connectionString: connectionUrl });
+   *   return Toolset.create({
+   *     id: 'postgres',
+   *     tools: [queryOrders, queryCustomers],
+   *     setup: () => pool.connect(),
+   *     aclose: () => pool.end(),
+   *   });
+   * }
+   * ```
+   *
+   * @example Dynamic tool list
+   * ```ts
+   * function createMcpToolset(url: string): Toolset {
+   *   const client = new MCPClient({ url });
+   *   return Toolset.create({
+   *     id: 'mcp_remote',
+   *     tools: () => client.getTools(),
+   *     setup: () => client.connect(),
+   *     aclose: () => client.disconnect(),
+   *   });
+   * }
+   * ```
+   */
+  static create(options: ToolsetCreateOptions): Toolset {
+    return new ToolsetFactory(options);
+  }
+
   get id(): string {
     return this.#id;
   }
@@ -239,6 +274,50 @@ export class Toolset {
   async setup(): Promise<void> {}
 
   async aclose(): Promise<void> {}
+}
+
+/** Options accepted by `Toolset.create()` — id + tools plus optional lifecycle hooks. */
+export interface ToolsetCreateOptions {
+  id: string;
+  /**
+   * Either a static list of tools, or a thunk re-evaluated on every `tools` access — useful
+   * when the underlying source (e.g. an MCP discovery loop) can produce a dynamic tool list.
+   */
+  tools: readonly Tool[] | (() => readonly Tool[]);
+  /** Invoked when the toolset becomes active in an `AgentActivity`. */
+  setup?: () => Promise<void>;
+  /** Invoked when the toolset is being torn down. */
+  aclose?: () => Promise<void>;
+}
+
+/** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
+class ToolsetFactory extends Toolset {
+  readonly #toolsSource: readonly Tool[] | (() => readonly Tool[]);
+
+  readonly #setupFn?: () => Promise<void>;
+
+  readonly #acloseFn?: () => Promise<void>;
+
+  constructor({ id, tools, setup, aclose }: ToolsetCreateOptions) {
+    // Pass [] to super and override the `tools` getter so a thunk can be re-evaluated on
+    // every access (lets callers expose a dynamic tool list).
+    super({ id, tools: [] });
+    this.#toolsSource = tools;
+    this.#setupFn = setup;
+    this.#acloseFn = aclose;
+  }
+
+  override get tools(): readonly Tool[] {
+    return typeof this.#toolsSource === 'function' ? this.#toolsSource() : this.#toolsSource;
+  }
+
+  override async setup(): Promise<void> {
+    if (this.#setupFn) await this.#setupFn();
+  }
+
+  override async aclose(): Promise<void> {
+    if (this.#acloseFn) await this.#acloseFn();
+  }
 }
 
 /**

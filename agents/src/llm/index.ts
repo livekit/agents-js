@@ -23,6 +23,7 @@ export {
   type ToolContextEntry,
   type ToolCtxInput,
   type ToolOptions,
+  type ToolsetCreateOptions,
   type ToolType,
 } from './tool_context.js';
 
