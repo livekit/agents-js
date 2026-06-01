@@ -7,7 +7,13 @@ import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'live
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../../inference/index.js';
 import { getJobContext } from '../../job.js';
-import type { ChatContext, LLM, RealtimeModel, ToolContext } from '../../llm/index.js';
+import type {
+  ChatContext,
+  Instructions,
+  LLM,
+  RealtimeModel,
+  ToolContext,
+} from '../../llm/index.js';
 import { ToolError, ToolFlag, tool } from '../../llm/index.js';
 import { log } from '../../log.js';
 import type { STT } from '../../stt/index.js';
@@ -23,14 +29,10 @@ import {
   type PlayHandle,
 } from '../../voice/background_audio.js';
 import { DEFAULT_PARTICIPANT_KINDS } from '../../voice/room_io/index.js';
+import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {
   humanAgentIdentity: string;
-}
-
-export interface InstructionParts {
-  persona?: string;
-  extra?: string;
 }
 
 export interface WarmTransferTaskOptions {
@@ -47,10 +49,26 @@ export interface WarmTransferTaskOptions {
   sipNumber?: string;
   /** Headers to include on the outbound SIP call. */
   sipHeaders?: Record<string, string>;
-  /** How long to wait, in milliseconds, for the human agent to answer before giving up. */
+  /**
+   * DTMF tones to send once the human agent's call is answered, e.g. to dial an extension or
+   * navigate an IVR menu (`'1234#'`). Insert `w` characters to pause ~0.5s each before/between
+   * digits (`'wwww1234#'` waits ~2s, useful when the destination plays a greeting before
+   * accepting input).
+   */
+  dtmf?: string | null;
+  /**
+   * How long to wait, in milliseconds, for the human agent to answer before giving up. The
+   * underlying SIP API only supports whole-second granularity, so the value is rounded to the
+   * nearest second.
+   */
   ringingTimeout?: number | null;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+  /**
+   * Instructions for the human-agent briefing. Pass a full string to replace the built-in prompt
+   * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
+   * keeping the built-in template and auto-formatted conversation history.
+   */
   instructions?: InstructionParts | string;
   chatCtx?: ChatContext;
   turnDetection?: TurnDetectionMode | null;
@@ -81,6 +99,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _sipConnection?: SIPOutboundConfig;
   private _sipNumber: string;
   private _sipHeaders: Record<string, string>;
+  private _dtmf: string | null;
   private _ringingTimeout: number | null;
 
   private _backgroundAudio = new BackgroundAudioPlayer();
@@ -94,12 +113,13 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
   constructor(options: WarmTransferTaskOptions = {}) {
     let sipCallTo = options.sipCallTo;
-    let instructions = options.instructions;
+    const { instructions } = options;
     const {
       sipTrunkId,
       sipConnection,
       sipNumber,
       sipHeaders,
+      dtmf,
       ringingTimeout,
       holdAudio,
       chatCtx,
@@ -123,13 +143,23 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       throw new Error('`sipCallTo` must be set');
     }
 
-    if (!instructions) {
-      instructions = { persona: PERSONA, extra: extraInstructions };
-    } else if (extraInstructions) {
+    if (instructions !== undefined && extraInstructions) {
       log().warn('`extraInstructions` will be ignored when `instructions` is provided');
     }
 
-    if (typeof instructions !== 'string') {
+    const renderPart = (value: Instructions | string): string =>
+      typeof value === 'string' ? value : value.value;
+
+    let resolvedInstructions: string;
+    if (typeof instructions === 'string') {
+      // A full instruction string replaces the built-in prompt entirely.
+      resolvedInstructions = instructions;
+    } else {
+      // No instructions or an `InstructionParts` override: fill the built-in template.
+      const parts: InstructionParts = instructions ?? {
+        persona: PERSONA,
+        extra: extraInstructions,
+      };
       // Substitute all placeholders in a single pass with function
       // replacements. This avoids two pitfalls of chained `.replace(str, str)`:
       // (1) special dollar-sign patterns (`$&`, `$\``, `$'`, `$N`) in the
@@ -139,18 +169,19 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       // text (e.g. a user message containing `{extra}` consuming the real
       // `{extra}` slot).
       const replacements: Record<string, string> = {
-        persona: instructions.persona ?? PERSONA,
+        // An unset section preserves its built-in default; an explicit empty string removes it.
+        persona: parts.persona !== undefined ? renderPart(parts.persona) : PERSONA,
         _conversation_history: WarmTransferTask.formatConversationHistory(chatCtx),
-        extra: instructions.extra ?? '',
+        extra: parts.extra !== undefined ? renderPart(parts.extra) : '',
       };
-      instructions = INSTRUCTIONS_TEMPLATE.replace(
+      resolvedInstructions = INSTRUCTIONS_TEMPLATE.replace(
         /\{(persona|_conversation_history|extra)\}/g,
         (_match, key: string) => replacements[key] ?? '',
       );
     }
 
     super({
-      instructions,
+      instructions: resolvedInstructions,
       turnDetection: turnDetection ?? undefined,
       tools,
       stt: stt ?? undefined,
@@ -192,6 +223,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
     this._sipNumber = sipNumber ?? process.env.LIVEKIT_SIP_NUMBER ?? '';
     this._sipHeaders = sipHeaders ?? {};
+    this._dtmf = dtmf ?? null;
     this._ringingTimeout = ringingTimeout ?? null;
     this._holdAudio =
       holdAudio === undefined ? { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 } : holdAudio;
@@ -342,20 +374,13 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
     }
 
     if (this._humanAgentSession) {
+      // `deleteRoomOnClose` on the human agent session deletes the supervisor
+      // room when it shuts down, which disconnects the underlying Room and
+      // releases its WebSocket. The human agent has already been moved out
+      // (mergeCalls) or torn down (failure) by the time we reach this point.
       this._humanAgentSession.shutdown();
       this._humanAgentSession = null;
-    }
-
-    // AgentSession.shutdown() closes RoomIO but does not disconnect the
-    // underlying Room, so the supervisor room's WebSocket would leak across
-    // every transfer. Disconnect explicitly here. The room is moved out of
-    // (mergeCalls) or torn down (failure) by the time we reach this point.
-    if (this._humanAgentRoom) {
-      const humanAgentRoom = this._humanAgentRoom;
       this._humanAgentRoom = null;
-      void humanAgentRoom.disconnect().catch((error) => {
-        this._logger.warn({ error }, 'failed to disconnect human agent room');
-      });
     }
 
     if (this._holdAudioHandle) {
@@ -431,6 +456,10 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
             room,
             inputOptions: {
               closeOnDisconnect: true,
+              // Delete the supervisor room when the session shuts down so its
+              // WebSocket does not leak across transfers. The human agent has
+              // already been moved out (mergeCalls) or never joined (failure).
+              deleteRoomOnClose: true,
               participantIdentity: this._humanAgentIdentity,
             },
             record: false,
@@ -450,8 +479,11 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
               waitUntilAnswered: true,
               fromNumber: this._sipNumber || undefined,
               headers: this._sipHeaders,
+              dtmf: this._dtmf ?? undefined,
+              // The SIP API expects whole seconds (it coerces the value via `BigInt`, which
+              // throws on fractional input), so round the ms value to the nearest second.
               ringingTimeout:
-                this._ringingTimeout !== null ? this._ringingTimeout / 1000 : undefined,
+                this._ringingTimeout !== null ? Math.round(this._ringingTimeout / 1000) : undefined,
             },
             this._sipConnection,
           ),
