@@ -4032,19 +4032,16 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /**
-   * Re-flatten the agent's tool context after a dynamic toolset pushed a new tool list (via
-   * `ToolsetContext.updateTools`), and re-advertise to the realtime session when the set changed.
-   * The next LLM turn picks up the new tools from `agent.toolCtx` automatically.
+   * Refresh the agent's tool context after a dynamic toolset pushed a new tool list (via
+   * `ToolsetContext.updateTools`), routing through updateTools so history, chat context, and the
+   * realtime session stay in sync. The next LLM turn picks up the new tools automatically.
    */
   private async onToolsetToolsChanged(): Promise<void> {
     if (!this._toolsetsSetup) return;
-    const before = this.agent._toolCtx;
-    const refreshed = new ToolContext(before.tools);
-    if (refreshed.equals(before)) return;
-    this.agent._toolCtx = refreshed;
-    if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(refreshed);
-    }
+    const current = this.agent._toolCtx;
+    if (new ToolContext(current.tools).equals(current)) return;
+    // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
+    await this.updateTools(current.tools);
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {

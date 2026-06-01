@@ -16,9 +16,9 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import { AgentConfigUpdate, ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { ToolContext } from '../llm/tool_context.js';
+import { type Tool, ToolContext, Toolset, tool } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
@@ -407,5 +407,98 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression test for the dynamic-toolset push path.
+ *
+ * When an already-activated toolset swaps its tools at runtime (e.g. an MCP server pushes a new
+ * tool list via `ToolsetContext.updateTools`), `setupToolsetList`'s wiring must (1) invoke
+ * `onToolsetToolsChanged`, which now funnels through `updateTools`, and (2) record an
+ * `AgentConfigUpdate` in the agent chat context + session history so a non-realtime pipeline's
+ * chat context reflects the new tool set on the next turn.
+ */
+class FakeToolsetLLM extends LLM {
+  label(): string {
+    return 'fake.toolset.LLM';
+  }
+  chat(): LLMStream {
+    throw new Error('not used in these tests');
+  }
+}
+
+describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
+  const makeFn = (name: string) =>
+    tool({ name, description: `${name} tool`, execute: async () => name });
+
+  function buildToolsetActivity(toolset: Toolset) {
+    const history = new ChatContext();
+    const fakeActivity = {
+      _toolsetsSetup: true,
+      realtimeSession: undefined,
+      llm: new FakeToolsetLLM(),
+      agent: {
+        _toolCtx: new ToolContext([toolset]),
+        _chatCtx: new ChatContext(),
+      },
+      agentSession: { history },
+      updateChatCtx: vi.fn(async () => {}),
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+    return { fakeActivity, history };
+  }
+
+  it('fires onToolsetToolsChanged on a dynamic push and records an AgentConfigUpdate', async () => {
+    const toolA = makeFn('toolA');
+    const toolB = makeFn('toolB');
+
+    // Capture the wired ctx.updateTools the framework hands the toolset during setup.
+    let pushTools!: (tools: readonly Tool[]) => void;
+    const toolset = Toolset.create({
+      id: 'dynamic',
+      tools: [toolA],
+      setup: async ({ updateTools }) => {
+        pushTools = updateTools;
+      },
+    });
+
+    const { fakeActivity, history } = buildToolsetActivity(toolset);
+
+    const changedSpy = vi.spyOn(
+      AgentActivity.prototype as unknown as Record<'onToolsetToolsChanged', () => Promise<void>>,
+      'onToolsetToolsChanged',
+    );
+
+    // Activate the toolset through the real path so it captures the push channel.
+    const setupToolsetList = (AgentActivity.prototype as Record<string, unknown>)
+      .setupToolsetList as (this: unknown, toolsets: readonly Toolset[]) => Promise<void>;
+    await setupToolsetList.call(fakeActivity, [toolset]);
+
+    expect(changedSpy).not.toHaveBeenCalled();
+
+    // (1) A dynamic push swaps the toolset's tools — the wiring must invoke onToolsetToolsChanged.
+    pushTools([toolA, toolB]);
+    expect(changedSpy).toHaveBeenCalledTimes(1);
+    await changedSpy.mock.results[0]!.value;
+
+    // (2) An AgentConfigUpdate naming the added tool lands in the session history.
+    const updates = history.items.filter(
+      (i): i is AgentConfigUpdate => i instanceof AgentConfigUpdate,
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.toolsAdded).toContain('toolB');
+    expect(updates[0]!.toolsRemoved ?? []).not.toContain('toolA');
+
+    // The refreshed tool context advertises the new tool to the next turn, and the non-realtime
+    // pipeline's chat context was refreshed via updateChatCtx.
+    expect(Object.keys(fakeActivity.agent._toolCtx.functionTools).sort()).toEqual([
+      'toolA',
+      'toolB',
+    ]);
+    expect(fakeActivity.updateChatCtx).toHaveBeenCalledTimes(1);
+
+    changedSpy.mockRestore();
   });
 });

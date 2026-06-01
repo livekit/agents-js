@@ -406,7 +406,7 @@ export class ToolContext<UserData = UnknownUserData> {
 
   /** A copy of all provider tools in the tool context, including those in tool sets. */
   get providerTools(): ProviderTool[] {
-    return this._providerTools;
+    return [...this._providerTools];
   }
 
   /** A copy of all toolsets registered in the context. */

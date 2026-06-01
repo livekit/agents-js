@@ -160,7 +160,9 @@ export function createEndCallTool<UserData = UnknownUserData>({
               return;
             }
 
-            void delayedSessionShutdown(session, signal);
+            void delayedSessionShutdown(session, signal).catch((error) =>
+              log().error({ error }, 'error during delayed session shutdown'),
+            );
           });
 
           if (onToolCalled) {

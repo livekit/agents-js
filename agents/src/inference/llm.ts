@@ -407,9 +407,7 @@ export class LLMStream extends llm.LLMStream {
       // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
       // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
-        ? // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
-          // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
-          llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               function: {
