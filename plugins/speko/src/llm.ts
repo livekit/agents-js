@@ -382,9 +382,22 @@ function toolCtxToSpekoTools(toolCtx: llm.ToolContext | undefined): ChatTool[] |
  */
 export function chatContextToSpeko(ctx: llm.ChatContext): SpekoChatMessage[] {
   const messages: SpekoChatMessage[] = [];
+  let pendingToolCallMessage: SpekoChatMessage | undefined;
+  let pendingToolCallGroupId: string | undefined;
+  let pendingToolCallHasGroupId = false;
+
+  const flushPendingToolCalls = () => {
+    if (pendingToolCallMessage === undefined) return;
+    messages.push(pendingToolCallMessage);
+    pendingToolCallMessage = undefined;
+    pendingToolCallGroupId = undefined;
+    pendingToolCallHasGroupId = false;
+  };
 
   for (const item of ctx.items) {
     if (item instanceof llm.ChatMessage) {
+      flushPendingToolCalls();
+
       const text = extractText(item);
       if (!text) continue;
 
@@ -401,15 +414,32 @@ export function chatContextToSpeko(ctx: llm.ChatContext): SpekoChatMessage[] {
     }
 
     if (item instanceof llm.FunctionCall) {
-      messages.push({
-        role: 'assistant',
-        content: '',
-        toolCalls: [{ id: item.callId, name: item.name, args: item.args }],
+      const shouldAppend =
+        pendingToolCallMessage !== undefined &&
+        (!pendingToolCallHasGroupId ||
+          item.groupId === undefined ||
+          item.groupId === pendingToolCallGroupId);
+
+      if (!shouldAppend) {
+        flushPendingToolCalls();
+        pendingToolCallMessage = { role: 'assistant', content: '', toolCalls: [] };
+      }
+
+      pendingToolCallMessage!.toolCalls!.push({
+        id: item.callId,
+        name: item.name,
+        args: item.args,
       });
+      if (!pendingToolCallHasGroupId && item.groupId !== undefined) {
+        pendingToolCallGroupId = item.groupId;
+        pendingToolCallHasGroupId = true;
+      }
       continue;
     }
 
     if (item instanceof llm.FunctionCallOutput) {
+      flushPendingToolCalls();
+
       messages.push({
         role: 'tool',
         content: item.output,
@@ -417,7 +447,11 @@ export function chatContextToSpeko(ctx: llm.ChatContext): SpekoChatMessage[] {
         ...(item.isError && { isError: true }),
       });
     }
+
+    flushPendingToolCalls();
   }
+
+  flushPendingToolCalls();
 
   return messages;
 }
