@@ -1048,7 +1048,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         await fnTool.execute(parsedArgs as any, {
           ctx: undefined as never,
           toolCallId: tc.callId,
-          abortSignal: undefined as unknown as AbortSignal,
+          abortSignal: new AbortController().signal,
         });
       } catch (error) {
         this._log.warn({ error, toolName: tc.name }, 'AMD tool execution failed');
