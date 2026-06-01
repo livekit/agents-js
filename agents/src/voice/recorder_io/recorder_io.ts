@@ -23,6 +23,7 @@ import {
 } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
+import { createSilenceFrame } from '../utils.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -448,10 +449,7 @@ class RecorderAudioInput extends AudioInput {
       );
       this._padded = true;
       const firstFrame = frames[0]!;
-      frames = [
-        createSilenceFrame(padding / 1000, firstFrame.sampleRate, firstFrame.channels),
-        ...frames,
-      ];
+      frames = [createSilenceFrame(padding, firstFrame.sampleRate, firstFrame.channels), ...frames];
     } else if (
       padSince !== undefined &&
       this._startedWallTime === undefined &&
@@ -680,7 +678,7 @@ class RecorderAudioOutput extends AudioOutput {
       // Process any pauses before this frame starts
       while (pauseIdx < pauseEvents.length && pauseEvents[pauseIdx]![0] <= accDur) {
         const [, pauseDur] = pauseEvents[pauseIdx]!;
-        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
         pauseIdx++;
       }
 
@@ -695,7 +693,7 @@ class RecorderAudioOutput extends AudioOutput {
         const [left, right] = splitFrame(currentFrame, (pausePos - accDur) / 1000);
         buf.push(left);
         accDur += (left.samplesPerChannel / left.sampleRate) * 1000;
-        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
 
         currentFrame = right;
         pauseIdx++;
@@ -713,7 +711,7 @@ class RecorderAudioOutput extends AudioOutput {
     while (pauseIdx < pauseEvents.length) {
       const [pausePos, pauseDur] = pauseEvents[pauseIdx]!;
       if (pausePos <= playbackPosition) {
-        buf.push(createSilenceFrame(pauseDur / 1000, sampleRate, numChannels));
+        buf.push(createSilenceFrame(pauseDur, sampleRate, numChannels));
       }
       pauseIdx++;
     }
@@ -723,9 +721,7 @@ class RecorderAudioOutput extends AudioOutput {
 
     if (filteredBuf.length > 0) {
       if (trailingSilenceDuration > 0) {
-        filteredBuf.push(
-          createSilenceFrame(trailingSilenceDuration / 1000, sampleRate, numChannels),
-        );
+        filteredBuf.push(createSilenceFrame(trailingSilenceDuration, sampleRate, numChannels));
       }
       this.writeFn(filteredBuf);
     }
@@ -769,19 +765,6 @@ class RecorderAudioOutput extends AudioOutput {
       this.nextInChain.clearBuffer();
     }
   }
-}
-
-/**
- * Create a silent audio frame with the given duration
- */
-function createSilenceFrame(
-  durationInS: number,
-  sampleRate: number,
-  numChannels: number,
-): AudioFrame {
-  const samples = Math.floor(durationInS * sampleRate);
-  const data = new Int16Array(samples * numChannels); // Zero-filled by default
-  return new AudioFrame(data, sampleRate, numChannels, samples);
 }
 
 /**

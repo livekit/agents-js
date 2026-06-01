@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import type { ParticipantKind } from '@livekit/rtc-node';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
@@ -12,9 +11,8 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
+import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
-import type { WritableStreamDefaultWriter } from 'node:stream/web';
-import type { ReadableStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
@@ -33,16 +31,23 @@ import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { splitWords } from '../tokenize/basic/word.js';
 import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
-import { type VAD, type VADEvent, VADEventType } from '../vad.js';
+import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
+import { type UserTurnExceededEvent, createUserTurnExceededEvent } from './events.js';
 import type { STTNode } from './io.js';
 import {
   type BaseEndpointing,
   createEndpointing,
   defaultEndpointingOptions,
 } from './turn_config/endpointing.js';
-import { setParticipantSpanAttributes } from './utils.js';
+import type { UserTurnLimitOptions } from './turn_config/user_turn_limit.js';
+import {
+  createSilenceFrame,
+  createSilenceFrameLike,
+  setParticipantSpanAttributes,
+} from './utils.js';
 
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
@@ -75,8 +80,15 @@ export interface RecognitionHooks {
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
+  onUserTurnExceeded: (ev: UserTurnExceededEvent) => void;
 
   retrieveChatCtx: () => ChatContext;
+}
+
+interface UserTurnTracker {
+  words: number;
+  transcript: string;
+  startedAt?: number;
 }
 
 export class STTPipeline {
@@ -153,6 +165,8 @@ export interface AudioRecognitionOptions {
   backchannelBoundary?: number | [number, number] | null;
   /** Endpointing delay strategy. */
   endpointing?: BaseEndpointing;
+  /** User turn limit configuration. */
+  userTurnLimit?: UserTurnLimitOptions;
   /** @deprecated Use endpointing instead. */
   minEndpointingDelay?: number;
   /** @deprecated Use endpointing instead. */
@@ -165,7 +179,7 @@ export interface AudioRecognitionOptions {
   sttProvider?: string;
   /** Getter for linked participant for span attribution */
   getLinkedParticipant?: () => ParticipantLike | undefined;
-  /** Predicate used to skip frames for STT while still forwarding them to VAD/interruption. */
+  /** Predicate used to substitute silence for STT while still forwarding real audio elsewhere. */
   shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
 }
 
@@ -188,6 +202,7 @@ export class AudioRecognition {
   private turnDetector?: _TurnDetector;
   private turnDetectionMode?: TurnDetectionMode;
   private endpointing: BaseEndpointing;
+  private userTurnLimit?: UserTurnLimitOptions;
   private lastLanguage?: LanguageCode;
   private rootSpanContext?: Context;
   private sttModel?: string;
@@ -206,9 +221,11 @@ export class AudioRecognition {
   private userTurnStart: number | undefined;
   private userTurnCommitted = false;
   private speaking = false;
+  private vadSpeechStarted = false;
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
+  private userTurnTracker: UserTurnTracker = { words: 0, transcript: '' };
   // Provider-known STT ids for the current user turn. Written to the
   // `user_turn` span when it ends so we can correlate traces with the
   // provider's logs for debugging.
@@ -238,6 +255,7 @@ export class AudioRecognition {
   private commitUserTurnTask?: Task<void>;
   private sttForwardTask?: Task<void>;
   private vadTask?: Task<void>;
+  private vadStream?: VADStream;
   private sttConsumerTask?: Task<void>;
   private interruptionTask?: Task<void>;
 
@@ -264,6 +282,7 @@ export class AudioRecognition {
     this.vad = opts.vad;
     this.turnDetector = opts.turnDetector;
     this.turnDetectionMode = opts.turnDetectionMode;
+    this.userTurnLimit = opts.userTurnLimit;
     this.endpointing =
       opts.endpointing ??
       createEndpointing({
@@ -323,7 +342,7 @@ export class AudioRecognition {
     );
     const primaryInputStream = this.deferredInputStream.stream.pipeThrough(broadcast);
 
-    const filterSttInput = (stream: ReadableStream<AudioFrame>) => {
+    const replaceSttInputWithSilence = (stream: ReadableStream<AudioFrame>) => {
       if (!opts.shouldDiscardAudioForStt) {
         return stream;
       }
@@ -331,9 +350,9 @@ export class AudioRecognition {
       return stream.pipeThrough(
         new TransformStream<AudioFrame, AudioFrame>({
           transform: (frame, controller) => {
-            if (!opts.shouldDiscardAudioForStt!(frame)) {
-              controller.enqueue(frame);
-            }
+            controller.enqueue(
+              opts.shouldDiscardAudioForStt!(frame) ? createSilenceFrameLike(frame) : frame,
+            );
           },
         }),
       );
@@ -344,7 +363,7 @@ export class AudioRecognition {
       const [inputStream, sttInputStream] = teedInput.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        filterSttInput(sttInputStream),
+        replaceSttInputWithSilence(sttInputStream),
         this.silenceAudioTransform.readable,
       );
       this.interruptionStreamChannel = createStreamChannel();
@@ -353,7 +372,7 @@ export class AudioRecognition {
       const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
-        filterSttInput(sttInputStream),
+        replaceSttInputWithSilence(sttInputStream),
         this.silenceAudioTransform.readable,
       );
     }
@@ -376,8 +395,16 @@ export class AudioRecognition {
   }
 
   /** @internal */
-  updateOptions(options: { turnDetection: TurnDetectionMode | undefined }): void {
-    this.turnDetectionMode = options.turnDetection;
+  updateOptions(options: {
+    endpointing?: BaseEndpointing;
+    turnDetection?: TurnDetectionMode | null;
+  }): void {
+    if (options.endpointing !== undefined) {
+      this.endpointing = options.endpointing;
+    }
+    if (options.turnDetection !== undefined) {
+      this.turnDetectionMode = options.turnDetection ?? undefined;
+    }
   }
 
   async start(options?: { sttPipeline?: STTPipeline }) {
@@ -411,6 +438,7 @@ export class AudioRecognition {
     await this.interruptionStreamChannel?.close();
     this.interruptionStreamChannel = undefined;
     this.cancelBackchannelBoundary();
+    await this.flushHeldTranscripts(0, true);
   }
 
   /**
@@ -445,6 +473,7 @@ export class AudioRecognition {
   async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
     this.endpointing.onStartOfAgentSpeech(startedAt);
+    this.userTurnTracker = { words: 0, transcript: '' };
 
     if (this.backchannelBoundary && this.backchannelBoundary[0] > 0) {
       this.cancelBackchannelBoundary();
@@ -461,8 +490,13 @@ export class AudioRecognition {
   async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
     this.cancelBackchannelBoundary();
 
-    if (this.isAgentSpeaking) {
-      this.endpointing.onEndOfAgentSpeech(Date.now());
+    const now = Date.now();
+    const wasAgentSpeaking = this.isAgentSpeaking;
+    // Capture before the assignment below; the overlap-end notification only fires when no
+    // overlap had been registered during this agent speech.
+    const priorIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
+    if (wasAgentSpeaking) {
+      this.endpointing.onEndOfAgentSpeech(now);
     }
 
     if (!this.isInterruptionEnabled) {
@@ -470,20 +504,9 @@ export class AudioRecognition {
       return;
     }
 
-    const inputOpen = await this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.agentSpeechEnded(),
-    );
-    if (!inputOpen) {
-      this.isAgentSpeaking = false;
-      return;
-    }
-
-    if (this.isAgentSpeaking) {
-      if (this.ignoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech(Date.now());
-      }
-
-      const endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
+    let endCooldown = 0;
+    if (wasAgentSpeaking) {
+      endCooldown = this.backchannelBoundary ? this.backchannelBoundary[1] : 0;
       const ignoreUntil = this.ignoreUserTranscriptUntil
         ? Math.min(ignoreUserTranscriptUntil, this.ignoreUserTranscriptUntil)
         : ignoreUserTranscriptUntil;
@@ -491,11 +514,27 @@ export class AudioRecognition {
       // Subtracting `endCooldown` widens the release window so transcripts that ended just
       // before the agent finished speaking (premature corrections) are surfaced.
       this.ignoreUserTranscriptUntil = ignoreUntil - endCooldown;
+    }
+    // Clear before awaiting the sentinel so STT events arriving while the sentinel is in
+    // flight are not buffered.
+    this.isAgentSpeaking = false;
 
-      // flush held transcripts if possible
+    const inputOpen = await this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.agentSpeechEnded(),
+    );
+    if (!inputOpen) {
+      return;
+    }
+
+    if (wasAgentSpeaking) {
+      // Notify overlap end after the agent-speech-ended sentinel resets the inference stream
+      // so it does not emit a synthetic `isInterruption: false` event following a real
+      // interruption.
+      if (priorIgnoreUserTranscriptUntil === undefined) {
+        this.onEndOfOverlapSpeech(Date.now());
+      }
       await this.flushHeldTranscripts(endCooldown);
     }
-    this.isAgentSpeaking = false;
   }
 
   /** Start interruption inference when agent is speaking and overlap speech starts. */
@@ -527,22 +566,32 @@ export class AudioRecognition {
   }
 
   /**
-   * Flush held transcripts whose *end time* is after the
-   * `ignoreUserTranscriptUntil - cooldown` timestamp. If the event has no timestamps, we
-   * assume it is the same as the next valid event.
+   * Flush held transcripts. When `force` is true, all buffered events are emitted during
+   * interruption-detector teardown because ignore-window gating can no longer be trusted.
+   * Otherwise, only transcripts whose end time is after `ignoreUserTranscriptUntil - cooldown`
+   * are emitted. Events without timestamps are treated as the next valid event.
    */
-  private async flushHeldTranscripts(cooldown: number = 0) {
-    if (
-      !this.isInterruptionEnabled ||
-      this.ignoreUserTranscriptUntil === undefined ||
-      this.transcriptBuffer.length === 0
-    ) {
+  private async flushHeldTranscripts(cooldown: number = 0, force = false) {
+    if (this.transcriptBuffer.length === 0) {
+      this.resetInterruptionDetection();
       return;
     }
 
-    if (!this._inputStartedAt) {
-      this.transcriptBuffer = [];
-      this.ignoreUserTranscriptUntil = undefined;
+    if (force) {
+      const eventsToEmit = [...this.transcriptBuffer];
+      this.resetInterruptionDetection();
+      for (const event of eventsToEmit) {
+        await this.onSTTEvent(event);
+      }
+      return;
+    }
+
+    if (
+      !this.isInterruptionEnabled ||
+      this.ignoreUserTranscriptUntil === undefined ||
+      this._inputStartedAt === undefined
+    ) {
+      this.resetInterruptionDetection();
       return;
     }
 
@@ -560,8 +609,7 @@ export class AudioRecognition {
         firstAlternative.startTime === firstAlternative.endTime &&
         firstAlternative.startTime === 0
       ) {
-        this.transcriptBuffer = [];
-        this.ignoreUserTranscriptUntil = undefined;
+        this.resetInterruptionDetection();
         return;
       }
 
@@ -581,8 +629,7 @@ export class AudioRecognition {
     // the value the holding decision was made against.
     const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
     const prevInputStartedAt = this._inputStartedAt;
-    this.transcriptBuffer = [];
-    this.ignoreUserTranscriptUntil = undefined;
+    this.resetInterruptionDetection();
 
     for (const event of eventsToEmit) {
       let addedDelay = 0;
@@ -605,8 +652,13 @@ export class AudioRecognition {
         { event: event.type, cooldown, addedDelay },
         're-emitting held user transcript',
       );
-      this.onSTTEvent(event);
+      await this.onSTTEvent(event);
     }
+  }
+
+  private resetInterruptionDetection(): void {
+    this.transcriptBuffer = [];
+    this.ignoreUserTranscriptUntil = undefined;
   }
 
   #alternativeEndsBeforeIgnoreWindow(
@@ -615,14 +667,14 @@ export class AudioRecognition {
     if (
       this.ignoreUserTranscriptUntil === undefined ||
       !this._inputStartedAt ||
-      alternative.startTime <= 0
+      alternative.endTime <= 0
     ) {
       return false;
     }
 
-    // `SpeechData.startTime` is in seconds relative to audio start, while `inputStartedAt` and
+    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
     // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.startTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
+    return alternative.endTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
@@ -764,6 +816,16 @@ export class AudioRecognition {
       }
     }
 
+    const firstAlternative = ev.alternatives?.[0];
+    const inputStartedAt = this._inputStartedAt;
+    const hasSTTEndTime =
+      firstAlternative !== undefined &&
+      firstAlternative.endTime > 0 &&
+      inputStartedAt !== undefined;
+    const sttLastSpeakingTime = hasSTTEndTime
+      ? firstAlternative.endTime * 1000 + inputStartedAt
+      : Date.now();
+
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
         const transcript = ev.alternatives?.[0]?.text;
@@ -797,13 +859,11 @@ export class AudioRecognition {
         this.audioPreflightTranscript = '';
 
         if (!this.vad || this.lastSpeakingTime === undefined) {
-          // vad disabled, use stt timestamp
-          // TODO: this would screw up transcription latency metrics
-          // but we'll live with it for now.
-          // the correct way is to ensure STT fires SpeechEventType.END_OF_SPEECH
-          // and using that timestamp for lastSpeakingTime
-          this.lastSpeakingTime = Date.now();
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
         }
+
+        this.checkUserTurnLimit(transcript);
 
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
@@ -866,8 +926,8 @@ export class AudioRecognition {
         this.audioInterimTranscript = preflightTranscript;
 
         if (!this.vad || this.lastSpeakingTime === undefined) {
-          // vad disabled, use stt timestamp
-          this.lastSpeakingTime = Date.now();
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
         if (this.turnDetectionMode !== 'manual' || this.userTurnCommitted) {
@@ -924,7 +984,7 @@ export class AudioRecognition {
           });
         }
         this.speaking = true;
-        this.lastSpeakingTime = Date.now();
+        this.lastSpeakingTime = sttLastSpeakingTime;
 
         this.bounceEOUTask?.cancel();
         break;
@@ -961,13 +1021,27 @@ export class AudioRecognition {
         // and user state won't be updated until a new VAD SOS is received.
         // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
         // If user is still speaking (an immediate VAD SOS will interrupt the agent).
-        if (this.vad && this.speaking) {
-          this.logger.warn('stt end of speech received while user is speaking, resetting vad');
-          this.resetVad();
+        if (this.vad && this.vadSpeechStarted) {
+          if (this.vadStream) {
+            this.vadStream.flush();
+          } else {
+            this.resetVad();
+          }
+
+          this.logger.warn(
+            {
+              vadSpeechStartTime: this.speechStartTime,
+              flushed: this.vadStream !== undefined,
+            },
+            'stt end of speech received while vad is still in a speech segment, flushing vad',
+          );
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        this.lastSpeakingTime = Date.now();
+        if (!this.vad || this.lastSpeakingTime === undefined) {
+          // vad disabled or missed a speech, use stt timestamp
+          this.lastSpeakingTime = sttLastSpeakingTime;
+        }
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
@@ -978,8 +1052,10 @@ export class AudioRecognition {
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
-    if (this.backchannelBoundaryActive) {
-      this.logger.trace('ignoring overlap speech event during backchannel boundary cooldown');
+    if (this.backchannelBoundaryActive && !ev.isInterruption) {
+      this.logger.trace(
+        'ignoring backchannel event during backchannel boundary cooldown, falling back to vad',
+      );
       return;
     }
 
@@ -1125,9 +1201,13 @@ export class AudioRecognition {
           // clear the transcript if the user turn was committed
           this.audioTranscript = '';
           this.finalTranscriptConfidence = [];
-          this.lastSpeakingTime = undefined;
           this.lastFinalTranscriptTime = 0;
-          this.speechStartTime = undefined;
+          // Concurrent user speech might have changed it; only reset if there is no new speech.
+          if (this.lastSpeakingTime === lastSpeakingTime) {
+            this.speechStartTime = undefined;
+            this.vadSpeechStarted = false;
+            this.lastSpeakingTime = undefined;
+          }
         }
 
         this.userTurnCommitted = false;
@@ -1145,12 +1225,58 @@ export class AudioRecognition {
         this.logger.debug('EOU detection task completed');
       })
       .catch((err: unknown) => {
-        if (err instanceof Error && err.message.includes('This operation was aborted')) {
+        if (err instanceof Error && err.name === 'AbortError') {
           // ignore aborted errors
           return;
         }
         this.logger.error(err, 'Error in EOU detection task:');
       });
+  }
+
+  async waitForEndOfTurnTask(): Promise<void> {
+    if (!this.bounceEOUTask || this.bounceEOUTask.done) {
+      return;
+    }
+
+    try {
+      await this.bounceEOUTask.result;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private checkUserTurnLimit(transcript: string): void {
+    const maxWords = this.userTurnLimit?.maxWords ?? null;
+    const maxDuration = this.userTurnLimit?.maxDuration ?? null;
+
+    if (maxWords === null && maxDuration === null) {
+      return;
+    }
+
+    const now = Date.now();
+    this.userTurnTracker.startedAt ??= this.speechStartTime ?? now;
+    this.userTurnTracker.words += splitWords(transcript, true).length;
+    this.userTurnTracker.transcript = `${this.userTurnTracker.transcript} ${transcript}`.trim();
+
+    const duration = now - this.userTurnTracker.startedAt;
+    const timeExceeded = maxDuration !== null && duration >= maxDuration;
+    const wordsExceeded = maxWords !== null && this.userTurnTracker.words >= maxWords;
+
+    if (!timeExceeded && !wordsExceeded) {
+      return;
+    }
+
+    this.hooks.onUserTurnExceeded(
+      createUserTurnExceededEvent({
+        transcript: this.currentTranscript,
+        accumulatedTranscript: this.userTurnTracker.transcript,
+        accumulatedWordCount: this.userTurnTracker.words,
+        duration,
+      }),
+    );
   }
 
   private startSttTasks(reusePipeline?: STTPipeline) {
@@ -1215,6 +1341,7 @@ export class AudioRecognition {
     if (!vad) return;
 
     const vadStream = vad.stream();
+    this.vadStream = vadStream;
     vadStream.updateInputStream(this.vadInputStream);
 
     const abortHandler = () => {
@@ -1233,6 +1360,10 @@ export class AudioRecognition {
             this.logger.debug('VAD task: START_OF_SPEECH');
             {
               const startTime = Date.now() - ev.speechDuration - ev.inferenceDuration;
+              if (!this.vadSpeechStarted) {
+                this.speechStartTime = startTime;
+                this.vadSpeechStarted = true;
+              }
               const span = this.ensureUserTurnSpan(startTime);
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
@@ -1277,6 +1408,7 @@ export class AudioRecognition {
             }
 
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            this.vadSpeechStarted = false;
             this.speaking = false;
 
             if (
@@ -1293,6 +1425,9 @@ export class AudioRecognition {
       this.logger.error(e, 'Error in VAD task');
     } finally {
       this.logger.debug('VAD task closed');
+      if (this.vadStream === vadStream) {
+        this.vadStream = undefined;
+      }
     }
   }
 
@@ -1474,8 +1609,10 @@ export class AudioRecognition {
     this.speechStartTime = undefined;
     this.userTurnStart = undefined;
     this.lastSpeakingTime = undefined;
+    this.vadSpeechStarted = false;
     this.speaking = false;
     this.userTurnCommitted = false;
+    this.userTurnTracker = { words: 0, transcript: '' };
 
     if (this.userTurnSpan?.isRecording()) {
       this.userTurnSpan.end();
@@ -1533,9 +1670,7 @@ export class AudioRecognition {
         if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
           // flush the stt by pushing silence
           if (audioDetached && this.sampleRate !== undefined) {
-            const numSamples = Math.floor(this.sampleRate * 0.5);
-            const silence = new Int16Array(numSamples * 2);
-            const silenceFrame = new AudioFrame(silence, this.sampleRate, 1, numSamples);
+            const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
             this.silenceAudioWriter.write(silenceFrame);
           }
 

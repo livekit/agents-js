@@ -24,6 +24,42 @@ import type * as api_proto from './realtime/api_proto.js';
 const REALTIME_SAMPLE_RATE = 24000;
 const REALTIME_NUM_CHANNELS = 1;
 const DEFAULT_REALTIME_MODEL = 'gpt-realtime-whisper';
+
+/**
+ * Build the realtime transcription WebSocket URL.
+ *
+ * Includes the model on the upgrade URL so OpenAI-compatible gateways
+ * (which can only see the URL at the WebSocket upgrade, not the subsequent
+ * `session.update` frame) can route by model. Mirrors the existing
+ * convention in `realtime/realtime_model.ts` for the conversational
+ * Realtime API. OpenAI's native endpoint accepts and ignores the
+ * parameter, so this is a no-op for direct connections.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function buildRealtimeSttUrl(baseURL: string | undefined, model: string): string {
+  const url = new URL(baseURL || 'https://api.openai.com/v1');
+  if (url.protocol === 'https:') {
+    url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
+  }
+
+  const path = url.pathname.replace(/\/$/, '');
+  if (!path || path === '/v1') {
+    url.pathname = `${path}/realtime`;
+  } else if (!path.endsWith('/realtime')) {
+    url.pathname = `${path}/realtime`;
+  }
+
+  url.searchParams.set('intent', 'transcription');
+  url.searchParams.set('model', model);
+  return url.toString();
+}
+
 const DEFAULT_REALTIME_TURN_DETECTION: api_proto.TurnDetectionType = {
   type: 'server_vad',
   threshold: 0.5,
@@ -530,20 +566,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #realtimeUrl(): string {
-    const url = new URL(this.#options.baseURL || 'https://api.openai.com/v1');
-    if (url.protocol === 'https:') {
-      url.protocol = 'wss:';
-    }
-
-    const path = url.pathname.replace(/\/$/, '');
-    if (!path || path === '/v1') {
-      url.pathname = `${path}/realtime`;
-    } else if (!path.endsWith('/realtime')) {
-      url.pathname = `${path}/realtime`;
-    }
-
-    url.searchParams.set('intent', 'transcription');
-    return url.toString();
+    return buildRealtimeSttUrl(this.#options.baseURL, this.#options.model);
   }
 
   #sessionUpdateEvent(): api_proto.SessionUpdateEvent {

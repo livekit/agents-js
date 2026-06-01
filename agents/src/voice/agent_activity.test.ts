@@ -16,7 +16,7 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatContext } from '../llm/chat_context.js';
+import { ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { ToolContext } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
@@ -231,6 +231,37 @@ describe('AgentActivity - mainTask', () => {
   });
 });
 
+describe('AgentActivity - speech completion', () => {
+  it('ends audio recognition speech when pipeline completion moves session out of speaking', () => {
+    const audioRecognition = {
+      onEndOfAgentSpeech: vi.fn(),
+    };
+    const fakeActivity = {
+      speechQueue: {
+        peek: () => undefined,
+      },
+      _currentSpeech: {
+        done: () => true,
+      },
+      audioRecognition,
+      agentSession: {
+        agentState: 'speaking',
+        _updateAgentState: vi.fn((state: string) => {
+          fakeActivity.agentSession.agentState = state;
+        }),
+      },
+    };
+
+    const onPipelineReplyDone = (AgentActivity.prototype as Record<string, unknown>)
+      .onPipelineReplyDone as (this: typeof fakeActivity) => void;
+
+    onPipelineReplyDone.call(fakeActivity);
+
+    expect(fakeActivity.agentSession._updateAgentState).toHaveBeenCalledWith('listening');
+    expect(audioRecognition.onEndOfAgentSpeech).toHaveBeenCalledTimes(1);
+  });
+});
+
 /**
  * Unit tests for the preemptive-generation guards in AgentActivity.
  *
@@ -269,7 +300,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
   );
   const cancelPreemptiveGeneration = vi.fn();
 
-  const fakeChatCtx = { copy: () => fakeChatCtx } as unknown as ChatContext;
+  const fakeChatCtx = new ChatContext();
 
   const emptyToolCtx = ToolContext.empty();
   const fakeActivity = {
@@ -295,6 +326,7 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
     generateReply,
     cancelPreemptiveGeneration,
   };
+  Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
 
   const onPreemptiveGeneration = (AgentActivity.prototype as Record<string, unknown>)
     .onPreemptiveGeneration as (this: unknown, info: PreemptiveGenerationInfo) => void;

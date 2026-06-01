@@ -71,5 +71,18 @@ export const logMetrics = (metrics: AgentMetrics) => {
         numRequests: metrics.numRequests,
       })
       .info('Interruption metrics');
+  } else if (metrics.type === 'avatar_metrics') {
+    const extra: Record<string, number | string> = {};
+    if (metrics.metadata?.modelProvider) extra.modelProvider = metrics.metadata.modelProvider;
+    if (metrics.metadata?.modelName) extra.modelName = metrics.metadata.modelName;
+    if (metrics.sessionStartedAt !== undefined && metrics.avatarJoinedAt !== undefined) {
+      extra.avatarJoinLatencyMs = roundTwoDecimals(
+        metrics.avatarJoinedAt - metrics.sessionStartedAt,
+      );
+    }
+    if (metrics.playbackLatencyMs !== undefined) {
+      extra.playbackLatencyMs = roundTwoDecimals(metrics.playbackLatencyMs);
+    }
+    logger.child(extra).info('Avatar metrics');
   }
 };

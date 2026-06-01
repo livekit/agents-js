@@ -8,8 +8,12 @@ minimumReleaseAgeExclude:
   - '@livekit/*'
   # Renovate security update: vite@7.3.2
   - vite@7.3.2
+  # Renovate security update: ws@8.20.1
+  - ws@8.20.1
+  # Renovate security update: vitest@4.1.0
+  - vitest@4.1.0
 
 catalog:
-  '@livekit/rtc-node': ^0.13.27
+  '@livekit/rtc-node': ^0.13.29
   ws: ^8.18.0
   '@types/ws': ^8.5.10

@@ -16,6 +16,7 @@ import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { availableParallelism } from 'node:os';
 import { WebSocket } from 'ws';
+import { APIStatusError } from './_exceptions.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { InferenceRunner } from './inference_runner.js';
@@ -432,7 +433,7 @@ export class AgentServer {
           const delay = Math.min(retries * 2, 10);
 
           this.#logger.warn(
-            e,
+            { error: e, retry_count: retries, max_retry: this.#opts.maxRetry },
             `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
           );
 
@@ -545,11 +546,24 @@ export class AgentServer {
     };
     this.event.on('worker_msg', send);
 
-    const close = new ThrowsPromise<void, never>((resolve) => {
-      ws.addEventListener('close', () => {
+    const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
+      ws.addEventListener('close', (event) => {
         closingWS = true;
         if (!this.#closed) {
-          this.#logger.error('worker connection closed unexpectedly');
+          reject(
+            new APIStatusError({
+              message: 'worker connection closed unexpectedly',
+              options: {
+                statusCode: event.code || -1,
+                body: {
+                  code: event.code,
+                  reason: event.reason,
+                  wasClean: event.wasClean,
+                },
+              },
+            }),
+          );
+          return;
         }
         resolve();
       });
@@ -560,13 +574,25 @@ export class AgentServer {
     });
 
     ws.addEventListener('message', (event) => {
-      if (event.type !== 'message') {
-        this.#logger.warn('unexpected message type: ' + event.type);
+      let data: Uint8Array;
+      if (event.data instanceof Uint8Array) {
+        data = event.data;
+      } else if (event.data instanceof ArrayBuffer) {
+        data = new Uint8Array(event.data);
+      } else if (Array.isArray(event.data)) {
+        data = Buffer.concat(event.data);
+      } else {
+        let wsData = String(event.data);
+        if (wsData.length > 128) {
+          wsData = `${wsData.slice(0, 128)}...(+${wsData.length - 128} more)`;
+        }
+        const type = typeof event.data;
+        this.#logger.warn({ type, ws_data: wsData }, `unexpected message type: ${type}`);
         return;
       }
 
       const msg = new ServerMessage();
-      msg.fromBinary(event.data as Uint8Array);
+      msg.fromBinary(data);
 
       // register is the only valid first message, and it is only valid as the
       // first message
@@ -710,8 +736,11 @@ export class AgentServer {
         });
     }, UPDATE_LOAD_INTERVAL);
 
-    await close;
-    ws.removeAllListeners();
+    try {
+      await close;
+    } finally {
+      ws.removeAllListeners();
+    }
   }
 
   async #availability(msg: AvailabilityRequest) {

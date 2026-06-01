@@ -221,6 +221,26 @@ export interface ToolsetContext {
 }
 
 /**
+ * Function tools of a `ToolContext`, sorted by name for deterministic provider payloads.
+ * Provider tools are intentionally excluded — callers that need them iterate `flatten()`.
+ * @internal
+ */
+export function sortedToolEntries<UserData = UnknownUserData>(
+  toolCtx: ToolContext<UserData>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries are generic function tools
+): Array<[string, FunctionTool<any, UserData, any>]> {
+  return Object.entries(toolCtx.functionTools).sort(([nameA], [nameB]) =>
+    nameA.localeCompare(nameB),
+  );
+}
+
+/** Function tool names of a `ToolContext`, sorted for deterministic output. @internal */
+export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
+  if (!toolCtx) return [];
+  return Object.keys(toolCtx.functionTools).sort((nameA, nameB) => nameA.localeCompare(nameB));
+}
+
+/**
  * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
  * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
  * `setup()` / `aclose()` hooks can be invoked by the agent runtime.

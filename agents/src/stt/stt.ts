@@ -76,6 +76,24 @@ export interface SpeechData {
    */
   sourceLanguages?: LanguageCode[];
   /**
+   * The original transcription segments in the source language(s), when translation is active.
+   * Each entry corresponds to the same-indexed entry in `sourceLanguages`.
+   */
+  sourceTexts?: string[];
+  /**
+   * The target language(s) produced by a translation-capable STT service, one entry per
+   * consecutive same-language run, parallel to `targetTexts`.
+   *
+   * `language` holds the dominant or first target language and `targetLanguages` carries the
+   * fine-grained per-run breakdown. Populated when translation is active.
+   */
+  targetLanguages?: LanguageCode[];
+  /**
+   * The translated transcription segments in the target language(s).
+   * Each entry corresponds to the same-indexed entry in `targetLanguages`.
+   */
+  targetTexts?: string[];
+  /**
    * Optional plugin-specific metadata (e.g. voice profile, provider diagnostics).
    *
    * Plugins may populate this with provider-specific data that doesn't map to standard fields.

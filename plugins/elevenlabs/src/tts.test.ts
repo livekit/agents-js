@@ -4,7 +4,7 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
 async function startWebSocketServer() {
@@ -28,6 +28,20 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('timed out waiting for condition');
+}
+
+async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('timed out waiting for promise')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function captureStreamInit(opts: { chunkLengthSchedule?: number[]; autoMode?: boolean }) {
@@ -64,6 +78,45 @@ async function captureStreamInit(opts: { chunkLengthSchedule?: number[]; autoMod
       initPacket: messages[0]!,
       requestUrl,
     };
+  } finally {
+    stream.close();
+    await elevenlabs.close();
+    await closeWebSocketServer(wss);
+  }
+}
+
+async function synthesizeWithMessages(
+  sendResponses: (ws: WebSocket, messages: Record<string, unknown>[]) => void,
+) {
+  const { wss, baseURL } = await startWebSocketServer();
+  const messages: Record<string, unknown>[] = [];
+
+  wss.on('connection', (ws) => {
+    ws.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      messages.push(message);
+      sendResponses(ws, messages);
+    });
+  });
+
+  const elevenlabs = new TTS({
+    apiKey: 'test-key',
+    baseURL,
+  });
+  const stream = elevenlabs.stream();
+  const events: unknown[] = [];
+  const outputTask = (async () => {
+    for await (const event of stream) {
+      events.push(event);
+    }
+  })();
+
+  try {
+    stream.pushText('hello world.');
+    stream.endInput();
+    await waitFor(outputTask);
+
+    return { messages, events };
   } finally {
     stream.close();
     await elevenlabs.close();
@@ -116,5 +169,93 @@ describe('ElevenLabs TTS options', () => {
     });
 
     expect(new URL(`ws://127.0.0.1${requestUrl}`).searchParams.get('auto_mode')).toBe('true');
+  });
+});
+
+describe('ElevenLabs TTS websocket', () => {
+  const audio = Buffer.alloc(4410).toString('base64');
+
+  it('accepts snake-case context IDs', async () => {
+    const { events } = await synthesizeWithMessages((ws, messages) => {
+      if (messages.length === 2) {
+        ws.send(
+          JSON.stringify({
+            context_id: messages[0]?.context_id,
+            audio,
+            isFinal: true,
+          }),
+        );
+      }
+    });
+
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('still accepts camel-case context IDs', async () => {
+    const { events } = await synthesizeWithMessages((ws, messages) => {
+      if (messages.length === 2) {
+        ws.send(
+          JSON.stringify({
+            contextId: messages[0]?.context_id,
+            audio,
+            isFinal: true,
+          }),
+        );
+      }
+    });
+
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('ignores flush_done for active contexts', async () => {
+    const { events } = await synthesizeWithMessages((ws, messages) => {
+      if (messages.length === 2) {
+        ws.send(
+          JSON.stringify({
+            type: 'flush_done',
+            context_id: messages[0]?.context_id,
+            status_code: 206,
+            done: false,
+            data: '',
+            flush_done: true,
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            context_id: messages[0]?.context_id,
+            audio,
+            isFinal: true,
+          }),
+        );
+      }
+    });
+
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('ignores flush_done for inactive contexts', async () => {
+    const { events } = await synthesizeWithMessages((ws, messages) => {
+      if (messages.length === 2) {
+        ws.send(
+          JSON.stringify({
+            type: 'flush_done',
+            context_id: 'already_closed_context',
+            status_code: 206,
+            done: false,
+            data: '',
+            flush_done: true,
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            context_id: messages[0]?.context_id,
+            audio,
+            isFinal: true,
+          }),
+        );
+      }
+    });
+
+    expect(events.length).toBeGreaterThan(0);
   });
 });

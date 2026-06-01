@@ -479,23 +479,47 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(
+    instructions?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<llm.GenerationCreatedEvent> {
     if (this.closed) {
       return Promise.reject(new Error('session is closed'));
     }
 
     if (this.pendingGenerateReplyFut && !this.pendingGenerateReplyFut.done) {
-      this.pendingGenerateReplyFut.reject(
-        new Error('generateReply superseded by a newer generateReply call'),
-      );
+      const oldFut = this.pendingGenerateReplyFut;
+      this.pendingGenerateReplyFut = undefined;
+      oldFut.reject(new Error('generateReply superseded by a newer generateReply call'));
     }
 
     const requestId = ++this.generateReplyRequestId;
     this.closeCurrentGeneration({ interrupted: false });
-    this.pendingGenerateReplyFut = new Future<llm.GenerationCreatedEvent>();
+    const fut = new Future<llm.GenerationCreatedEvent>();
+    this.pendingGenerateReplyFut = fut;
+
+    const onAbort = () => {
+      if (this.pendingGenerateReplyFut !== fut) {
+        return;
+      }
+      this.pendingGenerateReplyFut = undefined;
+      this.generateReplyRequestId += 1;
+      if (!fut.done) {
+        fut.reject(new Error('generateReply aborted'));
+      }
+    };
+
+    if (options.signal?.aborted) {
+      onAbort();
+      return fut.await;
+    }
+
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     this.sendGenerateReply(instructions, requestId);
 
-    return this.pendingGenerateReplyFut.await;
+    return fut.await.finally(() => {
+      options.signal?.removeEventListener('abort', onAbort);
+    });
   }
 
   private async sendGenerateReply(

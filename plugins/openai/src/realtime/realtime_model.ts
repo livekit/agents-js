@@ -225,7 +225,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     this._options = {
       ...DEFAULT_REALTIME_MODEL_OPTIONS,
       ...optionsWithoutModalities,
-      baseURL: options.baseURL || BASE_URL,
+      baseURL: options.baseURL || process.env.OPENAI_BASE_URL || BASE_URL,
       apiKey,
       isAzure,
       model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
@@ -350,7 +350,15 @@ function normalizeAzureClientEvent(event: Record<string, unknown>): void {
   }
 }
 
-function processBaseURL({
+/**
+ * Build the conversational Realtime API WebSocket URL.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function processBaseURL({
   baseURL,
   model,
   isAzure = false,
@@ -369,6 +377,8 @@ function processBaseURL({
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
   }
 
   // ensure "/realtime" is added if the path is empty OR "/v1"
@@ -430,6 +440,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
+
+  private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
   // Track items that have real server-side audio (created in current session, not restored)
   // Items restored after reconnection are text-only and cannot be truncated
@@ -816,10 +828,39 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pushedDurationMs = 0;
   }
 
-  async generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent> {
+  async generateReply(
+    instructions?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<llm.GenerationCreatedEvent> {
     const handle = this.createResponse({ instructions, userInitiated: true });
     this.textModeRecoveryRetries = 0;
-    return handle.doneFut.await;
+
+    const onAbort = () => {
+      const eventId = Object.entries(this.responseCreatedFutures).find(
+        ([, pendingHandle]) => pendingHandle === handle,
+      )?.[0];
+      if (eventId) {
+        delete this.responseCreatedFutures[eventId];
+      }
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error('generateReply aborted'));
+        this.sendEvent({
+          type: 'response.cancel',
+        } as api_proto.ResponseCancelEvent);
+      }
+    };
+
+    if (options.signal?.aborted) {
+      onAbort();
+    } else {
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      return await handle.doneFut.await;
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -990,6 +1031,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
+      this.inputTranscriptAccumulators.clear();
 
       const events: api_proto.ClientEvent[] = [];
 
@@ -1158,6 +1200,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         case 'conversation.item.deleted':
           this.handleConversationItemDeleted(event);
           break;
+        case 'conversation.item.input_audio_transcription.delta':
+          this.handleConversationItemInputAudioTranscriptionDelta(event);
+          break;
         case 'conversation.item.input_audio_transcription.completed':
           this.handleConversationItemInputAudioTranscriptionCompleted(event);
           break;
@@ -1272,6 +1317,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
     this.itemDeleteFutures = {};
+
+    this.inputTranscriptAccumulators.clear();
 
     // Clean up current generation if exists
     if (this.currentGeneration) {
@@ -1430,6 +1477,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Clean up audio-capable tracking for deleted items
     this.audioCapableItemIds.delete(event.item_id);
+    this.inputTranscriptAccumulators.delete(event.item_id);
 
     try {
       this.remoteChatCtx.delete(event.item_id);
@@ -1444,26 +1492,56 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  private handleConversationItemInputAudioTranscriptionDelta(
+    event: api_proto.ConversationItemInputAudioTranscriptionDeltaEvent,
+  ): void {
+    if (!event.delta) return;
+
+    const contentIndex = event.content_index ?? 0;
+    let byIndex = this.inputTranscriptAccumulators.get(event.item_id);
+    if (!byIndex) {
+      byIndex = new Map();
+      this.inputTranscriptAccumulators.set(event.item_id, byIndex);
+    }
+    const accumulated = (byIndex.get(contentIndex) ?? '') + event.delta;
+    byIndex.set(contentIndex, accumulated);
+
+    this.emit('input_audio_transcription_completed', {
+      itemId: event.item_id,
+      transcript: accumulated,
+      isFinal: false,
+    });
+  }
+
+  private clearAccumulator(itemId: string, contentIndex: number): string | undefined {
+    const byIndex = this.inputTranscriptAccumulators.get(itemId);
+    if (!byIndex) return undefined;
+    const partial = byIndex.get(contentIndex);
+    byIndex.delete(contentIndex);
+    if (byIndex.size === 0) this.inputTranscriptAccumulators.delete(itemId);
+    return partial;
+  }
+
   private handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
-    const remoteItem = this.remoteChatCtx.get(event.item_id);
-    if (!remoteItem) {
-      return;
-    }
+    this.clearAccumulator(event.item_id, event.content_index ?? 0);
 
-    const item = remoteItem.item;
-    if (item instanceof llm.ChatMessage) {
-      item.content.push(event.transcript);
-    } else {
-      throw new Error('item is not a chat message');
+    const remoteItem = this.remoteChatCtx.get(event.item_id);
+    if (remoteItem) {
+      const item = remoteItem.item;
+      if (item instanceof llm.ChatMessage) {
+        item.content.push(event.transcript);
+      } else {
+        throw new Error('item is not a chat message');
+      }
     }
 
     this.emit('input_audio_transcription_completed', {
       itemId: event.item_id,
       transcript: event.transcript,
       isFinal: true,
-    } as llm.InputTranscriptionCompleted);
+    });
   }
 
   private handleConversationItemInputAudioTranscriptionFailed(
@@ -1473,6 +1551,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       { error: event.error },
       'OpenAI Realtime API failed to transcribe input audio',
     );
+    this.finalizePartialOnTranscriptionFailure(event.item_id, event.content_index ?? 0);
+  }
+
+  // Close any open partial stream so consumers waiting for isFinal don't hang.
+  private finalizePartialOnTranscriptionFailure(itemId: string, contentIndex: number): void {
+    const partial = this.clearAccumulator(itemId, contentIndex);
+    if (partial === undefined) return;
+    this.emit('input_audio_transcription_completed', {
+      itemId,
+      transcript: partial,
+      isFinal: true,
+    });
   }
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
@@ -1735,7 +1825,44 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     this.emit('metrics_collected', realtimeMetrics);
-    // TODO(brian): handle response done but not complete
+    this.handleResponseDoneButNotComplete(_event);
+  }
+
+  private handleResponseDoneButNotComplete(event: api_proto.ResponseDoneEvent): void {
+    if (event.response.status === 'completed') {
+      return;
+    }
+
+    const statusDetails = event.response.status_details;
+    if (event.response.status === 'failed') {
+      const errorBody = statusDetails?.type === 'failed' ? statusDetails.error : undefined;
+      const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
+      const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
+
+      this.emitError({
+        error: new APIError(`OpenAI Realtime API response failed with error type: ${errorType}`, {
+          body: errorBody ?? null,
+          retryable: true,
+        }),
+        recoverable: true,
+      });
+    } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
+      const statusType = statusDetails?.type;
+      const statusReason =
+        statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+
+      this.#logger.debug(
+        {
+          eventId: event.response.id,
+          eventResponseStatus: event.response.status,
+          eventResponseStatusType: statusType,
+          eventResponseStatusReason: statusReason,
+        },
+        `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
+      );
+    } else {
+      this.#logger.debug({ eventResponseStatus: event.response.status }, 'Unknown response status');
+    }
   }
 
   private handleError(event: api_proto.ErrorEvent): void {
@@ -1767,6 +1894,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
     // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
     this.emit('error', {
+      type: 'realtime_model_error',
       timestamp: Date.now(),
       // TODO(brian): add label
       label: '',

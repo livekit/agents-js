@@ -75,7 +75,7 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
             `  If using Node.js starter template:\n` +
             `    pnpm download-files\n\n` +
             `  If using the agent directly:\n` +
-            `    node ./your_agent.ts download-files\n\n` +
+            `    npx livekit-agents download-files\n\n` +
             `Then try running your application again.\n\n` +
             `Original error: ${e}`,
         );

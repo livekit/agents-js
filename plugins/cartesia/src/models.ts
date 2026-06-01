@@ -2,6 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * LiveKit uses this encoding for all audio
+ */
+export const AUDIO_ENCODING = 'pcm_s16le';
+
+// ============================================================================
+//                                   TTS
+// ============================================================================
+
+/**
+ * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
+ */
 export type TTSModels =
   | 'sonic'
   | 'sonic-2'
@@ -10,6 +22,9 @@ export type TTSModels =
   | 'sonic-preview'
   | 'sonic-turbo';
 
+/**
+ * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
+ */
 export type TTSLanguages = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh' | 'ja';
 
 export const TTSDefaultVoiceId = 'f786b574-daa5-4673-aa0c-cbe3e8534c02';
@@ -45,9 +60,16 @@ export type TTSVoiceEmotion =
   | 'curiosity:high'
   | 'curiosity:highest';
 
-export type TTSEncoding =
-  // XXX(nbsp): not yet supported
-  // | 'pcm_f32le'
-  // | 'pcm_mulaw'
-  // | 'pcm_alaw'
-  'pcm_s16le';
+/**
+ * @deprecated Encoding should not be parameterized. Only `pcm_s16le`is allowed. Prefer using {@link AUDIO_ENCODING}.
+ */
+export type TTSEncoding = 'pcm_s16le';
+
+// ============================================================================
+//                                   STT
+// ============================================================================
+
+/**
+ * See [the docs](https://docs.cartesia.ai/build-with-cartesia/stt-models/latest) for all options.
+ */
+export type STTModel = 'ink-2';

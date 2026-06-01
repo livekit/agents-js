@@ -41,6 +41,7 @@ function getSampleRate(opts?: Partial<TTSOptions>): number {
   }
   switch (opts?.modelId) {
     case 'arcana':
+    case 'coda':
       return 24000;
     case 'mistv2':
       return 16000;
@@ -64,6 +65,7 @@ export interface TTSOptions {
   top_p?: number;
   max_tokens?: number;
   samplingRate?: number;
+  timeScaleFactor?: number;
   speedAlpha?: number;
   reduceLatency?: boolean;
   pauseBetweenBrackets?: boolean;
@@ -93,6 +95,10 @@ function modelParams(opts: TTSOptions): Record<string, string | number | boolean
     if (opts.temperature !== undefined) params.temperature = opts.temperature;
     if (opts.top_p !== undefined) params.top_p = opts.top_p;
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+    if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
+  } else if (opts.modelId === 'coda') {
+    if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+    if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
   } else if (opts.modelId.includes('mist')) {
     if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
     if (opts.pauseBetweenBrackets !== undefined) {
@@ -100,6 +106,9 @@ function modelParams(opts: TTSOptions): Record<string, string | number | boolean
     }
     if (opts.phonemizeBetweenBrackets !== undefined) {
       params.phonemizeBetweenBrackets = opts.phonemizeBetweenBrackets;
+    }
+    if (opts.modelId !== 'mistv2' && opts.timeScaleFactor !== undefined) {
+      params.timeScaleFactor = opts.timeScaleFactor;
     }
   }
 
@@ -136,6 +145,7 @@ function fetchPayload(opts: TTSOptions, text: string): Record<string, unknown> {
         'top_p',
         'max_tokens',
         'samplingRate',
+        'timeScaleFactor',
         'speedAlpha',
         'pauseBetweenBrackets',
         'phonemizeBetweenBrackets',
@@ -173,12 +183,24 @@ function resolveOptions(opts: Partial<TTSOptions>): TTSOptions {
   const useWebsocket = Boolean(
     opts.useWebsocket || opts.baseURL?.startsWith('ws://') || opts.baseURL?.startsWith('wss://'),
   );
-  return {
+  const resolved = {
     ...defaultTTSOptions,
     ...opts,
     useWebsocket,
     baseURL: opts.baseURL ?? (useWebsocket ? RIME_WS_BASE_URL : RIME_BASE_URL),
   };
+
+  if (opts.speaker === undefined && opts.modelId === 'coda') {
+    resolved.speaker = 'lyra';
+  }
+
+  if (resolved.modelId === 'mistv2' && resolved.timeScaleFactor !== undefined) {
+    throw new Error(
+      'timeScaleFactor is not supported by the mistv2 model; use arcana, mistv3, or coda.',
+    );
+  }
+
+  return resolved;
 }
 
 export class TTS extends tts.TTS {
