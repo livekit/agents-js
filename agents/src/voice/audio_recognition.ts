@@ -62,6 +62,13 @@ export interface EndOfTurnInfo {
   startedSpeakingAt: number | undefined;
   /** Timestamp when user stopped speaking (milliseconds since epoch). */
   stoppedSpeakingAt: number | undefined;
+  /**
+   * When `true`, the agent activity commits the user turn to chat context but
+   * skips generating the normal auto-reply. Mirrors python `_EndOfTurnInfo.skip_reply`.
+   * Set, for example, when AMD has taken over the turn with a machine verdict and the
+   * caller drives its own `generateReply` (e.g. leaving a voicemail).
+   */
+  skipReply?: boolean;
 }
 
 export interface PreemptiveGenerationInfo {

@@ -26,11 +26,8 @@ import {
   waitForTrackPublication,
 } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
-import {
-  AgentSessionEventTypes,
-  type UserInputTranscribedEvent,
-  type UserStateChangedEvent,
-} from './events.js';
+import type { EndOfTurnInfo } from './audio_recognition.js';
+import { AgentSessionEventTypes } from './events.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export enum AMDCategory {
@@ -90,6 +87,23 @@ export interface AMDOptions {
   humanSilenceThresholdMs?: number;
   /** Silence after machine-like speech before opening the silence gate. */
   machineSilenceThresholdMs?: number;
+  /**
+   * If `true`, once any speech has been heard the `detectionTimeout` no longer
+   * forces emission — AMD keeps waiting for post-speech silence and a positive
+   * end-of-turn from the session's turn detector before emitting. Useful for
+   * outbound voicemail flows where leaving a message early would overlap the
+   * greeting. `noSpeechTimeout` (uncertain) still fires normally (no audio at
+   * all means there is nothing to wait for). Defaults to `false`.
+   * Mirrors python detector.py `wait_until_finished`.
+   */
+  waitUntilFinished?: boolean;
+  /**
+   * Fallback end-of-turn delay (ms). When the session turn detector never
+   * commits a turn, this synthetic backstop, armed when speech ends, sets the
+   * end-of-turn so a gated verdict can still emit. Mirrors python
+   * `max_endpointing_delay`.
+   */
+  maxEndpointingDelayMs?: number;
   /** Override the AMD classification system prompt. */
   prompt?: string;
   /**
@@ -111,6 +125,7 @@ const HUMAN_SILENCE_THRESHOLD_MS = 500;
 const MACHINE_SILENCE_THRESHOLD_MS = 1_500;
 const DEFAULT_NO_SPEECH_TIMEOUT_MS = 10_000;
 const DEFAULT_DETECTION_TIMEOUT_MS = 20_000;
+const DEFAULT_MAX_ENDPOINTING_DELAY_MS = 3_000;
 
 const MAX_EXTENSIONS = 3;
 const MAX_EXTENSION_MS = 10_000;
@@ -160,15 +175,39 @@ function parseCategory(raw: string | undefined): AMDCategory {
     : AMDCategory.UNCERTAIN;
 }
 
-const AMD_PROMPT = `You classify the start of a phone call.
-Return strict JSON with keys "category" and "reason".
-Valid categories: "human", "machine-ivr", "machine-vm", "machine-unavailable", "uncertain".
-- "human": a live person answered.
-- "machine-ivr": an IVR, phone tree, or menu system answered. This includes call-screening prompts (e.g. "Please state your name and why you're calling").
-- "machine-vm": a voicemail greeting or mailbox prompt answered.
-- "machine-unavailable": the call reached an unavailable mailbox, failed mailbox, or generic machine state where no message should be left.
-- "uncertain": not enough evidence yet.
-Do not include markdown fences or extra text.`;
+// Verbatim port of python classifier.py `AMD_PROMPT`. The few-shot examples
+// meaningfully steer classification (e.g. "hours of operation" alone → uncertain,
+// but with "press 1" → machine-ivr; call-screening → machine-ivr), and this is the
+// prompt the EVALUATED_LLM_MODELS set was tuned against. The verdict is committed
+// via the `save_prediction` tool (tool_choice='required'), not free-text output.
+const AMD_PROMPT = `Task:
+Classify the call greeting transcript into exactly one of these categories:
+
+human: A person answered (e.g., "Hello?", "This is John.").
+machine-ivr: A prompt to press a key (e.g., "Press 1 to continue").
+machine-vm: A voicemail greeting where leaving a message IS possible.
+machine-unavailable: Any greeting indicating it's NOT possible to leave message, eg because mailbox is full, not setup, etc.
+uncertain: For partial transcripts that are ambiguous.
+
+Examples:
+Input: "The person you called has a voice mailbox that hasn't been set up yet. Goodbye."
+Output: machine-unavailable
+
+Input: "Thank you for calling Truly Pizza in Dana Pointe. Our hours of operation are 11AM to 8PM, Sunday through Thursday, 11AM to 9PM, Friday and Saturday, and we're closed on Tuesdays."
+Output: uncertain
+
+Input: "You for calling Truly Pizza in Dana Pointe. Our hours of operation are 11AM to 8PM, Sunday through Thursday, 11AM to 9PM, Friday and Saturday, and we're closed on Tuesdays. If you'd like to place an order, please press 1 or head to our website to order online for pickup and local delivery."
+Output: machine-ivr
+
+Input: "Please state your name and why you're calling, and I will check if the person is available"
+Output: machine-ivr
+Note: this should apply for any call screening prompts.
+
+Input: "I'm away from my desk. If you leave a message, I will get back to you."
+Output: machine-vm
+
+Input: "Hello, this is Lisa."
+Output: human`;
 
 function warnIfNotEvaluated(
   modelName: string | undefined,
@@ -206,12 +245,20 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private readonly llmOwned: boolean;
   /** Whether AMD owns (and must close) the resolved STT. */
   private readonly sttOwned: boolean;
+  /**
+   * Transcript source AMD consumes. `'amd_stt'` when AMD runs its own dedicated
+   * STT (session transcripts are ignored), `'stt'` when it relies on the
+   * session's STT transcripts. Mirrors python `_AMDClassifier._source`.
+   */
+  private readonly source: 'stt' | 'amd_stt';
   private readonly interruptOnMachine: boolean;
   private readonly noSpeechTimeoutMs: number;
   private readonly detectionTimeoutMs: number;
   private readonly humanSpeechThresholdMs: number;
   private readonly humanSilenceThresholdMs: number;
   private readonly machineSilenceThresholdMs: number;
+  private readonly waitUntilFinished: boolean;
+  private readonly maxEndpointingDelayMs: number;
   private readonly prompt: string;
   private readonly participantIdentity: string | undefined;
 
@@ -221,7 +268,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private settled = false;
   private transcriptParts: string[] = [];
   private verdictResult: AMDPredictionEvent | undefined;
-  private machineSilenceReached = false;
+  /**
+   * Two-gate emission (mirrors python classifier.py `_can_emit`): a verdict is
+   * released only when `silenceReached` is true AND, for everything except a
+   * confident human, `eotReached` is also true. Humans release on silence
+   * alone so the agent can respond quickly.
+   */
+  private silenceReached = false;
+  private eotReached = false;
   private speechStartedAt: number | undefined;
   private speechEndedAt: number | undefined;
   private detectGeneration = 0;
@@ -231,6 +285,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private detectionTimer: ReturnType<typeof setTimeout> | undefined;
   private silenceTimer: ReturnType<typeof setTimeout> | undefined;
   private silenceTimerTrigger: 'short_speech' | 'long_speech' | undefined;
+  /** Fallback end-of-turn backstop, armed when speech ends. */
+  private eotTimer: ReturnType<typeof setTimeout> | undefined;
 
   private sttStream: SpeechStream | undefined;
   private sttPumpTask: Task<void> | undefined;
@@ -282,6 +338,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const sttResolution = this.resolveSTT(stt);
     this.stt = sttResolution.stt;
     this.sttOwned = sttResolution.owned;
+    this.source = this.stt ? 'amd_stt' : 'stt';
 
     this.interruptOnMachine = options.interruptOnMachine ?? true;
     this.noSpeechTimeoutMs = options.noSpeechTimeoutMs ?? DEFAULT_NO_SPEECH_TIMEOUT_MS;
@@ -290,6 +347,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.humanSilenceThresholdMs = options.humanSilenceThresholdMs ?? HUMAN_SILENCE_THRESHOLD_MS;
     this.machineSilenceThresholdMs =
       options.machineSilenceThresholdMs ?? MACHINE_SILENCE_THRESHOLD_MS;
+    this.waitUntilFinished = options.waitUntilFinished ?? false;
+    this.maxEndpointingDelayMs = options.maxEndpointingDelayMs ?? DEFAULT_MAX_ENDPOINTING_DELAY_MS;
     this.prompt = options.prompt ?? AMD_PROMPT;
     this.participantIdentity = options.participantIdentity;
 
@@ -403,7 +462,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.listening = false;
     this.transcriptParts = [];
     this.verdictResult = undefined;
-    this.machineSilenceReached = false;
+    this.silenceReached = false;
+    this.eotReached = false;
     this.speechStartedAt = undefined;
     this.speechEndedAt = undefined;
     this.silenceTimerTrigger = undefined;
@@ -414,17 +474,27 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private subscribe(): void {
-    this.session.on(AgentSessionEventTypes.UserInputTranscribed, this.handleTranscript);
-    this.session.on(AgentSessionEventTypes.UserStateChanged, this.handleUserStateChanged);
+    // Speech boundaries and transcripts are delivered via the public hook
+    // methods ({@link onUserSpeechStarted}/{@link onUserSpeechEnded}/{@link onTranscript}),
+    // which `AgentActivity` invokes from its recognition hooks — mirroring how
+    // python `AudioRecognition` drives `_AMDClassifier`. Only the session-close
+    // lifecycle signal is consumed as an event here.
     this.session.on(AgentSessionEventTypes.Close, this.handleClose);
   }
 
   /**
-   * The detection timer is the hard ceiling on the entire run and starts as
-   * soon as `execute()` is called — even before the participant audio track is
-   * published — so a stuck/never-published track cannot make AMD hang forever.
+   * Arms the overall detection-timeout budget. It is started once in `execute()`
+   * — even before the participant audio track is published — as a backstop so a
+   * stuck/never-published track cannot make AMD hang forever, then re-armed in
+   * {@link gateListening} once the track is subscribed so the effective budget
+   * runs from track-up (mirrors python detector.py `_setup`, which arms
+   * `start_detection_timer()` only after `wait_for_track_publication` resolves).
    */
   private startDetectionTimer(): void {
+    // Re-armable: clear any prior handle so re-anchoring at track-up cannot leak
+    // the backstop timer. Mirrors python `start_detection_timer`'s single-arm
+    // guard, but here we deliberately allow a re-arm.
+    this.clearTimer('detection');
     this.detectionTimer = setTimeout(() => this.settleDetectionTimeout(), this.detectionTimeoutMs);
   }
 
@@ -522,9 +592,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         for await (const event of sttStream) {
           if (signal.aborted || this.settled) break;
           if (event.type !== SpeechEventType.FINAL_TRANSCRIPT) continue;
-          const text = event.alternatives?.[0]?.text?.trim();
+          const text = event.alternatives?.[0]?.text;
           if (!text) continue;
-          this.consumeTranscript(text);
+          // Mirrors python detector `_run_stt` → classifier.push_text(text, source="amd_stt").
+          this.onTranscript(text, 'amd_stt');
         }
       } catch (err) {
         if (this.settled) return;
@@ -572,6 +643,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         if (this.settled) {
           return;
         }
+
+        // Re-anchor the detection budget at track-subscribe time (mirrors python
+        // detector.py `_setup`: `start_detection_timer()` runs right after
+        // `wait_for_track_publication`). The execute()-time arm above stays only
+        // as a backstop for the case where the track never publishes, so slow
+        // track subscription no longer eats into the listening budget.
+        this.startDetectionTimer();
 
         const publicationSid = publication.sid;
         const participant = targetIdentity
@@ -626,9 +704,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.clearTimer('noSpeech');
     this.clearTimer('detection');
     this.clearTimer('silence');
+    this.clearTimer('eot');
     this.listening = false;
-    this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.handleTranscript);
-    this.session.off(AgentSessionEventTypes.UserStateChanged, this.handleUserStateChanged);
     this.session.off(AgentSessionEventTypes.Close, this.handleClose);
 
     // Detach the track-publication listener — without this, a run that
@@ -656,8 +733,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
   }
 
-  private clearTimer(name: 'noSpeech' | 'detection' | 'silence'): void {
-    const key = `${name}Timer` as 'noSpeechTimer' | 'detectionTimer' | 'silenceTimer';
+  private clearTimer(name: 'noSpeech' | 'detection' | 'silence' | 'eot'): void {
+    const key = `${name}Timer` as 'noSpeechTimer' | 'detectionTimer' | 'silenceTimer' | 'eotTimer';
     if (this[key]) {
       clearTimeout(this[key]);
       this[key] = undefined;
@@ -684,15 +761,28 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   /**
-   * Ref: python classifier.py `_try_emit_result` — emits only when both
-   * `verdictResult` is set AND `machineSilenceReached` is true.
+   * Ref: python classifier.py `_try_emit_result` + `_can_emit` — releases a
+   * verdict only when the silence gate is open AND, for everything except a
+   * confident human, the end-of-turn gate is open too. Humans release on
+   * silence alone so the agent can respond quickly.
    */
   private tryEmitResult(): void {
-    if (!this.verdictResult || !this.machineSilenceReached || this.settled) {
+    if (!this.verdictResult || this.settled) {
+      return;
+    }
+    if (!this.canEmit(this.verdictResult)) {
       return;
     }
     this.clearTimer('detection');
     this.finish(this.verdictResult);
+  }
+
+  /** Ref: python classifier.py `_can_emit`. */
+  private canEmit(verdict: AMDPredictionEvent): boolean {
+    if (!this.silenceReached) {
+      return false;
+    }
+    return verdict.category === AMDCategory.HUMAN ? true : this.eotReached;
   }
 
   private finish(result: AMDPredictionEvent): void {
@@ -735,16 +825,79 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.emit('amd_prediction', result);
   }
 
+  /**
+   * Hook invoked by {@link AgentActivity} when the user turn ends. Mirrors python
+   * detector.py `_on_end_of_turn`: signals whether AMD is consuming this turn so
+   * the activity should skip the normal reply pipeline.
+   *
+   * Returns `true` when AMD has settled on a machine verdict and the caller asked
+   * us to take over via `interruptOnMachine`; the caller is expected to drive its
+   * own `generateReply` (e.g. leaving a voicemail) and the auto-reply triggered by
+   * user-turn completion would otherwise race with — and interrupt — it.
+   *
+   * @internal
+   */
+  onEndOfTurn(info: EndOfTurnInfo): boolean {
+    // Forward the session turn detector's end-of-turn into the emission gate so
+    // a verdict that was waiting on end-of-turn (machine/uncertain, or anything
+    // under `waitUntilFinished`) can release. Mirrors python detector
+    // `_on_end_of_turn` → classifier `on_end_of_turn`.
+    this.onEotReached();
+
+    // Gate on the *emitted* verdict, mirroring python detector `_on_end_of_turn`
+    // which checks `self._result` — only assigned in `_on_amd_prediction` after the
+    // verdict clears the two emission gates. `this.onEotReached()` above may emit
+    // synchronously (flipping `settled`); a verdict merely committed via `setVerdict`
+    // but still gated on post-speech silence must NOT skip the reply, otherwise we'd
+    // skip ahead of an interrupt/prediction that hasn't fired yet.
+    if (!this.interruptOnMachine || !this.settled || !this.verdictResult?.isMachine) {
+      return false;
+    }
+    this._log.debug(
+      { category: this.verdictResult.category, transcript: info.newTranscript },
+      'skipping auto reply: AMD already returned a machine verdict',
+    );
+    return true;
+  }
+
   // ─── timer callbacks ─────────────────────────────────────────────────────────
 
   /**
-   * Ref: python classifier.py `_silence_timer_callback` — fires when a silence
-   * threshold expires. Optionally provides a verdict (for no-speech / timeout /
-   * short-greeting paths) and always opens the silence gate.
+   * Ref: python classifier.py `_on_silence_reached` — the post-speech silence
+   * window elapsed. Opens the silence gate and tries to emit a pending verdict.
+   * Does NOT commit a fallback verdict and does NOT touch the end-of-turn gate.
    */
-  private onSilenceTimerFired(category?: AMDCategory, reason?: string): void {
+  private onSilenceReached(): void {
+    if (this.settled) return;
+    this.silenceTimer = undefined;
+    this.silenceTimerTrigger = undefined;
+    this.silenceReached = true;
+    this.tryEmitResult();
+  }
+
+  /**
+   * Ref: python classifier.py `_on_timeout` — a timeout (detection budget,
+   * no-speech, short greeting) fired. Commits a fallback verdict if none exists,
+   * then tries to emit. This only decides *what* the verdict is; {@link canEmit}
+   * decides *when* it is released. End-of-turn is forced here only when there is
+   * nothing left to wait for: no speech was heard, or we are not waiting for the
+   * greeting to finish (`waitUntilFinished` off). When `waitUntilFinished` is set
+   * and speech was heard, the fallback is still committed but its release stays
+   * gated on end-of-turn (the real signal or the backstop timer), so we don't cut
+   * the greeting short with an `uncertain` result.
+   *
+   * Not gated by `listening`: detection_timeout must still fire when the call
+   * never reaches listening (e.g. SIP never answered).
+   */
+  private onTimeout(category: AMDCategory, reason: string, speechDurationMs?: number): void {
+    if (this.settled) return;
     this.clearTimer('silence');
-    if (category && reason && !this.verdictResult) {
+    this.silenceReached = true;
+    const hasSpeech = this.speechStartedAt !== undefined || this.transcriptParts.length > 0;
+    if (!(this.waitUntilFinished && hasSpeech)) {
+      this.eotReached = true;
+    }
+    if (!this.verdictResult) {
       this.setVerdict({
         type: 'amd_prediction',
         category,
@@ -752,98 +905,118 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         transcript: this.joinTranscript(),
         rawResponse: '',
         isMachine: isMachineCategory(category),
-        speechDurationMs: this.computeSpeechDurationMs(),
+        speechDurationMs: speechDurationMs ?? this.computeSpeechDurationMs(),
         delayMs: this.computeDelayMs(),
       });
     }
-    this.machineSilenceReached = true;
+    this.tryEmitResult();
+  }
+
+  /**
+   * Ref: python classifier.py `_on_eot_reached` — the session turn detector
+   * committed a turn (or the fallback backstop fired). Opens the end-of-turn
+   * gate and tries to emit a pending verdict.
+   */
+  private onEotReached(): void {
+    if (this.settled) return;
+    this.clearTimer('eot');
+    this.eotReached = true;
     this.tryEmitResult();
   }
 
   private settleNoSpeech(): void {
-    this.onSilenceTimerFired(AMDCategory.MACHINE_UNAVAILABLE, 'no_speech_timeout');
+    this.onTimeout(AMDCategory.UNCERTAIN, 'no_speech_timeout');
   }
 
   private settleDetectionTimeout(): void {
-    this.onSilenceTimerFired(AMDCategory.UNCERTAIN, 'detection_timeout');
+    this.onTimeout(AMDCategory.UNCERTAIN, 'detection_timeout');
   }
 
-  // ─── event handlers (arrow properties for stable `on`/`off` references) ─────
+  // ─── recognition hooks (invoked by AgentActivity, mirroring python AudioRecognition) ───
 
   /**
-   * Ref: python classifier.py `on_user_speech_started` / `on_user_speech_ended` —
-   * VAD-driven speech boundaries control the silence gate and short-greeting heuristic.
+   * Ref: python classifier.py `on_user_speech_started` (called from
+   * `AudioRecognition._on_vad_event` on VAD START_OF_SPEECH). A new speech
+   * segment cancels the pending gates/timers and reopens both emission gates.
+   *
+   * @internal
    */
-  private readonly handleUserStateChanged = (ev: UserStateChangedEvent): void => {
-    if (this.settled) {
+  onUserSpeechStarted(): void {
+    if (this.settled || !this.listening) return;
+    this.clearTimer('silence');
+    this.clearTimer('noSpeech');
+    this.clearTimer('eot');
+    if (this.speechStartedAt === undefined) {
+      this.speechStartedAt = Date.now();
+    }
+    this.silenceReached = false;
+    this.eotReached = false;
+  }
+
+  /**
+   * Ref: python classifier.py `on_user_speech_ended(silence_duration)` (called
+   * from `AudioRecognition._on_vad_event` on VAD END_OF_SPEECH with
+   * `ev.silence_duration`). `silenceDurationMs` is the silence already elapsed
+   * when the VAD declared end-of-speech; the true speech-end time is therefore
+   * `now - silenceDurationMs`, and every timer is shortened by it so it fires
+   * `threshold` after speech actually ended. Mirrors python's
+   * `speech_ended_at = time.time() - silence_duration` and
+   * `max(0, threshold - silence_duration)`.
+   *
+   * @internal
+   */
+  onUserSpeechEnded(silenceDurationMs: number): void {
+    if (this.settled || !this.listening) return;
+    if (this.speechStartedAt === undefined) {
+      this._log.warn('AMD: onUserSpeechEnded called before onUserSpeechStarted');
       return;
     }
 
-    if (!this.listening) {
-      return;
-    }
-
-    if (ev.newState === 'speaking') {
-      this.clearTimer('silence');
-      this.clearTimer('noSpeech');
-      if (this.speechStartedAt === undefined) {
-        this.speechStartedAt = ev.createdAt;
-      }
-      this.machineSilenceReached = false;
-      return;
-    }
-
-    if (ev.newState !== 'listening' || ev.oldState !== 'speaking') {
-      return;
-    }
-
-    const speechDurationMs = ev.createdAt - (this.speechStartedAt ?? ev.createdAt);
-    this.speechEndedAt = ev.createdAt;
+    this.speechEndedAt = Date.now() - silenceDurationMs;
+    const speechDurationMs = this.speechEndedAt - this.speechStartedAt;
+    const remaining = (thresholdMs: number): number => Math.max(0, thresholdMs - silenceDurationMs);
 
     this.clearTimer('silence');
 
-    // Short greeting: speech ≤ humanSpeechThreshold AND no transcript yet → HUMAN (skip LLM)
-    // When transcript is available, defer to LLM and use the longer machine_silence_threshold
-    // so the classifier can review the words before settling.
-    if (speechDurationMs <= this.humanSpeechThresholdMs) {
-      if (this.transcriptParts.length === 0) {
-        this.silenceTimer = setTimeout(
-          () => this.onSilenceTimerFired(AMDCategory.HUMAN, 'short_greeting'),
-          this.humanSilenceThresholdMs,
-        );
-        this.silenceTimerTrigger = 'short_speech';
-      } else {
-        this.silenceTimer = setTimeout(
-          () => this.onSilenceTimerFired(),
-          this.machineSilenceThresholdMs,
-        );
-        this.silenceTimerTrigger = 'long_speech';
-      }
+    // Arm the fallback end-of-turn backstop in case the session turn detector is
+    // slow or never commits. Mirrors python on_user_speech_ended's `_eot_timer`.
+    this.clearTimer('eot');
+    this.eotTimer = setTimeout(() => this.onEotReached(), remaining(this.maxEndpointingDelayMs));
+
+    // Short greeting: speech ≤ humanSpeechThreshold AND no transcript yet → HUMAN (skip LLM).
+    // Otherwise defer to the LLM and use the longer machine_silence_threshold so the
+    // classifier can review the words before settling.
+    if (speechDurationMs <= this.humanSpeechThresholdMs && this.transcriptParts.length === 0) {
+      this.silenceTimer = setTimeout(
+        () => this.onTimeout(AMDCategory.HUMAN, 'short_greeting', speechDurationMs),
+        remaining(this.humanSilenceThresholdMs),
+      );
+      this.silenceTimerTrigger = 'short_speech';
       return;
     }
 
-    // Longer speech: open silence gate after machine_silence_threshold of quiet
     this.silenceTimer = setTimeout(
-      () => this.onSilenceTimerFired(),
-      this.machineSilenceThresholdMs,
+      () => this.onSilenceReached(),
+      remaining(this.machineSilenceThresholdMs),
     );
     this.silenceTimerTrigger = 'long_speech';
-  };
+  }
 
   /**
-   * Session-level transcript handler. Mirrors python `_AMDClassifier.push_text`'s
-   * source filtering: when AMD has its own dedicated STT we ignore session-level
-   * events entirely (the dedicated pump in {@link runSTTPump} drives transcripts
-   * via {@link consumeTranscript}); when no dedicated STT is configured we
-   * consume session events as the only transcript source.
+   * Ref: python classifier.py `push_text(text, source)` (called from
+   * `AudioRecognition._on_transcript` with the session STT transcript, and from
+   * AMD's dedicated STT with `source='amd_stt'`). Transcripts whose source is not
+   * the one AMD is consuming are dropped — so when AMD runs its own STT the
+   * session's transcripts are ignored, and vice versa.
+   *
+   * @internal
    */
-  private readonly handleTranscript = (ev: UserInputTranscribedEvent): void => {
-    if (this.stt) return;
-    if (!ev.isFinal) return;
-    const transcript = ev.transcript.trim();
+  onTranscript(text: string, source: 'stt' | 'amd_stt' = 'stt'): void {
+    if (source !== this.source) return;
+    const transcript = text.trim();
     if (!transcript) return;
     this.consumeTranscript(transcript);
-  };
+  }
 
   /**
    * Shared transcript ingestion: cancels the no-speech timer, refreshes the
@@ -860,7 +1033,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           0,
           this.speechEndedAt + this.machineSilenceThresholdMs - Date.now(),
         );
-        this.silenceTimer = setTimeout(() => this.onSilenceTimerFired(), remaining);
+        this.silenceTimer = setTimeout(() => this.onSilenceReached(), remaining);
         this.silenceTimerTrigger = 'long_speech';
       }
     }
@@ -871,7 +1044,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private readonly handleClose = (): void => {
-    this.onSilenceTimerFired(AMDCategory.UNCERTAIN, 'session_closed');
+    if (this.settled) return;
+    // The session is closing — force a settle regardless of the emission gates
+    // (open the end-of-turn gate so a non-human fallback can release immediately).
+    this.eotReached = true;
+    this.onTimeout(AMDCategory.UNCERTAIN, 'session_closed');
   };
 
   // ─── LLM classification ─────────────────────────────────────────────────────
@@ -965,7 +1142,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private joinTranscript(): string {
-    return this.transcriptParts.join('\n');
+    // Space-join to match python classifier.py, which accumulates the transcript
+    // as `(self._transcript + " " + text).lstrip()` and feeds that single-line
+    // string to the LLM — the prompt's few-shot `Input:` examples are single-line.
+    return this.transcriptParts.join(' ');
   }
 
   private setSpanAttributes(result: AMDPredictionEvent): void {
@@ -1049,8 +1229,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           // Extension window expired without another postpone: open the silence
           // gate and re-run classification with the latest transcript. With
           // extensions now exhausted, postpone is no longer offered to the LLM,
-          // forcing it to commit via save_prediction.
-          this.machineSilenceReached = true;
+          // forcing it to commit via save_prediction. Mirrors python
+          // `_on_postpone_elapsed` — opens silence only, not the end-of-turn gate.
+          this.silenceReached = true;
           this.scheduleLLMClassification();
           this.tryEmitResult();
         }, clampedMs);
@@ -1065,10 +1246,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
 
     const chatCtx = new ChatContext();
     chatCtx.addMessage({ role: 'system', content: this.prompt });
-    chatCtx.addMessage({
-      role: 'user',
-      content: `Transcript:\n${transcript}\n\nClassify this call answer.`,
-    });
+    // Pass the raw transcript as the user message (mirrors python `_run`), so the
+    // model treats it as the next "Input:" in the prompt's few-shot pattern.
+    chatCtx.addMessage({ role: 'user', content: transcript });
 
     const stream = this.llm.chat({ chatCtx, toolCtx, toolChoice: 'required' });
     this.currentLLMStream = stream;
@@ -1121,7 +1301,26 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return { ...savedResult, rawResponse };
     }
 
-    // Fallback: plain-JSON content (legacy / non-tool LLM responses).
+    // The LLM used the tool interface but did not commit a non-uncertain verdict
+    // (it called save_prediction(uncertain) and/or postpone_termination). Mirror
+    // python, which only ever acts on tool calls: return UNCERTAIN and do NOT
+    // resurrect a verdict by parsing any free-text content the model emitted
+    // alongside its tool calls.
+    if (toolCalls.length > 0) {
+      return {
+        type: 'amd_prediction',
+        category: AMDCategory.UNCERTAIN,
+        reason: 'llm',
+        transcript,
+        rawResponse,
+        isMachine: false,
+        speechDurationMs: this.computeSpeechDurationMs(),
+        delayMs: this.computeDelayMs(),
+      };
+    }
+
+    // Fallback: plain-JSON content (legacy / non-tool LLM responses, e.g. mock
+    // LLMs in tests or providers that ignore `toolChoice='required'`).
     const parsed = this.parseDetection(rawResponse);
     return {
       type: 'amd_prediction',

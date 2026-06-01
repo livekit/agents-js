@@ -5,12 +5,11 @@ import type {
   LocalTrackPublication,
   Participant,
   ParticipantKind,
-  RemoteParticipant,
   RemoteTrackPublication,
   Room,
   TrackKind,
 } from '@livekit/rtc-node';
-import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -1082,7 +1081,8 @@ export async function waitForParticipantAttribute({
 
   const fut = new Future<void>();
 
-  const isMatch = (p: Participant) => p.identity === identity && p.attributes[attribute] === value;
+  const isMatch = (p: Participant) =>
+    p instanceof RemoteParticipant && p.identity === identity && p.attributes[attribute] === value;
 
   const onParticipantAttributesChanged = (
     _changedAttributes: Record<string, string>,
@@ -1117,8 +1117,19 @@ export async function waitForParticipantAttribute({
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    // Re-check AFTER registering listeners. The presence check is authoritative
+    // here, not just the attribute: if the participant vanished between the
+    // initial existence check and listener setup, no future ParticipantDisconnected
+    // callback is guaranteed to arrive for it, so reject instead of awaiting a
+    // future that could only settle on room-disconnect/abort. (In practice JS
+    // delivers room events as queued tasks, so a disconnect in that window fires
+    // after we await and is caught by the handler — this just makes the guarantee
+    // independent of that timing.)
     const current = room.remoteParticipants.get(identity);
-    if (current && current.attributes[attribute] === value) {
+    if (!current) {
+      throw new Error(`Participant ${identity} is not in the room`);
+    }
+    if (current.attributes[attribute] === value) {
       return;
     }
     await fut.await;
