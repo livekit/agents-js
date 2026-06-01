@@ -6,6 +6,7 @@ import { ParticipantKind, TrackKind } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
+import { performance } from 'node:perf_hooks';
 import type { ReadableStream } from 'node:stream/web';
 import { z } from 'zod';
 import * as inference from '../inference/index.js';
@@ -939,7 +940,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.clearTimer('noSpeech');
     this.clearTimer('eot');
     if (this.speechStartedAt === undefined) {
-      this.speechStartedAt = Date.now();
+      this.speechStartedAt = performance.now();
     }
     this.silenceReached = false;
     this.eotReached = false;
@@ -964,8 +965,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return;
     }
 
-    this.speechEndedAt = Date.now() - silenceDurationMs;
-    const speechDurationMs = this.speechEndedAt - this.speechStartedAt;
+    this.speechEndedAt = performance.now() - silenceDurationMs;
+    const speechDurationMs = Math.ceil(this.speechEndedAt - this.speechStartedAt);
     const remaining = (thresholdMs: number): number => Math.max(0, thresholdMs - silenceDurationMs);
 
     this.clearTimer('silence');
@@ -1023,7 +1024,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       if (this.speechEndedAt !== undefined) {
         const remaining = Math.max(
           0,
-          this.speechEndedAt + this.machineSilenceThresholdMs - Date.now(),
+          this.speechEndedAt + this.machineSilenceThresholdMs - performance.now(),
         );
         this.silenceTimer = setTimeout(() => this.onSilenceReached(), remaining);
         this.silenceTimerTrigger = 'long_speech';
@@ -1327,15 +1328,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (this.speechStartedAt === undefined) {
       return 0;
     }
-    const end = this.speechEndedAt ?? Date.now();
-    return Math.max(0, end - this.speechStartedAt);
+    const end = this.speechEndedAt ?? performance.now();
+    return Math.ceil(Math.max(0, end - this.speechStartedAt));
   }
 
   private computeDelayMs(): number {
     if (this.speechEndedAt === undefined) {
       return 0;
     }
-    return Math.max(0, Date.now() - this.speechEndedAt);
+    return Math.ceil(Math.max(0, performance.now() - this.speechEndedAt));
   }
 
   private parseDetection(rawResponse: string): Pick<AMDPredictionEvent, 'category' | 'reason'> {
