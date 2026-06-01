@@ -173,6 +173,11 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
 
 const CONNECT_TIMEOUT_MS = 10_000; // WebSocket handshake timeout
 
+// Transient gRPC-style status codes worth retrying; everything else is treated as
+// a permanent request rejection. 4 = DEADLINE_EXCEEDED, 8 = RESOURCE_EXHAUSTED
+// (rate limit), 14 = UNAVAILABLE.
+const RETRYABLE_STATUS_CODES = new Set([4, 8, 14]);
+
 class WSConnectionPool {
   #ws?: WebSocket;
   #url: string;
@@ -702,15 +707,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
         }
       } else if (result.status && result.status.code !== 0) {
         // status.code is a gRPC-style code (0-16), not an HTTP status, so
-        // APIStatusError's 4xx heuristic can't classify it. A server status
-        // error here is a request-level rejection (bad voice/params, auth);
-        // transient infra issues surface as connection drops (APIConnectionError,
-        // already retryable). Mark it non-retryable so permanent errors fail fast
-        // instead of being retried.
+        // APIStatusError's 4xx heuristic can't classify it. Retry only transient
+        // codes (rate limit / unavailable / deadline); permanent request
+        // rejections (bad voice/params, auth) fail fast instead of retrying.
         rejectProcessing(
           new APIStatusError({
             message: `Inworld stream error: ${result.status.message}`,
-            options: { statusCode: result.status.code, retryable: false },
+            options: {
+              statusCode: result.status.code,
+              retryable: RETRYABLE_STATUS_CODES.has(result.status.code),
+            },
           }),
         );
       }
