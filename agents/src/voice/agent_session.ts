@@ -43,7 +43,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task, asError } from '../utils.js';
+import { Event as AsyncEvent, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -286,6 +286,7 @@ export class AgentSession<
   private _userData: UserData | undefined;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
+  private userTurnReleaseState: UserState = 'listening';
 
   private _input: AgentInput;
   private _output: AgentOutput;
@@ -326,6 +327,12 @@ export class AgentSession<
 
   /** @internal */
   _recorderIO?: RecorderIO;
+
+  /** @internal */
+  _userTurnClaims = 0;
+
+  /** @internal */
+  _userTurnReleased = new AsyncEvent();
 
   /** @internal */
   rootSpanContext?: Context;
@@ -407,6 +414,7 @@ export class AgentSession<
     this.sessionOptions = resolvedSessionOptions;
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+    this._userTurnReleased.set();
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
@@ -741,6 +749,27 @@ export class AgentSession<
     }
 
     return this.activity.interrupt(options);
+  }
+
+  /** @internal */
+  async _claimUserTurn<T>(fn: () => T | Promise<T>): Promise<T> {
+    const first = this._userTurnClaims === 0;
+    if (first) {
+      this.userTurnReleaseState = this._userState === 'speaking' ? 'speaking' : 'listening';
+      this._userTurnReleased.clear();
+      this._updateUserState('speaking', { lastSpeakingTime: Date.now() });
+    }
+
+    this._userTurnClaims += 1;
+    try {
+      return await fn();
+    } finally {
+      this._userTurnClaims -= 1;
+      if (this._userTurnClaims === 0) {
+        this._userTurnReleased.set();
+        this._updateUserState(this.userTurnReleaseState);
+      }
+    }
   }
 
   /** @internal — emit a debug/trace payload to the debugger/recorder. */
@@ -1220,6 +1249,13 @@ export class AgentSession<
     state: UserState,
     options?: { lastSpeakingTime?: number; otelContext?: Context },
   ) {
+    if (this._userTurnClaims > 0) {
+      this.userTurnReleaseState = state === 'speaking' ? 'speaking' : 'listening';
+      if (state !== 'speaking') {
+        return;
+      }
+    }
+
     if (this._userState === state) {
       return;
     }

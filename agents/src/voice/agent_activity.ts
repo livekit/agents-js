@@ -1676,6 +1676,12 @@ export class AgentActivity implements RecognitionHooks {
           await delay(0, { signal });
         }
       }
+
+      if (this.agentSession._userTurnClaims > 0) {
+        await Promise.race([this.agentSession._userTurnReleased.wait(), waitForAbort(signal)]);
+        agentActive = waitForAgent;
+        userActive = waitForUser;
+      }
     }
   }
 
