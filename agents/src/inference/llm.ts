@@ -400,7 +400,7 @@ export class LLMStream extends llm.LLMStream {
       )) as OpenAI.ChatCompletionMessageParam[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               function: {
