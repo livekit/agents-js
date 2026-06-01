@@ -1254,7 +1254,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.27
+        version: 0.13.29
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
