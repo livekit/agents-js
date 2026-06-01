@@ -1678,7 +1678,11 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (this.agentSession._userTurnClaims > 0) {
-        await Promise.race([this.agentSession._userTurnReleased.wait(), waitForAbort(signal)]);
+        await this.waitForOrAbort(
+          this.agentSession._userTurnReleased.wait().then(() => undefined),
+          signal,
+          'error waiting for user turn release',
+        );
         agentActive = waitForAgent;
         userActive = waitForUser;
       }
