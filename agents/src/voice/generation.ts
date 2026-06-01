@@ -19,10 +19,13 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
+  sortedToolNames,
 } from '../llm/tool_context.js';
+import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -485,10 +488,7 @@ export function performLLMInference(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
     );
-    span.setAttribute(
-      traceTypes.ATTR_FUNCTION_TOOLS,
-      JSON.stringify(Object.keys(toolCtx.functionTools)),
-    );
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
@@ -542,7 +542,8 @@ export function performLLMInference(
               if (tool.type !== 'function_call') continue;
 
               const toolCall = FunctionCall.create({
-                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                id: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                callId: tool.callId,
                 name: tool.name,
                 args: tool.args,
                 // Preserve thought signature for Gemini 3+ thinking mode
@@ -917,6 +918,9 @@ async function forwardAudio(
 
     reader?.releaseLock();
     audioOutput.flush();
+    if (signal?.aborted) {
+      audioOutput.clearBuffer();
+    }
     resampler?.close();
   }
 }
@@ -1022,7 +1026,12 @@ export function performToolExecutions({
 
       // Ensure valid arguments
       try {
-        const jsonArgs = JSON.parse(toolCall.args);
+        const rawArgs = toolCall.args || '{}';
+        const jsonArgs = parseFunctionArguments(rawArgs);
+        const canonicalArgs = JSON.stringify(jsonArgs);
+        if (canonicalArgs !== rawArgs) {
+          toolCall.args = canonicalArgs;
+        }
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1045,10 +1054,13 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
         toolCompleted(
           createToolOutput({
             toolCall,
-            exception: error,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
           }),
         );
         continue;

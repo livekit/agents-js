@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
+import { AgentSession as pb } from '@livekit/protocol';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
@@ -18,7 +20,6 @@ import {
   type STTModelString,
   type TTSModelString,
 } from '../inference/index.js';
-import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
@@ -89,12 +90,13 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
+import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
   InternalTurnHandlingOptions,
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
-import { migrateLegacyOptions } from './turn_config/utils.js';
+import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface AgentSessionUsage {
@@ -153,6 +155,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
+  [AgentSessionEventTypes.DebugMessage]: (ev: pb.DebugMessage) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
@@ -223,6 +226,30 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+};
+
+export type AgentSessionUpdateOptions = {
+  /** Configuration updates for turn handling. */
+  turnHandling?: {
+    /**
+     * Strategy for deciding when the user has finished speaking.
+     *
+     * - `undefined`: leave the current turn detection setting unchanged.
+     * - `null`: clear the current turn detection setting and return to automatic selection.
+     * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+     */
+    turnDetection?: TurnDetectionMode | null;
+    /** Endpointing options to merge into the current session defaults. */
+    endpointing?: Partial<EndpointingOptions>;
+  };
+  /**
+   * @deprecated use turnHandling.turnDetection instead.
+   *
+   * - `undefined`: leave the current turn detection setting unchanged.
+   * - `null`: clear the current turn detection setting and return to automatic selection.
+   * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
+   */
+  turnDetection?: TurnDetectionMode | null;
 };
 
 type ActivityTransitionOptions = {
@@ -315,6 +342,11 @@ export class AgentSession<
   /** @internal - Whether `start()` has been called and completed. */
   get _started(): boolean {
     return this.started;
+  }
+
+  /** @internal - Whether the session is closing/draining. */
+  get _closing(): boolean {
+    return this.closing;
   }
 
   /** @internal - Current run state for testing */
@@ -615,6 +647,10 @@ export class AgentSession<
       return;
     }
 
+    // immediately block the old activity from accepting new user turns
+    // during the transition window (before drain() formally pauses scheduling)
+    this.activity?.blockNewTurns();
+
     const _updateActivityTask = async (oldTask: Task<void> | undefined, agent: Agent) => {
       if (oldTask) {
         try {
@@ -707,6 +743,12 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
+  /** @internal — emit a debug/trace payload to the debugger/recorder. */
+  _emitDebugMessage(payload: JsonObject): void {
+    const debugMessage = new pb.DebugMessage({ payload: Struct.fromJson(payload) });
+    super.emit(AgentSessionEventTypes.DebugMessage, debugMessage);
+  }
+
   /**
    * The currently bound `AMD` instance, or `null` if AMD is not in use.
    * Mirrors python `AgentSession.amd`.
@@ -752,6 +794,39 @@ export class AgentSession<
     }
 
     this.activity.resumeReplyAuthorization();
+  }
+
+  updateOptions(options: AgentSessionUpdateOptions): void {
+    const endpointing = options.turnHandling?.endpointing;
+    const turnDetection =
+      options.turnHandling?.turnDetection !== undefined
+        ? options.turnHandling.turnDetection
+        : options.turnDetection;
+    const hasTurnDetection = turnDetection !== undefined;
+    const normalizedTurnDetection = turnDetection ?? undefined;
+
+    if (endpointing !== undefined) {
+      this.sessionOptions.turnHandling.endpointing = {
+        ...this.sessionOptions.turnHandling.endpointing,
+        ...stripUndefined(endpointing),
+      };
+    }
+
+    if (hasTurnDetection) {
+      this.turnDetection = normalizedTurnDetection;
+      this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+    }
+
+    if (this.activity) {
+      const activityOptions: Parameters<AgentActivity['updateOptions']>[0] = {};
+      if (endpointing !== undefined) {
+        activityOptions.endpointing = this.sessionOptions.turnHandling.endpointing;
+      }
+      if (hasTurnDetection) {
+        activityOptions.turnDetection = turnDetection;
+      }
+      this.activity.updateOptions(activityOptions);
+    }
   }
 
   generateReply(options?: {
@@ -1050,9 +1125,7 @@ export class AgentSession<
   }
 
   /** @internal */
-  _onError(
-    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
-  ): void {
+  _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (this.closingTask || error.recoverable) {
       return;
     }
@@ -1068,9 +1141,6 @@ export class AgentSession<
       if (this.ttsErrorCounts <= this._connOptions.maxUnrecoverableErrors) {
         return;
       }
-    } else if (error.type === 'interruption_detection_error') {
-      this.logger.error(error.toString());
-      return;
     }
 
     this.logger.error(error, 'AgentSession is closing due to an unrecoverable error');
@@ -1264,13 +1334,7 @@ export class AgentSession<
 
   private async closeImpl(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (this.rootSpanContext) {
@@ -1284,13 +1348,7 @@ export class AgentSession<
 
   private async closeImplInner(
     reason: ShutdownReason,
-    error:
-      | RealtimeModelError
-      | LLMError
-      | TTSError
-      | STTError
-      | InterruptionDetectionError
-      | null = null,
+    error: RealtimeModelError | LLMError | TTSError | STTError | null = null,
     drain: boolean = false,
   ): Promise<void> {
     if (!this.started) {

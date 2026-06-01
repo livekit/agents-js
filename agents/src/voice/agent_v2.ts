@@ -16,14 +16,7 @@ import type { STT, SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import { readStream, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
-import type {
-  Agent,
-  AgentOptions,
-  AgentTask,
-  AgentTaskOptions,
-  ModelSettings,
-  TTSPronunciationMap,
-} from './agent.js';
+import type { Agent, AgentOptions, AgentTask, AgentTaskOptions, ModelSettings } from './agent.js';
 import type { AgentSession } from './agent_session.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 
@@ -41,8 +34,6 @@ export interface AgentContext<UserData = unknown> {
   tts: TTS | undefined;
   /** Whether TTS-aligned transcripts are enabled for the agent. */
   useTtsAlignedTranscript: boolean | undefined;
-  /** Pronunciation replacements applied before TTS synthesis. */
-  ttsPronunciationMap: TTSPronunciationMap | undefined;
   /** Readonly view of the agent's current chat context. */
   chatCtx: ReadonlyChatContext;
   /** Agent identifier. */
@@ -433,10 +424,6 @@ class AgentHookContext<UserData> implements AgentContext<UserData> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this.agent.useTtsAlignedTranscript;
-  }
-
-  get ttsPronunciationMap(): TTSPronunciationMap | undefined {
-    return this.agent.ttsPronunciationMap;
   }
 
   get chatCtx(): ReadonlyChatContext {

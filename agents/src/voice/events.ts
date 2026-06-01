@@ -30,6 +30,7 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SessionUsageUpdated = 'session_usage_updated',
+  DebugMessage = 'debug_message',
   SpeechCreated = 'speech_created',
   AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
@@ -242,6 +243,40 @@ export const createSpeechCreatedEvent = ({
   userInitiated,
   source,
   speechHandle,
+  createdAt,
+});
+
+export type UserTurnExceededEvent = {
+  type: 'user_turn_exceeded';
+  /** Transcript from the current uncommitted user turn only. */
+  transcript: string;
+  /** Full transcript since the start of user speaking in the accumulation window. */
+  accumulatedTranscript: string;
+  /** Total word count since the start of user speaking in the accumulation window. */
+  accumulatedWordCount: number;
+  /** Duration of the user turn accumulation window in milliseconds. */
+  duration: number;
+  createdAt: number;
+};
+
+export const createUserTurnExceededEvent = ({
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
+  createdAt = Date.now(),
+}: {
+  transcript: string;
+  accumulatedTranscript: string;
+  accumulatedWordCount: number;
+  duration: number;
+  createdAt?: number;
+}): UserTurnExceededEvent => ({
+  type: 'user_turn_exceeded',
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
   createdAt,
 });
 

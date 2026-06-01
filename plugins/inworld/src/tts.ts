@@ -40,6 +40,7 @@ export type TimestampTransportStrategy =
   | 'TIMESTAMP_TRANSPORT_STRATEGY_UNSPECIFIED'
   | 'SYNC'
   | 'ASYNC';
+export type DeliveryMode = 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
 
 export interface TTSOptions {
   apiKey?: string;
@@ -54,6 +55,8 @@ export interface TTSOptions {
   language?: string;
   timestampType?: TimestampType;
   textNormalization?: TextNormalization;
+  /** Controls output variation on inworld-tts-2 only. */
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   bufferCharThreshold: number;
   maxBufferDelayMs: number;
@@ -80,6 +83,7 @@ interface SynthesizeRequest {
   language?: string;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
 }
 
@@ -93,6 +97,7 @@ interface CreateContextConfig {
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
+  deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   autoMode?: boolean;
 }
@@ -414,6 +419,7 @@ class ChunkedStream extends tts.ChunkedStream {
       language: this.#opts.language,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
     };
 
@@ -742,6 +748,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
+      deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
       // Always enable auto_mode since we use sentence tokenizer and don't expose
       // mid-stream flush_context control to users yet

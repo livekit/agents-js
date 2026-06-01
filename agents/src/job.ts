@@ -6,6 +6,7 @@ import type {
   E2EEOptions,
   LocalParticipant,
   RemoteParticipant,
+  RemoteTrackPublication,
   Room,
   RtcConfiguration,
 } from '@livekit/rtc-node';
@@ -261,16 +262,24 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);
 
     if ([AutoSubscribe.AUDIO_ONLY, AutoSubscribe.VIDEO_ONLY].includes(autoSubscribe)) {
+      const desiredKind =
+        autoSubscribe === AutoSubscribe.AUDIO_ONLY ? TrackKind.KIND_AUDIO : TrackKind.KIND_VIDEO;
+      const subscribeIfMatch = (pub: RemoteTrackPublication) => {
+        if (pub.kind === desiredKind) {
+          pub.setSubscribed(true);
+        }
+      };
+
+      // Subscribe to tracks already published at connect time.
       this.#room.remoteParticipants.forEach((p) => {
-        p.trackPublications.forEach((pub) => {
-          if (
-            (autoSubscribe === AutoSubscribe.AUDIO_ONLY && pub.kind === TrackKind.KIND_AUDIO) ||
-            (autoSubscribe === AutoSubscribe.VIDEO_ONLY && pub.kind === TrackKind.KIND_VIDEO)
-          ) {
-            pub.setSubscribed(true);
-          }
-        });
+        p.trackPublications.forEach(subscribeIfMatch);
       });
+
+      // Server-side autosubscribe is disabled for AUDIO_ONLY/VIDEO_ONLY, so
+      // subscribe to matching tracks published AFTER connect as well (e.g. a
+      // participant that unmutes or joins later). Without this, late-published
+      // tracks are never subscribed. Mirrors Python's _apply_auto_subscribe_opts.
+      this.#room.on(RoomEvent.TrackPublished, subscribeIfMatch);
     }
     this.connected = true;
   }

@@ -58,6 +58,7 @@ export type ServerEventType =
   | 'input_audio_buffer.speech_stopped'
   | 'conversation.item.added' // GA: renamed from conversation.item.created
   | 'conversation.item.created' // Beta: kept for backward compatibility
+  | 'conversation.item.input_audio_transcription.delta'
   | 'conversation.item.input_audio_transcription.completed'
   | 'conversation.item.input_audio_transcription.failed'
   | 'conversation.item.truncated'
@@ -509,6 +510,13 @@ export interface ConversationItemAddedEvent extends BaseServerEvent {
   item: ItemResource;
 }
 
+export interface ConversationItemInputAudioTranscriptionDeltaEvent extends BaseServerEvent {
+  type: 'conversation.item.input_audio_transcription.delta';
+  item_id: string;
+  content_index?: number;
+  delta?: string;
+}
+
 export interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServerEvent {
   type: 'conversation.item.input_audio_transcription.completed';
   item_id: string;
@@ -670,6 +678,7 @@ export type ServerEvent =
   | InputAudioBufferSpeechStoppedEvent
   | ConversationItemCreatedEvent
   | ConversationItemAddedEvent // GA: renamed from conversation.item.created
+  | ConversationItemInputAudioTranscriptionDeltaEvent
   | ConversationItemInputAudioTranscriptionCompletedEvent
   | ConversationItemInputAudioTranscriptionFailedEvent
   | ConversationItemTruncatedEvent

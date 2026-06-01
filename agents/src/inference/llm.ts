@@ -247,6 +247,27 @@ export class LLM extends llm.LLM {
     return new LLM({ model: modelString });
   }
 
+  /**
+   * Update LLM configuration options used by the next chat call.
+   *
+   * `modelOptions` replaces the persistent options object instead of merging;
+   * pass `{}` to clear it.
+   */
+  updateOptions({
+    model,
+    modelOptions,
+  }: {
+    model?: LLMModels;
+    modelOptions?: ChatCompletionOptions;
+  }): void {
+    if (model !== undefined) {
+      this.opts.model = model;
+    }
+    if (modelOptions !== undefined) {
+      this.opts.modelOptions = { ...modelOptions };
+    }
+  }
+
   chat({
     chatCtx,
     toolCtx: toolCtxInput,
@@ -383,33 +404,29 @@ export class LLMStream extends llm.LLMStream {
         this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
+      // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
+      // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
-        ? this.toolCtx
-            .flatten()
-            .map((t) => {
-              if (llm.isFunctionTool(t)) {
-                const oaiParams = {
-                  type: 'function' as const,
-                  function: {
-                    name: t.name,
-                    description: t.description,
-                    parameters: llm.toJsonSchema(
-                      t.parameters,
-                      true,
-                      this.strictToolSchema,
-                    ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
-                  } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
-                };
-                if (this.strictToolSchema) {
-                  oaiParams.function.strict = true;
-                }
-                return oaiParams;
-              }
-              // Provider-defined tools are not yet supported by the inference adapter; skip them
-              // here rather than emitting a malformed tool definition. See AJS-112.
-              return undefined;
-            })
-            .filter((t): t is NonNullable<typeof t> => t !== undefined)
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+            const oaiParams = {
+              type: 'function' as const,
+              function: {
+                name,
+                description: func.description,
+                parameters: llm.toJsonSchema(
+                  func.parameters,
+                  true,
+                  this.strictToolSchema,
+                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+              } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
+            };
+
+            if (this.strictToolSchema) {
+              oaiParams.function.strict = true;
+            }
+
+            return oaiParams;
+          })
         : undefined;
 
       const requestOptions: Record<string, unknown> = dropUnsupportedParams(
@@ -433,6 +450,8 @@ export class LLMStream extends llm.LLMStream {
         ...buildMetadataHeaders(),
         ...((requestOptions.extra_headers as Record<string, string> | undefined) ?? {}),
       };
+      const extraBody = requestOptions.extra_body as Record<string, unknown> | undefined;
+      const extraQuery = requestOptions.extra_query as Record<string, unknown> | undefined;
       if (this.provider) {
         extraHeaders[INFERENCE_PROVIDER_HEADER] = this.provider;
       }
@@ -440,6 +459,8 @@ export class LLMStream extends llm.LLMStream {
         extraHeaders[INFERENCE_PRIORITY_HEADER] = this.inferenceClass;
       }
       delete requestOptions.extra_headers;
+      delete requestOptions.extra_body;
+      delete requestOptions.extra_query;
 
       const stream = await this.client.chat.completions.create(
         {
@@ -449,9 +470,11 @@ export class LLMStream extends llm.LLMStream {
           stream: true,
           stream_options: { include_usage: true },
           ...requestOptions,
+          ...extraBody,
         },
         {
           headers: extraHeaders,
+          query: extraQuery,
           timeout: this.connOptions.timeoutMs,
           signal: this.abortController.signal,
         },

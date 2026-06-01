@@ -118,7 +118,6 @@ describe('Agent', () => {
         id: 'factory_agent',
         instructions: 'factory instructions',
         minConsecutiveSpeechDelay: 12,
-        ttsPronunciationMap: { LiveKit: 'live kit' },
         onEnter: (ctx) => {
           expect(ctx.agent).toBe(agent);
           expect(ctx.id).toBe(agent.id);
@@ -126,7 +125,6 @@ describe('Agent', () => {
           expect(ctx.toolCtx.functionTools).toEqual(agent.toolCtx.functionTools);
           expect(ctx.chatCtx.items).toEqual(agent.chatCtx.items);
           expect(ctx.minConsecutiveSpeechDelay).toBe(agent.minConsecutiveSpeechDelay);
-          expect(ctx.ttsPronunciationMap).toBe(agent.ttsPronunciationMap);
           calls.push('enter');
         },
         onExit: async (ctx) => {

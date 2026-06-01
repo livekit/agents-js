@@ -91,13 +91,15 @@ describe('Google Provider Format - toChatCtx', () => {
     expect(result).toEqual([
       {
         role: 'user',
-        parts: [{ text: 'Hello' }],
+        parts: [
+          {
+            text: 'New instructions received. Apply them carefully: Be concise in your responses',
+          },
+          { text: 'Hello' },
+        ],
       },
     ]);
-    expect(formatData.systemMessages).toEqual([
-      'You are a helpful assistant',
-      'Be concise in your responses',
-    ]);
+    expect(formatData.systemMessages).toEqual(['You are a helpful assistant']);
   });
 
   it('should handle multi-part text content', async () => {

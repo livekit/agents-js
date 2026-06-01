@@ -23,6 +23,7 @@ export interface LLMOptions {
   baseURL?: string;
   user?: string;
   temperature?: number;
+  topP?: number;
   client?: OpenAI;
   toolChoice?: llm.ToolChoice;
   parallelToolCalls?: boolean;
@@ -498,6 +499,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.temperature) {
       extras.temperature = this.#opts.temperature;
+    }
+
+    if (this.#opts.topP !== undefined) {
+      extras.top_p = this.#opts.topP;
     }
 
     if (this.#opts.serviceTier) {

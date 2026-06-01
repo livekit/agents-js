@@ -375,12 +375,15 @@ export class ParticipantAudioOutput extends AudioOutput {
   private audioSource: AudioSource;
   private publication?: LocalTrackPublication;
   private flushTask?: Task<void>;
+  private flushPushedDuration?: number;
 
   /** Duration of audio pushed to the source, in seconds */
   private pushedDuration: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
   private firstFrameEmitted: boolean = false;
+  /** Gate held closed while the output is paused; frame forwarding awaits it. */
+  private playbackEnabledFuture: Future<void> = new Future();
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -391,6 +394,24 @@ export class ParticipantAudioOutput extends AudioOutput {
       options.numChannels,
       options.queueSizeMs,
     );
+    this.playbackEnabledFuture.resolve();
+  }
+
+  pause(): void {
+    if (this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture = new Future();
+    }
+    // Drop already-buffered audio so playback stops promptly instead of draining the prebuffer.
+    this.audioSource.clearQueue();
+    super.pause();
+  }
+
+  resume(): void {
+    if (!this.playbackEnabledFuture.done) {
+      this.playbackEnabledFuture.resolve();
+    }
+    this.firstFrameEmitted = false;
+    super.resume();
   }
 
   get subscribed(): boolean {
@@ -406,6 +427,15 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     super.captureFrame(frame);
 
+    if (!this.playbackEnabledFuture.done) {
+      this.audioSource.clearQueue();
+      // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
+      await Promise.race([this.playbackEnabledFuture.await, this.interruptedFuture.await]);
+      if (this.interruptedFuture.done) {
+        return;
+      }
+    }
+
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
       this.onPlaybackStarted(Date.now());
@@ -420,6 +450,8 @@ export class ParticipantAudioOutput extends AudioOutput {
     // Snapshot duration for this flush so overlapping next-segment frames are not erased on completion.
     const accountedDuration = this.pushedDuration;
     const abortFuture = new Future<boolean>();
+    // Reset before the race so a stale clearBuffer() from before this segment doesn't fire it.
+    this.interruptedFuture = new Future();
 
     const resolveAbort = () => {
       if (!abortFuture.done) abortFuture.resolve(true);
@@ -432,10 +464,11 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (!abortFuture.done) abortFuture.resolve(false);
     });
 
-    const interrupted = await Promise.race([
+    const aborted = await Promise.race([
       abortFuture.await,
       this.interruptedFuture.await.then(() => true),
     ]);
+    const interrupted = this.interruptedFuture.done || aborted;
 
     let pushedDuration = accountedDuration;
 
@@ -445,7 +478,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     this.pushedDuration = 0;
-    this.interruptedFuture = new Future();
     this.firstFrameEmitted = false;
 
     this.onPlaybackFinished({
@@ -465,19 +497,31 @@ export class ParticipantAudioOutput extends AudioOutput {
     }
 
     if (this.flushTask && !this.flushTask.done) {
+      if (this.flushPushedDuration === this.pushedDuration) {
+        return;
+      }
+
       this.logger.error('flush called while playback is in progress');
       this.flushTask.cancel();
     }
 
-    this.flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    this.flushPushedDuration = this.pushedDuration;
+    const flushTask = Task.from((controller) => this.waitForPlayoutTask(controller));
+    this.flushTask = flushTask;
+    void flushTask.result
+      .finally(() => {
+        if (this.flushTask === flushTask) {
+          this.flushPushedDuration = undefined;
+        }
+      })
+      .catch(() => {});
   }
 
   clearBuffer(): void {
-    if (!this.pushedDuration) {
-      return;
+    // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
+    if (!this.interruptedFuture.done) {
+      this.interruptedFuture.resolve();
     }
-
-    this.interruptedFuture.resolve();
   }
 
   private async publishTrack(signal: AbortSignal) {

@@ -156,6 +156,13 @@ class SegmentSynchronizerImpl {
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
   private playbackCompleted: boolean = false;
+  private interrupted: boolean = false;
+
+  private pausedWallTime?: number;
+  /** Accumulated paused time in milliseconds; subtracted from wall-clock elapsed. */
+  private pausedDuration: number = 0;
+  /** Gate held closed while paused; the main task awaits it between words. */
+  private outputEnabledFuture: Future<void> = new Future();
 
   private logger = log();
 
@@ -190,6 +197,7 @@ class SegmentSynchronizerImpl {
     };
     this.outputStream = new IdentityTransform();
     this.outputStreamWriter = this.outputStream.writable.getWriter();
+    this.outputEnabledFuture.resolve();
 
     if (this.enabled) {
       this.mainTask()
@@ -307,12 +315,44 @@ class SegmentSynchronizerImpl {
     }
   }
 
+  pause(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.pause called after close');
+      return;
+    }
+    if (this.pausedWallTime === undefined) {
+      this.pausedWallTime = Date.now();
+    }
+    if (this.outputEnabledFuture.done) {
+      this.outputEnabledFuture = new Future();
+    }
+  }
+
+  resume(): void {
+    if (this.closed) {
+      this.logger.warn('SegmentSynchronizerImpl.resume called after close');
+      return;
+    }
+    if (this.pausedWallTime !== undefined) {
+      if (this.startWallTime !== undefined) {
+        // max() guards the case where pause() ran before startWallTime was set
+        // (e.g. a new impl is created while the synchronizer is already paused).
+        this.pausedDuration += Date.now() - Math.max(this.startWallTime, this.pausedWallTime);
+      }
+      this.pausedWallTime = undefined;
+    }
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
+  }
+
   markPlaybackFinished(_playbackPosition: number, interrupted: boolean) {
     if (this.closed) {
       this.logger.warn('SegmentSynchronizerImpl.markPlaybackFinished called after close');
       return;
     }
 
+    this.interrupted = interrupted;
     if (!this.textData.done || !this.audioData.done) {
       this.logger.warn(
         { textDone: this.textData.done, audioDone: this.audioData.done },
@@ -369,6 +409,13 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
+      if (!this.outputEnabledFuture.done) {
+        await this.outputEnabledFuture.await;
+        if (this.interrupted) {
+          return;
+        }
+      }
+
       if (this.closed && !this.playbackCompleted) {
         return;
       }
@@ -392,7 +439,7 @@ class SegmentSynchronizerImpl {
         this.outputStreamWriter.write(
           createTimedString({
             text: forwardedWord,
-            endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+            endTime: this.synchronizedElapsedSeconds(),
           }),
         );
         const cleanWords = this.options.splitWords(word);
@@ -405,7 +452,7 @@ class SegmentSynchronizerImpl {
       const cleanWords = this.options.splitWords(word);
       const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
       const wordHyphens = this.options.hyphenateWord(cleanWord).length;
-      const elapsedSeconds = (Date.now() - this.startWallTime) / 1000;
+      const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
       const annotated = this.audioData.annotatedRate;
@@ -438,7 +485,7 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: forwardedWord,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       await this.sleepIfNotClosed(delayTime / 2);
@@ -452,11 +499,19 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.write(
         createTimedString({
           text: remaining,
-          endTime: this.startWallTime ? (Date.now() - this.startWallTime) / 1000 : undefined,
+          endTime: this.synchronizedElapsedSeconds(),
         }),
       );
       this.textData.forwardedText += remaining;
     }
+  }
+
+  /** Elapsed audio-playback time in seconds — wall-clock minus paused time. */
+  private synchronizedElapsedSeconds(): number | undefined {
+    if (this.startWallTime === undefined) {
+      return undefined;
+    }
+    return (Date.now() - this.startWallTime - this.pausedDuration) / 1000;
   }
 
   private calcHyphens(text: string): string[] {
@@ -487,6 +542,10 @@ class SegmentSynchronizerImpl {
     }
 
     this.startFuture.resolve(); // avoid deadlock of mainTaskImpl in case it never started
+    // Release the pause gate so mainTask can observe `closed` and exit if close() ran while paused.
+    if (!this.outputEnabledFuture.done) {
+      this.outputEnabledFuture.resolve();
+    }
     // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
     if (!this.enabled && !this.textData.done) {
       this.outputStreamWriter.close();
@@ -532,6 +591,10 @@ export class TranscriptionSynchronizer {
   // the synchronizer transitions back to enabled
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
+
+  /** Pause state tracked at the synchronizer level so it can be reapplied across segment rotations.
+   * @internal */
+  _paused: boolean = false;
 
   private logger = log();
 
@@ -629,6 +692,10 @@ export class TranscriptionSynchronizer {
 
     await this._impl.close();
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
+
+    if (this._paused) {
+      this._impl.pause();
+    }
   }
 }
 
@@ -640,6 +707,22 @@ class SyncedAudioOutput extends AudioOutput {
     private nextInChainAudio: AudioOutput,
   ) {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
+  }
+
+  pause(): void {
+    super.pause();
+    this.synchronizer._paused = true;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.pause();
+    }
+  }
+
+  resume(): void {
+    super.resume();
+    this.synchronizer._paused = false;
+    if (!this.synchronizer._impl.closed) {
+      this.synchronizer._impl.resume();
+    }
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {

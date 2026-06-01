@@ -32,6 +32,30 @@ const OPENAI_RESPONSES_WS_URL = 'wss://api.openai.com/v1/responses';
 // OpenAI enforces a 60-minute maximum duration on Responses WebSocket connections.
 const WS_MAX_SESSION_DURATION = 3_600_000;
 
+/**
+ * Build the Responses-API WebSocket URL.
+ *
+ * Includes the model on the upgrade URL so OpenAI-compatible gateways
+ * (which can only see the URL at the WebSocket upgrade, not the subsequent
+ * `response.create` frame) can route by model. Mirrors the existing
+ * convention in `realtime/realtime_model.ts` for the conversational
+ * Realtime API. OpenAI's native endpoint accepts and ignores the
+ * parameter, so this is a no-op for direct connections.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function buildResponsesWsUrl(baseURL: string | undefined, model: string): string {
+  const base = baseURL
+    ? `${baseURL.replace(/^http(s?):/, 'ws$1:').replace(/\/+$/, '')}/responses`
+    : OPENAI_RESPONSES_WS_URL;
+  const url = new URL(base);
+  url.searchParams.set('model', model);
+  return url.toString();
+}
+
 // ============================================================================
 // Internal: ResponsesWebSocket
 //
@@ -187,9 +211,7 @@ export class WSLLM extends llm.LLM {
     this.#pool = new ConnectionPool<ResponsesWebSocket>({
       maxSessionDuration: WS_MAX_SESSION_DURATION,
       connectCb: async (timeoutMs: number) => {
-        const wsUrl = this.#opts.baseURL
-          ? `${this.#opts.baseURL.replace(/^https?/, 'wss').replace(/\/+$/, '')}/responses`
-          : OPENAI_RESPONSES_WS_URL;
+        const wsUrl = buildResponsesWsUrl(this.#opts.baseURL, String(this.#opts.model));
         const ws = await connectWs(wsUrl, this.#opts.apiKey!, timeoutMs);
         return new ResponsesWebSocket(ws);
       },

@@ -219,7 +219,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = Object.keys(toolCtx?.functionTools ?? {});
+        const toolNames = llm.sortedToolNames(toolCtx);
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
