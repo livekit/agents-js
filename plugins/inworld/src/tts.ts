@@ -555,6 +555,13 @@ class SynthesizeStream extends tts.SynthesizeStream {
       resolveProcessing = resolve;
       rejectProcessing = reject;
     });
+    // `processing` can be rejected (by onClose below, or a server status error)
+    // before it is awaited at the Promise.race() further down: if a send/flush
+    // throws first we jump straight to the catch block and skip the race. Attach
+    // a no-op handler so that early rejection is never an unhandled rejection
+    // (which aborts the process in Node >= 15). The real error still surfaces via
+    // the thrown send/flush/close, so retry behavior is unchanged.
+    processing.catch(() => {});
 
     // If the shared socket drops mid-turn, fail the turn fast with a retryable
     // error so the framework restarts it on a fresh connection, instead of
