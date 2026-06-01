@@ -483,17 +483,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   /**
-   * Arms the overall detection-timeout budget. It is started once in `execute()`
-   * — even before the participant audio track is published — as a backstop so a
-   * stuck/never-published track cannot make AMD hang forever, then re-armed in
-   * {@link gateListening} once the track is subscribed so the effective budget
-   * runs from track-up (mirrors python detector.py `_setup`, which arms
-   * `start_detection_timer()` only after `wait_for_track_publication` resolves).
+   * Arms the detection-timeout budget. Started in `execute()` as a backstop against a
+   * never-published track, then re-armed in {@link gateListening} at track-up so the
+   * effective budget runs from track-subscribe. Re-armable, hence the clear first.
    */
   private startDetectionTimer(): void {
-    // Re-armable: clear any prior handle so re-anchoring at track-up cannot leak
-    // the backstop timer. Mirrors python `start_detection_timer`'s single-arm
-    // guard, but here we deliberately allow a re-arm.
     this.clearTimer('detection');
     this.detectionTimer = setTimeout(() => this.settleDetectionTimeout(), this.detectionTimeoutMs);
   }
@@ -644,11 +638,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           return;
         }
 
-        // Re-anchor the detection budget at track-subscribe time (mirrors python
-        // detector.py `_setup`: `start_detection_timer()` runs right after
-        // `wait_for_track_publication`). The execute()-time arm above stays only
-        // as a backstop for the case where the track never publishes, so slow
-        // track subscription no longer eats into the listening budget.
+        // Re-anchor the budget at track-subscribe so slow subscription doesn't eat it.
         this.startDetectionTimer();
 
         const publicationSid = publication.sid;
@@ -660,14 +650,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
               )
             : undefined;
         if (!participant) {
-          // We resolved a published+subscribed audio track but can't tie it to a
-          // current participant — almost always because the publisher disconnected
-          // in the race window, so there is no live audio and no SIP call status
-          // left to gate on. Python returns here and lets the detection timeout
-          // settle AMD, but that strands the run for the full detectionTimeoutMs.
-          // Start listening instead (matching the .catch() fallback below) so the
-          // much shorter no-speech timer settles it as UNCERTAIN; if audio does
-          // somehow arrive we still classify it rather than going deaf.
+          // Publisher gone (disconnected in the race window): nothing to gate on.
+          // Start listening so the no-speech timer settles AMD instead of stranding
+          // it until the detection timeout.
           if (!this.settled) {
             this.startListening();
           }
@@ -855,12 +840,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // `_on_end_of_turn` → classifier `on_end_of_turn`.
     this.onEotReached();
 
-    // Gate on the *emitted* verdict, mirroring python detector `_on_end_of_turn`
-    // which checks `self._result` — only assigned in `_on_amd_prediction` after the
-    // verdict clears the two emission gates. `this.onEotReached()` above may emit
-    // synchronously (flipping `settled`); a verdict merely committed via `setVerdict`
-    // but still gated on post-speech silence must NOT skip the reply, otherwise we'd
-    // skip ahead of an interrupt/prediction that hasn't fired yet.
+    // Only skip once the verdict has actually emitted (`settled`): a committed-but-
+    // still-gated machine verdict must not skip ahead of its own interrupt/prediction.
     if (!this.interruptOnMachine || !this.settled || !this.verdictResult?.isMachine) {
       return false;
     }
@@ -1153,9 +1134,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private joinTranscript(): string {
-    // Space-join to match python classifier.py, which accumulates the transcript
-    // as `(self._transcript + " " + text).lstrip()` and feeds that single-line
-    // string to the LLM — the prompt's few-shot `Input:` examples are single-line.
+    // Single-line join: the prompt's few-shot `Input:` examples are single-line.
     return this.transcriptParts.join(' ');
   }
 

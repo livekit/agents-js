@@ -1117,14 +1117,8 @@ export async function waitForParticipantAttribute({
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    // Re-check AFTER registering listeners. The presence check is authoritative
-    // here, not just the attribute: if the participant vanished between the
-    // initial existence check and listener setup, no future ParticipantDisconnected
-    // callback is guaranteed to arrive for it, so reject instead of awaiting a
-    // future that could only settle on room-disconnect/abort. (In practice JS
-    // delivers room events as queued tasks, so a disconnect in that window fires
-    // after we await and is caught by the handler — this just makes the guarantee
-    // independent of that timing.)
+    // Re-check after registering: if the participant vanished in between, reject
+    // rather than await a future that could only settle on disconnect/abort.
     const current = room.remoteParticipants.get(identity);
     if (!current) {
       throw new Error(`Participant ${identity} is not in the room`);
