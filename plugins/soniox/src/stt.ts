@@ -162,7 +162,9 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #connectWS(): Promise<WebSocket> {
     const ws = new WebSocket(this.#opts.baseUrl);
+    let timedOut = false;
     const timeout = setTimeout(() => {
+      timedOut = true;
       ws.terminate();
     }, 10000);
 
@@ -173,8 +175,15 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
       });
     } catch (error) {
-      throw new APITimeoutError({
-        message: `Timeout connecting to or initializing Soniox Speech-to-Text API session: ${error}`,
+      // Only our own timeout above is a genuine timeout; every other failure
+      // (connection refused, DNS, handshake error) is a connection error.
+      if (timedOut) {
+        throw new APITimeoutError({
+          message: 'Timeout connecting to or initializing Soniox Speech-to-Text API session',
+        });
+      }
+      throw new APIConnectionError({
+        message: `Soniox Speech-to-Text API connection error: ${error}`,
       });
     } finally {
       clearTimeout(timeout);

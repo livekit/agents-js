@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, stt } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  APITimeoutError,
+  stt,
+} from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -17,6 +23,19 @@ import {
   processMessage,
 } from './_internal.js';
 import { STT } from './stt.js';
+
+// The failure-path tests below drive SpeechStream.mainTask, which re-throws
+// after emitting the 'error' event (the rethrow only drives `.finally()`
+// cleanup; the error is observed via the event). That produces a by-design
+// floating rejection that can land after the originating test returns, so the
+// handler is file-scoped. Swallow the expected API errors; let anything else
+// fail the run.
+const swallowExpectedRejection = (reason: unknown) => {
+  if (reason instanceof APIError) return;
+  throw reason;
+};
+beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
 // ---------------------------------------------------------------------------
 // TokenAccumulator: language-segment coalescing
@@ -334,13 +353,6 @@ async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
 }
 
 describe('SpeechStream server errors', () => {
-  // SpeechStream.mainTask re-throws after emitting the 'error' event (the
-  // rethrow only drives `.finally()` cleanup; the error is observed via the
-  // event). Suppress the resulting by-design unhandled rejection.
-  const swallowRejection = () => {};
-  beforeAll(() => process.on('unhandledRejection', swallowRejection));
-  afterAll(() => void process.off('unhandledRejection', swallowRejection));
-
   it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {
     const { wss, baseUrl } = await startWebSocketServer();
 
@@ -388,6 +400,33 @@ describe('SpeechStream server errors', () => {
     } finally {
       await closeWebSocketServer(wss);
     }
+  });
+
+  it('wraps a refused connection as APIConnectionError, not APITimeoutError', async () => {
+    // Bind a port, then release it, so connecting to it is refused immediately
+    // (rather than timing out). This must surface as a connection error.
+    const { wss, baseUrl } = await startWebSocketServer();
+    await closeWebSocketServer(wss);
+
+    const soniox = new STT({ apiKey: 'test-key', baseUrl });
+    const errorEvent = once(soniox, 'error') as Promise<Parameters<stt.STTCallbacks['error']>>;
+
+    const stream = soniox.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _ of stream) {
+        /* discard events */
+      }
+    })();
+
+    const [{ error }] = await errorEvent;
+    expect(error).toBeInstanceOf(APIConnectionError);
+    // APITimeoutError extends APIConnectionError, so this is the discriminating check.
+    expect(error).not.toBeInstanceOf(APITimeoutError);
+
+    stream.close();
+    await drain.catch(() => {});
   });
 });
 
