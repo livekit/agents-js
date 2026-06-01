@@ -21,7 +21,6 @@ const KEEPALIVE_MESSAGE = '{"type":"keepalive"}';
 // emits a `finished` response, then closes the connection.
 const END_OF_AUDIO_MESSAGE = Buffer.alloc(0);
 
-
 /** @public */
 export interface ContextGeneralItem {
   key: string;
