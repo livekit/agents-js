@@ -5,6 +5,7 @@ import {
   type APIConnectOptions,
   APIConnectionError,
   APIError,
+  APIStatusError,
   APITimeoutError,
   AudioByteStream,
   Future,
@@ -446,9 +447,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               this.#logger.debug({ error: serverMsg.error }, 'Cartesia sent a non-fatal error');
             } else {
               this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
-              throw new APIConnectionError({
+              throw new APIStatusError({
                 message: `Cartesia returned error: ${serverMsg.error}`,
-                options: { retryable: true },
+                options: { statusCode: serverMsg.status_code, retryable: true },
               });
             }
           }
