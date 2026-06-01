@@ -215,6 +215,10 @@ function* sendEndpointTranscript(
   options: ProcessMessageOptions,
 ): Generator<stt.SpeechEvent> {
   if (state.final.text) {
+    if (!state.isSpeaking) {
+      state.isSpeaking = true;
+      yield { type: stt.SpeechEventType.START_OF_SPEECH };
+    }
     yield {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
       alternatives: [
