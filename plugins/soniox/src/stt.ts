@@ -19,7 +19,8 @@ const BASE_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const KEEPALIVE_MESSAGE = '{"type":"keepalive"}';
 // An empty frame tells Soniox to end the session: it flushes remaining tokens,
 // emits a `finished` response, then closes the connection.
-const END_OF_AUDIO_MESSAGE = '';
+const END_OF_AUDIO_MESSAGE = Buffer.alloc(0);
+
 
 /** @public */
 export interface ContextGeneralItem {
