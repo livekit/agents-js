@@ -660,6 +660,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
               )
             : undefined;
         if (!participant) {
+          // We resolved a published+subscribed audio track but can't tie it to a
+          // current participant — almost always because the publisher disconnected
+          // in the race window, so there is no live audio and no SIP call status
+          // left to gate on. Python returns here and lets the detection timeout
+          // settle AMD, but that strands the run for the full detectionTimeoutMs.
+          // Start listening instead (matching the .catch() fallback below) so the
+          // much shorter no-speech timer settles it as UNCERTAIN; if audio does
+          // somehow arrive we still classify it rather than going deaf.
+          if (!this.settled) {
+            this.startListening();
+          }
           return;
         }
 

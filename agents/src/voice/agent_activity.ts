@@ -1072,6 +1072,16 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (ev.isFinal) {
+      // Forward realtime user transcripts to AMD as well. onFinalTranscript (the STT
+      // path that carries the AMD hook) bails early for a RealtimeModel with
+      // userTranscription, so without this an AMD relying on session transcripts
+      // (source 'stt', i.e. no dedicated STT) would never see the greeting and would
+      // always settle UNCERTAIN via timeout. Only final transcripts feed the
+      // classifier, mirroring the FINAL_TRANSCRIPT forward in onFinalTranscript.
+      // (Python has the same gap today — its realtime handler does not forward to
+      // AMD — so this is a deliberate improvement over the reference.)
+      this.agentSession.amd?.onTranscript(ev.transcript);
+
       const message = ChatMessage.create({
         role: 'user',
         content: ev.transcript,
