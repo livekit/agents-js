@@ -721,12 +721,12 @@ export class AgentActivity implements RecognitionHooks {
   //   );
   // }
 
-  // get maxEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.maxDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-  //   );
-  // }
+  get maxEndpointingDelay(): number {
+    return (
+      this.agent.turnHandling?.endpointing?.maxDelay ??
+      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+    );
+  }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -1071,6 +1071,10 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (ev.isFinal) {
+      if (!this.stt && ev.transcript) {
+        this.agentSession.amd?.onTranscript(ev.transcript);
+      }
+
       const message = ChatMessage.create({
         role: 'user',
         content: ev.transcript,
@@ -1137,6 +1141,8 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechStartTime,
       otelContext: otelContext.active(),
     });
+    // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_started().
+    this.agentSession.amd?.onUserSpeechStarted();
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
       // Pass speechStartTime as the absolute startedAt timestamp.
       this.audioRecognition.onStartOfOverlapSpeech(
@@ -1171,9 +1177,11 @@ export class AgentActivity implements RecognitionHooks {
 
   onEndOfSpeech(ev: VADEvent): void {
     let speechEndTime = Date.now();
+    let silenceDurationMs = 0;
     if (ev) {
       // Subtract both silenceDuration and inferenceDuration to correct for VAD model latency.
       speechEndTime = speechEndTime - ev.silenceDuration - ev.inferenceDuration;
+      silenceDurationMs = ev.silenceDuration;
     }
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
       // Pass speechEndTime as the absolute endedAt timestamp.
@@ -1186,6 +1194,8 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechEndTime,
       otelContext: otelContext.active(),
     });
+    // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_ended(ev.silence_duration).
+    this.agentSession.amd?.onUserSpeechEnded(silenceDurationMs);
 
     if (this.pausedSpeech) {
       this.startFalseInterruptionTimer(this.pausedSpeech.timeout);
@@ -1349,6 +1359,8 @@ export class AgentActivity implements RecognitionHooks {
         speakerId: ev.alternatives![0].speakerId ?? null,
       }),
     );
+    // Mirrors python AudioRecognition._on_stt_event → amd._on_transcript(transcript).
+    this.agentSession.amd?.onTranscript(ev.alternatives![0].text);
 
     // agent speech might not be interrupted if VAD failed and a final transcript is received
     // we call interruptByAudioActivity (idempotent) to pause the speech, if possible
@@ -1580,6 +1592,16 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
+    // When AMD has taken over the turn with a machine verdict, the caller drives
+    // its own reply (e.g. leaving a voicemail). Cancel any post-verdict preemptive
+    // generation and mark the turn so the normal auto-reply is skipped, otherwise
+    // it would race with — and interrupt — the caller's generateReply.
+    const amd = this.agentSession?.amd;
+    if (amd && amd.onEndOfTurn(info)) {
+      this.cancelPreemptiveGeneration();
+      info.skipReply = true;
+    }
+
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.cancelPreemptiveGeneration();
       this.logger.warn(
@@ -1972,6 +1994,24 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  /**
+   * Commit a user turn whose reply is being skipped: append the transcript to the
+   * agent chat context (when non-empty) without triggering reply generation.
+   * Mirrors the python `_on_user_turn_completed` `skip_reply` branch.
+   */
+  private commitSkippedUserTurn(info: EndOfTurnInfo): void {
+    if (info.newTranscript === '') {
+      return;
+    }
+    const userMessage = ChatMessage.create({
+      role: 'user',
+      content: info.newTranscript,
+      transcriptConfidence: info.transcriptConfidence,
+    });
+    this.agent._chatCtx.items.push(userMessage);
+    this.agentSession._conversationItemAdded(userMessage);
+  }
+
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
     if (oldTask) {
       // We never cancel user code as this is very confusing.
@@ -1994,7 +2034,20 @@ export class AgentActivity implements RecognitionHooks {
       if (this.llm.capabilities.turnDetection) {
         return;
       }
-      this.realtimeSession?.commitAudio();
+      if (this.realtimeSession) {
+        if (info.skipReply) {
+          this.commitSkippedUserTurn(info);
+          return;
+        }
+        this.realtimeSession.commitAudio();
+      }
+    }
+
+    // The reply is being driven elsewhere (e.g. AMD leaving a voicemail). Commit the
+    // user turn to chat context but don't generate or interrupt anything.
+    if (info.skipReply) {
+      this.commitSkippedUserTurn(info);
+      return;
     }
 
     // Capture into a local before awaiting cancelSpeechPause: the main scheduling

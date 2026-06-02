@@ -763,6 +763,16 @@ export class AgentSession<
   }
 
   /**
+   * The currently running activity, or `undefined` when none is active. Mirrors
+   * python `session._activity` — exposed so tightly-coupled internals (e.g. AMD)
+   * can read activity state such as the endpointing delay.
+   * @internal
+   */
+  get _activity(): AgentActivity | undefined {
+    return this.activity;
+  }
+
+  /**
    * @internal — forwarded to {@link SessionHost} so a connected
    * {@link RemoteSession} peer receives an `amd_prediction` event when AMD
    * settles. Mirrors python `AgentSession._session_host._on_amd_prediction`.
