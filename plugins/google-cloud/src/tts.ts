@@ -475,7 +475,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
       sendLastFrame(true);
     } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (this.abortSignal.aborted || isAbortError(error)) {
         return;
       }
 
@@ -562,6 +562,10 @@ function destroyStreamingCall(call: GoogleStreamingCall, error: unknown): void {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 async function synthesizeSpeechWithAbort(
   client: TextToSpeechClient,
   request: SynthesizeSpeechRequest,
@@ -635,6 +639,9 @@ function toLiveKitTtsError(error: unknown): Error {
   };
 
   if (typeof maybeGoogleError.code === 'number') {
+    // Google returns gRPC status codes here (0-16), not HTTP status codes.
+    // Retryability is set explicitly so APIStatusError's HTTP 4xx heuristic
+    // does not classify these provider errors for us.
     const retryable =
       maybeGoogleError.code === 4 ||
       maybeGoogleError.code === 8 ||
