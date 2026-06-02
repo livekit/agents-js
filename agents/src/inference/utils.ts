@@ -55,7 +55,7 @@ export async function createAccessToken(
 
 /**
  * Build metadata headers for inference requests.
- * Includes SDK version/platform, and optionally room/job IDs from the current job context.
+ * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -70,6 +70,10 @@ export function buildMetadataHeaders(): Record<string, string> {
     }
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
+    }
+    const agentSid = ctx.agent?.sid;
+    if (agentSid) {
+      headers['X-LiveKit-Agent-Id'] = agentSid;
     }
   }
 
