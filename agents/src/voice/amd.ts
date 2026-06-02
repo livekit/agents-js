@@ -101,8 +101,10 @@ export interface AMDOptions {
   /**
    * Fallback end-of-turn delay (ms). When the session turn detector never
    * commits a turn, this synthetic backstop, armed when speech ends, sets the
-   * end-of-turn so a gated verdict can still emit. Mirrors python
-   * `max_endpointing_delay`.
+   * end-of-turn so a gated verdict can still emit. Defaults to the running
+   * session activity's endpointing `maxDelay` (so the backstop tracks the real
+   * turn detector), or {@link DEFAULT_MAX_ENDPOINTING_DELAY_MS} when no activity
+   * is available. Mirrors python `max_endpointing_delay`.
    */
   maxEndpointingDelayMs?: number;
   /** Override the AMD classification system prompt. */
@@ -349,7 +351,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.machineSilenceThresholdMs =
       options.machineSilenceThresholdMs ?? MACHINE_SILENCE_THRESHOLD_MS;
     this.waitUntilFinished = options.waitUntilFinished ?? false;
-    this.maxEndpointingDelayMs = options.maxEndpointingDelayMs ?? DEFAULT_MAX_ENDPOINTING_DELAY_MS;
+    // Mirrors python `_resolve_classifier`: default to the session activity's
+    // max_endpointing_delay so the backstop tracks the real turn detector, falling
+    // back to the constant when no activity is running (or it's not configured).
+    this.maxEndpointingDelayMs =
+      options.maxEndpointingDelayMs ??
+      this.session._activity?.maxEndpointingDelay ??
+      DEFAULT_MAX_ENDPOINTING_DELAY_MS;
     this.prompt = options.prompt ?? AMD_PROMPT;
     this.participantIdentity = options.participantIdentity;
 

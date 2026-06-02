@@ -722,12 +722,12 @@ export class AgentActivity implements RecognitionHooks {
   //   );
   // }
 
-  // get maxEndpointingDelay(): number {
-  //   return (
-  //     this.agent.turnHandling?.endpointing?.maxDelay ??
-  //     this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-  //   );
-  // }
+  get maxEndpointingDelay(): number {
+    return (
+      this.agent.turnHandling?.endpointing?.maxDelay ??
+      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
+    );
+  }
 
   get toolCtx(): ToolContext {
     return this.agent.toolCtx;
@@ -1072,10 +1072,9 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (ev.isFinal) {
-      // Realtime user-transcription path: onFinalTranscript (which carries the AMD
-      // hook) doesn't run here, so forward directly or a source='stt' AMD would
-      // never see the greeting.
-      this.agentSession.amd?.onTranscript(ev.transcript);
+      if (!this.stt && ev.transcript) {
+        this.agentSession.amd?.onTranscript(ev.transcript);
+      }
 
       const message = ChatMessage.create({
         role: 'user',
