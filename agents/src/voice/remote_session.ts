@@ -265,7 +265,6 @@ export class TcpSessionTransport extends SessionTransport {
   private readonly port: number;
   private socket: net.Socket | null = null;
   private closed = false;
-  private readonly _logger = log();
 
   constructor(host: string, port: number) {
     super();
@@ -324,7 +323,7 @@ export class TcpSessionTransport extends SessionTransport {
         while (buffer.length >= TCP_HEADER_SIZE) {
           const length = buffer.readUInt32BE(0);
           if (length > TCP_MAX_MESSAGE_SIZE) {
-            this._logger.error({ length }, 'TCP session message too large, closing transport');
+            log().error({ length }, 'TCP session message too large, closing transport');
             return;
           }
           if (buffer.length < TCP_HEADER_SIZE + length) break;
@@ -336,7 +335,7 @@ export class TcpSessionTransport extends SessionTransport {
           try {
             msg = pb.AgentSessionMessage.fromBinary(payload);
           } catch (e) {
-            this._logger.warn({ error: e }, 'failed to parse TCP session message');
+            log().warn({ error: e }, 'failed to parse TCP session message');
             continue;
           }
           yield msg;
@@ -344,7 +343,7 @@ export class TcpSessionTransport extends SessionTransport {
       }
     } catch (e) {
       if (!this.closed) {
-        this._logger.warn({ error: e }, 'TCP session transport read error');
+        log().warn({ error: e }, 'TCP session transport read error');
       }
     }
   }
