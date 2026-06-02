@@ -48,6 +48,7 @@ interface RealtimeOptions {
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
   tracing?: api_proto.TracingConfig | null;
+  reasoning?: api_proto.RealtimeReasoning | null;
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
@@ -130,6 +131,7 @@ const DEFAULT_REALTIME_MODEL_OPTIONS = {
   connOptions: DEFAULT_API_CONNECT_OPTIONS,
   modalities: ['text', 'audio'] as Modality[],
   tracing: undefined as api_proto.TracingConfig | undefined,
+  reasoning: undefined as api_proto.RealtimeReasoning | undefined,
 };
 export class RealtimeModel extends llm.RealtimeModel {
   sampleRate = api_proto.SAMPLE_RATE;
@@ -171,6 +173,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection?: api_proto.TurnDetectionType | null;
       speed?: number;
       tracing?: api_proto.TracingConfig | null;
+      reasoning?: api_proto.RealtimeReasoning | null;
       azureDeployment?: string;
       apiKey?: string;
       entraToken?: string;
@@ -267,6 +270,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     turnDetection = AZURE_DEFAULT_TURN_DETECTION,
     speed,
     tracing,
+    reasoning,
   }: {
     azureDeployment: string;
     azureEndpoint?: string;
@@ -282,6 +286,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     turnDetection?: api_proto.TurnDetectionType;
     speed?: number;
     tracing?: api_proto.TracingConfig;
+    reasoning?: api_proto.RealtimeReasoning | null;
   }) {
     apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
     if (!apiKey && !entraToken) {
@@ -315,6 +320,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       turnDetection,
       speed,
       tracing,
+      reasoning,
       apiKey,
       azureDeployment,
       apiVersion,
@@ -508,6 +514,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           tool_choice: toOaiToolChoice(opts.toolChoice),
           max_response_output_tokens: maxOutputTokens,
           speed: opts.speed,
+          ...(opts.reasoning != null && { reasoning: opts.reasoning }),
           instructions: this.instructions,
         },
       };
@@ -538,6 +545,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         max_output_tokens: maxOutputTokens,
         tool_choice: toOaiToolChoice(opts.toolChoice),
         tracing: opts.tracing,
+        ...(opts.reasoning != null && { reasoning: opts.reasoning }),
         instructions: this.instructions,
       },
     };
@@ -774,23 +782,44 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
-    const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
-    const nextToolChoice = toOaiToolChoice(toolChoice);
-    if (currentToolChoice === nextToolChoice) {
-      this._options.toolChoice = toolChoice;
-      return;
-    }
-
+  updateOptions({
+    toolChoice,
+    reasoning,
+  }: {
+    toolChoice?: llm.ToolChoice;
+    reasoning?: api_proto.RealtimeReasoning | null;
+  }): void {
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     const options: api_proto.SessionUpdateEvent['session'] = {
       ...(!isLegacyAzure && { type: 'realtime' }),
     };
+    let hasChanges = false;
 
-    this._options.toolChoice = toolChoice;
-    options.tool_choice = toOaiToolChoice(toolChoice);
+    if (toolChoice !== undefined) {
+      const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
+      const nextToolChoice = toOaiToolChoice(toolChoice);
+      this._options.toolChoice = toolChoice;
+      if (currentToolChoice !== nextToolChoice) {
+        options.tool_choice = nextToolChoice;
+        hasChanges = true;
+      }
+    }
+
+    if (reasoning !== undefined) {
+      const currentReasoning = this._options.reasoning ?? null;
+      const nextReasoning = reasoning ?? null;
+      if (JSON.stringify(currentReasoning) !== JSON.stringify(nextReasoning)) {
+        options.reasoning = reasoning;
+        hasChanges = true;
+      }
+      this._options.reasoning = reasoning;
+    }
 
     // TODO(brian): add other options here
+
+    if (!hasChanges) {
+      return;
+    }
 
     this.sendEvent({
       type: 'session.update',

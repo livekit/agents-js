@@ -153,6 +153,10 @@ export interface RealtimeAudioConfig {
   output?: RealtimeAudioConfigOutput;
 }
 
+export interface RealtimeReasoning {
+  effort?: 'none' | 'low' | 'medium' | 'high' | string;
+}
+
 export interface InputTextContent {
   type: 'input_text';
   text: string;
@@ -329,6 +333,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     audio?: RealtimeAudioConfig; // GA: nested audio config
     max_output_tokens?: number | 'inf'; // GA: renamed from max_response_output_tokens
     tracing?: TracingConfig | null; // GA: tracing config
+    reasoning?: RealtimeReasoning | null;
     // Common fields
     model: Model;
     instructions: string;
