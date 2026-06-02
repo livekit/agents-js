@@ -7,6 +7,7 @@ import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type {
@@ -228,6 +229,103 @@ export class RoomSessionTransport extends SessionTransport {
         });
       },
     };
+  }
+}
+
+const TCP_HEADER_SIZE = 4;
+const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
+const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
+
+/**
+ * {@link SessionTransport} that frames protobuf messages over a raw TCP socket.
+ *
+ * @experimental
+ */
+export class TcpSessionTransport extends SessionTransport {
+  private readonly host: string;
+  private readonly port: number;
+  private socket: net.Socket | null = null;
+  private closed = false;
+  private readonly _logger = log();
+
+  constructor(host: string, port: number) {
+    super();
+    this.host = host;
+    this.port = port;
+  }
+
+  override async start(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.createConnection({ host: this.host, port: this.port }, () => {
+        socket.setNoDelay(true);
+        socket.removeListener('error', onConnectError);
+        this.socket = socket;
+        resolve();
+      });
+      const onConnectError = (err: Error) => {
+        socket.destroy();
+        reject(err);
+      };
+      socket.once('error', onConnectError);
+    });
+  }
+
+  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+    if (this.closed || this.socket === null) return;
+
+    const data = msg.toBinary();
+    const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
+    header.writeUInt32BE(data.length, 0);
+    const flushed = this.socket.write(Buffer.concat([header, data]));
+
+    // Only block on backpressure once the write buffer is backed up.
+    if (!flushed && this.socket.writableLength > TCP_DRAIN_THRESHOLD) {
+      await new Promise<void>((resolve) => this.socket!.once('drain', resolve));
+    }
+  }
+
+  override async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
+  override async *[Symbol.asyncIterator](): AsyncIterableIterator<pb.AgentSessionMessage> {
+    const socket = this.socket;
+    if (socket === null) return;
+
+    let buffer = Buffer.alloc(0);
+    try {
+      for await (const chunk of socket) {
+        buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+
+        while (buffer.length >= TCP_HEADER_SIZE) {
+          const length = buffer.readUInt32BE(0);
+          if (length > TCP_MAX_MESSAGE_SIZE) {
+            this._logger.error({ length }, 'TCP session message too large, closing transport');
+            return;
+          }
+          if (buffer.length < TCP_HEADER_SIZE + length) break;
+
+          const payload = buffer.subarray(TCP_HEADER_SIZE, TCP_HEADER_SIZE + length);
+          buffer = buffer.subarray(TCP_HEADER_SIZE + length);
+
+          let msg: pb.AgentSessionMessage;
+          try {
+            msg = pb.AgentSessionMessage.fromBinary(payload);
+          } catch (e) {
+            this._logger.warn({ error: e }, 'failed to parse TCP session message');
+            continue;
+          }
+          yield msg;
+        }
+      }
+    } catch (e) {
+      if (!this.closed) {
+        this._logger.warn({ error: e }, 'TCP session transport read error');
+      }
+    }
   }
 }
 
@@ -795,7 +893,34 @@ export class SessionHost {
             sdkVersion: version,
           }),
         });
+      case 'updateIo':
+        return this.handleUpdateIo(req.requestId, req.request.value);
     }
+  }
+
+  private async handleUpdateIo(
+    requestId: string,
+    update: pb.SessionRequest_UpdateIO,
+  ): Promise<void> {
+    const session = this.session!;
+    // Each field is proto3 `optional`; only apply the ones the peer actually set.
+    // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
+    if (update.input?.audioEnabled !== undefined) {
+      session.input.setAudioEnabled(update.input.audioEnabled);
+    }
+    if (update.output) {
+      if (update.output.audioEnabled !== undefined) {
+        session.output.setAudioEnabled(update.output.audioEnabled);
+      }
+      if (update.output.transcriptionEnabled !== undefined) {
+        session.output.setTranscriptionEnabled(update.output.transcriptionEnabled);
+      }
+    }
+
+    return this.sendResponse(requestId, {
+      case: 'updateIo',
+      value: new pb.SessionResponse_UpdateIOResponse(),
+    });
   }
 
   private async handleGetChatHistory(requestId: string): Promise<void> {
