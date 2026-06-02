@@ -335,6 +335,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    const recorderIO = session._recorderIO;
+    if (recorderIO?.recording) {
+      this.#logger.warn('recorder_io is still recording at session end, closing it');
+      await recorderIO.close();
+    }
+
     const report = this.makeSessionReport(session);
 
     // TODO(brian): Implement CLI/console
