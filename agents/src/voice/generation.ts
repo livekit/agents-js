@@ -23,7 +23,6 @@ import {
   isAgentHandoff,
   isFunctionTool,
   isToolError,
-  sortedToolNames,
 } from '../llm/tool_context.js';
 import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
@@ -488,7 +487,7 @@ export function performLLMInference(
       traceTypes.ATTR_CHAT_CTX,
       JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
     );
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
 
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);

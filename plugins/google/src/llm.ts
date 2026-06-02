@@ -218,7 +218,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = llm.sortedToolNames(toolCtx);
+        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
