@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-liveavatar",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "LiveAvatar avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
