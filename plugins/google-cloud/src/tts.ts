@@ -222,6 +222,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const call = this.#tts.client.streamingSynthesize();
     let tokenizer: tokenize.SentenceStream | undefined;
     let tasks: Promise<void>[] | undefined;
+    const attemptController = new AbortController();
     const abort = () => {
       try {
         call.cancel();
@@ -245,19 +246,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       tokenizer = new tokenize.basic.SentenceTokenizer().stream();
       tasks = [
-        this.#tokenizeInput(tokenizer),
+        this.#tokenizeInput(tokenizer, attemptController.signal),
         this.#sendText(call, tokenizer),
         this.#receiveAudio(call, requestId),
       ];
 
       await Promise.all(tasks);
     } catch (error: unknown) {
+      // Do not close this.input here: it belongs to the base stream and must
+      // remain usable if the base retry loop invokes run() again.
+      attemptController.abort();
       tokenizer?.close();
       if (tasks) {
         destroyStreamingCall(call, error);
-        if (!this.input.closed) {
-          this.input.close();
-        }
         await Promise.allSettled(tasks);
       } else {
         call.destroy();
@@ -274,14 +275,29 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       throw toLiveKitTtsError(error);
     } finally {
       this.abortSignal.removeEventListener('abort', abort);
+      attemptController.abort();
       tokenizer?.close();
       call.destroy();
     }
   }
 
-  async #tokenizeInput(tokenizer: tokenize.SentenceStream): Promise<void> {
+  async #tokenizeInput(
+    tokenizer: tokenize.SentenceStream,
+    attemptSignal: AbortSignal,
+  ): Promise<void> {
+    const input = this.input as {
+      next(options: {
+        signal?: AbortSignal;
+      }): Promise<IteratorResult<string | typeof SynthesizeStream.FLUSH_SENTINEL>>;
+    };
+
     try {
-      for await (const data of this.input) {
+      while (!attemptSignal.aborted) {
+        const { value: data, done } = await input.next({ signal: attemptSignal });
+        if (done || attemptSignal.aborted) {
+          break;
+        }
+
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           tokenizer.flush();
           continue;
@@ -290,7 +306,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         tokenizer.pushText(data);
       }
 
-      tokenizer.endInput();
+      if (!attemptSignal.aborted) {
+        tokenizer.endInput();
+      }
     } catch {
       // Stream shutdown can close tokenizer/input concurrently.
     }

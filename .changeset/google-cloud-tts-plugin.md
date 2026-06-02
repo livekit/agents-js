@@ -1,5 +1,6 @@
 ---
 "@livekit/agents-plugin-google-cloud": patch
+"@livekit/agents": patch
 ---
 
 feat: add Google Cloud Text-to-Speech plugin
