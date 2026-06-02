@@ -17,8 +17,6 @@ export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended
  *
  * Ref: https://developers.openai.com/api/reference/resources/realtime/subresources/calls/methods/accept
  */
-export type ReasoningCapableModel = 'gpt-realtime-2' | `gpt-realtime-2-${string}`;
-
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface Reasoning {

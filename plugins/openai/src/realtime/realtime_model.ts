@@ -159,10 +159,9 @@ export class RealtimeModel extends llm.RealtimeModel {
   }
 
   constructor(
-    options: (
-      | { model: api_proto.ReasoningCapableModel; reasoning?: api_proto.Reasoning }
-      | { model?: string; reasoning?: never }
-    ) & {
+    options: {
+      model?: string; 
+      reasoning?: api_proto.Reasoning;
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
