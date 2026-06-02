@@ -117,6 +117,7 @@ export class RecorderIO {
 
       if (this.forwardTask) {
         await cancelAndWait([this.forwardTask]);
+        this.forwardTask = undefined;
       }
 
       await this.inChan.close();
@@ -388,13 +389,15 @@ export class RecorderIO {
     } catch (err) {
       this.logger.error({ err }, 'Error in encode task');
     } finally {
-      inReader.releaseLock();
-      outReader.releaseLock();
-      this.inResampler?.close();
-      this.outResampler?.close();
-
-      if (!this.closeFuture.done) {
-        this.closeFuture.resolve();
+      try {
+        inReader.releaseLock();
+        outReader.releaseLock();
+        this.inResampler?.close();
+        this.outResampler?.close();
+      } finally {
+        if (!this.closeFuture.done) {
+          this.closeFuture.resolve();
+        }
       }
     }
   }
@@ -784,7 +787,7 @@ function splitFrame(frame: AudioFrame, position: number): [AudioFrame, AudioFram
   }
 
   // samplesNeeded is samples per channel (i.e., sample count in time)
-  const samplesNeeded = Math.floor(position * frame.sampleRate);
+  const samplesNeeded = Math.min(Math.floor(position * frame.sampleRate), frame.samplesPerChannel);
   // Int16Array: each element is one sample, interleaved by channel
   // So total elements = samplesPerChannel * channels
   const numChannels = frame.channels;
