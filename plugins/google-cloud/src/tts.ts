@@ -16,7 +16,6 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { once } from 'node:events';
 import type { TTSGender, TTSLanguage, TTSModel } from './models.js';
 
 const NUM_CHANNELS = 1;
@@ -253,13 +252,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       await Promise.all(tasks);
     } catch (error: unknown) {
-      call.destroy();
       tokenizer?.close();
       if (tasks) {
+        destroyStreamingCall(call, error);
         if (!this.input.closed) {
           this.input.close();
         }
         await Promise.allSettled(tasks);
+      } else {
+        call.destroy();
       }
 
       if (this.abortSignal.aborted) {
@@ -518,7 +519,47 @@ async function writeStreamingRequest(
     return;
   }
 
-  await once(call, 'drain');
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      call.off('drain', onDrain);
+      call.off('error', onError);
+      call.off('close', onClose);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(
+        new APIConnectionError({
+          message: 'Google Cloud TTS stream closed while waiting for drain',
+          options: { retryable: true },
+        }),
+      );
+    };
+
+    call.once('drain', onDrain);
+    call.once('error', onError);
+    call.once('close', onClose);
+  });
+}
+
+function destroyStreamingCall(call: GoogleStreamingCall, error: unknown): void {
+  const streamError =
+    error instanceof Error ? error : new Error('Google Cloud TTS streaming request failed');
+  const ignoreDestroyError = () => {};
+
+  call.on('error', ignoreDestroyError);
+  try {
+    call.destroy(streamError);
+  } finally {
+    call.off('error', ignoreDestroyError);
+  }
 }
 
 async function synthesizeSpeechWithAbort(
@@ -595,6 +636,7 @@ function toLiveKitTtsError(error: unknown): Error {
 
   if (typeof maybeGoogleError.code === 'number') {
     const retryable =
+      maybeGoogleError.code === 4 ||
       maybeGoogleError.code === 8 ||
       maybeGoogleError.code === 10 ||
       maybeGoogleError.code === 13 ||
