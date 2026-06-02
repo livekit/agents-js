@@ -7,7 +7,7 @@ import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
 import { asError } from '../../utils.js';
-import { DEFAULT_INFERENCE_URL, STAGING_INFERENCE_URL, getDefaultInferenceUrl } from '../utils.js';
+import { getDefaultInferenceUrl } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
 import { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
@@ -19,7 +19,7 @@ type InterruptionCallbacks = {
   error: (error: InterruptionDetectionError) => void;
 };
 
-export type AdaptiveInterruptionDetectorOptions = Omit<Partial<InterruptionOptions>, 'useProxy'>;
+export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
 
 export class AdaptiveInterruptionDetector extends (EventEmitter as new () => TypedEventEmitter<InterruptionCallbacks>) {
   options: InterruptionOptions;
@@ -47,45 +47,24 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     }
 
     const lkBaseUrl = baseUrl ?? process.env.LIVEKIT_REMOTE_EOT_URL ?? getDefaultInferenceUrl();
-    let lkApiKey = apiKey || '';
-    let lkApiSecret = apiSecret || '';
-    let useProxy: boolean;
 
-    // Use LiveKit credentials if using the inference service (production or staging)
-    const isInferenceUrl =
-      lkBaseUrl === DEFAULT_INFERENCE_URL || lkBaseUrl === STAGING_INFERENCE_URL;
-    if (isInferenceUrl) {
-      lkApiKey =
-        apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || '';
-      if (!lkApiKey) {
-        throw new TypeError(
-          'apiKey is required, either as argument or set LIVEKIT_API_KEY environmental variable',
-        );
-      }
-
-      lkApiSecret =
-        apiSecret ||
-        process.env.LIVEKIT_INFERENCE_API_SECRET ||
-        process.env.LIVEKIT_API_SECRET ||
-        '';
-      if (!lkApiSecret) {
-        throw new TypeError(
-          'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
-        );
-      }
-      useProxy = true;
-    } else {
-      useProxy = false;
+    // Adaptive interruption is inference-gateway-only and always connects over WebSocket,
+    // so LiveKit credentials are always required.
+    const lkApiKey =
+      apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || '';
+    if (!lkApiKey) {
+      throw new TypeError(
+        'apiKey is required, either as argument or set LIVEKIT_API_KEY environmental variable',
+      );
     }
-    const transport = useProxy ? 'websocket' : 'http';
-    this.logger.debug(
-      {
-        baseUrl: lkBaseUrl,
-        useProxy,
-        transport,
-      },
-      '=== Resolved interruption detector transport configuration',
-    );
+
+    const lkApiSecret =
+      apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET || '';
+    if (!lkApiSecret) {
+      throw new TypeError(
+        'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
+      );
+    }
 
     this.options = {
       sampleRate: SAMPLE_RATE,
@@ -98,7 +77,6 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       baseUrl: lkBaseUrl,
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
-      useProxy,
       minInterruptionDurationInS,
     };
 
@@ -111,10 +89,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
         audioPrefixDurationInS: this.options.audioPrefixDurationInS,
         maxAudioDurationInS: this.options.maxAudioDurationInS,
         minFrames: this.options.minFrames,
-        threshold: this.options.threshold,
+        threshold: this.options.threshold ?? null,
         inferenceTimeout: this.options.inferenceTimeout,
-        useProxy: this.options.useProxy,
-        transport,
       },
       '=== Adaptive interruption detector initialized',
     );

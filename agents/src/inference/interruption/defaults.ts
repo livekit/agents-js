@@ -36,12 +36,13 @@ export function intervalForRetry(
 }
 
 // env-derived fields are resolved in the constructor, not at module load.
+// `threshold` is intentionally omitted: when the user does not override it, it stays undefined
+// so the server applies its fetched default.
 export const interruptionOptionDefaults: Omit<
   InterruptionOptions,
-  'baseUrl' | 'useProxy' | 'apiKey' | 'apiSecret'
+  'baseUrl' | 'apiKey' | 'apiSecret' | 'threshold'
 > = {
   sampleRate: SAMPLE_RATE,
-  threshold: THRESHOLD,
   minFrames: Math.ceil(MIN_INTERRUPTION_DURATION_IN_S * FRAMES_PER_SECOND),
   maxAudioDurationInS: MAX_AUDIO_DURATION_IN_S,
   audioPrefixDurationInS: AUDIO_PREFIX_DURATION_IN_S,

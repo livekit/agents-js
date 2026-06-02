@@ -56,6 +56,7 @@ export async function createAccessToken(
 /**
  * Build metadata headers for inference requests.
  * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
+ * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -76,6 +77,10 @@ export function buildMetadataHeaders(): Record<string, string> {
       if (agentSid) {
         headers['X-LiveKit-Agent-Id'] = agentSid;
       }
+    }
+    const workerToken = process.env.LIVEKIT_WORKER_TOKEN;
+    if (workerToken) {
+      headers['X-LiveKit-Worker-Token'] = workerToken;
     }
   }
 

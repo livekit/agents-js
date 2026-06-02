@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
 import { buildMetadataHeaders, createAccessToken } from '../utils.js';
+import { THRESHOLD } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -26,7 +27,11 @@ export interface WsTransportOptions {
   apiKey: string;
   apiSecret: string;
   sampleRate: number;
-  threshold: number;
+  /**
+   * Only set when the user explicitly overrides the threshold; omitted otherwise so the server
+   * applies its fetched default.
+   */
+  threshold?: number;
   minFrames: number;
   timeout: number;
   connectTimeout: number;
@@ -42,6 +47,9 @@ export interface WsTransportState {
 const wsMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal(MSG_SESSION_CREATED),
+    // The server-recommended interruption threshold. Used as the effective threshold when the
+    // user has not explicitly overridden it.
+    default_threshold: z.number().nullish(),
   }),
   z.object({
     type: z.literal(MSG_SESSION_CLOSED),
@@ -187,15 +195,20 @@ export function createWsTransport(
     ws = await connectWebSocket(options);
     setupMessageHandler(ws);
 
+    const settings: Record<string, unknown> = {
+      sample_rate: options.sampleRate,
+      num_channels: 1,
+      min_frames: options.minFrames,
+      encoding: 's16le',
+    };
+    // Only send the threshold when the user explicitly overrode it; otherwise let the server
+    // apply its fetched default.
+    if (options.threshold !== undefined) {
+      settings.threshold = options.threshold;
+    }
     const sessionCreateMsg = JSON.stringify({
       type: MSG_SESSION_CREATE,
-      settings: {
-        sample_rate: options.sampleRate,
-        num_channels: 1,
-        threshold: options.threshold,
-        min_frames: options.minFrames,
-        encoding: 's16le',
-      },
+      settings,
     });
     ws.send(sessionCreateMsg);
   }
@@ -204,9 +217,28 @@ export function createWsTransport(
     const state = getState();
 
     switch (message.type) {
-      case MSG_SESSION_CREATED:
-        logger.debug('WebSocket session created');
+      case MSG_SESSION_CREATED: {
+        // The server makes the actual decision: when we omit the threshold from session.create
+        // (no user override) it uses its fetched default. Resolve the effective value here only
+        // for observability, with THRESHOLD as the backup.
+        let effectiveThreshold: number;
+        if (options.threshold !== undefined) {
+          effectiveThreshold = options.threshold;
+        } else if (message.default_threshold != null) {
+          effectiveThreshold = message.default_threshold;
+        } else {
+          effectiveThreshold = THRESHOLD;
+        }
+        logger.debug(
+          {
+            defaultThreshold: message.default_threshold,
+            effectiveThreshold,
+            userOverride: options.threshold !== undefined,
+          },
+          'adaptive interruption session created',
+        );
         break;
+      }
 
       case MSG_INTERRUPTION_DETECTED: {
         const createdAt = message.created_at;
