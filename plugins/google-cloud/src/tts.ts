@@ -8,6 +8,7 @@ import {
   APIConnectionError,
   APIError,
   APIStatusError,
+  type AsyncIterableQueue,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   log,
@@ -44,6 +45,9 @@ type CancellableSynthesizeSpeechCall = (
   request: SynthesizeSpeechRequest,
   options?: SynthesizeSpeechCallOptions,
 ) => CancellablePromise<SynthesizeSpeechResult>;
+type AbortableAsyncIterableQueue<T> = AsyncIterableQueue<T> & {
+  next(options: { signal?: AbortSignal }): Promise<IteratorResult<T>>;
+};
 
 // ---------------------------------------------------------------------------
 // Options
@@ -227,7 +231,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       try {
         call.cancel();
       } catch {
-        call.destroy();
+        destroyStreamingCall(call, new Error('Google Cloud TTS stream cancelled'));
       }
     };
 
@@ -285,11 +289,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     tokenizer: tokenize.SentenceStream,
     attemptSignal: AbortSignal,
   ): Promise<void> {
-    const input = this.input as {
-      next(options: {
-        signal?: AbortSignal;
-      }): Promise<IteratorResult<string | typeof SynthesizeStream.FLUSH_SENTINEL>>;
-    };
+    const input = this.input as AbortableAsyncIterableQueue<
+      string | typeof SynthesizeStream.FLUSH_SENTINEL
+    >;
 
     try {
       while (!attemptSignal.aborted) {
