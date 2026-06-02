@@ -237,6 +237,25 @@ const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
 const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
 
 /**
+ * Resolve once the socket's write buffer drains, or when the socket closes or
+ * errors. Unlike a bare `once('drain')`, this can't hang forever if the peer
+ * stops reading and the socket is then torn down.
+ */
+function waitForDrain(socket: net.Socket): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      socket.removeListener('drain', done);
+      socket.removeListener('close', done);
+      socket.removeListener('error', done);
+      resolve();
+    };
+    socket.once('drain', done);
+    socket.once('close', done);
+    socket.once('error', done);
+  });
+}
+
+/**
  * {@link SessionTransport} that frames protobuf messages over a raw TCP socket.
  *
  * @experimental
@@ -271,16 +290,18 @@ export class TcpSessionTransport extends SessionTransport {
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    if (this.closed || this.socket === null) return;
+    const socket = this.socket;
+    if (this.closed || socket === null) return;
 
     const data = msg.toBinary();
     const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
     header.writeUInt32BE(data.length, 0);
-    const flushed = this.socket.write(Buffer.concat([header, data]));
+    const flushed = socket.write(Buffer.concat([header, data]));
 
-    // Only block on backpressure once the write buffer is backed up.
-    if (!flushed && this.socket.writableLength > TCP_DRAIN_THRESHOLD) {
-      await new Promise<void>((resolve) => this.socket!.once('drain', resolve));
+    // Only block on backpressure once the write buffer is backed up. The wait
+    // also settles on close/error so a stalled reader can't hang teardown.
+    if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
+      await waitForDrain(socket);
     }
   }
 

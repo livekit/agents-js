@@ -126,6 +126,44 @@ describe('TcpSessionTransport framing', () => {
     const t = new TcpSessionTransport('127.0.0.1', 1);
     await expect(t.start()).rejects.toThrow();
   });
+
+  it('unblocks a backpressured sendMessage when the transport closes', async () => {
+    // Self-contained: a non-reading server leaves its connection open, so we
+    // manage its lifecycle here rather than via the shared afterEach.
+    let serverSocket: net.Socket | undefined;
+    const localServer = net.createServer((sock) => {
+      serverSocket = sock; // intentionally never consume incoming data
+    });
+    const port = await listen(localServer);
+
+    const t = new TcpSessionTransport('127.0.0.1', port);
+    await t.start();
+    try {
+      // 4 MiB payload guarantees we exceed the 64 KiB drain threshold and park
+      // in waitForDrain (the peer never reads, so no natural 'drain').
+      const huge = 'x'.repeat(4 * 1024 * 1024);
+      const msg = new pb.AgentSessionMessage({
+        message: {
+          case: 'request',
+          value: new pb.SessionRequest({
+            requestId: huge,
+            request: { case: 'ping', value: new pb.SessionRequest_Ping() },
+          }),
+        },
+      });
+
+      const sendPromise = t.sendMessage(msg);
+      await new Promise((r) => setTimeout(r, 50)); // ensure we're parked in the drain wait
+      await t.close();
+
+      // Without the close/error race this would hang until the test times out.
+      await expect(sendPromise).resolves.toBeUndefined();
+    } finally {
+      await t.close();
+      serverSocket?.destroy();
+      await new Promise<void>((resolve) => localServer.close(() => resolve()));
+    }
+  });
 });
 
 /** In-memory transport so SessionHost can be driven without a socket. */
