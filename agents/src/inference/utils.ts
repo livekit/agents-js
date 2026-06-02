@@ -65,14 +65,15 @@ export function buildMetadataHeaders(): Record<string, string> {
   const ctx = getJobContext(false);
   if (ctx) {
     const roomSid = ctx.job.room?.sid;
-    if (roomSid) {
+    if (typeof roomSid === 'string' && roomSid) {
       headers['X-LiveKit-Room-Id'] = roomSid;
     }
-    if (ctx.job.id) {
-      headers['X-LiveKit-Job-Id'] = ctx.job.id;
+    const jobId = ctx.job.id;
+    if (typeof jobId === 'string' && jobId) {
+      headers['X-LiveKit-Job-Id'] = jobId;
     }
     const agentSid = ctx.agent?.sid;
-    if (agentSid) {
+    if (typeof agentSid === 'string' && agentSid) {
       headers['X-LiveKit-Agent-Id'] = agentSid;
     }
   }
