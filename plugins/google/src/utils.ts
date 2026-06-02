@@ -139,7 +139,7 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
 export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  for (const [name, tool] of Object.entries(toolCtx)) {
+  for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
     const { description, parameters } = tool;
     const jsonSchema = llm.toJsonSchema(parameters, false);
 

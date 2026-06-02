@@ -51,7 +51,7 @@ export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess, ev) => {
   sess.generateReply({ userInput: ev.text });
 };
 
-const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
+export const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
   ParticipantKind.CONNECTOR,
   ParticipantKind.SIP,
   ParticipantKind.STANDARD,

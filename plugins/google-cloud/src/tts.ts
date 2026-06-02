@@ -6,6 +6,7 @@ import type { protos } from '@google-cloud/text-to-speech';
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APIStatusError,
   AudioByteStream,
   log,
@@ -24,6 +25,7 @@ type GaxClientOptions = NonNullable<ConstructorParameters<typeof TextToSpeechCli
 type SynthesizeSpeechRequest = protos.google.cloud.texttospeech.v1.ISynthesizeSpeechRequest;
 type StreamingSynthesizeRequest = protos.google.cloud.texttospeech.v1.IStreamingSynthesizeRequest;
 type StreamingSynthesizeResponse = protos.google.cloud.texttospeech.v1.StreamingSynthesizeResponse;
+type VoiceSelectionParams = protos.google.cloud.texttospeech.v1.IVoiceSelectionParams;
 type GoogleStreamingCall = ReturnType<TextToSpeechClient['streamingSynthesize']>;
 
 // ---------------------------------------------------------------------------
@@ -61,7 +63,7 @@ export interface TTSOptions {
 }
 
 interface ResolvedTTSOptions {
-  modelName: TTSModel | string;
+  modelName?: TTSModel | string;
   voiceName: string;
   language: TTSLanguage | string;
   sampleRate: number;
@@ -84,7 +86,7 @@ export class TTS extends tts.TTS {
     super(sampleRate, NUM_CHANNELS, { streaming });
 
     this.#opts = {
-      modelName: opts.modelName ?? 'journey',
+      modelName: opts.modelName,
       voiceName: opts.voiceName ?? 'en-US-Standard-H',
       language: opts.language ?? 'en-US',
       sampleRate,
@@ -113,7 +115,7 @@ export class TTS extends tts.TTS {
   }
 
   get model(): string {
-    return this.#opts.modelName;
+    return this.#opts.modelName ?? this.#opts.voiceName;
   }
 
   get provider(): string {
@@ -174,34 +176,17 @@ export class TTS extends tts.TTS {
 export class SynthesizeStream extends tts.SynthesizeStream {
   readonly label = 'google-cloud.SynthesizeStream';
   #tts: TTS;
-  #tokenizer: tokenize.SentenceStream;
 
   constructor(ttsProvider: TTS, connOptions?: APIConnectOptions) {
     super(ttsProvider, connOptions);
     this.#tts = ttsProvider;
-    this.#tokenizer = new tokenize.basic.SentenceTokenizer({
-      language: ttsProvider.opts.language,
-    }).stream();
   }
 
   protected async run(): Promise<void> {
     const requestId = shortuuid();
     const call = this.#tts.client.streamingSynthesize();
-
-    await writeStreamingRequest(call, {
-      streamingConfig: {
-        voice: {
-          languageCode: this.#tts.opts.language,
-          name: this.#tts.opts.voiceName,
-          modelName: this.#tts.opts.modelName,
-        },
-        streamingAudioConfig: {
-          audioEncoding: 1 /* PCM */,
-          sampleRateHertz: this.#tts.opts.sampleRate,
-        },
-      },
-    });
-
+    let tokenizer: tokenize.SentenceStream | undefined;
+    let tasks: Promise<void>[] | undefined;
     const abort = () => {
       try {
         call.cancel();
@@ -209,49 +194,73 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         call.destroy();
       }
     };
+
     this.abortSignal.addEventListener('abort', abort, { once: true });
 
     try {
-      await Promise.all([
-        this.#tokenizeInput(),
-        this.#sendText(call),
+      await writeStreamingRequest(call, {
+        streamingConfig: {
+          voice: buildVoiceSelectionParams(this.#tts.opts),
+          streamingAudioConfig: {
+            audioEncoding: 1 /* PCM */,
+            sampleRateHertz: this.#tts.opts.sampleRate,
+          },
+        },
+      });
+
+      tokenizer = new tokenize.basic.SentenceTokenizer().stream();
+      tasks = [
+        this.#tokenizeInput(tokenizer),
+        this.#sendText(call, tokenizer),
         this.#receiveAudio(call, requestId),
-      ]);
+      ];
+
+      await Promise.all(tasks);
     } catch (error: unknown) {
+      call.destroy();
+      tokenizer?.close();
+      if (tasks) {
+        if (!this.input.closed) {
+          this.input.close();
+        }
+        await Promise.allSettled(tasks);
+      }
+
       if (this.abortSignal.aborted) {
         return;
       }
 
-      if (error instanceof APIConnectionError || error instanceof APIStatusError) {
+      if (error instanceof APIError) {
         throw error;
       }
 
       throw toLiveKitTtsError(error);
     } finally {
       this.abortSignal.removeEventListener('abort', abort);
+      tokenizer?.close();
       call.destroy();
     }
   }
 
-  async #tokenizeInput(): Promise<void> {
+  async #tokenizeInput(tokenizer: tokenize.SentenceStream): Promise<void> {
     try {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
 
-        this.#tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
 
-      this.#tokenizer.endInput();
+      tokenizer.endInput();
     } catch {
       // Stream shutdown can close tokenizer/input concurrently.
     }
   }
 
-  async #sendText(call: GoogleStreamingCall): Promise<void> {
-    for await (const event of this.#tokenizer) {
+  async #sendText(call: GoogleStreamingCall, tokenizer: tokenize.SentenceStream): Promise<void> {
+    for await (const event of tokenizer) {
       if (this.abortSignal.aborted) {
         break;
       }
@@ -285,6 +294,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     await new Promise<void>((resolve, reject) => {
+      let errored = false;
+
       call.on('data', (response: StreamingSynthesizeResponse) => {
         const audioContent = response.audioContent;
         if (!audioContent) {
@@ -304,6 +315,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       call.once('end', () => {
+        if (errored) {
+          return;
+        }
+
         for (const frame of bstream.flush()) {
           sendLastFrame(false);
           lastFrame = frame;
@@ -317,6 +332,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
 
       call.once('error', (error) => {
+        errored = true;
         reject(error);
       });
     });
@@ -347,11 +363,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       input: {
         text: this.inputText,
       },
-      voice: {
-        languageCode: this.#tts.opts.language,
-        name: this.#tts.opts.voiceName,
-        modelName: this.#tts.opts.modelName,
-      },
+      voice: buildVoiceSelectionParams(this.#tts.opts),
       audioConfig: {
         audioEncoding: 1 /* LINEAR16 */,
         sampleRateHertz: this.#tts.opts.sampleRate,
@@ -422,7 +434,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         return;
       }
 
-      if (error instanceof APIConnectionError || error instanceof APIStatusError) {
+      if (error instanceof APIError) {
         throw error;
       }
 
@@ -439,6 +451,19 @@ function buildVoiceName(language: string, gender: TTSGender): string {
   // Map gender to the Standard voice suffix
   const suffix = gender === 'male' ? 'B' : gender === 'female' ? 'C' : 'A';
   return `${language}-Standard-${suffix}`;
+}
+
+function buildVoiceSelectionParams(opts: ResolvedTTSOptions): VoiceSelectionParams {
+  const voice: VoiceSelectionParams = {
+    languageCode: opts.language,
+    name: opts.voiceName,
+  };
+
+  if (opts.modelName !== undefined) {
+    voice.modelName = opts.modelName;
+  }
+
+  return voice;
 }
 
 async function writeStreamingRequest(
@@ -490,6 +515,10 @@ function extractLinear16Pcm(audioBuffer: Buffer): Buffer {
 }
 
 function toLiveKitTtsError(error: unknown): Error {
+  if (error instanceof APIError) {
+    return error;
+  }
+
   const maybeGoogleError = error as {
     code?: number;
     message?: string;

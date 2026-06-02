@@ -74,7 +74,6 @@ import {
   StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
-  functionCallStorage,
   speechHandleStorage,
 } from './agent.js';
 import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
@@ -1824,10 +1823,16 @@ export class AgentActivity implements RecognitionHooks {
       throw new Error('trying to generate reply without an LLM model');
     }
 
-    const functionCall = functionCallStorage.getStore()?.functionCall;
-    if (toolChoice === undefined && functionCall !== undefined) {
-      // when generateReply is called inside a tool, set toolChoice to 'none' by default
-      toolChoice = 'none';
+    if (toolChoice === undefined) {
+      // Default to 'none' when generateReply runs inside a tool on this activity.
+      // Uses per-activity task info, not functionCallStorage: the latter is
+      // AsyncLocalStorage and leaks the parent's function-call context into child
+      // sessions spawned inside a tool (e.g. WarmTransferTask's supervisor session).
+      const currentTask = Task.current();
+      const taskInfo = currentTask ? _getActivityTaskInfo(currentTask) : undefined;
+      if (taskInfo?.functionCall) {
+        toolChoice = 'none';
+      }
     }
 
     const handle = SpeechHandle.create({
