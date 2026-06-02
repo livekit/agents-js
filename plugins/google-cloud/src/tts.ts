@@ -9,6 +9,7 @@ import {
   APIError,
   APIStatusError,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   log,
   shortuuid,
   tokenize,
@@ -25,8 +26,25 @@ type GaxClientOptions = NonNullable<ConstructorParameters<typeof TextToSpeechCli
 type SynthesizeSpeechRequest = protos.google.cloud.texttospeech.v1.ISynthesizeSpeechRequest;
 type StreamingSynthesizeRequest = protos.google.cloud.texttospeech.v1.IStreamingSynthesizeRequest;
 type StreamingSynthesizeResponse = protos.google.cloud.texttospeech.v1.StreamingSynthesizeResponse;
+type SynthesizeSpeechResponse = protos.google.cloud.texttospeech.v1.ISynthesizeSpeechResponse;
 type VoiceSelectionParams = protos.google.cloud.texttospeech.v1.IVoiceSelectionParams;
 type GoogleStreamingCall = ReturnType<TextToSpeechClient['streamingSynthesize']>;
+type SynthesizeSpeechResult = [
+  SynthesizeSpeechResponse,
+  SynthesizeSpeechRequest | undefined,
+  object | undefined,
+];
+type CancellablePromise<T> = Promise<T> & { cancel(): void };
+type SynthesizeSpeechCallOptions = {
+  timeout?: number;
+  otherArgs?: {
+    headers?: Record<string, string>;
+  };
+};
+type CancellableSynthesizeSpeechCall = (
+  request: SynthesizeSpeechRequest,
+  options?: SynthesizeSpeechCallOptions,
+) => CancellablePromise<SynthesizeSpeechResult>;
 
 // ---------------------------------------------------------------------------
 // Options
@@ -40,7 +58,10 @@ export interface TTSOptions {
   voiceName?: string;
   /** Language code (BCP-47, e.g. `en-US`). */
   language?: TTSLanguage | string;
-  /** Voice gender. Overrides `voiceName` when both are provided. */
+  /**
+   * Voice gender. Builds a Standard-tier voice name and overrides `voiceName`
+   * when both are provided.
+   */
   gender?: TTSGender;
   /** Output sample rate in Hz. Default: 24000. */
   sampleRate?: number;
@@ -100,6 +121,11 @@ export class TTS extends tts.TTS {
           `Google Cloud TTS: gender '${gender}' overrides explicit voiceName '${opts.voiceName}'`,
         );
       }
+      if (opts.modelName) {
+        log().warn(
+          `Google Cloud TTS: gender '${gender}' builds a Standard voice name that may not match modelName '${opts.modelName}'`,
+        );
+      }
       this.#opts.voiceName = buildVoiceName(this.#opts.language, gender);
     }
 
@@ -152,6 +178,16 @@ export class TTS extends tts.TTS {
     if (opts.voiceName !== undefined) this.#opts.voiceName = opts.voiceName;
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.gender !== undefined) {
+      if (opts.voiceName !== undefined) {
+        log().warn(
+          `Google Cloud TTS: gender '${opts.gender}' overrides explicit voiceName '${opts.voiceName}'`,
+        );
+      }
+      if (this.#opts.modelName) {
+        log().warn(
+          `Google Cloud TTS: gender '${opts.gender}' builds a Standard voice name that may not match modelName '${this.#opts.modelName}'`,
+        );
+      }
       this.#opts.voiceName = buildVoiceName(this.#opts.language, opts.gender);
     }
   }
@@ -346,15 +382,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 export class ChunkedStream extends tts.ChunkedStream {
   readonly label = 'google-cloud.ChunkedStream';
   #tts: TTS;
+  #connOptions: APIConnectOptions;
 
   constructor(
     inputText: string,
     ttsProvider: TTS,
-    connOptions?: APIConnectOptions,
+    connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     abortSignal?: AbortSignal,
   ) {
     super(inputText, ttsProvider, connOptions, abortSignal);
     this.#tts = ttsProvider;
+    this.#connOptions = connOptions;
   }
 
   protected async run(): Promise<void> {
@@ -371,15 +409,21 @@ export class ChunkedStream extends tts.ChunkedStream {
     };
 
     try {
-      const [response] = await this.#tts.client.synthesizeSpeech(request, {
-        otherArgs: {
-          headers: {
-            'x-goog-request-params': `voice.language_code=${encodeURIComponent(
-              this.#tts.opts.language,
-            )}`,
+      const [response] = await synthesizeSpeechWithAbort(
+        this.#tts.client,
+        request,
+        {
+          timeout: this.#connOptions.timeoutMs,
+          otherArgs: {
+            headers: {
+              'x-goog-request-params': `voice.language_code=${encodeURIComponent(
+                this.#tts.opts.language,
+              )}`,
+            },
           },
         },
-      });
+        this.abortSignal,
+      );
 
       if (this.abortSignal.aborted) {
         return;
@@ -475,6 +519,30 @@ async function writeStreamingRequest(
   }
 
   await once(call, 'drain');
+}
+
+async function synthesizeSpeechWithAbort(
+  client: TextToSpeechClient,
+  request: SynthesizeSpeechRequest,
+  options: SynthesizeSpeechCallOptions,
+  abortSignal: AbortSignal,
+): Promise<SynthesizeSpeechResult> {
+  const synthesizeSpeech = client.innerApiCalls.synthesizeSpeech as CancellableSynthesizeSpeechCall;
+  const call = synthesizeSpeech(request, options);
+  const abort = () => {
+    call.cancel();
+  };
+
+  abortSignal.addEventListener('abort', abort, { once: true });
+  if (abortSignal.aborted) {
+    call.cancel();
+  }
+
+  try {
+    return await call;
+  } finally {
+    abortSignal.removeEventListener('abort', abort);
+  }
 }
 
 function extractArrayBuffer(buf: Buffer): ArrayBuffer {
