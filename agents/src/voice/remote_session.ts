@@ -28,6 +28,7 @@ import { Future, Task, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
+import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
   AgentSessionEventTypes,
   type AgentState,
@@ -618,6 +619,8 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 export class SessionHost {
   private readonly transport: SessionTransport;
+  private readonly audioInput: TcpAudioInput | undefined;
+  private readonly audioOutput: TcpAudioOutput | undefined;
   private session: AgentSession | undefined;
   private started = false;
   private eventsRegistered = false;
@@ -625,8 +628,14 @@ export class SessionHost {
   private readonly tasks = new Set<Task<void>>();
   private textInputCb: TextInputCallback | undefined;
 
-  constructor(transport: SessionTransport) {
+  constructor(
+    transport: SessionTransport,
+    audioInput?: TcpAudioInput,
+    audioOutput?: TcpAudioOutput,
+  ) {
     this.transport = transport;
+    this.audioInput = audioInput;
+    this.audioOutput = audioOutput;
   }
 
   registerSession(session: AgentSession): void {
@@ -686,12 +695,22 @@ export class SessionHost {
   private async recvLoop(): Promise<void> {
     try {
       for await (const msg of this.transport) {
-        if (msg.message.case === 'request') {
-          if (this.session) {
-            this.trackTask(
-              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
-            );
-          }
+        switch (msg.message.case) {
+          case 'request':
+            if (this.session) {
+              this.trackTask(
+                Task.from(async () =>
+                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                ),
+              );
+            }
+            break;
+          case 'audioInput':
+            this.audioInput?.pushFrame(msg.message.value);
+            break;
+          case 'audioPlaybackFinished':
+            this.audioOutput?.notifyPlayoutFinished();
+            break;
         }
       }
     } catch (e) {
