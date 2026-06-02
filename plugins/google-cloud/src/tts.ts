@@ -552,14 +552,9 @@ async function writeStreamingRequest(
 function destroyStreamingCall(call: GoogleStreamingCall, error: unknown): void {
   const streamError =
     error instanceof Error ? error : new Error('Google Cloud TTS streaming request failed');
-  const ignoreDestroyError = () => {};
 
-  call.on('error', ignoreDestroyError);
-  try {
-    call.destroy(streamError);
-  } finally {
-    call.off('error', ignoreDestroyError);
-  }
+  call.on('error', () => {});
+  call.destroy(streamError);
 }
 
 function isAbortError(error: unknown): boolean {
