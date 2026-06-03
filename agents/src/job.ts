@@ -21,7 +21,7 @@ import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
-import type { AgentSession } from './voice/agent_session.js';
+import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
 import { type SessionReport, createSessionReport } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
@@ -321,6 +321,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       options: targetSession.sessionOptions,
       events: targetSession._recordedEvents,
       enableRecording: targetSession._enableRecording,
+      recordingOptions: targetSession._recordingOptions,
       chatHistory: targetSession.history.copy(),
       startedAt: targetSession._startedAt,
       audioRecordingPath: recorderIO?.outputPath,
@@ -425,9 +426,15 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#participantEntrypoints.push(callback);
   }
 
-  async initRecording() {
+  async initRecording(options: ResolvedRecordingOptions) {
     const url = new URL(this.#info.url);
     if (!isCloud(url)) {
+      return;
+    }
+
+    // The cloud tracer handles trace spans and OTel logs; only configure it
+    // when at least one of those categories is enabled.
+    if (!options.traces && !options.logs) {
       return;
     }
 
@@ -436,6 +443,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomId: this.job.room!.sid,
       jobId: this.job.id,
       cloudHostname: url.hostname,
+      enableTraces: options.traces,
+      enableLogs: options.logs,
     });
   }
 }
