@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
-import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
+import type {
+  AgentSessionOptions,
+  ResolvedRecordingOptions,
+  VoiceOptions,
+} from './agent_session.js';
 import type { AgentEvent } from './events.js';
 
 type ReportOptions = AgentSessionOptions & Partial<VoiceOptions>;
@@ -16,6 +20,8 @@ export interface SessionReport {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording: boolean;
+  /** Resolved per-category recording options for this session. */
+  recordingOptions: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt: number;
   /** Timestamp when the session report was created (milliseconds), typically at the end of the session */
@@ -38,6 +44,8 @@ export interface SessionReportOptions {
   events: AgentEvent[];
   chatHistory: ChatContext;
   enableRecording?: boolean;
+  /** Resolved per-category recording options for this session. */
+  recordingOptions?: ResolvedRecordingOptions;
   /** Timestamp when the session started (milliseconds) */
   startedAt?: number;
   /** Timestamp when the session report was created (milliseconds) */
@@ -62,6 +70,12 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,
+    recordingOptions: opts.recordingOptions ?? {
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+    },
     startedAt: opts.startedAt ?? Date.now(),
     timestamp,
     audioRecordingPath: opts.audioRecordingPath,
