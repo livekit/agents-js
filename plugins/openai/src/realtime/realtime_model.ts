@@ -808,7 +808,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (reasoning !== undefined) {
       const currentReasoning = this._options.reasoning ?? null;
       const nextReasoning = reasoning ?? null;
-      if (JSON.stringify(currentReasoning) !== JSON.stringify(nextReasoning)) {
+      if (currentReasoning !== nextReasoning) {
         options.reasoning = reasoning;
         hasChanges = true;
       }
