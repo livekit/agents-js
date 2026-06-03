@@ -16,7 +16,7 @@
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",
-    "test": "vitest run",
+    "test": "node scripts/vitest.js",
     "test:watch": "vitest",
     "test:examples": "vitest run examples",
     "throws:check": "turbo throws:check",

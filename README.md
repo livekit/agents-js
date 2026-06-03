@@ -340,7 +340,16 @@ To contribute to this project:
 
 ### Testing changes and plugins
 
-To test any changes or plugins:
+Unit and provider tests can be selected before import with category flags:
+
+```bash
+pnpm test -- --unit
+pnpm test -- --plugin openai
+pnpm test -- --stt deepgram
+pnpm test -- --list-categories
+```
+
+To manually test agent or plugin behavior:
 
 1. Build the project:
    ```bash
