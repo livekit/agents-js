@@ -597,14 +597,6 @@ export class AgentSession<
         tasks.push(ctx.connect());
       }
 
-      if (ctx._primaryAgentSession === undefined) {
-        ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
-        throw new Error(
-          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
-        );
-      }
-
       if (this.input.audio && this.output.audio && this._recordingOptions.audio) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
@@ -678,11 +670,28 @@ export class AgentSession<
     const ctx = getJobContext(false);
 
     if (ctx) {
+      const recordIsGiven = record !== undefined;
       if (record === undefined) {
+        // defer to the server-side setting for recording
         record = ctx.job.enableRecording;
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+
+      // Only one AgentSession per job can be the primary (and therefore record).
+      // Designate the primary before initRecording so a demoted secondary session
+      // never configures cloud recording. Mirrors Python's start() ordering.
+      if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
+        ctx._primaryAgentSession = this;
+      } else if (this._enableRecording) {
+        if (recordIsGiven) {
+          throw new Error(
+            'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
+          );
+        }
+        // record was not given: silently disable recording for the secondary session
+        this._recordingOptions = resolveRecordingOptions(false);
+      }
 
       if (this._enableRecording) {
         await ctx.initRecording(this._recordingOptions);
