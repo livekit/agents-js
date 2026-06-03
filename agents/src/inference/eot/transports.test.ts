@@ -23,7 +23,7 @@ import { APIConnectionError } from '../../_exceptions.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AudioTurnDetector, type TurnDetectorOptions } from './base.js';
 import { AudioTurnDetectorStreamImpl } from './detector.js';
-import type { TurnDetectorModel } from './languages.js';
+import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 import { CloudTransport, type CloudWebSocket } from './transports.js';
 
 const { ClientMessage } = AgentInference;
@@ -70,7 +70,10 @@ function makeStream(opts: {
 }): MakeStreamResult {
   const fakeWs = new FakeWS();
   const script = [...(opts.connectScript ?? [])];
-  const turnOpts: TurnDetectorOptions = { sampleRate: 16000, thresholds: {} };
+  const turnOpts: TurnDetectorOptions = {
+    sampleRate: 16000,
+    thresholds: new ThresholdOptions('turn-detector'),
+  };
   const detector = new FakeDetector(turnOpts);
   const cloudOpts = {
     baseUrl: '',

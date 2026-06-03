@@ -29,7 +29,7 @@ import {
   Status,
   type TurnDetectorOptions,
 } from './base.js';
-import type { TurnDetectorModel } from './languages.js';
+import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
 class FakeTransport implements AudioTurnDetectionTransport {
   events: Array<[string, string]> = [];
@@ -97,7 +97,9 @@ class FakeBackend extends AudioTurnDetectorStream {
 }
 
 function makeOpts(thresholds: Record<string, number> = {}): TurnDetectorOptions {
-  return { sampleRate: 16000, thresholds };
+  // Seed the resolved thresholds via a local-model dict override so `lookup`
+  // returns them (unmapped languages fall back to the shipped local table).
+  return { sampleRate: 16000, thresholds: new ThresholdOptions('turn-detector-mini', thresholds) };
 }
 
 function makeStream(thresholds: Record<string, number> = {}): FakeBackend {

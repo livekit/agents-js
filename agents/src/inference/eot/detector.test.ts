@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tests for the unified `AudioTurnDetector` (auto-select + fallback).
+ * Tests for the unified `AudioTurnDetector` (auto-select + fallback + server defaults).
  *
  * Covers:
  *
@@ -14,15 +14,19 @@
  * - Fallback persistence across turns.
  * - Local-failure handling (default 1.0, retry on next turn).
  * - Per-session warning dedupe (one warning per failure mode).
- * - Threshold scaling: pass-through for cloud / explicit-local, multiplicative
- *   scaling only on actual fallback.
+ * - Server-provided default thresholds adopted from `SessionCreated`.
+ * - Override resolution (scalar / dict / none) against the server defaults, the
+ *   override warning, runtime `updateOptions`, and the degenerate
+ *   (no usable thresholds) → fallback path.
+ * - Threshold rescaling against the server defaults on actual fallback.
  *
  * Port of Python `tests/test_audio_turn_detector_fallback.py`.
  */
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APIConnectionError } from '../../_exceptions.js';
+import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { AudioTurnDetectorStream } from './base.js';
 import {
@@ -31,9 +35,13 @@ import {
   type TurnDetectorOptions,
 } from './base.js';
 import { AudioTurnDetector, AudioTurnDetectorStreamImpl } from './detector.js';
-import { CLOUD_LANGUAGES, LOCAL_LANGUAGES, materializeThresholds } from './languages.js';
+import { LOCAL_LANGUAGES, ThresholdOptions } from './languages.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
 import { LocalTransport } from './transports.js';
+
+// Stand-in for the per-language defaults a gateway returns in `SessionCreated`.
+const SERVER_THRESHOLDS: Record<string, number> = { en: 0.56, ja: 0.37, fr: 0.575 };
+const SERVER_DEFAULT_THRESHOLD = 0.5;
 
 async function waitFor(predicate: () => boolean, ticks = 50): Promise<void> {
   for (let i = 0; i < ticks; i++) {
@@ -93,8 +101,8 @@ class ScriptedTransport implements AudioTurnDetectionTransport {
   }
 }
 
-function makeOpts(thresholds?: Record<string, number>): TurnDetectorOptions {
-  return { sampleRate: 16000, thresholds: thresholds ?? {} };
+function detectorOpts(detector: AudioTurnDetector): TurnDetectorOptions {
+  return (detector as unknown as { _opts: TurnDetectorOptions })._opts;
 }
 
 interface MakeStreamOpts {
@@ -103,17 +111,22 @@ interface MakeStreamOpts {
   detector?: AudioTurnDetector;
 }
 
+/**
+ * Construct a stream wired to a scripted transport. The detector and stream
+ * share one `ThresholdOptions` (as in production). The cloud model starts with
+ * empty thresholds (its defaults arrive via `SessionCreated` — call
+ * `stream.thresholdsOptions._updateDefaults` to simulate that). The local mini
+ * model resolves its thresholds against `LOCAL_LANGUAGES` up front.
+ */
 function makeStreamWithTransport(
   transport: AudioTurnDetectionTransport,
   opts: MakeStreamOpts = {},
 ): AudioTurnDetectorStreamImpl {
   const model = opts.model ?? 'turn-detector';
-  const detector =
-    opts.detector ??
-    makeMockDetector(model, makeOpts(materializeThresholds(opts.userThreshold, model)));
+  const detector = opts.detector ?? makeMockDetector(model, opts.userThreshold);
   const stream = new AudioTurnDetectorStreamImpl({
     detector,
-    opts: detector['_opts'] as TurnDetectorOptions,
+    opts: detectorOpts(detector),
     cloudOpts:
       model === 'turn-detector'
         ? {
@@ -130,14 +143,14 @@ function makeStreamWithTransport(
 }
 
 /** Build an `AudioTurnDetector` for assertions without going through env
- * resolution — useful when we want a specific model + threshold table for
- * a stream we'll build separately. */
+ * resolution — seed a specific model + threshold override for a stream we'll
+ * build separately. */
 function makeMockDetector(
   model: 'turn-detector' | 'turn-detector-mini',
-  opts: TurnDetectorOptions,
+  userThreshold?: number | Record<string, number>,
 ): AudioTurnDetector {
-  // Construct via the public constructor, then override the internal
-  // model + threshold view to match what we want for the assertion.
+  // Construct via the public constructor, then override the internal model +
+  // shared threshold options to match what we want for the assertion.
   const originalEnv = { ...process.env };
   if (model === 'turn-detector-mini') {
     delete process.env.LIVEKIT_REMOTE_EOT_URL;
@@ -150,7 +163,7 @@ function makeMockDetector(
   process.env = originalEnv;
   const internals = det as unknown as { _model: typeof model; _opts: TurnDetectorOptions };
   internals._model = model;
-  internals._opts = { ...internals._opts, thresholds: opts.thresholds };
+  internals._opts = { ...internals._opts, thresholds: new ThresholdOptions(model, userThreshold) };
   return det;
 }
 
@@ -284,13 +297,13 @@ describe('Fallback', () => {
 });
 
 describe('MultiStreamOwnership', () => {
-  it('multiple streams can coexist', async () => {
+  it('multiple streams can be opened off one detector', async () => {
     let detector!: AudioTurnDetector;
     withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
       detector = new AudioTurnDetector({ model: 'turn-detector-mini' });
     });
-    // Detector no longer enforces single-stream ownership; fallback state lives
-    // on the stream itself so multiple streams off the same detector are safe.
+    // Only one stream is active at a time in production; the detector still
+    // permits constructing several (they share its `ThresholdOptions`).
     const s1 = detector.stream();
     const s2 = detector.stream();
     await s1.aclose();
@@ -298,45 +311,41 @@ describe('MultiStreamOwnership', () => {
   });
 });
 
-describe('DetectorViewReflectsConstructionDefaults', () => {
-  it('detector model/threshold stay at construction-time defaults across fallbacks', async () => {
+describe('DetectorViewAfterFallback', () => {
+  it('detector model + threshold follow the fallback (shared ThresholdOptions)', async () => {
     let detector!: AudioTurnDetector;
-    await withEnv(
+    withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
         LIVEKIT_API_KEY: 'k',
         LIVEKIT_API_SECRET: 's',
       },
-      async () => {
+      () => {
         detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
-        expect(detector.model).toBe('turn-detector');
-        expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
       },
     );
+    expect(detector.model).toBe('turn-detector');
+    // scalar override is resolvable pre-session via the catch-all
+    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
 
-    const transport = new ScriptedTransport({
-      runBehavior: 'raise',
-      runExc: new APIConnectionError({ message: 'boom' }),
-    });
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
     const stream = new AudioTurnDetectorStreamImpl({
       detector,
-      opts: (detector as unknown as { _opts: TurnDetectorOptions })._opts,
+      opts: detectorOpts(detector),
       cloudOpts: undefined,
       model: 'turn-detector',
       transport,
     });
+    // server defaults arrive, then the cloud session fails
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
     await waitFor(() => stream.model === 'turn-detector-mini');
 
-    // The stream reflects the fallback...
+    // Both the stream and the detector (sharing one ThresholdOptions) reflect it.
     expect(stream.model).toBe('turn-detector-mini');
-    const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
-    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(expected);
-
-    // ...but the detector still reports the construction-time defaults: the
-    // fallback state lives on the stream, never written back to the detector,
-    // so other streams off the same detector aren't corrupted.
-    expect(detector.model).toBe('turn-detector');
-    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
+    expect(detector.model).toBe('turn-detector-mini');
+    const expected = LOCAL_LANGUAGES.en! * (0.5 / SERVER_THRESHOLDS.en!);
+    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(expected);
     await stream.aclose();
   });
 });
@@ -383,115 +392,217 @@ describe('WarningDedupe', () => {
   });
 });
 
-describe('ThresholdScaling', () => {
-  it('cloud user threshold is pass-through pre-stream', async () => {
-    await withEnv(
-      {
-        LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
-        LIVEKIT_API_KEY: 'k',
-        LIVEKIT_API_SECRET: 's',
-      },
-      async () => {
-        const detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
-        expect(detector.model).toBe('turn-detector');
-        const value = await detector.unlikelyThreshold('en');
-        expect(value).toBeCloseTo(0.5);
-      },
-    );
+describe('ResolveThresholds', () => {
+  // Cloud-override resolution against the server defaults, via ThresholdOptions.
+  function cloud(overrides?: number | Record<string, number>): ThresholdOptions {
+    const opts = new ThresholdOptions('turn-detector', overrides);
+    opts._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    return opts;
+  }
+
+  it('no override adopts server map + fallback default', () => {
+    const opts = cloud();
+    expect(opts.thresholds).toEqual(SERVER_THRESHOLDS);
+    expect(opts.defaultThreshold).toBeCloseTo(SERVER_DEFAULT_THRESHOLD);
   });
 
-  it('explicit-local user threshold passes through (no rescale)', async () => {
-    await withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, async () => {
-      const detector = new AudioTurnDetector({
-        model: 'turn-detector-mini',
-        unlikelyThreshold: 0.5,
-      });
-      const value = await detector.unlikelyThreshold('en');
-      expect(value).toBeCloseTo(0.5);
-    });
+  it('scalar override replaces with empty map', () => {
+    const opts = cloud(0.8);
+    // empty map → every language resolves through the scalar fallback
+    expect(opts.thresholds).toEqual({});
+    expect(opts.defaultThreshold).toBeCloseTo(0.8);
   });
 
-  it('post-fallback threshold rescales on stream', async () => {
-    const transport = new ScriptedTransport({
-      runBehavior: 'raise',
-      runExc: new APIConnectionError({ message: 'boom' }),
-    });
-    const stream = makeStreamWithTransport(transport, { userThreshold: 0.5 });
-    await waitFor(() => stream.model === 'turn-detector-mini');
-    expect(stream.isFallback).toBe(true);
-    const value = await stream.unlikelyThreshold('en');
-    const expected = LOCAL_LANGUAGES.en! * (0.5 / CLOUD_LANGUAGES.en!);
-    expect(value).toBeCloseTo(expected);
-    await stream.aclose();
+  it('dict override layers on server map', () => {
+    const opts = cloud({ en: 0.7 });
+    expect(opts.thresholds.en).toBeCloseTo(0.7);
+    // unmapped languages keep the server values + server fallback
+    expect(opts.thresholds.ja).toBeCloseTo(SERVER_THRESHOLDS.ja!);
+    expect(opts.defaultThreshold).toBeCloseTo(SERVER_DEFAULT_THRESHOLD);
   });
 
-  it('threshold default unchanged when user threshold not set', async () => {
-    await withEnv(
-      {
-        LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
-        LIVEKIT_API_KEY: 'k',
-        LIVEKIT_API_SECRET: 's',
-      },
-      async () => {
-        const detector = new AudioTurnDetector();
-        const cloudDefault = await detector.unlikelyThreshold('en');
-        expect(cloudDefault).toBeCloseTo(CLOUD_LANGUAGES.en!);
-      },
-    );
-
-    await withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, async () => {
-      const detector = new AudioTurnDetector();
-      const localDefault = await detector.unlikelyThreshold('en');
-      expect(localDefault).toBeCloseTo(LOCAL_LANGUAGES.en!);
-    });
+  it('dict keys normalized', () => {
+    const opts = cloud({ English: 0.7, 'en-US': 0.7 });
+    expect(opts.thresholds.en).toBeCloseTo(0.7);
   });
 });
 
-describe('ThresholdDictOverride', () => {
-  it('dict override applies per language', async () => {
-    await withEnv(
+describe('ServerDefaults', () => {
+  it('cloud thresholds pending before session created', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport);
+    // A cloud detector has no per-language threshold until `SessionCreated`,
+    // but reports the language as supported so the first turn isn't skipped.
+    expect(await stream.unlikelyThreshold('en')).toBeUndefined();
+    expect(await stream.supportsLanguage('en')).toBe(true);
+    await stream.aclose();
+  });
+
+  it('cloud adopts server defaults', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport);
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(SERVER_THRESHOLDS.en!);
+    // language absent from the server map → catch-all default
+    expect(await stream.unlikelyThreshold('de')).toBeCloseTo(SERVER_DEFAULT_THRESHOLD);
+    await stream.aclose();
+  });
+
+  it('dict override layers on server defaults', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport, { userThreshold: { en: 0.7, ja: 0.2 } });
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(0.7);
+    expect(await stream.unlikelyThreshold('ja')).toBeCloseTo(0.2);
+    // fr not overridden → server default for fr
+    expect(await stream.unlikelyThreshold('fr')).toBeCloseTo(SERVER_THRESHOLDS.fr!);
+    await stream.aclose();
+  });
+
+  it('degenerate session created throws without override', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport);
+    expect(() => stream.thresholdsOptions._updateDefaults({}, 0.0)).toThrow(APIError);
+    await stream.aclose();
+  });
+
+  it('degenerate session created throws even with override', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport, { userThreshold: 0.8 });
+    expect(() => stream.thresholdsOptions._updateDefaults({}, 0.0)).toThrow(APIError);
+    await stream.aclose();
+  });
+});
+
+describe('OverrideWarning', () => {
+  it('warns on construction with override', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    try {
+      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+        new AudioTurnDetector({ unlikelyThreshold: 0.5 });
+      });
+      const warned = warnSpy.mock.calls.some((c) =>
+        JSON.stringify(c).includes('non-default turn detection threshold'),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('no warning without override', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    try {
+      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+        new AudioTurnDetector();
+      });
+      const warned = warnSpy.mock.calls.some((c) =>
+        JSON.stringify(c).includes('non-default turn detection threshold'),
+      );
+      expect(warned).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('UpdateOptions', () => {
+  it('re-resolves an active cloud stream against cached server defaults', async () => {
+    let detector!: AudioTurnDetector;
+    withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
         LIVEKIT_API_KEY: 'k',
         LIVEKIT_API_SECRET: 's',
       },
-      async () => {
-        const detector = new AudioTurnDetector({
-          unlikelyThreshold: { en: 0.55, ja: 0.25 },
-        });
-        expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.55);
-        expect(await detector.unlikelyThreshold('ja')).toBeCloseTo(0.25);
-        expect(await detector.unlikelyThreshold('fr')).toBeCloseTo(CLOUD_LANGUAGES.fr!);
+      () => {
+        detector = new AudioTurnDetector();
       },
     );
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = new AudioTurnDetectorStreamImpl({
+      detector,
+      opts: detectorOpts(detector),
+      cloudOpts: undefined,
+      model: 'turn-detector',
+      transport,
+    });
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(SERVER_THRESHOLDS.en!);
+
+    detector.updateOptions({ unlikelyThreshold: 0.7 });
+    // the shared resolver re-resolves against the cached server defaults
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(0.7);
+    await stream.aclose();
   });
 
-  it('dict keys normalized via language code', async () => {
-    await withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, async () => {
-      const detector = new AudioTurnDetector({
-        unlikelyThreshold: { English: 0.55, 'en-US': 0.55 },
-      });
-      expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.55);
+  it('local model updateOptions', async () => {
+    let detector!: AudioTurnDetector;
+    withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+      detector = new AudioTurnDetector();
     });
+    expect(detector.model).toBe('turn-detector-mini');
+    detector.updateOptions({ unlikelyThreshold: 0.42 });
+    expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.42);
+    await detector.aclose();
+  });
+});
+
+describe('ThresholdRescaleOnFallback', () => {
+  it('scalar override rescaled against server on fallback', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport, { userThreshold: 0.5 });
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    await waitFor(() => stream.model === 'turn-detector-mini');
+    expect(stream.isFallback).toBe(true);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
+      LOCAL_LANGUAGES.en! * (0.5 / SERVER_THRESHOLDS.en!),
+    );
+    await stream.aclose();
+  });
+
+  it('no override fallback uses local table', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport);
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    await waitFor(() => stream.model === 'turn-detector-mini');
+    // ratio 1.0 → local table unchanged
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(LOCAL_LANGUAGES.en!);
+    await stream.aclose();
   });
 
   it('dict override rescaled per language on fallback', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'idle' });
+    const stream = makeStreamWithTransport(transport, { userThreshold: { en: 0.55, ja: 0.25 } });
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
+    await waitFor(() => stream.model === 'turn-detector-mini');
+    expect(stream.isFallback).toBe(true);
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
+      LOCAL_LANGUAGES.en! * (0.55 / SERVER_THRESHOLDS.en!),
+    );
+    expect(await stream.unlikelyThreshold('ja')).toBeCloseTo(
+      LOCAL_LANGUAGES.ja! * (0.25 / SERVER_THRESHOLDS.ja!),
+    );
+    // fr not in dict → server value as effective → plain local default
+    expect(await stream.unlikelyThreshold('fr')).toBeCloseTo(LOCAL_LANGUAGES.fr!);
+    await stream.aclose();
+  });
+
+  it('fallback before session created uses local table with override applied', async () => {
+    // Cloud fails before any `SessionCreated` → no server map to rescale
+    // against, so the local table (with the override applied) is used directly.
     const transport = new ScriptedTransport({
       runBehavior: 'raise',
       runExc: new APIConnectionError({ message: 'boom' }),
     });
-    const stream = makeStreamWithTransport(transport, {
-      userThreshold: { en: 0.55, ja: 0.25 },
-    });
+    const stream = makeStreamWithTransport(transport, { userThreshold: 0.42 });
     await waitFor(() => stream.model === 'turn-detector-mini');
     expect(stream.isFallback).toBe(true);
-    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
-      LOCAL_LANGUAGES.en! * (0.55 / CLOUD_LANGUAGES.en!),
-    );
-    expect(await stream.unlikelyThreshold('ja')).toBeCloseTo(
-      LOCAL_LANGUAGES.ja! * (0.25 / CLOUD_LANGUAGES.ja!),
-    );
-    expect(await stream.unlikelyThreshold('fr')).toBeCloseTo(LOCAL_LANGUAGES.fr!);
+    // scalar 0.42 → 0.42 for every language via the catch-all
+    expect(await stream.unlikelyThreshold('en')).toBeCloseTo(0.42);
     await stream.aclose();
   });
 });

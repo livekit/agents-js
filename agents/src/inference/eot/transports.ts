@@ -16,6 +16,7 @@ import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
+import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import {
   type AudioTurnDetectionTransport,
   type AudioTurnDetectorStream,
@@ -23,7 +24,6 @@ import {
   type FlushSentinel,
   type TurnDetectorOptions,
 } from './base.js';
-import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import type { AudioTurnDetector } from './detector.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
 
@@ -382,6 +382,17 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     return ws as unknown as CloudWebSocket;
   }
 
+  private _warnTransportLatency(msg: ServerMsg): void {
+    const clientCreatedAtMs = timestampToMs(msg.clientCreatedAt);
+    const transportLatency = Date.now() - clientCreatedAtMs;
+    if (transportLatency > 500 && clientCreatedAtMs > 0) {
+      this._logger.warn(
+        { transportLatencyMs: transportLatency },
+        'turn detection transport latency is too high',
+      );
+    }
+  }
+
   protected _processServerMessage(msg: ServerMsg): void {
     const stream = this._streamRef?.deref();
     if (stream === undefined) return;
@@ -414,20 +425,29 @@ export class CloudTransport implements AudioTurnDetectionTransport {
         message: err.message,
         options: { statusCode: err.code, requestId: msg.requestId },
       });
+    } else if (kind === 'sessionCreated') {
+      this._warnTransportLatency(msg);
+      const created = msg.message.value;
+      // Adopt the gateway's calibrated default thresholds. A degenerate
+      // response (no usable thresholds) throws a non-retryable `APIError` that
+      // propagates out of the recv task → `run()` → the stream's cloud→local
+      // fallback.
+      stream.thresholdsOptions._updateDefaults(created.defaultThresholds, created.defaultThreshold);
+      this._logger.debug(
+        {
+          model: stream.thresholdsOptions.model,
+          thresholds: stream.thresholdsOptions.thresholds,
+          defaultThreshold: stream.thresholdsOptions.defaultThreshold,
+          overrides: stream.thresholdsOptions.overrides,
+        },
+        'audio turn detector initialized',
+      );
     } else if (
-      kind === 'sessionCreated' ||
       kind === 'sessionClosed' ||
       kind === 'inferenceStarted' ||
       kind === 'inferenceStopped'
     ) {
-      const clientCreatedAtMs = timestampToMs(msg.clientCreatedAt);
-      const transportLatency = Date.now() - clientCreatedAtMs;
-      if (transportLatency > 500 && clientCreatedAtMs > 0) {
-        this._logger.warn(
-          { transportLatencyMs: transportLatency },
-          'turn detection transport latency is too high',
-        );
-      }
+      this._warnTransportLatency(msg);
     } else {
       this._logger.warn({ kind }, 'unexpected turn detector message');
     }
@@ -578,12 +598,13 @@ export class CloudTransport implements AudioTurnDetectionTransport {
       if (socketErr !== undefined && !closingWs && !runAbort.signal.aborted) {
         throw new APIConnectionError({
           message: `turn detector connection error: ${socketErr.message}`,
+          options: { retryable: false },
         });
       }
       if (!closingWs && !runAbort.signal.aborted) {
         throw new APIStatusError({
           message: 'turn detector connection closed unexpectedly',
-          options: { statusCode: -1 },
+          options: { statusCode: -1, retryable: false },
         });
       }
     });

@@ -20,7 +20,7 @@ import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, Task, cancelAndWait, shortuuid } from '../../utils.js';
-import type { TurnDetectorModel } from './languages.js';
+import type { ThresholdOptions, TurnDetectorModel } from './languages.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
@@ -38,7 +38,7 @@ export enum Status {
  */
 export interface TurnDetectorOptions {
   sampleRate: number;
-  thresholds: Record<string, number>;
+  thresholds: ThresholdOptions;
 }
 
 /**
@@ -123,20 +123,20 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
     return 'livekit';
   }
 
-  /** Most-recent threshold map (after any cloud→local fallback rescale). */
-  get thresholds(): Record<string, number> {
-    return this._opts.thresholds;
+  /** Most-recent materialized threshold map (after any cloud→local fallback
+   * rescale or server-default adoption). */
+  get thresholds(): Readonly<Record<string, number>> {
+    return this._opts.thresholds.thresholds;
   }
 
   /** Threshold below which the detector treats the prediction as "unlikely
    * to be end-of-turn". Returns `undefined` when the language isn't covered. */
   async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
-    const key = language ?? 'en';
-    return this._opts.thresholds[key];
+    return this._opts.thresholds.lookup(language);
   }
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
-    return (await this.unlikelyThreshold(language)) !== undefined;
+    return this._opts.thresholds.supports(language);
   }
 
   abstract stream(): AudioTurnDetectorStream;
@@ -241,13 +241,18 @@ export class AudioTurnDetectorStream {
     return this._detector.provider;
   }
 
+  /** @internal Shared threshold resolver — the cloud transport reads it to
+   * adopt the server-sent defaults from `SessionCreated`. */
+  get thresholdsOptions(): ThresholdOptions {
+    return this._opts.thresholds;
+  }
+
   async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
-    const key = language ?? 'en';
-    return this._opts.thresholds[key];
+    return this._opts.thresholds.lookup(language);
   }
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
-    return (await this.unlikelyThreshold(language)) !== undefined;
+    return this._opts.thresholds.supports(language);
   }
 
   /**
@@ -266,8 +271,7 @@ export class AudioTurnDetectorStream {
    * unsupported code misses the table and is never treated as likely.
    */
   protected _isLikely(probability: number): boolean {
-    const key = this._lastLanguage ?? 'en';
-    const threshold = this._opts.thresholds[key];
+    const threshold = this._opts.thresholds.lookup(this._lastLanguage);
     return threshold !== undefined && probability >= threshold;
   }
 

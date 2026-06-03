@@ -10,14 +10,13 @@ export { eot };
 export {
   AudioTurnDetector,
   AudioTurnDetectorStreamImpl,
-  CLOUD_LANGUAGES,
   LOCAL_LANGUAGES,
   CloudTransport,
   LocalTransport,
-  materializeThresholds,
-  rescaleForLocalFallback,
+  ThresholdOptions,
   type AudioTurnDetectorOptions,
   type CloudTransportOptions,
+  type ThresholdOverride,
   type TurnDetectorModel,
 } from './eot/index.js';
 

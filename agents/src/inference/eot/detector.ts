@@ -10,10 +10,10 @@
  */
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { getJobContext } from '../../job.js';
-import type { LanguageCode } from '../../language.js';
 import { log } from '../../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
+import { getDefaultInferenceUrl } from '../utils.js';
 import {
   type AudioTurnDetectionTransport,
   AudioTurnDetector as AudioTurnDetectorBase,
@@ -22,12 +22,7 @@ import {
   SwapAbortError,
   type TurnDetectorOptions,
 } from './base.js';
-import { getDefaultInferenceUrl } from '../utils.js';
-import {
-  type TurnDetectorModel,
-  materializeThresholds,
-  rescaleForLocalFallback,
-} from './languages.js';
+import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 import { CloudTransport, type CloudTransportOptions, LocalTransport } from './transports.js';
 
 export interface AudioTurnDetectorOptions {
@@ -109,11 +104,12 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
 
     const detectorOpts: TurnDetectorOptions = {
       sampleRate: opts.sampleRate ?? DEFAULT_SAMPLE_RATE,
-      thresholds: materializeThresholds(opts.unlikelyThreshold, resolvedModel),
+      thresholds: new ThresholdOptions(resolvedModel, opts.unlikelyThreshold),
     };
     super(detectorOpts);
     this._model = resolvedModel;
     this._cloudOpts = cloudOpts;
+    this._warnThresholdOverride();
     // Default to the current job's shared inference executor. `getJobContext`
     // throws outside a job (tests, standalone) — degrade to `undefined`
     // (the local model then resolves a positive default) rather than throwing.
@@ -128,13 +124,37 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
     }
   }
 
-  /** Construction-time model. Per-stream `turn-detector`→`turn-detector-mini`
-   * (cloud→local) fallback state lives on the stream itself
-   * (`AudioTurnDetectorStreamImpl.model`) and is never written back here, so a
-   * fallback on one stream can't corrupt another stream spun off the same
-   * detector. */
+  /** Current model. Starts at the construction-time selection and flips to
+   * `'turn-detector-mini'` after a cloud→local fallback: the detector and its
+   * (single) active stream share one mutable `ThresholdOptions`, and the
+   * stream writes the swap back here so EOU metrics and `audio_recognition`
+   * see a consistent view. The fallback is one-way and sticky. */
   override get model(): TurnDetectorModel {
     return this._model;
+  }
+
+  /** @internal Written by the active stream on cloud→local fallback. */
+  _setModel(model: TurnDetectorModel): void {
+    this._model = model;
+  }
+
+  protected _warnThresholdOverride(): void {
+    const overrides = this._opts.thresholds.overrides;
+    if (overrides !== undefined) {
+      log().warn(
+        { unlikelyThreshold: overrides },
+        'a non-default turn detection threshold was provided; the server provides calibrated ' +
+          'defaults and overriding them may be suboptimal',
+      );
+    }
+  }
+
+  /** Replace the user threshold override at runtime. The shared
+   * `ThresholdOptions` re-resolves against the current (server or shipped)
+   * defaults, so an active stream picks it up immediately. */
+  updateOptions(opts: { unlikelyThreshold?: number | Record<string, number> } = {}): void {
+    this._opts.thresholds.updateOverrides(opts.unlikelyThreshold);
+    this._warnThresholdOverride();
   }
 
   override stream(opts: { connOptions?: APIConnectOptions } = {}): AudioTurnDetectorStream {
@@ -171,8 +191,8 @@ export interface AudioTurnDetectorStreamImplArgs {
  * Stream that owns the `turn-detector` → `turn-detector-mini` (cloud → local)
  * fallback FSM. On cloud transport failure (`transport.run()` raises, or
  * `predictEndOfTurn` times out), the stream swaps the transport and rescales
- * per-language thresholds. The fallback state lives on the stream; the detector
- * reads it back through its active-stream delegation rather than being mutated.
+ * per-language thresholds in place on the shared `ThresholdOptions`, then writes
+ * the model swap back to the owning detector so its view stays consistent.
  */
 export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   protected _model: TurnDetectorModel;
@@ -200,9 +220,8 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   }
 
   /** This stream's *current* model (flips to `'turn-detector-mini'` after a
-   * cloud→local fallback). Self-contained: the stream owns its active model,
-   * so this reports `'turn-detector-mini'` after a fallback while the detector
-   * delegates here for its own view. */
+   * cloud→local fallback). The swap is also written back to the owning
+   * detector, which shares this stream's mutable `ThresholdOptions`. */
   override get model(): TurnDetectorModel {
     return this._model;
   }
@@ -231,7 +250,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     if (!this._warnedCloudFailure) {
       this._detLogger.warn(
         { reason: reason.message },
-        'cloud audio eot failed; falling back to local mini model',
+        'cloud turn detector failed; falling back to local mini model',
       );
       this._warnedCloudFailure = true;
     }
@@ -241,15 +260,18 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     } catch {
       // ignore detach errors during swap
     }
-    const rescaled = rescaleForLocalFallback(this._opts.thresholds);
-    this._opts = { ...this._opts, thresholds: rescaled };
+    // Mutate the shared `ThresholdOptions` in place so the rescaled local
+    // thresholds + model swap are visible to the owning detector (read by EOU
+    // metrics and `audio_recognition`) without a copy-back. Safe because only
+    // one active stream per detector is supported, and the swap is sticky.
+    this._opts.thresholds._toLocalFallback();
+    if (this._detector instanceof AudioTurnDetector) {
+      this._detector._setModel('turn-detector-mini');
+    }
     this._transport = new LocalTransport({ opts: this._opts, executor: this._executor });
     this._transport.attach(this);
     this._model = 'turn-detector-mini';
     this._isFallback = true;
-    // The fallback view is owned by this stream (`model`/`_opts`);
-    // we deliberately don't write it back onto the shared detector, so a
-    // fallback here can't corrupt another stream off the same detector.
   }
 
   /** @internal Test-visible: same logic as the path taken when `_run` sees a
@@ -258,7 +280,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     if (!this._warnedLocalFailure) {
       this._detLogger.warn(
         { reason: reason.message },
-        'local audio eot mini failed; defaulting to 1.0 and retrying on next turn',
+        'local audio turn detector failed; defaulting to 1.0 and retrying on next turn',
       );
       this._warnedLocalFailure = true;
     }

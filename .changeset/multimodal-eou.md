@@ -14,4 +14,4 @@ feat(core): multimodal end-of-turn detection with cloud → local fallback (AGT-
 - `livekit-plugins-silero` is deprecated; pass `vad: null` to opt out of the bundled default, or use `inference.VAD({ model: 'silero', ... })` to customise.
 - `livekit-plugins-livekit` turn detector is deprecated in favor of `inference.AudioTurnDetector`.
 - New `EOTInferenceMetrics` and `EOTModelUsage`; new telemetry span attributes (`lk.eou.source`, `lk.eou.from_cache`, `lk.eou.detection_delay`); new `eot_prediction` event forwarded over remote sessions.
-- Requires `@livekit/protocol` >= 1.46.2 (exposes the `AgentInference` message namespace used by the cloud transport).
+- Requires `@livekit/protocol` >= 1.46.5 (exposes the `AgentInference` message namespace used by the cloud transport, including the server-provided `SessionCreated` default thresholds).
