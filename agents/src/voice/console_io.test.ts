@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
-import { TcpAudioInput, TcpAudioOutput } from './console_io.js';
+import type { AgentSession } from './agent_session.js';
+import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import { SessionHost, SessionTransport } from './remote_session.js';
 
 beforeAll(() => {
@@ -135,6 +136,41 @@ describe('TcpAudioOutput', () => {
     expect(ev.interrupted).toBe(true);
     expect(ev.playbackPosition).toBeLessThan(1);
     expect(transport.sent.some((m) => m.message.case === 'audioPlaybackClear')).toBe(true);
+  });
+});
+
+describe('AgentsConsole', () => {
+  afterEach(() => {
+    AgentsConsole._reset();
+  });
+
+  const makeSession = () =>
+    ({
+      input: { audio: {} },
+      output: { audio: {}, transcription: {} },
+    }) as unknown as AgentSession;
+
+  it('is a process-wide singleton', () => {
+    expect(AgentsConsole.getInstance()).toBe(AgentsConsole.getInstance());
+  });
+
+  it('acquireIo unsets session audio/transcription (text mode) and flips ioAcquired', () => {
+    const c = AgentsConsole.getInstance();
+    expect(c.ioAcquired).toBe(false);
+
+    const session = makeSession();
+    c.acquireIo(session);
+
+    expect(c.ioAcquired).toBe(true);
+    expect(session.input.audio).toBeNull();
+    expect(session.output.audio).toBeNull();
+    expect(session.output.transcription).toBeNull();
+  });
+
+  it('throws when acquired by a second session', () => {
+    const c = AgentsConsole.getInstance();
+    c.acquireIo(makeSession());
+    expect(() => c.acquireIo(makeSession())).toThrow(/already acquired/);
   });
 });
 

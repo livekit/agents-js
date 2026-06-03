@@ -6,6 +6,7 @@ import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { Future, Task } from '../utils.js';
+import type { AgentSession } from './agent_session.js';
 import { AudioInput, AudioOutput } from './io.js';
 import type { SessionTransport } from './remote_session.js';
 
@@ -181,5 +182,61 @@ export class TcpAudioOutput extends AudioOutput {
 
     this.pushedDurationMs = 0;
     this.interrupted = new Future();
+  }
+}
+
+/**
+ * Process-wide singleton that carries the console transport (and audio IO) from
+ * the `console` CLI runner into the {@link AgentSession} that starts inside the
+ * agent entrypoint. Mirrors python `AgentsConsole`.
+ *
+ * The runner sets {@link enabled} and the transport; `AgentSession._startImpl`
+ * then calls {@link acquireIo} to wire the session and build its `SessionHost`.
+ * Only text mode is wired today — the user drives the agent over the session
+ * transport (text in via `runInput`, events out), so no audio/transcription IO
+ * is attached to the session. Audio-mode session wiring is a follow-up.
+ *
+ * @experimental
+ */
+export class AgentsConsole {
+  private static _instance?: AgentsConsole;
+
+  static getInstance(): AgentsConsole {
+    if (!AgentsConsole._instance) {
+      AgentsConsole._instance = new AgentsConsole();
+    }
+    return AgentsConsole._instance;
+  }
+
+  /** @internal — reset the process-wide singleton (test only). */
+  static _reset(): void {
+    AgentsConsole._instance = undefined;
+  }
+
+  enabled = false;
+  record = false;
+  transport?: SessionTransport;
+  audioInput?: TcpAudioInput;
+  audioOutput?: TcpAudioOutput;
+
+  private acquired = false;
+
+  get ioAcquired(): boolean {
+    return this.acquired;
+  }
+
+  /** Wire the session's IO for console mode. */
+  acquireIo(session: AgentSession): void {
+    if (this.acquired) {
+      throw new Error('the console IO was already acquired by another session');
+    }
+    this.acquired = true;
+
+    // Text mode: leave audio/transcription unset. The audio bridges are still
+    // routed at the transport level by `SessionHost`, but are not attached to
+    // the session pipeline until audio-mode wiring lands.
+    session.input.audio = null;
+    session.output.audio = null;
+    session.output.transcription = null;
   }
 }
