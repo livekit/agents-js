@@ -116,7 +116,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 
 ### Remote Sessions (`voice/remote_session.ts`)
 
-Wire protocol for distributed agents via LiveKit room message channels. `SessionTransport` abstraction with `RoomSessionTransport` implementation.
+Wire protocol for distributed agents. `SessionTransport` abstraction with `RoomSessionTransport` (LiveKit room channels) and `TcpSessionTransport` (raw TCP socket) implementations.
 
 ### Plugins (`plugins/`)
 
