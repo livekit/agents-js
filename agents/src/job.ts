@@ -399,15 +399,25 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal */
   onParticipantConnected(p: RemoteParticipant) {
     for (const callback of this.#participantEntrypoints) {
-      if (this.#participantTasks[p.identity!]?.callback == callback) {
+      const identity = p.identity!;
+      if (this.#participantTasks[identity]?.callback == callback) {
         this.#logger.warn(
           'a participant has joined before a prior prticipant task matching the same identity has finished:',
-          p.identity,
+          identity,
         );
       }
       const result = callback(this, p);
-      result.finally(() => delete this.#participantTasks[p.identity!]);
-      this.#participantTasks[p.identity!] = { callback, result };
+      void result.then(
+        () => delete this.#participantTasks[identity],
+        (error) => {
+          delete this.#participantTasks[identity];
+          this.#logger.error(
+            { error },
+            `error in participant entrypoint ${callback.name || '<anonymous>'} for '${identity}'`,
+          );
+        },
+      );
+      this.#participantTasks[identity] = { callback, result };
     }
   }
 
