@@ -1081,10 +1081,6 @@ export function performToolExecutions({
 
       onToolExecutionStarted(toolCall);
       const activity = session.currentActivity;
-      if (!activity) {
-        logger.error({ speech_id: speechHandle.id }, 'no active AgentActivity to execute tool');
-        continue;
-      }
 
       logger.info(
         {
@@ -1167,6 +1163,14 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
+              if (!activity) {
+                return await tool.execute(parsedArgs, {
+                  ctx: runCtx,
+                  toolCallId: toolCall.callId,
+                  abortSignal: signal,
+                });
+              }
+
               return await activity._toolExecutor.execute({
                 tool,
                 runCtx,
