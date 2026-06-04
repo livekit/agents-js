@@ -4,6 +4,7 @@
 import type { Room } from '@livekit/rtc-node';
 import { RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
@@ -89,10 +90,54 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   }
 
   /**
+   * Wait until the avatar participant has joined the room and published its video track.
+   *
+   * @param timeout - Timeout in milliseconds. Pass `null` to wait indefinitely.
+   */
+  async waitForJoin({ timeout = 30000 }: { timeout?: number | null } = {}): Promise<void> {
+    if (!this.#waitAvatarJoinPromise) return;
+    if (timeout === null) {
+      await this.#waitAvatarJoinPromise;
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.#waitAvatarJoinPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('timed out waiting for avatar participant')),
+          timeout,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  /**
    * Release any resources owned by this avatar session. Default implementation is a no-op;
    * subclasses can override to perform cleanup.
    */
   async aclose(): Promise<void> {
+    const roomName = this.#room?.name;
+    if (this.#room?.isConnected && roomName !== undefined) {
+      const jobCtx = getJobContext(false);
+      if (jobCtx !== undefined) {
+        try {
+          const client = new RoomServiceClient(
+            jobCtx.info.url,
+            jobCtx.info.apiKey,
+            jobCtx.info.apiSecret,
+          );
+          await client.removeParticipant(roomName, this.avatarIdentity);
+        } catch (error) {
+          this.#logger.warn(
+            { error, identity: this.avatarIdentity },
+            'failed to remove avatar participant',
+          );
+        }
+      }
+    }
+
     if (this.#agentSession) {
       this.#agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
