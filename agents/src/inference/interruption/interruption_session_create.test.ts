@@ -11,6 +11,7 @@
 // off `session.created` and the observability-only effective-threshold resolution.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
+import { MockWebSocket } from './_mock_ws.js';
 import { THRESHOLD } from './defaults.js';
 import { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
@@ -21,52 +22,11 @@ import { resolveEffectiveThreshold, wsMessageSchema } from './ws_transport.js';
 // ---------------------------------------------------------------------------
 
 vi.mock('ws', async () => {
-  const { EventEmitter: NodeEventEmitter } = await import('node:events');
-
-  class MockWebSocket extends NodeEventEmitter {
-    static OPEN = 1;
-    static instances: MockWebSocket[] = [];
-
-    readyState = 0; // CONNECTING
-    readonly sent: unknown[] = [];
-
-    constructor(
-      public url: string,
-      public opts: unknown,
-    ) {
-      super();
-      MockWebSocket.instances.push(this);
-    }
-
-    send(data: unknown): void {
-      this.sent.push(data);
-    }
-
-    close(): void {
-      this.readyState = 3; // CLOSED
-      this.emit('close', 1000, Buffer.from(''));
-    }
-
-    terminate(): void {
-      this.readyState = 3;
-    }
-
-    simulateOpen(): void {
-      this.readyState = MockWebSocket.OPEN;
-      this.emit('open');
-    }
-  }
-
+  const { MockWebSocket } = await import('./_mock_ws.js');
   return { default: MockWebSocket, WebSocket: MockWebSocket };
 });
 
-const { default: MockWebSocket } = (await import('ws')) as unknown as {
-  default: {
-    instances: Array<{ readyState: number; sent: unknown[]; simulateOpen(): void }>;
-  };
-};
-
-type MockSocket = (typeof MockWebSocket.instances)[number];
+type MockSocket = MockWebSocket;
 
 // ---------------------------------------------------------------------------
 // Helpers

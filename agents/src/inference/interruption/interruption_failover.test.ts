@@ -19,6 +19,7 @@ import { APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { ChatContext } from '../../llm/chat_context.js';
 import { initializeLogger } from '../../log.js';
 import { AudioRecognition, type RecognitionHooks } from '../../voice/audio_recognition.js';
+import { MockWebSocket } from './_mock_ws.js';
 import { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import { InterruptionStreamBase, InterruptionStreamSentinel } from './interruption_stream.js';
 
@@ -27,68 +28,11 @@ import { InterruptionStreamBase, InterruptionStreamSentinel } from './interrupti
 // ---------------------------------------------------------------------------
 
 vi.mock('ws', async () => {
-  const { EventEmitter: NodeEventEmitter } = await import('node:events');
-
-  class MockWebSocket extends NodeEventEmitter {
-    static OPEN = 1;
-    static instances: MockWebSocket[] = [];
-
-    readyState = 0; // CONNECTING
-    readonly sent: unknown[] = [];
-    terminated = false;
-
-    constructor(
-      public url: string,
-      public opts: unknown,
-    ) {
-      super();
-      MockWebSocket.instances.push(this);
-    }
-
-    send(data: unknown): void {
-      this.sent.push(data);
-    }
-
-    close(): void {
-      this.readyState = 3; // CLOSED
-      this.emit('close', 1000, Buffer.from(''));
-    }
-
-    terminate(): void {
-      this.terminated = true;
-      this.readyState = 3;
-    }
-
-    /** Simulate a successful upgrade. */
-    simulateOpen(): void {
-      this.readyState = MockWebSocket.OPEN;
-      this.emit('open');
-    }
-
-    /** Simulate the server rejecting the upgrade with an HTTP status. */
-    simulateUnexpectedResponse(statusCode: number): void {
-      this.emit('unexpected-response', {}, { statusCode });
-    }
-  }
-
+  const { MockWebSocket } = await import('./_mock_ws.js');
   return { default: MockWebSocket, WebSocket: MockWebSocket };
 });
 
-// Pull the mocked class back out so tests can reach the constructed instances.
-const { default: MockWebSocket } = (await import('ws')) as unknown as {
-  default: {
-    OPEN: number;
-    instances: Array<{
-      readyState: number;
-      sent: unknown[];
-      terminated: boolean;
-      simulateOpen(): void;
-      simulateUnexpectedResponse(statusCode: number): void;
-    }>;
-  };
-};
-
-type MockSocket = (typeof MockWebSocket.instances)[number];
+type MockSocket = MockWebSocket;
 
 // ---------------------------------------------------------------------------
 // Helpers
