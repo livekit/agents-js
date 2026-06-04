@@ -10,6 +10,7 @@ import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
+import { AudioTurnDetector, type AudioTurnDetectorStream } from '../inference/eot/base.js';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -120,7 +121,6 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
-import { AudioTurnDetector, type AudioTurnDetectorStream } from '../inference/eot/base.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 

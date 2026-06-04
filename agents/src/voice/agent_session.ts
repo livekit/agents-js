@@ -12,9 +12,10 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import type { AudioTurnDetector } from '../inference/eot/base.js';
 import {
-  LLM as InferenceLLM,
   AudioTurnDetector as InferenceAudioTurnDetector,
+  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   VAD as InferenceVAD,
@@ -93,7 +94,6 @@ import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
 import type { TextTransform } from './transcription/text_transforms.js';
-import type { AudioTurnDetector } from '../inference/eot/base.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
 import type {
