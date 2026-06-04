@@ -148,6 +148,9 @@ describe('init timeout rejection handling', () => {
 
     const { SupervisedProc } = await import('./supervised_proc.js');
     class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
       createProcess() {
         return fork(slowScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
       }
@@ -195,6 +198,9 @@ describe('init timeout rejection handling', () => {
 
     const { SupervisedProc } = await import('./supervised_proc.js');
     class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
       createProcess() {
         return fork(slowScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
       }
