@@ -5,12 +5,11 @@ import type {
   LocalTrackPublication,
   Participant,
   ParticipantKind,
-  RemoteParticipant,
   RemoteTrackPublication,
   Room,
   TrackKind,
 } from '@livekit/rtc-node';
-import { AudioFrame, AudioResampler, RoomEvent } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -1050,6 +1049,87 @@ export async function waitForParticipant({
     return await fut.await;
   } finally {
     room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+    room.off(RoomEvent.Disconnected, onDisconnected);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+export async function waitForParticipantAttribute({
+  room,
+  identity,
+  attribute,
+  value,
+  signal,
+}: {
+  room: Room;
+  identity: string;
+  attribute: string;
+  value: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (!room.isConnected) {
+    throw new Error('Room is not connected');
+  }
+  if (signal?.aborted) {
+    throw new Error('waitForParticipantAttribute aborted');
+  }
+
+  const participant = room.remoteParticipants.get(identity);
+  if (!participant) {
+    throw new Error(`Participant ${identity} is not in the room`);
+  }
+
+  const fut = new Future<void>();
+
+  const isMatch = (p: Participant) =>
+    p instanceof RemoteParticipant && p.identity === identity && p.attributes[attribute] === value;
+
+  const onParticipantAttributesChanged = (
+    _changedAttributes: Record<string, string>,
+    p: Participant,
+  ) => {
+    if (!fut.done && isMatch(p)) {
+      fut.resolve();
+    }
+  };
+
+  const onParticipantDisconnected = (p: RemoteParticipant) => {
+    if (!fut.done && p.identity === identity) {
+      fut.reject(new Error(`Participant ${identity} disconnected while waiting for ${attribute}`));
+    }
+  };
+
+  const onDisconnected = () => {
+    if (!fut.done) {
+      fut.reject(new Error(`Room disconnected while waiting for ${identity} ${attribute}`));
+    }
+  };
+
+  const onAbort = () => {
+    if (!fut.done) {
+      fut.reject(new Error('waitForParticipantAttribute aborted'));
+    }
+  };
+
+  room.on(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+  room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+  room.on(RoomEvent.Disconnected, onDisconnected);
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    // Re-check after registering: if the participant vanished in between, reject
+    // rather than await a future that could only settle on disconnect/abort.
+    const current = room.remoteParticipants.get(identity);
+    if (!current) {
+      throw new Error(`Participant ${identity} is not in the room`);
+    }
+    if (current.attributes[attribute] === value) {
+      return;
+    }
+    await fut.await;
+  } finally {
+    room.off(RoomEvent.ParticipantAttributesChanged, onParticipantAttributesChanged);
+    room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
     room.off(RoomEvent.Disconnected, onDisconnected);
     signal?.removeEventListener('abort', onAbort);
   }

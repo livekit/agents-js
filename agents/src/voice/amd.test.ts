@@ -13,7 +13,25 @@ import { STT } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
 import type { AgentSession } from './agent_session.js';
 import { AMD, AMDCategory } from './amd.js';
-import { AgentSessionEventTypes } from './events.js';
+import type { EndOfTurnInfo } from './audio_recognition.js';
+
+// AMD receives speech boundaries and transcripts via the recognition hooks that
+// AgentActivity invokes (mirroring python AudioRecognition driving _AMDClassifier).
+// Tests drive those hooks directly instead of emitting session events.
+const speechStart = (amd: AMD): void => amd.onUserSpeechStarted();
+const speechEnd = (amd: AMD, silenceDurationMs = 0): void =>
+  amd.onUserSpeechEnded(silenceDurationMs);
+const pushTranscript = (amd: AMD, text: string, source: 'stt' | 'amd_stt' = 'stt'): void =>
+  amd.onTranscript(text, source);
+
+const makeEotInfo = (newTranscript: string): EndOfTurnInfo => ({
+  newTranscript,
+  transcriptConfidence: 1,
+  transcriptionDelay: 0,
+  endOfUtteranceDelay: 0,
+  startedSpeakingAt: undefined,
+  stoppedSpeakingAt: undefined,
+});
 
 class StaticLLM extends LLM {
   constructor(private readonly response: string | Error) {
@@ -76,14 +94,7 @@ describe('AMD', () => {
     amd.on('amd_prediction', onPrediction);
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Please leave a message after the tone',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'Please leave a message after the tone');
 
     await expect(promise).resolves.toMatchObject({
       type: 'amd_prediction',
@@ -100,6 +111,92 @@ describe('AMD', () => {
     });
   });
 
+  it('onEndOfTurn signals skip-reply after a machine verdict', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+
+    const promise = amd.execute();
+    pushTranscript(amd, 'Please leave a message after the tone');
+    await promise;
+
+    // machine verdict + interruptOnMachine (default) → skip the racing auto-reply
+    expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(true);
+  });
+
+  it('onEndOfTurn does not skip-reply for a human verdict', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+
+    const promise = amd.execute();
+    pushTranscript(amd, 'hello there');
+    await promise;
+
+    expect(amd.onEndOfTurn(makeEotInfo('hello there'))).toBe(false);
+  });
+
+  it('onEndOfTurn does not skip-reply when interruptOnMachine is false', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 50,
+      interruptOnMachine: false,
+    });
+
+    const promise = amd.execute();
+    pushTranscript(amd, 'Please leave a message after the tone');
+    await promise;
+
+    // caller opted out of AMD taking over the turn, so the normal reply is not skipped
+    expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(false);
+  });
+
+  it('onEndOfTurn does not skip-reply while a machine verdict is committed but not yet emitted', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      // keep the post-speech silence gate closed long enough to call onEndOfTurn
+      // while the machine verdict is committed but still gated (not emitted).
+      machineSilenceThresholdMs: 1_000,
+      maxEndpointingDelayMs: 5_000,
+      detectionTimeoutMs: 5_000,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    speechStart(amd);
+    pushTranscript(amd, 'Please leave a message after the tone');
+    speechEnd(amd, 0);
+
+    // Let the LLM commit a machine verdict; the silence gate (1s) is still closed.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // EOT arrives before post-speech silence: the verdict is committed but has not
+    // cleared the emission gates, so we must NOT skip the reply yet — mirrors python
+    // gating on the *emitted* `_result`, not the pre-emission committed verdict.
+    expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(false);
+
+    // Once the silence gate opens the verdict emits, and a later EOT does skip.
+    const result = await promise;
+    expect(result.category).toBe(AMDCategory.MACHINE_VM);
+    expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(true);
+  }, 5_000);
+
   it('should forward predictions to session._onAmdPrediction', async () => {
     const onAmdPrediction = vi.fn();
     const session = Object.assign(new MockSession(), { _onAmdPrediction: onAmdPrediction });
@@ -110,14 +207,7 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'hello there',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'hello there');
 
     await promise;
     expect(onAmdPrediction).toHaveBeenCalledTimes(1);
@@ -139,14 +229,7 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'The mailbox you are trying to reach is unavailable',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'The mailbox you are trying to reach is unavailable');
 
     await expect(promise).resolves.toMatchObject({
       category: AMDCategory.MACHINE_UNAVAILABLE,
@@ -161,14 +244,7 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), { llm });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Hello?',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'Hello?');
 
     await expect(promise).rejects.toThrow('boom');
     expect(session.resumeReplyAuthorization).toHaveBeenCalled();
@@ -223,14 +299,7 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Press 1 for sales, 2 for support',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'Press 1 for sales, 2 for support');
 
     await expect(promise).resolves.toMatchObject({
       category: AMDCategory.MACHINE_IVR,
@@ -258,14 +327,7 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Hello?',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'Hello?');
 
     await expect(promise).resolves.toMatchObject({ category: AMDCategory.HUMAN });
   });
@@ -285,32 +347,13 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
-    const t0 = Date.now();
-
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'listening',
-      newState: 'speaking',
-      createdAt: t0,
-    });
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'speaking',
-      newState: 'listening',
-      createdAt: t0 + 50,
-    });
+    speechStart(amd);
+    speechEnd(amd, 0);
 
     // Transcript arrives 40ms after speech end, well inside the 100ms HUMAN
     // silence window. Without the fix this would race the short_greeting timer.
     await new Promise((resolve) => setTimeout(resolve, 40));
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'hello there',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'hello there');
 
     const result = await promise;
     expect(result.category).toBe(AMDCategory.HUMAN);
@@ -331,20 +374,8 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
-    const t0 = Date.now();
-
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'listening',
-      newState: 'speaking',
-      createdAt: t0,
-    });
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'speaking',
-      newState: 'listening',
-      createdAt: t0 + 50,
-    });
+    speechStart(amd);
+    speechEnd(amd, 0);
 
     const result = await promise;
     expect(result.category).toBe(AMDCategory.HUMAN);
@@ -364,23 +395,15 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
-    const t0 = Date.now();
-
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'listening',
-      newState: 'speaking',
-      createdAt: t0,
-    });
-    session.emit(AgentSessionEventTypes.UserStateChanged, {
-      type: 'user_state_changed',
-      oldState: 'speaking',
-      newState: 'listening',
-      createdAt: t0 + 80,
-    });
+    speechStart(amd);
+    // ~80ms of speech before it ends, so speechDuration reflects it
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    speechEnd(amd, 0);
 
     const result = await promise;
-    expect(result.speechDurationMs).toBeGreaterThanOrEqual(80);
+    // setTimeout can fire a hair early, so allow scheduling slack below the 80ms
+    // sleep; the point is that the duration reflects the speech window, not 0.
+    expect(result.speechDurationMs).toBeGreaterThanOrEqual(70);
     expect(result.delayMs).toBeGreaterThanOrEqual(0);
   }, 5_000);
 
@@ -408,14 +431,7 @@ describe('AMD', () => {
       const amd = new AMD(asAgentSession(session), { detectionTimeoutMs: 50 });
 
       const promise = amd.execute();
-      session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-        type: 'user_input_transcribed',
-        transcript: 'Hello?',
-        isFinal: true,
-        speakerId: null,
-        createdAt: Date.now(),
-        language: null,
-      });
+      pushTranscript(amd, 'Hello?');
       await expect(promise).resolves.toMatchObject({
         category: AMDCategory.HUMAN,
         reason: expect.any(String),
@@ -511,20 +527,13 @@ describe('AMD', () => {
       suppressCompatibilityWarning: true,
     });
 
-    // Drive the AMD via a session-STT event — should be IGNORED because the
-    // dedicated STT pump owns transcript ingestion (source filtering).
+    // A session-STT transcript (source 'stt') must be IGNORED because the
+    // dedicated STT pump owns transcript ingestion (source = 'amd_stt').
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'this should be ignored',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    pushTranscript(amd, 'this should be ignored', 'stt');
 
     // Detection timer fires while the dedicated STT pump never produced a
-    // transcript → settles UNCERTAIN with no LLM verdict (the session event
+    // transcript → settles UNCERTAIN with no LLM verdict (the 'stt' event
     // was dropped).
     const result = await promise;
     expect(result.reason).toBe('detection_timeout');
@@ -573,21 +582,104 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), {
       llm,
       detectionTimeoutMs: 5_000,
+      // small end-of-turn backstop so the machine verdict's eot gate opens
+      // quickly without a session turn detector (mirrors python on_user_speech_ended)
+      maxEndpointingDelayMs: 100,
       suppressCompatibilityWarning: true,
     });
 
     const promise = amd.execute();
-    session.emit(AgentSessionEventTypes.UserInputTranscribed, {
-      type: 'user_input_transcribed',
-      transcript: 'Press 1 for sales',
-      isFinal: true,
-      speakerId: null,
-      createdAt: Date.now(),
-      language: null,
-    });
+    // speech boundary so the eot backstop is armed, then the IVR transcript
+    speechStart(amd);
+    speechEnd(amd, 0);
+    pushTranscript(amd, 'Press 1 for sales');
 
     const result = await promise;
     expect(result.category).toBe(AMDCategory.MACHINE_IVR);
     expect(callCount).toBeGreaterThanOrEqual(2);
+  }, 5_000);
+
+  it('no_speech_timeout settles as UNCERTAIN (not a machine)', async () => {
+    const session = new MockSession();
+    // session.llm fallback is unused because no transcript ever arrives
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'x' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      noSpeechTimeoutMs: 30,
+      detectionTimeoutMs: 5_000,
+      suppressCompatibilityWarning: true,
+    });
+
+    // No speech at all → no-speech timer fires.
+    const result = await amd.execute();
+    expect(result.reason).toBe('no_speech_timeout');
+    expect(result.category).toBe(AMDCategory.UNCERTAIN);
+    expect(result.isMachine).toBe(false);
+    // not a machine → no forced interrupt
+    expect(session.interrupt).not.toHaveBeenCalled();
+  });
+
+  it('waitUntilFinished gates a machine verdict on end-of-turn', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      waitUntilFinished: true,
+      // long backstop so the only fast path to eot is the explicit turn-detector signal
+      maxEndpointingDelayMs: 5_000,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    // transcript present before speech ends → machine-silence (not short-greeting) path
+    speechStart(amd);
+    pushTranscript(amd, 'Please leave a message after the tone');
+    speechEnd(amd, 0);
+
+    // Give silence + LLM verdict time to settle; the verdict must NOT emit yet
+    // because the end-of-turn gate is still closed under waitUntilFinished.
+    await new Promise((r) => setTimeout(r, 100));
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+
+    // Turn detector commits end-of-turn → verdict releases.
+    expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(true);
+    const result = await promise;
+    expect(result.category).toBe(AMDCategory.MACHINE_VM);
+  }, 5_000);
+
+  it('subtracts already-elapsed silence from the silence timer (onUserSpeechEnded)', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'x' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      humanSilenceThresholdMs: 300,
+      detectionTimeoutMs: 5_000,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    speechStart(amd);
+    // ~300ms of speech, of which 250ms of trailing silence has already elapsed
+    // when the VAD declares end-of-speech.
+    await new Promise((r) => setTimeout(r, 300));
+    const endedAt = Date.now();
+    speechEnd(amd, 250);
+
+    const result = await promise;
+    expect(result.category).toBe(AMDCategory.HUMAN);
+    expect(result.reason).toBe('short_greeting');
+    // human-silence window was shortened by the already-elapsed 250ms
+    // (300 - 250 ≈ 50ms), so it settles well before the full 300ms threshold.
+    expect(Date.now() - endedAt).toBeLessThan(250);
   }, 5_000);
 });

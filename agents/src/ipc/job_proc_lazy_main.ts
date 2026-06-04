@@ -171,7 +171,11 @@ const startJob = (
     }
 
     // Generate and save/upload session report
-    await ctx._onSessionEnd();
+    try {
+      await ctx._onSessionEnd();
+    } catch (error) {
+      logger.error({ error }, 'error in ctx._onSessionEnd');
+    }
 
     await room.disconnect();
     logger.debug('disconnected from room');

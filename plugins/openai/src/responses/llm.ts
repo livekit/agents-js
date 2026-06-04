@@ -182,7 +182,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       )) as OpenAI.Responses.ResponseInputItem[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               name: name,

@@ -1,5 +1,82 @@
 # @livekit/agents
 
+## 1.4.5
+
+### Patch Changes
+
+- Fix `AgentActivity.generateReply` defaulting `toolChoice` to `'none'` on a child `AgentSession` spawned inside a tool. The previous check relied on `AsyncLocalStorage`, which leaks the parent function-call context into the child session and caused the framework to drop legitimate tool calls emitted by the child agent (e.g. the supervisor's `connect_to_caller` invocation in `WarmTransferTask`). The check now uses per-task info, matching the Python implementation. - [#1458](https://github.com/livekit/agents-js/pull/1458) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Block user turn exceeded callbacks while an agent handoff is starting. - [#1614](https://github.com/livekit/agents-js/pull/1614) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: repair leaked chat-template tokens in function call args - [#1604](https://github.com/livekit/agents-js/pull/1604) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix interrupt race that could leak unplayed transcript text. - [#1573](https://github.com/livekit/agents-js/pull/1573) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Wire internal debug messages through remote sessions. - [#1645](https://github.com/livekit/agents-js/pull/1645) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- subscribe to tracks published after connect with AUDIO_ONLY/VIDEO_ONLY - [#1629](https://github.com/livekit/agents-js/pull/1629) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(worker): update worker warnings - [#1571](https://github.com/livekit/agents-js/pull/1571) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(inference): stop mislabeling barge-in handler errors as parse failures - [#1619](https://github.com/livekit/agents-js/pull/1619) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  The interruption WebSocket handler wrapped both `wsMessageSchema.parse` and `handleMessage` in one `try`, so a handler throw (e.g. a late `bargein_detected` prediction enqueued after the readable side was errored/closed) was logged as "Failed to parse WebSocket message" with the real error discarded. Parse and handler errors are now caught separately and log the actual error, and the late barge-in event is dropped quietly (`desiredSize === null`) instead of throwing into a dead stream.
+
+- update rtc sdk to 0.13.29 - [#1652](https://github.com/livekit/agents-js/pull/1652) ([@davidzhao](https://github.com/davidzhao))
+
+- fix(llm): convert per-turn instructions on the first turn for Google provider format - [#1589](https://github.com/livekit/agents-js/pull/1589) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(realtime): process all messages in multi-message realtime generations - [#1628](https://github.com/livekit/agents-js/pull/1628) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+  Reorders audio/text forwarding setup inside `processOneMessage` to match the
+  Python source order (audio first, then text), and tightens the playout-await
+  guard so `playoutPromise` is only awaited when not interrupted. This fixes a
+  case where the second message in a multi-message realtime response (e.g.
+  `gpt-realtime-2` preambles) could be dropped.
+
+  Also stamps assistant `ChatMessage.createdAt` with `startedSpeakingAt` (the
+  first frame's playback start) instead of defaulting to `Date.now()` at
+  end-of-generation. This preserves correct user/assistant ordering in
+  `ChatContext` when user transcription items land during agent playout.
+
+- feat(realtime): support multi-message generation per response - [#1555](https://github.com/livekit/agents-js/pull/1555) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent recorder close from hanging during encode cleanup and clamp recorder frame splits to valid frame bounds. - [#1684](https://github.com/livekit/agents-js/pull/1684) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Remove the `ttsPronunciationMap` Agent option (and the `TTSPronunciationMap` type). Use the general `tts_text_transforms` / `replace` text transform for pre-TTS pronunciation replacements instead. - [#1620](https://github.com/livekit/agents-js/pull/1620) ([@u9g](https://github.com/u9g))
+
+- fix: reset user turn tracker when clearing user turn - [#1615](https://github.com/livekit/agents-js/pull/1615) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): make ParticipantAudioOutput.pause() actually gate audio (port \_playback_enabled + synchronizer pause) - [#1579](https://github.com/livekit/agents-js/pull/1579) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Replace discarded input audio with silence for STT and realtime model streams. - [#1601](https://github.com/livekit/agents-js/pull/1601) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix: make non-transient 4xx API status errors non-retryable - [#1597](https://github.com/livekit/agents-js/pull/1597) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat: allow updating dynamic endpointing alpha on active sessions - [#1634](https://github.com/livekit/agents-js/pull/1634) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat(google): add Vertex AI Model Garden LLM integration - [#1606](https://github.com/livekit/agents-js/pull/1606) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Soniox STT support and surface per-run source and target language segments on STT speech data. - [#1602](https://github.com/livekit/agents-js/pull/1602) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): sort function tools to keep tool order invariant. - [#1641](https://github.com/livekit/agents-js/pull/1641) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Update download-files deprecation message - [#1621](https://github.com/livekit/agents-js/pull/1621) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use STT transcript timestamps for last speaking time when VAD is unavailable or misses speech. - [#1603](https://github.com/livekit/agents-js/pull/1603) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): surface tool-argument validation errors to the LLM instead of returning a generic "internal error" - [#1606](https://github.com/livekit/agents-js/pull/1606) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  When an LLM-generated tool call failed JSON parsing or Zod schema validation, the framework returned `"An internal error occurred"` to the LLM, which left the model with no way to correct itself — causing it to loop on the same invalid call. Argument-validation failures are now wrapped in a `ToolError` whose message includes the tool name and the validator's diagnostic, so the LLM can fix its arguments.
+
+  Behavior is unchanged for exceptions thrown from inside a tool's `execute`: regular `Error`s are still masked as `"An internal error occurred"` to avoid leaking server-side details, and `ToolError` continues to be the supported way to forward a custom message to the LLM.
+
+- Make `ToolOptions.abortSignal` required. The framework always provides an `AbortSignal` to tool execution, so the field is no longer optional. Tool authors can rely on `abortSignal` always being defined and drop defensive `if (abortSignal)` checks. - [#1678](https://github.com/livekit/agents-js/pull/1678) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Reset active VAD streams on flush so STT end-of-speech can recover without recreating streams. STT end-of-speech now preserves the VAD-owned `lastSpeakingTime` instead of overwriting it, keeping the end-of-turn "no new speech" check reliable when VAD is active. - [#1574](https://github.com/livekit/agents-js/pull/1574) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add beta WarmTransferTask workflow for SIP-based human handoffs. - [#1458](https://github.com/livekit/agents-js/pull/1458) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.4
 
 ### Patch Changes
