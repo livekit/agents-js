@@ -73,6 +73,10 @@ export enum AutoSubscribe {
   AUDIO_ONLY,
 }
 
+type RoomConnectOptions = NonNullable<Parameters<Room['connect']>[2]> & {
+  singlePeerConnection?: boolean;
+};
+
 export type JobAcceptArguments = {
   name: string;
   identity: string;
@@ -251,7 +255,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
-    const opts = {
+    const opts: RoomConnectOptions = {
       e2ee,
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
       rtcConfig,
