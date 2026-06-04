@@ -110,6 +110,13 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import {
+  ToolExecutor,
+  cancelTaskTool,
+  getRunningTasksTool,
+  hasCancellableTool,
+  resolveAsyncToolOptions,
+} from './tool_executor.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
@@ -130,6 +137,13 @@ export class SchedulingPausedError extends Error {
   constructor() {
     super('cannot schedule new speech, the speech scheduling is draining/pausing');
     this.name = 'SchedulingPausedError';
+  }
+}
+
+export class ActivityClosedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ActivityClosedError';
   }
 }
 
@@ -163,6 +177,12 @@ export async function cleanupReusableResources(
       }
     }
   }
+}
+
+function resolveActivityAsyncToolOptions(agent: Agent, session: AgentSession) {
+  return agent._asyncToolOptions
+    ? resolveAsyncToolOptions(agent._asyncToolOptions)
+    : session._asyncToolOptions;
 }
 
 interface PreemptiveGeneration {
@@ -272,6 +292,8 @@ export class AgentActivity implements RecognitionHooks {
   _onEnterTask?: Task<void>;
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
+  /** @internal */
+  _toolExecutor: ToolExecutor;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -286,6 +308,10 @@ export class AgentActivity implements RecognitionHooks {
       return p1 === p2 ? t1 - t2 : p2 - p1;
     });
     this.q_updated = new Future();
+    this._toolExecutor = new ToolExecutor(
+      this,
+      resolveActivityAsyncToolOptions(agent, agentSession),
+    );
 
     this.turnDetectionMode =
       typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
@@ -1651,6 +1677,18 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.chatCtx;
   }
 
+  async waitForIdle(
+    options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const controller = signal ? undefined : new AbortController();
+    const waitSignal = signal ?? controller!.signal;
+    await this.waitForInactive(options, waitSignal);
+    if (this.schedulingPaused || this.agentSession._closing) {
+      throw new ActivityClosedError(`activity ${this.agent.id} is closing`);
+    }
+  }
+
   private async waitForInactive(
     options: { waitForAgent?: boolean; waitForUser?: boolean },
     signal: AbortSignal,
@@ -1902,13 +1940,21 @@ export class AgentActivity implements RecognitionHooks {
       const shouldFilterTools =
         onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
 
-      const tools = shouldFilterTools
+      let tools = shouldFilterTools
         ? Object.fromEntries(
             Object.entries(this.agent.toolCtx).filter(
               ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
             ),
           )
         : this.agent.toolCtx;
+
+      if (hasCancellableTool(tools)) {
+        tools = {
+          ...tools,
+          lk_agents_get_running_tasks: getRunningTasksTool,
+          lk_agents_cancel_task: cancelTaskTool,
+        };
+      }
 
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
@@ -3719,6 +3765,7 @@ export class AgentActivity implements RecognitionHooks {
       this.cancelPreemptiveGeneration();
 
       await this._onExitTask.result;
+      await this._toolExecutor.drain();
       await this._pauseSchedulingTask([]);
 
       // detach after speech tasks are done but before _closeSessionResources
@@ -3748,6 +3795,8 @@ export class AgentActivity implements RecognitionHooks {
 
       await this.cancelSpeechPause({ interrupt: false });
       this.cancelSpeechPauseTask = undefined;
+
+      await this._toolExecutor.close();
 
       await this._closeSessionResources();
 

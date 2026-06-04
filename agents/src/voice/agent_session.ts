@@ -89,6 +89,11 @@ import {
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import {
+  type ResolvedAsyncToolOptions,
+  type ToolHandlingOptions,
+  resolveAsyncToolOptions,
+} from './tool_executor.js';
 import type { TextTransform } from './transcription/text_transforms.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
@@ -162,6 +167,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
+  toolHandling?: ToolHandlingOptions;
   userAwayTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
@@ -175,6 +181,7 @@ export const defaultAgentSessionOptions = {
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
+  toolHandling: undefined,
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;
@@ -231,6 +238,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   voiceOptions?: Partial<VoiceOptions>;
 
   maxToolSteps?: number;
+  toolHandling?: ToolHandlingOptions;
   /**
    * @deprecated Use `turnHandling.preemptiveGeneration` instead.
    * When set, migrated into `turnHandling.preemptiveGeneration.enabled`.
@@ -417,6 +425,9 @@ export class AgentSession<
   _globalRunState?: RunResult;
 
   /** @internal */
+  _asyncToolOptions: ResolvedAsyncToolOptions;
+
+  /** @internal */
   _userSpeakingSpan?: Span;
 
   private logger = log();
@@ -469,6 +480,9 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+    this._asyncToolOptions = resolveAsyncToolOptions(
+      resolvedSessionOptions.toolHandling?.asyncOptions,
+    );
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
@@ -1035,6 +1049,26 @@ export class AgentSession<
     return runState;
   }
 
+  async waitForIdle(): Promise<AgentActivity> {
+    while (true) {
+      if (this.closingTask !== null) {
+        throw new Error('AgentSession is closing');
+      }
+      if (!this.activity) {
+        throw new Error('AgentSession has no active AgentActivity');
+      }
+      const activity = this.activity;
+      try {
+        await activity.waitForIdle();
+        return activity;
+      } catch (error) {
+        if (this.activity === activity) {
+          throw error;
+        }
+      }
+    }
+  }
+
   /** @internal */
   async _updateActivity(agent: Agent, options: ActivityTransitionOptions = {}): Promise<void> {
     const { previousActivity = 'close', newActivity = 'start', blockedTasks = [] } = options;
@@ -1174,6 +1208,11 @@ export class AgentSession<
     }
 
     return this.agent;
+  }
+
+  /** @internal */
+  get currentActivity(): AgentActivity | undefined {
+    return this.activity;
   }
 
   async close(): Promise<void> {

@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  type JSONObject,
   type ToolChoice,
   type ToolContext,
   ToolError,
@@ -59,6 +60,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { cancelTaskTool, getRunningTasksTool, hasCancellableTool } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -966,6 +968,13 @@ export function performToolExecutions({
   controller: AbortController;
 }): [Task<void>, ToolOutput] {
   const logger = log();
+  const effectiveToolCtx: ToolContext = hasCancellableTool(toolCtx)
+    ? {
+        ...toolCtx,
+        lk_agents_get_running_tasks: getRunningTasksTool,
+        lk_agents_cancel_task: cancelTaskTool,
+      }
+    : toolCtx;
   const toolOutput: ToolOutput = {
     output: [],
     firstToolStartedFuture: new Future(),
@@ -999,7 +1008,7 @@ export function performToolExecutions({
 
       // TODO(brian): assert other toolChoice values
 
-      const tool = toolCtx[toolCall.name];
+      const tool = effectiveToolCtx[toolCall.name];
       if (!tool) {
         logger.warn(
           {
@@ -1071,6 +1080,11 @@ export function performToolExecutions({
       }
 
       onToolExecutionStarted(toolCall);
+      const activity = session.currentActivity;
+      if (!activity) {
+        logger.error({ speech_id: speechHandle.id }, 'no active AgentActivity to execute tool');
+        continue;
+      }
 
       logger.info(
         {
@@ -1149,12 +1163,14 @@ export function performToolExecutions({
             });
           }
 
+          const runCtx = new RunContext(session, speechHandle, toolCall);
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
-                ctx: new RunContext(session, speechHandle, toolCall),
-                toolCallId: toolCall.callId,
+              return await activity._toolExecutor.execute({
+                tool,
+                runCtx,
+                parsedArgs: parsedArgs as JSONObject,
                 abortSignal: signal,
               });
             },

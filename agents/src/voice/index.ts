@@ -33,6 +33,13 @@ export {
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
+export {
+  type AsyncToolOptions,
+  type PromptTemplate,
+  type ReplyPromptArgs,
+  type ToolHandlingOptions,
+  type UpdatePromptArgs,
+} from './tool_executor.js';
 export * from './turn_config/endpointing.js';
 export * from './turn_config/user_turn_limit.js';
 export * as testing from './testing/index.js';

@@ -83,9 +83,17 @@ export class ToolError extends Error {
 export const ToolFlag = {
   NONE: 0,
   IGNORE_ON_ENTER: 1 << 0,
+  CANCELLABLE: 1 << 1,
 } as const;
 
 export type ToolFlag = (typeof ToolFlag)[keyof typeof ToolFlag];
+
+export type DuplicateMode = 'allow' | 'reject' | 'replace' | 'confirm';
+
+export const CONFIRM_DUPLICATE_PARAM = 'lk_agents_confirm_duplicate';
+
+const CONFIRM_DUPLICATE_DESCRIPTION =
+  'Set this to true to confirm you want to run a duplicate. Only do this when user confirms the duplication is needed.';
 
 export interface AgentHandoff {
   /**
@@ -187,6 +195,8 @@ export interface FunctionTool<
 
   flags: number;
 
+  onDuplicate: DuplicateMode;
+
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
@@ -265,11 +275,13 @@ export function tool<
   parameters,
   execute,
   flags,
+  onDuplicate,
 }: {
   description: string;
   parameters: Schema;
   execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
   flags?: number;
+  onDuplicate?: DuplicateMode;
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
 /**
@@ -279,11 +291,13 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
   description,
   execute,
   flags,
+  onDuplicate,
 }: {
   description: string;
   parameters?: never;
   execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
   flags?: number;
+  onDuplicate?: DuplicateMode;
 }): FunctionTool<Record<string, never>, UserData, Result>;
 
 /**
@@ -304,7 +318,8 @@ export function tool({
 export function tool(tool: any): any {
   if (tool.execute !== undefined) {
     // Default parameters to z.object({}) if not provided
-    const parameters = tool.parameters ?? z.object({});
+    let parameters = tool.parameters ?? z.object({});
+    const onDuplicate = tool.onDuplicate ?? 'allow';
 
     // if parameters is a Zod schema, ensure it's an object schema
     if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
@@ -316,12 +331,17 @@ export function tool(tool: any): any {
       throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
     }
 
+    if (onDuplicate === 'confirm') {
+      parameters = injectConfirmDuplicateParam(parameters);
+    }
+
     return {
       type: 'function',
       description: tool.description,
       parameters,
       execute: tool.execute,
       flags: tool.flags ?? ToolFlag.NONE,
+      onDuplicate,
       [TOOL_SYMBOL]: true,
       [FUNCTION_TOOL_SYMBOL]: true,
     };
@@ -338,6 +358,44 @@ export function tool(tool: any): any {
   }
 
   throw new Error('Invalid tool');
+}
+
+function injectConfirmDuplicateParam(parameters: ToolInputSchema): ToolInputSchema {
+  const maybeZod = parameters as unknown as z.ZodSchema;
+  const maybeExtendable = parameters as unknown as {
+    extend?: (shape: Record<string, z.ZodTypeAny>) => ToolInputSchema;
+  };
+  if (
+    isZodSchema(maybeZod) &&
+    isZodObjectSchema(maybeZod) &&
+    typeof maybeExtendable.extend === 'function'
+  ) {
+    return maybeExtendable.extend({
+      [CONFIRM_DUPLICATE_PARAM]: z
+        .boolean()
+        .nullable()
+        .default(false)
+        .describe(CONFIRM_DUPLICATE_DESCRIPTION),
+    });
+  }
+
+  if (typeof parameters === 'object' && parameters !== null && !isZodSchema(parameters)) {
+    const schema = { ...parameters } as JSONSchema7;
+    const properties = { ...(schema.properties ?? {}) } as Record<string, JSONSchema7>;
+    properties[CONFIRM_DUPLICATE_PARAM] = {
+      type: ['boolean', 'null'] as unknown as JSONSchema7['type'],
+      description: CONFIRM_DUPLICATE_DESCRIPTION,
+    };
+    schema.properties = properties;
+    const required = Array.isArray(schema.required) ? [...schema.required] : [];
+    if (!required.includes(CONFIRM_DUPLICATE_PARAM)) {
+      required.push(CONFIRM_DUPLICATE_PARAM);
+    }
+    schema.required = required;
+    return schema;
+  }
+
+  return parameters;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
