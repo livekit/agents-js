@@ -21,6 +21,8 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -71,3 +73,12 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
           AWS_DEFAULT_REGION: 'us-east-1'
+
+  deploy-examples:
+    name: Deploy examples
+    needs: [release]
+    if: always() && needs.release.outputs.published == 'true'
+    uses: ./.github/workflows/deploy-examples.yml
+    with:
+      ref: ${{ github.sha }}
+    secrets: inherit

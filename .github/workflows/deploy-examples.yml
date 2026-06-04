@@ -1,0 +1,205 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Deploy Examples
+
+on:
+  # Manual runs deploy from the branch picked in the Actions "Use workflow
+  # from" selector, unless an explicit ref is provided.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit/branch/tag to deploy. Defaults to the triggering ref.'
+        type: string
+        required: false
+  # Called by release.yml after a release to deploy the published commit.
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Commit/branch/tag to deploy. Defaults to the triggering ref.'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: basic
+            entry: basic_agent.ts
+          - example: survey
+            entry: survey_agent.ts
+          - example: frontdesk
+            entry: frontdesk/frontdesk_agent.ts
+          - example: drive-thru
+            entry: drive-thru/drivethru_agent.ts
+          - example: avatar
+            entry: lemonslice_realtime_avatar.ts
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
+
+      - name: Install LiveKit CLI
+        run: |
+          curl -sSL https://get.livekit.io/cli | bash
+          lk --version
+
+      - name: Add LiveKit Cloud project
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_EXAMPLES_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_EXAMPLES_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_EXAMPLES_API_SECRET }}
+        run: |
+          lk project add examples \
+            --url "$LIVEKIT_URL" \
+            --api-key "$LIVEKIT_API_KEY" \
+            --api-secret "$LIVEKIT_API_SECRET" \
+            --default
+
+      - name: Build deploy context
+        env:
+          EXAMPLE_ENTRY: ${{ matrix.entry }}
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const deployDir = '.deploy-example';
+          const ignored = new Set([
+            '.deploy-example',
+            '.git',
+            '.turbo',
+            'coverage',
+            'dist',
+            'docs',
+            'node_modules',
+            'temp',
+          ]);
+          const copyOptions = {
+            recursive: true,
+            filter: (src) => !ignored.has(path.basename(src)),
+          };
+
+          fs.rmSync(deployDir, { force: true, recursive: true });
+          fs.mkdirSync(path.join(deployDir, 'examples'), { recursive: true });
+
+          for (const file of [
+            'globals.d.ts',
+            'package.json',
+            'pnpm-lock.yaml',
+            'pnpm-workspace.yaml',
+            'tsconfig.json',
+            'turbo.json',
+          ]) {
+            fs.copyFileSync(file, path.join(deployDir, file));
+          }
+          for (const dir of ['agents', 'plugins', 'patches', 'scripts']) {
+            fs.cpSync(dir, path.join(deployDir, dir), copyOptions);
+          }
+          for (const file of ['package.json', 'tsconfig.json']) {
+            fs.copyFileSync(path.join('examples', file), path.join(deployDir, 'examples', file));
+          }
+          for (const dir of ['assets', 'src']) {
+            fs.cpSync(path.join('examples', dir), path.join(deployDir, 'examples', dir), copyOptions);
+          }
+          fs.writeFileSync(
+            path.join(deployDir, '.dockerignore'),
+            '.env*\n.git\nnode_modules\n**/node_modules\ndist\n**/dist\n.turbo\n',
+          );
+
+          const entry = process.env.EXAMPLE_ENTRY;
+          const entrypoint = entry.replace(/\.ts$/, '.js');
+          fs.writeFileSync(
+            path.join(deployDir, 'Dockerfile'),
+            [
+              '# syntax=docker/dockerfile:1',
+              'FROM node:22-slim AS base',
+              '',
+              'ENV PNPM_HOME="/pnpm"',
+              'ENV PATH="$PNPM_HOME:$PATH"',
+              '',
+              'RUN apt-get update -qq \\',
+              '    && apt-get install --no-install-recommends -y ca-certificates \\',
+              '    && rm -rf /var/lib/apt/lists/*',
+              'RUN npm install -g pnpm@10',
+              '',
+              'WORKDIR /app',
+              '',
+              'ARG UID=10001',
+              'RUN adduser \\',
+              '    --disabled-password \\',
+              '    --gecos "" \\',
+              '    --home "/app" \\',
+              '    --shell "/sbin/nologin" \\',
+              '    --uid "${UID}" \\',
+              '    appuser',
+              '',
+              'COPY . .',
+              'RUN pnpm install --frozen-lockfile',
+              'RUN pnpm --filter livekit-agents-examples... build',
+              'RUN pnpm --filter livekit-agents-examples exec livekit-agents download-files',
+              '',
+              'RUN chown -R appuser:appuser /app /pnpm',
+              'USER appuser',
+              '',
+              'ENV NODE_ENV=production',
+              '',
+              `CMD [ "pnpm", "--filter", "livekit-agents-examples", "exec", "node", "dist/${entrypoint}", "start" ]`,
+              '',
+            ].join('\n'),
+          );
+          JS
+
+      - name: Build secrets file
+        working-directory: .deploy-example
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
+          CARTESIA_API_KEY: ${{ secrets.CARTESIA_API_KEY }}
+          LEMONSLICE_API_KEY: ${{ secrets.LEMONSLICE_API_KEY }}
+          LEMONSLICE_IMAGE_URL: ${{ secrets.LEMONSLICE_IMAGE_URL }}
+        run: |
+          : > .env.deploy
+          echo "LIVEKIT_AGENT_NAME=${{ matrix.example }}" >> .env.deploy
+          case "${{ matrix.example }}" in
+            frontdesk|drive-thru)
+              keys="OPENAI_API_KEY DEEPGRAM_API_KEY ELEVEN_API_KEY"
+              ;;
+            avatar)
+              keys="LEMONSLICE_API_KEY LEMONSLICE_IMAGE_URL"
+              ;;
+            *)
+              keys=""
+              ;;
+          esac
+          for k in $keys; do
+            val="${!k}"
+            if [ -n "$val" ]; then
+              echo "${k}=${val}" >> .env.deploy
+            fi
+          done
+
+      - name: Deploy ${{ matrix.example }}
+        working-directory: .deploy-example
+        run: |
+          args=()
+          if [ -s .env.deploy ]; then
+            args+=(--secrets-file .env.deploy)
+          fi
+          lk agent deploy "${args[@]}" .
