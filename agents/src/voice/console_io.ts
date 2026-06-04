@@ -192,9 +192,6 @@ export class TcpAudioOutput extends AudioOutput {
  *
  * The runner sets {@link enabled} and the transport; `AgentSession._startImpl`
  * then calls {@link acquireIo} to wire the session and build its `SessionHost`.
- * Only text mode is wired today — the user drives the agent over the session
- * transport (text in via `runInput`, events out), so no audio/transcription IO
- * is attached to the session. Audio-mode session wiring is a follow-up.
  *
  * @experimental
  */
@@ -232,11 +229,11 @@ export class AgentsConsole {
     }
     this.acquired = true;
 
-    // Text mode: leave audio/transcription unset. The audio bridges are still
-    // routed at the transport level by `SessionHost`, but are not attached to
-    // the session pipeline until audio-mode wiring lands.
-    session.input.audio = null;
-    session.output.audio = null;
+    // Attach the audio bridges, enabled by default (voice mode). A text-mode
+    // driver disables them at runtime with an `update_io` request (audio off),
+    // so one wiring path serves both modes.
+    session.input.audio = this.audioInput ?? null;
+    session.output.audio = this.audioOutput ?? null;
     session.output.transcription = null;
   }
 }

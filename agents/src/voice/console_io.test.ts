@@ -154,16 +154,21 @@ describe('AgentsConsole', () => {
     expect(AgentsConsole.getInstance()).toBe(AgentsConsole.getInstance());
   });
 
-  it('acquireIo unsets session audio/transcription (text mode) and flips ioAcquired', () => {
+  it('acquireIo attaches the audio bridges (voice default) and flips ioAcquired', () => {
     const c = AgentsConsole.getInstance();
     expect(c.ioAcquired).toBe(false);
+
+    const audioInput = {} as unknown as TcpAudioInput;
+    const audioOutput = {} as unknown as TcpAudioOutput;
+    c.audioInput = audioInput;
+    c.audioOutput = audioOutput;
 
     const session = makeSession();
     c.acquireIo(session);
 
     expect(c.ioAcquired).toBe(true);
-    expect(session.input.audio).toBeNull();
-    expect(session.output.audio).toBeNull();
+    expect(session.input.audio).toBe(audioInput);
+    expect(session.output.audio).toBe(audioOutput);
     expect(session.output.transcription).toBeNull();
   });
 
