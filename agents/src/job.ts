@@ -239,11 +239,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    *
    * @see {@link https://github.com/livekit/node-sdks/tree/main/packages/livekit-rtc#readme |
    * @livekit/rtc-node} for more information about the parameters.
+   * @param singlePeerConnection - Use a single peer connection for publishing and subscribing.
    */
   async connect(
     e2ee?: E2EEOptions,
     autoSubscribe: AutoSubscribe = AutoSubscribe.SUBSCRIBE_ALL,
     rtcConfig?: RtcConfiguration,
+    singlePeerConnection?: boolean,
   ) {
     if (this.connected) {
       return;
@@ -254,6 +256,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
       rtcConfig,
       dynacast: false,
+      singlePeerConnection,
     };
 
     await this.#room.connect(this.#info.url, this.#info.token, opts);
