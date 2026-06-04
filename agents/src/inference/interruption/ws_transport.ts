@@ -44,7 +44,7 @@ export interface WsTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
-const wsMessageSchema = z.discriminatedUnion('type', [
+export const wsMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal(MSG_SESSION_CREATED),
     // The server-recommended interruption threshold. Used as the effective threshold when the
@@ -76,6 +76,23 @@ const wsMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 type WsMessage = z.infer<typeof wsMessageSchema>;
+
+/**
+ * Resolve the effective interruption threshold for observability only — the server makes the
+ * actual decision. Precedence: user override, then server default, then THRESHOLD backup.
+ */
+export function resolveEffectiveThreshold(
+  threshold: number | undefined,
+  defaultThreshold: number | null | undefined,
+): number {
+  if (threshold !== undefined) {
+    return threshold;
+  }
+  if (defaultThreshold != null) {
+    return defaultThreshold;
+  }
+  return THRESHOLD;
+}
 
 /**
  * Creates a WebSocket connection and waits for it to open.
@@ -218,21 +235,15 @@ export function createWsTransport(
 
     switch (message.type) {
       case MSG_SESSION_CREATED: {
-        // The server makes the actual decision: when we omit the threshold from session.create
-        // (no user override) it uses its fetched default. Resolve the effective value here only
-        // for observability, with THRESHOLD as the backup.
-        let effectiveThreshold: number;
-        if (options.threshold !== undefined) {
-          effectiveThreshold = options.threshold;
-        } else if (message.default_threshold != null) {
-          effectiveThreshold = message.default_threshold;
-        } else {
-          effectiveThreshold = THRESHOLD;
-        }
+        // Observability only — the server makes the actual decision; when we omit the threshold
+        // from session.create it applies its fetched default.
         logger.debug(
           {
             defaultThreshold: message.default_threshold,
-            effectiveThreshold,
+            effectiveThreshold: resolveEffectiveThreshold(
+              options.threshold,
+              message.default_threshold,
+            ),
             userOverride: options.threshold !== undefined,
           },
           'adaptive interruption session created',

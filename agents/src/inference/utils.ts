@@ -72,15 +72,16 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
-    if (ctx.room.isConnected) {
-      const agentSid = ctx.agent?.sid;
-      if (agentSid) {
-        headers['X-LiveKit-Agent-Id'] = agentSid;
-      }
-    }
+    // for hosted agents where job context is always present
     const workerToken = process.env.LIVEKIT_WORKER_TOKEN;
     if (workerToken) {
       headers['X-LiveKit-Worker-Token'] = workerToken;
+    }
+    // Only emit the agent SID once the room is connected: before connection the
+    // local participant SID is unset/placeholder and would leak into requests.
+    const agentSid = ctx.agent?.sid;
+    if (ctx.room.isConnected && agentSid) {
+      headers['X-LiveKit-Agent-Id'] = agentSid;
     }
   }
 
