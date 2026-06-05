@@ -47,7 +47,7 @@ import {
 } from './_output.js';
 
 export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = async (sess, ev) => {
-  await sess.claimUserTurn(async () => {
+  await sess._claimUserTurn(async () => {
     await sess.interrupt().await;
     sess.generateReply({ userInput: ev.text });
   });

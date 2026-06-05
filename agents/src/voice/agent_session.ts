@@ -259,7 +259,7 @@ type ActivityTransitionOptions = {
   waitOnEnter?: boolean;
 };
 
-export interface UserTurnClaim {
+interface UserTurnClaim {
   /** Release the programmatic user turn. Safe to call more than once. */
   release(): void;
 }
@@ -696,9 +696,10 @@ export class AgentSession<
    * Pins `userState` to `"speaking"` and keeps idle detection open until the returned claim is
    * released. Pass a callback to release automatically when the callback settles.
    */
-  claimUserTurn<T>(callback: () => T | Promise<T>): Promise<T>;
-  claimUserTurn(): UserTurnClaim;
-  claimUserTurn<T>(callback?: () => T | Promise<T>): UserTurnClaim | Promise<T> {
+  /** @internal */
+  _claimUserTurn<T>(callback: () => T | Promise<T>): Promise<T>;
+  _claimUserTurn(): UserTurnClaim;
+  _claimUserTurn<T>(callback?: () => T | Promise<T>): UserTurnClaim | Promise<T> {
     const first = this._userTurnClaims === 0;
     this._userTurnClaims += 1;
     if (first) {
