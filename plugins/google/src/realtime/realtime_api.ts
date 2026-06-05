@@ -815,6 +815,33 @@ export class RealtimeSession extends llm.RealtimeSession {
     // TODO(brian): implement push video frames
   }
 
+  /**
+   * Send a text turn to the model as realtime input.
+   *
+   * Unlike {@link generateReply}, this works with models that do not support
+   * mid-session client content updates (e.g. `gemini-3.1` live models): the text is
+   * delivered via the Live API's realtime input (`send_realtime_input({ text })`),
+   * which the model treats as a completed user turn and responds to.
+   *
+   * With manual activity detection the text is wrapped in activity markers so it
+   * forms a complete turn, unless an activity is already open via
+   * {@link startUserActivity}.
+   */
+  sendText(text: string): void {
+    if (this.shouldBlockRealtimeInputForPendingTools()) {
+      return;
+    }
+
+    const wrapActivity = this.manualActivityDetection && !this.inUserActivity;
+    if (wrapActivity) {
+      this.sendClientEvent({ type: 'realtime_input', value: { activityStart: {} } });
+    }
+    this.sendClientEvent({ type: 'realtime_input', value: { text } });
+    if (wrapActivity) {
+      this.sendClientEvent({ type: 'realtime_input', value: { activityEnd: {} } });
+    }
+  }
+
   private sendClientEvent(event: api_proto.ClientEvents) {
     this.messageChannel.put(event);
   }
