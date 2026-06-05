@@ -160,7 +160,7 @@ describe('interruption WebSocket transport failover', () => {
   it('closes the underlying WebSocket on teardown even after the transport errored', async () => {
     // The transport's flush() only runs on graceful stream completion. When the stream is torn
     // down via an error (here a 408 inference timeout) the socket is still open, so close() must
-    // tear it down directly — otherwise the WebSocket leaks (mirrors Python `finally: ws.close()`).
+    // tear it down directly — otherwise the WebSocket leaks.
     const inferenceTimeout = 50;
     const detector = createDetector({ inferenceTimeout });
     const stream = new InterruptionStreamBase(detector, {});

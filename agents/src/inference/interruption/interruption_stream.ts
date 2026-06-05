@@ -412,9 +412,7 @@ export class InterruptionStreamBase {
     try {
       if (!this.inputStream.closed) await this.inputStream.close();
     } finally {
-      // Always tear down the socket directly. The transport's flush() only fires on graceful
-      // stream completion, so on error/cancel teardown the WebSocket would otherwise leak.
-      // Mirrors Python interruption._run()'s `finally: await ws.close()`. close() is idempotent.
+      // Tear down the socket directly (see wsClose); close() is idempotent.
       this.wsClose?.();
       this.resampler?.close();
       this.model.removeStream(this);
