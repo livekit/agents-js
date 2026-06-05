@@ -8,6 +8,17 @@
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 
 /**
+ * Marker yielded from an LLM node to flush the current audio/text output segment.
+ */
+export const FlushSentinel = Symbol.for('lk.FlushSentinel');
+export type FlushSentinel = typeof FlushSentinel;
+
+/** @internal */
+export function isFlushSentinel(value: unknown): value is FlushSentinel {
+  return value === FlushSentinel;
+}
+
+/**
  * Connection options for API calls, controlling retry and timeout behavior.
  */
 export interface APIConnectOptions {

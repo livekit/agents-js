@@ -10,6 +10,7 @@ import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import type { SpeechEvent } from '../stt/stt.js';
+import type { FlushSentinel } from '../types.js';
 import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
 
@@ -22,7 +23,7 @@ export type LLMNode = (
   chatCtx: ChatContext,
   toolCtx: ToolContext,
   modelSettings: ModelSettings,
-) => Promise<ReadableStream<ChatChunk | string> | null>;
+) => Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null>;
 
 export type TTSNode = (
   text: ReadableStream<string>,
