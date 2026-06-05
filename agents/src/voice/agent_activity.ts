@@ -2482,8 +2482,8 @@ export class AgentActivity implements RecognitionHooks {
 
     const forwardedTextFor = (output: SegmentOutput): string => {
       if (output.played === 'skipped') return '';
-      if (output.played === 'partial' && output.synchronizedTranscript !== undefined) {
-        return output.synchronizedTranscript;
+      if (output.played === 'partial' && output.audioOut) {
+        return output.synchronizedTranscript ?? '';
       }
       return output.textOut?.text ?? '';
     };
