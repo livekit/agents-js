@@ -218,12 +218,11 @@ export class LLMStream extends llm.LLMStream {
         if (status) {
           throw new APIStatusError({
             message: error.message,
-            options: { retryable },
+            options: { statusCode: status },
           });
         }
         throw new APIConnectionError({
           message: error.message,
-          options: { retryable },
         });
       }
       throw error;
