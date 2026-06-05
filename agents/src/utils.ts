@@ -115,6 +115,12 @@ export class Queue<T> {
     return item;
   }
 
+  async waitForItem(options: { signal?: AbortSignal } = {}): Promise<void> {
+    while (this.items.length === 0) {
+      await once(this.#events, 'put', { signal: options.signal });
+    }
+  }
+
   async put(item: T) {
     if (this.#limit && this.items.length >= this.#limit) {
       await once(this.#events, 'get');

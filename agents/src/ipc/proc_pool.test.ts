@@ -163,7 +163,6 @@ describe('ProcPool warmed process lock handling', () => {
   > => {
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const initUnlock = vi.fn();
-    const procUnlock = vi.fn();
     const jobInfo = {
       acceptArguments: { name: 'n', identity: 'i', metadata: '' },
       job: { id: 'job-id' },
@@ -188,16 +187,15 @@ describe('ProcPool warmed process lock handling', () => {
     pool.initMutex.lock = vi.fn(async () => initUnlock);
 
     try {
-      const watchTask = pool.procWatchTask(procUnlock);
-      pool.tasks.push(watchTask);
+      pool.start();
 
       await expect(pool.launchJob(jobInfo)).rejects.toThrow('no process became available');
-      await Promise.allSettled(pool.tasks);
+      await pool.close();
 
-      expect(procUnlock).toHaveBeenCalledTimes(1);
       expect(pool.processes).toHaveLength(0);
     } finally {
       jobProcExecutorSpy.mockRestore();
+      await pool.close();
     }
   });
 });

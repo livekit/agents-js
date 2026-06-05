@@ -19,6 +19,7 @@ export class ProcPool {
   closeTimeout: number;
   executors: JobExecutor[] = [];
   tasks: Promise<void>[] = [];
+  spawnTasks: Promise<void>[] = [];
   started = false;
   closed = false;
   controller = new AbortController();
@@ -75,32 +76,28 @@ export class ProcPool {
       return this.warmedProcQueue.get();
     }
 
-    if (this.tasks.length === 0) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-      });
+    if (this.spawnTasks.length === 0 && this.procMutex) {
+      this.trackProcSpawn(this.procMutex.lock());
+    }
 
-      if (this.warmedProcQueue.items.length > 0) {
-        return this.warmedProcQueue.get();
-      }
-
-      if (this.tasks.length === 0) {
-        return undefined;
-      }
+    const spawns = [...this.spawnTasks];
+    if (spawns.length === 0) {
+      return undefined;
     }
 
     const abortController = new AbortController();
-    const queueGet = this.warmedProcQueue
-      .get({ signal: abortController.signal })
-      .then((entry) => ({ entry }));
-    const spawnsDone = Promise.allSettled(this.tasks).then(() => undefined);
-    const result = await Promise.race([queueGet, spawnsDone]);
+    const queueReady = this.warmedProcQueue
+      .waitForItem({ signal: abortController.signal })
+      .then(() => true)
+      .catch(() => false);
+    const spawnsDone = Promise.allSettled(spawns).then(() => false);
+    const result = await Promise.race([queueReady, spawnsDone]);
+    abortController.abort();
 
-    if (result) {
-      return result.entry;
+    if (result && this.warmedProcQueue.items.length > 0) {
+      return this.warmedProcQueue.get();
     }
 
-    abortController.abort();
     return undefined;
   }
 
@@ -127,7 +124,7 @@ export class ProcPool {
     await proc.launchJob(info);
   }
 
-  async procWatchTask(procUnlock: () => void) {
+  async procWatchTask(procUnlock: () => void, spawnSettled?: () => void) {
     const proc = new JobProcExecutor(
       this.agent,
       this.inferenceExecutor,
@@ -146,6 +143,13 @@ export class ProcPool {
       const unlock = await this.initMutex.lock();
       let initReleased = false;
       let procUnlockTransferred = false;
+      let spawnSettledCalled = false;
+      const markSpawnSettled = () => {
+        if (!spawnSettledCalled) {
+          spawnSettledCalled = true;
+          spawnSettled?.();
+        }
+      };
       try {
         if (this.closed) {
           return;
@@ -156,16 +160,19 @@ export class ProcPool {
           await proc.initialize();
           await this.warmedProcQueue.put({ proc, unlock: procUnlock });
           procUnlockTransferred = true;
+          markSpawnSettled();
           // Release initMutex after enqueue — holding it through join() serialises
           // the pool to concurrency 1 since child procs are one-shot.
           unlock();
           initReleased = true;
         } catch {
           // Initialization failed before enqueue, so release the acquired slot immediately.
+          markSpawnSettled();
         }
 
         await proc.join();
       } finally {
+        markSpawnSettled();
         if (!initReleased) {
           unlock();
         }
@@ -183,6 +190,40 @@ export class ProcPool {
     }
   }
 
+  private startProcWatchTask(procUnlock: () => void): Promise<void> {
+    let markSpawnSettled: () => void = () => {};
+    const spawnTask = new Promise<void>((resolve) => {
+      markSpawnSettled = resolve;
+    });
+
+    const task = this.procWatchTask(procUnlock, markSpawnSettled);
+    this.tasks.push(task);
+    task.finally(() => {
+      markSpawnSettled();
+      const taskIndex = this.tasks.indexOf(task);
+      if (taskIndex !== -1) {
+        this.tasks.splice(taskIndex, 1);
+      } else {
+        throw new Error(`task ${task} not found in tasks`);
+      }
+    });
+
+    return spawnTask;
+  }
+
+  private trackProcSpawn(procUnlockPromise: Promise<() => void>) {
+    const spawnTask = procUnlockPromise.then((procUnlock) => this.startProcWatchTask(procUnlock));
+    this.spawnTasks.push(spawnTask);
+    spawnTask.finally(() => {
+      const taskIndex = this.spawnTasks.indexOf(spawnTask);
+      if (taskIndex !== -1) {
+        this.spawnTasks.splice(taskIndex, 1);
+      } else {
+        throw new Error(`spawn task ${spawnTask} not found in spawnTasks`);
+      }
+    });
+  }
+
   start() {
     if (this.started) {
       return;
@@ -195,17 +236,9 @@ export class ProcPool {
   async run(signal: AbortSignal) {
     if (this.procMutex) {
       while (!signal.aborted) {
-        const procUnlock = await this.procMutex.lock();
-        const task = this.procWatchTask(procUnlock);
-        this.tasks.push(task);
-        task.finally(() => {
-          const taskIndex = this.tasks.indexOf(task);
-          if (taskIndex !== -1) {
-            this.tasks.splice(taskIndex, 1);
-          } else {
-            throw new Error(`task ${task} not found in tasks`);
-          }
-        });
+        const procUnlockPromise = this.procMutex.lock();
+        this.trackProcSpawn(procUnlockPromise);
+        await procUnlockPromise;
       }
     }
   }
