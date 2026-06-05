@@ -40,7 +40,7 @@ export abstract class SupervisedProc {
   #pingInterval?: ReturnType<typeof setInterval>;
   #memoryMonitorInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
-  #memoryBaselineMB?: number;
+  private memoryBaselineMB?: number;
   #lastMemoryWarnAt = 0;
   #lastMemoryWarnMB = 0;
   protected init = new Future();
@@ -93,7 +93,7 @@ export abstract class SupervisedProc {
     this.proc = this.createProcess();
 
     this.#started = true;
-    this.#startedAt = Date.now();
+    this.#startedAt = performance.now();
     this.run().catch((err) => {
       this.#logger.child({ err }).warn('supervised process run failed');
       // Note: we intentionally do NOT kill the child process here. Killing it
@@ -127,7 +127,7 @@ export abstract class SupervisedProc {
         return;
       }
 
-      this.#memoryBaselineMB ??= memoryMB;
+      this.memoryBaselineMB ??= memoryMB;
 
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
@@ -272,14 +272,13 @@ export abstract class SupervisedProc {
   }
 
   private get uptime(): number {
-    if (!this.#startedAt) {
+    if (this.#startedAt === undefined) {
       return 0;
     }
-    return Date.now() - this.#startedAt;
+    return performance.now() - this.#startedAt;
   }
 
-  private shouldEmitMemoryWarning(memoryMB: number): boolean {
-    const now = Date.now();
+  private shouldEmitMemoryWarning(memoryMB: number, now: number = performance.now()): boolean {
     const cooledDown = now - this.#lastMemoryWarnAt >= MEMORY_WARN_COOLDOWN;
     const grew = memoryMB - this.#lastMemoryWarnMB >= MEMORY_WARN_RESET_DELTA_MB;
     if (cooledDown || grew) {
@@ -300,9 +299,9 @@ export abstract class SupervisedProc {
       hasRunningJob: this.runningJob !== undefined,
     };
 
-    if (this.#memoryBaselineMB !== undefined) {
-      fields.baselineMemoryMB = Math.round(this.#memoryBaselineMB * 10) / 10;
-      fields.growthMemoryMB = Math.round((memoryMB - this.#memoryBaselineMB) * 10) / 10;
+    if (this.memoryBaselineMB !== undefined) {
+      fields.baselineMemoryMB = Math.round(this.memoryBaselineMB * 10) / 10;
+      fields.growthMemoryMB = Math.round((memoryMB - this.memoryBaselineMB) * 10) / 10;
     }
 
     return fields;
