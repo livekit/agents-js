@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { APIConnectOptions } from '@livekit/agents';
-import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { APIConnectionError, APIStatusError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import axios from 'axios';
 import type { ChatModels } from './models.js';
 
@@ -61,7 +61,11 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      modelOptions: extraKwargs ?? {},
+      modelOptions: {
+        ...(this.#opts.temperature !== undefined && { temperature: this.#opts.temperature }),
+        ...(this.#opts.user !== undefined && { user: this.#opts.user }),
+        ...extraKwargs,
+      },
     });
   }
 }
@@ -208,6 +212,20 @@ export class LLMStream extends llm.LLMStream {
       }
     } catch (error) {
       if (this.abortController.signal.aborted) return;
+      if (error instanceof axios.AxiosError) {
+        const status = error.response?.status;
+        const retryable = status !== undefined && status >= 500;
+        if (status) {
+          throw new APIStatusError({
+            message: error.message,
+            options: { retryable },
+          });
+        }
+        throw new APIConnectionError({
+          message: error.message,
+          options: { retryable },
+        });
+      }
       throw error;
     }
   }
