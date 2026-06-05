@@ -98,6 +98,10 @@ export class InterruptionStreamBase {
   // Store reconnect function for WebSocket transport
   private wsReconnect?: () => Promise<void>;
 
+  // Direct WebSocket close, used to guarantee the socket is torn down on close() regardless of
+  // how the stream ends (the transport's flush() only runs on graceful completion).
+  private wsClose?: () => void;
+
   // Mutable transport options that can be updated via updateOptions()
   private transportOptions: {
     baseUrl: string;
@@ -322,6 +326,7 @@ export class InterruptionStreamBase {
     );
     const transport = wsResult.transport;
     this.wsReconnect = wsResult.reconnect;
+    this.wsClose = wsResult.close;
 
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
@@ -404,9 +409,16 @@ export class InterruptionStreamBase {
   }
 
   async close(): Promise<void> {
-    if (!this.inputStream.closed) await this.inputStream.close();
-    this.resampler?.close();
-    this.model.removeStream(this);
+    try {
+      if (!this.inputStream.closed) await this.inputStream.close();
+    } finally {
+      // Always tear down the socket directly. The transport's flush() only fires on graceful
+      // stream completion, so on error/cancel teardown the WebSocket would otherwise leak.
+      // Mirrors Python interruption._run()'s `finally: await ws.close()`. close() is idempotent.
+      this.wsClose?.();
+      this.resampler?.close();
+      this.model.removeStream(this);
+    }
   }
 }
 

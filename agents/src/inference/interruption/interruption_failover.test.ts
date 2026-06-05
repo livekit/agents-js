@@ -156,6 +156,33 @@ describe('interruption WebSocket transport failover', () => {
 
     await stream.close();
   });
+
+  it('closes the underlying WebSocket on teardown even after the transport errored', async () => {
+    // The transport's flush() only runs on graceful stream completion. When the stream is torn
+    // down via an error (here a 408 inference timeout) the socket is still open, so close() must
+    // tear it down directly — otherwise the WebSocket leaks (mirrors Python `finally: ws.close()`).
+    const inferenceTimeout = 50;
+    const detector = createDetector({ inferenceTimeout });
+    const stream = new InterruptionStreamBase(detector, {});
+
+    const errPromise = readError(stream);
+    const ws = await waitForInstance();
+    ws.simulateOpen();
+    await sleep(5);
+
+    await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechStarted(500, Date.now()));
+    await stream.pushFrame(makeAudioFrame());
+    await sleep(inferenceTimeout + 40);
+    await stream.pushFrame(makeAudioFrame());
+
+    await errPromise;
+    expect(ws.readyState).toBe(MockWebSocket.OPEN); // socket still open after the stream errored
+
+    await stream.close();
+
+    expect(ws.readyState).toBe(3); // CLOSED — close() tore the socket down despite the error
+  });
 });
 
 // ---------------------------------------------------------------------------

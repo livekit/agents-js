@@ -148,6 +148,11 @@ async function connectWebSocket(
 export interface WsTransportResult {
   transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
   reconnect: () => Promise<void>;
+  /**
+   * Close the underlying WebSocket directly. The transport's `flush()` only runs on graceful
+   * stream completion, so error/cancel teardown paths must call this to avoid leaking the socket.
+   */
+  close: () => void;
 }
 
 /**
@@ -477,5 +482,5 @@ export function createWsTransport(
     { highWaterMark: 2 },
   );
 
-  return { transport, reconnect };
+  return { transport, reconnect, close };
 }
