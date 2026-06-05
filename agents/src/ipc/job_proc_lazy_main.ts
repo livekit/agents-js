@@ -9,7 +9,7 @@ import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import { initializeLogger, log } from '../log.js';
-import { Future, shortuuid } from '../utils.js';
+import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
@@ -168,22 +168,19 @@ const startJob = (
 
     // Close the primary agent session if it exists
     if (ctx._primaryAgentSession) {
-      let sessionCloseTimeout: ReturnType<typeof setTimeout> | undefined;
       const sessionClosePromise = ctx._primaryAgentSession.close();
-      const sessionCloseTimedOut = await Promise.race([
-        sessionClosePromise.then(() => false),
-        new Promise<true>((resolve) => {
-          sessionCloseTimeout = setTimeout(() => resolve(true), SESSION_CLOSE_TIMEOUT);
-        }),
-      ]).finally(() => {
-        if (sessionCloseTimeout) {
-          clearTimeout(sessionCloseTimeout);
+      try {
+        await waitUntilTimeout(sessionClosePromise, SESSION_CLOSE_TIMEOUT);
+      } catch (error) {
+        if (!(error instanceof IdleTimeoutError)) {
+          throw error;
         }
-      });
 
-      if (sessionCloseTimedOut) {
-        void sessionClosePromise.catch((error) =>
-          logger.debug({ error }, 'AgentSession.close() rejected after shutdown timeout'),
+        void sessionClosePromise.catch((sessionCloseError) =>
+          logger.debug(
+            { error: sessionCloseError },
+            'AgentSession.close() rejected after shutdown timeout',
+          ),
         );
         logger.error(
           { timeout: SESSION_CLOSE_TIMEOUT },
