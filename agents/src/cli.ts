@@ -209,7 +209,7 @@ export const runApp = (opts: ServerOptions) => {
       runConsole({
         agentPath: opts.agent,
         connectAddr: commandOptions.connectAddr,
-        record: !!commandOptions.record,
+        record: commandOptions.record === true,
       }).catch((error) => {
         log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
         process.exit(1);

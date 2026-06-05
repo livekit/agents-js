@@ -28,7 +28,7 @@ class ConsoleInferenceExecutor implements InferenceExecutor {
 }
 
 async function loadAgent(agentPath: string): Promise<Agent> {
-  const module = await import(pathToFileURL(agentPath).pathname);
+  const module = await import(pathToFileURL(agentPath).href);
   // ESM exposes the agent as `module.default`; CJS interop nests it once more.
   const agent =
     typeof module.default === 'function' || isAgent(module.default)
@@ -65,9 +65,10 @@ export async function runConsole({
     throw new Error(`invalid --connect-addr "${connectAddr}", expected host:port`);
   }
   const host = connectAddr.slice(0, sep);
-  const port = Number.parseInt(connectAddr.slice(sep + 1), 10);
-  if (!Number.isInteger(port)) {
-    throw new Error(`invalid port in --connect-addr "${connectAddr}"`);
+  const portStr = connectAddr.slice(sep + 1);
+  const port = Number(portStr);
+  if (!/^\d+$/.test(portStr) || port < 1 || port > 65535) {
+    throw new Error(`invalid port in --connect-addr "${connectAddr}", expected 1-65535`);
   }
 
   const agent = await loadAgent(agentPath);
@@ -79,7 +80,6 @@ export async function runConsole({
 
   const consoleInst = AgentsConsole.getInstance();
   consoleInst.enabled = true;
-  consoleInst.record = record;
   consoleInst.transport = transport;
   consoleInst.audioInput = audioInput;
   consoleInst.audioOutput = audioOutput;
@@ -93,6 +93,7 @@ export async function runConsole({
       id: shortuuid('console-job-'),
       type: JobType.JT_ROOM,
       room: new RoomModel({ name: 'console-room' }),
+      enableRecording: record,
     }),
     url: '',
     token: '',
@@ -140,5 +141,14 @@ export async function runConsole({
     }
     await transport.close();
     await room.disconnect();
+
+    // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
+    // worker path does; runConsole bypasses the ProcPool so it must drain them.
+    const results = await Promise.allSettled(ctx.shutdownCallbacks.map((cb) => cb()));
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.error({ error: result.reason }, 'error while running shutdown callback');
+      }
+    }
   }
 }
