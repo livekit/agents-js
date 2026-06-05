@@ -678,7 +678,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       | api_proto.ConversationItemDeleteEvent
     )[] = [];
 
-    const diffOps = llm.computeChatCtxDiff(this.chatCtx, newChatCtx);
+    const remoteCtx = this.chatCtx;
+    const remoteIds = new Set(remoteCtx.items.map((item) => item.id));
+    newChatCtx.items = newChatCtx.items.filter(
+      (item) => item.type !== 'message' || item.content.length > 0 || remoteIds.has(item.id),
+    );
+
+    const diffOps = llm.computeChatCtxDiff(remoteCtx, newChatCtx);
     for (const op of diffOps.toRemove) {
       events.push({
         type: 'conversation.item.delete',
