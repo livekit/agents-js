@@ -318,6 +318,19 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           ],
         },
       };
+    } else if (event.item.type === 'message') {
+      const phase = (event.item as OpenAI.Responses.ResponseOutputMessage & { phase?: string })
+        .phase;
+      if (phase === undefined) return undefined;
+
+      chunk = {
+        id: this.responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase } },
+        },
+      };
     }
     return chunk;
   }
