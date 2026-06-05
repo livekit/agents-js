@@ -56,13 +56,12 @@ export interface TurnDetectionEvent {
 }
 
 /**
- * Sentinel value carried alongside flush requests. Transports use
- * `keepTailMs` to optionally retain trailing audio for the next turn.
+ * Sentinel value carried alongside flush requests. Signals a turn boundary
+ * to the transport so it can clear its buffered audio.
  */
 export interface FlushSentinel {
   readonly kind: 'flush';
   reason?: string;
-  keepTailMs: number;
 }
 
 export function isFlushSentinel(value: unknown): value is FlushSentinel {
@@ -156,7 +155,7 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
  *   prediction already resolved during warmup.
  * - `deactivate(trigger)` clears the request id, resolves the in-flight
  *   future with 0.0, calls transport.stopInference.
- * - `flush(reason, keepTailMs)` deactivates and signals turn boundary to
+ * - `flush(reason)` deactivates and signals turn boundary to
  *   the transport via a `FlushSentinel`. Clears the cached prediction so
  *   it can't leak into the next turn.
  * - `predictEndOfTurn(chatCtx?, { timeoutMs })` returns a probability,
@@ -359,18 +358,16 @@ export class AudioTurnDetectorStream {
     this._transport.stopInference(trigger);
   }
 
-  flush(reason?: string, opts: { keepTailMs?: number } = {}): void {
+  flush(reason?: string): void {
     if (this._audioChannel.closed) {
       return;
     }
-    const keepTailMs = opts.keepTailMs ?? 0;
     for (const resampled of this._flushAudioResampler()) {
       void this._audioChannel.write(resampled);
     }
     const sentinel: FlushSentinel = {
       kind: 'flush',
       reason,
-      keepTailMs,
     };
     void this._audioChannel.write(sentinel);
     // Turn boundary — the cached prediction belongs to the turn we just

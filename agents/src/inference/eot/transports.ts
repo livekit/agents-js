@@ -217,10 +217,9 @@ export class LocalTransport implements AudioTurnDetectionTransport {
     this._buf.pushFrame(frame);
   }
 
-  async flush(sentinel: FlushSentinel): Promise<void> {
-    const keepSamples = Math.floor((sentinel.keepTailMs * DEFAULT_SAMPLE_RATE) / 1000);
-    if (this._buf.length > keepSamples) {
-      this._buf.shift(this._buf.length - keepSamples);
+  async flush(_sentinel: FlushSentinel): Promise<void> {
+    if (this._buf.length > 0) {
+      this._buf.shift(this._buf.length);
     }
   }
 

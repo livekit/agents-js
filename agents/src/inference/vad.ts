@@ -52,6 +52,10 @@ export class VAD extends BaseVAD {
   protected _opts: VADOptions;
   protected _model: VADModels;
   label = 'inference.VAD';
+  // Live streams, tracked weakly so they don't outlive their consumers. JS
+  // `WeakSet` isn't iterable, so we hold `WeakRef`s in a `Set` and prune dead
+  // entries on iteration — the iterable equivalent of Python's `weakref.WeakSet`.
+  #streams = new Set<WeakRef<InferenceVADStream>>();
 
   constructor(opts: Partial<VADOptions> & { model?: VADModels } = {}) {
     super({ updateInterval: 32 });
@@ -81,13 +85,25 @@ export class VAD extends BaseVAD {
     return this._opts.minSilenceDuration;
   }
 
-  /** Update one or more knobs at runtime. */
+  /** Update one or more knobs at runtime, propagating to live streams. */
   updateOptions(opts: Partial<VADOptions>): void {
     this._opts = { ...this._opts, ...opts };
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream === undefined) {
+        this.#streams.delete(ref);
+        continue;
+      }
+      stream.updateOptions(opts);
+    }
   }
 
   stream(): BaseVADStream {
-    return new InferenceVADStream(this, { ...this._opts });
+    // Each stream owns its own options snapshot so its `updateOptions` can read
+    // the prior `maxBufferedSpeech` before this VAD's copy is mutated.
+    const stream = new InferenceVADStream(this, { ...this._opts });
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 }
 
@@ -126,6 +142,32 @@ class InferenceVADStream extends BaseVADStream {
     });
   }
 
+  /**
+   * Apply updated options to this live stream. Once the input sample rate is
+   * known, recomputes the prefix-padding pre-roll and resizes the speech
+   * buffer in place, preserving any audio already accumulated.
+   */
+  updateOptions(opts: Partial<VADOptions>): void {
+    const oldMaxBufferedSpeech = this._opts.maxBufferedSpeech;
+    this._opts = { ...this._opts, ...opts };
+
+    if (this._inputSampleRate && this._speechBuffer !== null) {
+      this._prefixPaddingSamples = Math.trunc(
+        (this._opts.prefixPaddingDuration * this._inputSampleRate) / 1000,
+      );
+      const bufferSize =
+        Math.trunc((this._opts.maxBufferedSpeech * this._inputSampleRate) / 1000) +
+        this._prefixPaddingSamples;
+      const resized = new Int16Array(bufferSize);
+      resized.set(this._speechBuffer.subarray(0, Math.min(this._speechBuffer.length, bufferSize)));
+      this._speechBuffer = resized;
+
+      if (this._opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
+        this._speechBufferMaxReached = false;
+      }
+    }
+  }
+
   private async _pump(): Promise<void> {
     let pubSpeaking = false;
     let pubSpeechDurationMs = 0;
@@ -159,6 +201,39 @@ class InferenceVADStream extends BaseVADStream {
       this._speechBufferMaxReached = false;
     };
 
+    const resetState = () => {
+      this._nativeVad?.reset();
+
+      speechBufferIndex = 0;
+      this._speechBufferMaxReached = false;
+      this._speechBuffer?.fill(0);
+
+      pubSpeaking = false;
+      pubSpeechDurationMs = 0;
+      pubSilenceDurationMs = 0;
+      pubCurrentSample = 0;
+      pubTimestampMs = 0;
+      speechThresholdDurationMs = 0;
+      silenceThresholdDurationMs = 0;
+
+      inputFrames = [];
+      inferenceFrames = [];
+      inputCopyRemainingFrac = 0;
+      extraInferenceTime = 0;
+
+      this._resampler?.close?.();
+      if (this._inputSampleRate && this._inputSampleRate !== MODEL_SAMPLE_RATE) {
+        this._resampler = new AudioResampler(
+          this._inputSampleRate,
+          MODEL_SAMPLE_RATE,
+          1,
+          AudioResamplerQuality.QUICK,
+        );
+      } else {
+        this._resampler = undefined;
+      }
+    };
+
     const copySpeechBuffer = (): AudioFrame => {
       if (this._speechBuffer === null) {
         return new AudioFrame(new Int16Array(0), this._inputSampleRate, 1, 0);
@@ -174,7 +249,10 @@ class InferenceVADStream extends BaseVADStream {
     while (!this.closed) {
       const { done, value: frame } = await this.inputReader.read();
       if (done) break;
-      if (typeof frame === 'symbol') continue;
+      if (typeof frame === 'symbol') {
+        resetState();
+        continue;
+      }
 
       if (!this._inputSampleRate) {
         this._inputSampleRate = frame.sampleRate;
