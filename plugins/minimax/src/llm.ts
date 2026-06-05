@@ -109,17 +109,25 @@ export class LLMStream extends llm.LLMStream {
 
       // Filter messages to remove function calling artifacts that MiniMax doesn't support
       const filteredMessages = messages.map((msg) => {
+        // Skip tool role messages entirely - MiniMax doesn't support tool calling
+        if (msg.role === 'tool') {
+          return null;
+        }
         const filtered: Record<string, unknown> = { ...msg };
-        // Remove function_call from assistant messages
+        // Remove legacy function_call from assistant messages
         if (filtered.function_call) {
           delete filtered.function_call;
+        }
+        // Remove modern tool_calls from assistant messages
+        if (filtered.tool_calls) {
+          delete filtered.tool_calls;
         }
         // Remove name field if it's a function response
         if (filtered.name && String(filtered.name).startsWith('func_')) {
           delete filtered.name;
         }
         return filtered;
-      });
+      }).filter((msg) => msg !== null);
 
       // MiniMax doesn't support multiple system messages - merge them into one
       const systemMessages = filteredMessages.filter((m) => m.role === 'system');
@@ -140,10 +148,10 @@ export class LLMStream extends llm.LLMStream {
       );
       if (!hasUserMessage && finalMessages.length > 0) {
         finalMessages.push({ role: 'user', content: 'hello' });
-        console.log('[MiniMax LLM] Added dummy user message due to no user message found');
+        this.logger.debug('[MiniMax LLM] Added dummy user message due to no user message found');
       }
 
-      console.log('[MiniMax LLM] Sending messages:', JSON.stringify(finalMessages.map(m => ({ role: m.role, content: String(m.content).substring(0, 80) }))));
+      this.logger.debug('[MiniMax LLM] Sending messages', { messages: finalMessages.map((m) => ({ role: m.role })) });
 
       // Filter out unsupported parameters that MiniMax doesn't handle
       const filteredOptions: Record<string, unknown> = {};
