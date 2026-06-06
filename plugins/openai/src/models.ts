@@ -238,24 +238,30 @@ export type BedrockResponsesModels =
  *
  * On Bedrock's mantle endpoint the `gpt-oss` open-weight models are served on the `/v1`
  * path, while the `gpt-5.x` models are served on `/openai/v1` (the only path openai-node's
- * `BedrockOpenAI` derives). Resolve the `/v1` URL for `gpt-oss` here. For every other case
- * (explicit `baseURL`, an `AWS_BEDROCK_BASE_URL` override, a non-gpt-oss model, or an
- * unresolved region) `baseURL` is returned unchanged so the SDK keeps its default behaviour.
+ * `BedrockOpenAI` derives). An explicit `baseURL` or an `AWS_BEDROCK_BASE_URL` override is
+ * always honored; otherwise the `/v1` URL is resolved for `gpt-oss`, and `undefined` is
+ * returned for everything else so `BedrockOpenAI` keeps its default behaviour.
  */
 export function resolveBedrockBaseURL(
   model: string,
   awsRegion?: string,
   baseURL?: string,
 ): string | undefined {
-  if (baseURL !== undefined || !model.startsWith('openai.gpt-oss')) {
+  // An explicit baseURL or an AWS_BEDROCK_BASE_URL override always wins, for every model.
+  if (baseURL !== undefined) {
     return baseURL;
   }
   if (process.env.AWS_BEDROCK_BASE_URL) {
-    return baseURL;
+    return process.env.AWS_BEDROCK_BASE_URL;
+  }
+  // Only gpt-oss needs an override: it is served on the mantle `/v1` path, whereas the SDK
+  // only derives `/openai/v1` (used by the gpt-5.x models). Defer everything else to the SDK.
+  if (!model.startsWith('openai.gpt-oss')) {
+    return undefined;
   }
   const region = awsRegion ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
   if (!region) {
-    return baseURL;
+    return undefined;
   }
   return `https://bedrock-mantle.${region}.api.aws/v1`;
 }

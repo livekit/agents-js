@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
 import { resolveBedrockBaseURL } from './models.js';
 import { LLM as ResponsesLLM } from './responses/llm.js';
@@ -22,6 +22,20 @@ describe('resolveBedrockBaseURL', () => {
   it('passes an explicit baseURL through unchanged', () => {
     const url = 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1';
     expect(resolveBedrockBaseURL('openai.gpt-oss-120b', 'us-west-2', url)).toBe(url);
+  });
+
+  describe('with AWS_BEDROCK_BASE_URL set', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it('honors the env override for every model (not the /v1 derivation)', () => {
+      vi.stubEnv('AWS_BEDROCK_BASE_URL', 'https://custom.example/v1');
+      expect(resolveBedrockBaseURL('openai.gpt-oss-120b', 'us-east-2')).toBe(
+        'https://custom.example/v1',
+      );
+      expect(resolveBedrockBaseURL('openai.gpt-5.5', 'us-east-2')).toBe(
+        'https://custom.example/v1',
+      );
+    });
   });
 });
 
