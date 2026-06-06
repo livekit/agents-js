@@ -18,13 +18,13 @@ import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
 import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import {
-  type AudioTurnDetectionTransport,
-  type AudioTurnDetectorStream,
+  type BaseStreamingTurnDetectorOptions,
+  type BaseStreamingTurnDetectorStream,
   DEFAULT_SAMPLE_RATE,
   type FlushSentinel,
-  type TurnDetectorOptions,
+  type StreamingTurnDetectionTransport,
 } from './base.js';
-import type { AudioTurnDetector } from './detector.js';
+import type { TurnDetector } from './detector.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
 
 const AudioEncoding = AgentInference.AudioEncoding;
@@ -131,7 +131,7 @@ class PcmRingBuffer {
 }
 
 /**
- * Transport for the local `turn-detector-mini` model.
+ * Transport for the local `turn-detector-v1-mini` model.
  *
  * The native model runs in the shared `InferenceProcExecutor` (one load per
  * host, ~138 MB) rather than in every job worker. Audio is buffered locally
@@ -143,22 +143,25 @@ class PcmRingBuffer {
  * predictions resolve to a positive default (1.0) so the session still
  * commits turns after `minDelay` — same as the existing local-failure path.
  */
-export class LocalTransport implements AudioTurnDetectionTransport {
-  protected _opts: TurnDetectorOptions;
+export class LocalTransport implements StreamingTurnDetectionTransport {
+  protected _opts: BaseStreamingTurnDetectorOptions;
   protected _executor: InferenceExecutor | undefined;
   protected _buf: PcmRingBuffer;
-  protected _streamRef: WeakRef<AudioTurnDetectorStream> | undefined;
+  protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
   protected _tasks = new Set<Promise<void>>();
   protected _warnedNoExecutor = false;
   protected _logger = log();
 
-  constructor(opts: { opts: TurnDetectorOptions; executor: InferenceExecutor | undefined }) {
+  constructor(opts: {
+    opts: BaseStreamingTurnDetectorOptions;
+    executor: InferenceExecutor | undefined;
+  }) {
     this._opts = opts.opts;
     this._executor = opts.executor;
     this._buf = new PcmRingBuffer(CLIENT_BUFFER_SAMPLES);
   }
 
-  attach(stream: AudioTurnDetectorStream): void {
+  attach(stream: BaseStreamingTurnDetectorStream): void {
     this._streamRef = new WeakRef(stream);
   }
 
@@ -229,6 +232,12 @@ export class LocalTransport implements AudioTurnDetectionTransport {
   }
 
   detach(): void {
+    // We drop our references to the in-flight predicts, but the underlying IPC
+    // `doInference` calls aren't cancellable, so they run to completion in the
+    // inference process. Their results are harmless: `_predict` re-derefs the
+    // (now-gone) stream via `_streamRef.deref()` and the stream's request-id /
+    // closing guards discard any late prediction. (Python cancels the tasks;
+    // our IPC executor has no AbortSignal to thread through, so we can't.)
     this._tasks.clear();
   }
 
@@ -240,7 +249,7 @@ export class LocalTransport implements AudioTurnDetectionTransport {
 }
 
 /**
- * WebSocket transport for the `turn-detector` (cloud) model.
+ * WebSocket transport for the `turn-detector-v1` (cloud) model.
  *
  * Maintains one inference session against the LiveKit Agent Gateway:
  * connect → `SessionCreate` → three concurrent tasks (drain audio, send,
@@ -251,12 +260,12 @@ export class LocalTransport implements AudioTurnDetectionTransport {
  * hooks fired synchronously between two awaited audio frames (e.g.
  * `inferenceStart` then `inputAudio`) reach the wire in call order.
  */
-export class CloudTransport implements AudioTurnDetectionTransport {
-  protected _detectorRef: WeakRef<AudioTurnDetector>;
-  protected _opts: TurnDetectorOptions;
+export class CloudTransport implements StreamingTurnDetectionTransport {
+  protected _detectorRef: WeakRef<TurnDetector>;
+  protected _opts: BaseStreamingTurnDetectorOptions;
   protected _cloudOpts: CloudTransportOptions;
   protected _connOptions: APIConnectOptions;
-  protected _streamRef: WeakRef<AudioTurnDetectorStream> | undefined;
+  protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
   protected _ws: CloudWebSocket | undefined;
   protected _numRetries = 0;
   protected _connectCalls = 0;
@@ -273,8 +282,8 @@ export class CloudTransport implements AudioTurnDetectionTransport {
   private _connectImpl: (() => Promise<CloudWebSocket>) | undefined;
 
   constructor(args: {
-    detector: AudioTurnDetector;
-    opts: TurnDetectorOptions;
+    detector: TurnDetector;
+    opts: BaseStreamingTurnDetectorOptions;
     cloudOpts: CloudTransportOptions;
     /** @internal test seam — supply a fake WebSocket factory. */
     connect?: (transport: CloudTransport) => Promise<CloudWebSocket>;
@@ -295,7 +304,7 @@ export class CloudTransport implements AudioTurnDetectionTransport {
     return this._numRetries;
   }
 
-  attach(stream: AudioTurnDetectorStream): void {
+  attach(stream: BaseStreamingTurnDetectorStream): void {
     this._streamRef = new WeakRef(stream);
   }
 
@@ -627,8 +636,8 @@ export class CloudTransport implements AudioTurnDetectionTransport {
 }
 
 // Re-export the transport interface from the FSM module so callers that
-// import `AudioTurnDetectionTransport` from this package barrel see the
+// import `StreamingTurnDetectionTransport` from this package barrel see the
 // same type.
-export type { AudioTurnDetectionTransport };
+export type { StreamingTurnDetectionTransport };
 // Expose APIError so detector + fallback code can narrow on it.
 export type { APIError };

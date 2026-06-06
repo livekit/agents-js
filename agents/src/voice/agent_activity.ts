@@ -10,7 +10,10 @@ import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
-import { AudioTurnDetector, type AudioTurnDetectorStream } from '../inference/eot/base.js';
+import {
+  BaseStreamingTurnDetector,
+  type BaseStreamingTurnDetectorStream,
+} from '../inference/eot/base.js';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -135,7 +138,7 @@ interface OnEnterData {
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
   rtSession?: RealtimeSession;
-  turnDetectorStream?: AudioTurnDetectorStream;
+  turnDetectorStream?: BaseStreamingTurnDetectorStream;
 }
 
 export class SchedulingPausedError extends Error {
@@ -239,7 +242,7 @@ export class AgentActivity implements RecognitionHooks {
 
   /**
    * Validated turn detection for this activity. Equals `this.turnDetection`
-   * except when an `AudioTurnDetector` instance fails the runtime preconditions
+   * except when an `BaseStreamingTurnDetector` instance fails the runtime preconditions
    * (no VAD, or RealtimeModel with server-side turn detection enabled), in
    * which case it is downgraded to `undefined` and a warning is logged.
    */
@@ -539,7 +542,7 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.on('metrics_collected', this.onMetricsCollected);
     }
 
-    if (this._resolvedTurnDetection instanceof AudioTurnDetector) {
+    if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
       this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
     }
 
@@ -631,7 +634,7 @@ export class AgentActivity implements RecognitionHooks {
       // reuse the turn detector stream during a handoff whenever we can
       if (
         this.audioRecognition &&
-        this._resolvedTurnDetection instanceof AudioTurnDetector &&
+        this._resolvedTurnDetection instanceof BaseStreamingTurnDetector &&
         this._resolvedTurnDetection === newActivity._resolvedTurnDetection
       ) {
         resources.turnDetectorStream = this.audioRecognition.detachTurnDetector();
@@ -3968,16 +3971,16 @@ export class AgentActivity implements RecognitionHooks {
     turnDetection: TurnDetectionMode | undefined,
   ): TurnDetectionMode | undefined {
     if (turnDetection !== undefined && typeof turnDetection !== 'string') {
-      if (turnDetection instanceof AudioTurnDetector) {
+      if (turnDetection instanceof BaseStreamingTurnDetector) {
         if (this.vad === undefined) {
           this.logger.warn(
-            'AudioTurnDetector requires a VAD model. Pass vad=inference.VAD() to AgentSession/Agent or turnDetection=null to disable the default AudioTurnDetector',
+            'TurnDetector requires a VAD model. Pass vad=inference.VAD() to AgentSession/Agent or turnDetection=null to disable the default TurnDetector',
           );
           return undefined;
         }
         if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
           this.logger.warn(
-            'turnDetection is an AudioTurnDetector, but the LLM is a RealtimeModel with server-side turn detection enabled, ignoring the turnDetection setting',
+            'turnDetection is a TurnDetector, but the LLM is a RealtimeModel with server-side turn detection enabled, ignoring the turnDetection setting',
           );
           return undefined;
         }
@@ -4249,7 +4252,7 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.off('metrics_collected', this.onMetricsCollected);
     }
 
-    if (this._resolvedTurnDetection instanceof AudioTurnDetector) {
+    if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
       this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
 

@@ -72,7 +72,7 @@ export default defineAgent({
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
         // turn detection determines when the agent should respond. See https://docs.livekit.io/agents/build/turns
-        turnDetection: new inference.AudioTurnDetector(),
+        turnDetection: new inference.TurnDetector(),
         // To use the local on-device text turn detector instead, re-enable the
         // `@livekit/agents-plugin-livekit` import above and use:
         // turnDetection: new livekit.turnDetector.MultilingualModel(),

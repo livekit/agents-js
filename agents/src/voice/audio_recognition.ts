@@ -15,8 +15,8 @@ import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/we
 import { TransformStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import {
-  AudioTurnDetector,
-  AudioTurnDetectorStream,
+  BaseStreamingTurnDetector,
+  BaseStreamingTurnDetectorStream,
   MIN_SILENCE_DURATION_MS,
   type TurnDetectionEvent,
 } from '../inference/eot/base.js';
@@ -219,8 +219,8 @@ export interface AudioRecognitionOptions {
   usingDefaultVad?: boolean;
   /** Turn detector for end-of-turn prediction. Accepts text-based detectors
    * via `_TurnDetector` (e.g. plugins/livekit) or audio-based detectors via
-   * `AudioTurnDetector` (e.g. `inference.AudioTurnDetector`). */
-  turnDetector?: _TurnDetector | AudioTurnDetector;
+   * `TurnDetector` (e.g. `inference.TurnDetector`). */
+  turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   /** Turn detection mode. */
   turnDetectionMode?: TurnDetectionMode;
   interruptionDetection?: AdaptiveInterruptionDetector;
@@ -268,8 +268,8 @@ export class AudioRecognition {
   private sttPipeline?: STTPipeline;
   private vad?: VAD;
   private usingDefaultVad: boolean;
-  private turnDetector?: _TurnDetector | AudioTurnDetector;
-  private turnDetectorStream?: AudioTurnDetectorStream;
+  private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
+  private turnDetectorStream?: BaseStreamingTurnDetectorStream;
   /**
    * The last `TurnDetectionEvent` we forwarded via `onEotPrediction`, kept
    * by reference to dedupe: both EOU triggers in a turn read the same
@@ -528,7 +528,7 @@ export class AudioRecognition {
   }
 
   /**
-   * Swap the active turn detector at runtime. When an `AudioTurnDetector`
+   * Swap the active turn detector at runtime. When an `BaseStreamingTurnDetector`
    * is provided, opens a per-turn FSM stream after retiring the prior one.
    *
    * When `stream` is provided it is adopted as-is (handoff reuse) instead of
@@ -536,8 +536,8 @@ export class AudioRecognition {
    * per-session cloud→local fallback state — survives the handoff.
    */
   updateTurnDetector(
-    detector: _TurnDetector | AudioTurnDetector | undefined,
-    options?: { stream?: AudioTurnDetectorStream },
+    detector: _TurnDetector | BaseStreamingTurnDetector | undefined,
+    options?: { stream?: BaseStreamingTurnDetectorStream },
   ): void {
     // Validate against the incoming detector before swapping in so the error
     // — when raised — names the configuration that failed.
@@ -562,7 +562,7 @@ export class AudioRecognition {
       this.turnDetectorStream = reuseStream;
     } else {
       this.turnDetectorStream =
-        detector instanceof AudioTurnDetector ? detector.stream() : undefined;
+        detector instanceof BaseStreamingTurnDetector ? detector.stream() : undefined;
     }
   }
 
@@ -575,7 +575,7 @@ export class AudioRecognition {
    * detector, retaining the detector's single-stream slot, so the new
    * AudioRecognition must adopt it rather than open a second stream.
    */
-  detachTurnDetector(): AudioTurnDetectorStream | undefined {
+  detachTurnDetector(): BaseStreamingTurnDetectorStream | undefined {
     const stream = this.turnDetectorStream;
     this.turnDetectorStream = undefined;
     return stream;
@@ -588,9 +588,9 @@ export class AudioRecognition {
    * is below the floor. VADs that don't expose the knob are left untouched.
    */
   private checkVadSilenceRequirement(
-    detector: _TurnDetector | AudioTurnDetector | undefined = this.turnDetector,
+    detector: _TurnDetector | BaseStreamingTurnDetector | undefined = this.turnDetector,
   ): void {
-    if (!(detector instanceof AudioTurnDetector) || this.vad === undefined) {
+    if (!(detector instanceof BaseStreamingTurnDetector) || this.vad === undefined) {
       return;
     }
     const current = this.vad.minSilenceDuration;
@@ -600,7 +600,7 @@ export class AudioRecognition {
     const required = MIN_SILENCE_DURATION_MS + 50;
     if (current < required) {
       throw new Error(
-        `vad minSilenceDuration=${current}ms is too low for the AudioTurnDetector. ` +
+        `vad minSilenceDuration=${current}ms is too low for the TurnDetector. ` +
           `Raise the VAD's minSilenceDuration to at least ${required}ms.`,
       );
     }
@@ -608,7 +608,7 @@ export class AudioRecognition {
 
   /**
    * Speaking-guard wrapper for the bounce-EOU task, mirroring Python's
-   * `_bounce_eou_task_with_speaking_guard`. When an `AudioTurnDetector`
+   * `_bounce_eou_task_with_speaking_guard`. When an `BaseStreamingTurnDetector`
    * is active, the bounce task races against the `userSpeakingEvent`:
    *
    * - if the user is already speaking, skip the EOU outright;
@@ -659,7 +659,7 @@ export class AudioRecognition {
 
   async start(options?: {
     sttPipeline?: STTPipeline;
-    turnDetectorStream?: AudioTurnDetectorStream;
+    turnDetectorStream?: BaseStreamingTurnDetectorStream;
   }) {
     this.startSttTasks(options?.sttPipeline);
 
@@ -676,10 +676,10 @@ export class AudioRecognition {
     });
 
     // Open (or adopt) the audio EOT detector stream now that the activity is
-    // running. We only call `updateTurnDetector` for AudioTurnDetector /
+    // running. We only call `updateTurnDetector` for BaseStreamingTurnDetector /
     // undefined detectors — plugin-based `_TurnDetector` instances are
     // text-only and don't carry a stream.
-    if (this.turnDetector instanceof AudioTurnDetector || this.turnDetector === undefined) {
+    if (this.turnDetector instanceof BaseStreamingTurnDetector || this.turnDetector === undefined) {
       this.updateTurnDetector(this.turnDetector, { stream: options?.turnDetectorStream });
     }
   }
@@ -1368,13 +1368,13 @@ export class AudioRecognition {
     //    prediction for the current inference window so the bounce task
     //    can short-circuit on cache)
     //  - text-based detector: only run when we have a transcript to score
-    const hasAudioDetector = this.turnDetector instanceof AudioTurnDetector;
+    const hasAudioDetector = this.turnDetector instanceof BaseStreamingTurnDetector;
     const useDetector =
       this.turnDetectionMode !== 'manual' && (this.audioTranscript || hasAudioDetector);
     // The unified type only covers the predict surface; the audio
     // detector's per-turn stream stands in for the parent when one is
     // attached so the cached prediction is available.
-    let turnDetector: _TurnDetector | AudioTurnDetectorStream | undefined;
+    let turnDetector: _TurnDetector | BaseStreamingTurnDetectorStream | undefined;
     if (!useDetector) {
       turnDetector = undefined;
     } else if (hasAudioDetector) {
@@ -1408,7 +1408,7 @@ export class AudioRecognition {
               // current inference window — a non-undefined value here
               // means `predictEndOfTurn` will short-circuit on cache.
               const fromCache =
-                turnDetector instanceof AudioTurnDetectorStream &&
+                turnDetector instanceof BaseStreamingTurnDetectorStream &&
                 turnDetector.lastPrediction !== undefined;
 
               if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
@@ -1478,7 +1478,7 @@ export class AudioRecognition {
               // differs from the last one we forwarded; set the tracker on
               // every emit (matches Python `_last_emitted_prediction`).
               const prediction =
-                turnDetector instanceof AudioTurnDetectorStream
+                turnDetector instanceof BaseStreamingTurnDetectorStream
                   ? turnDetector.lastPrediction
                   : undefined;
               if (prediction === undefined || prediction !== this.lastEmittedEotPrediction) {
@@ -1579,6 +1579,11 @@ export class AudioRecognition {
             this.vadSpeechStarted = false;
             this.lastSpeakingTime = undefined;
           }
+
+          // Flush the cached prediction and write the turn-boundary sentinel to
+          // the transport so the next turn's predict starts fresh — the normal
+          // EOU-commit path, mirroring clearUserTurn()'s flush on interrupt.
+          this.turnDetectorStream?.flush('turn committed');
         }
 
         this.userTurnCommitted = false;

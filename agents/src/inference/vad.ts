@@ -328,7 +328,9 @@ class InferenceVADStream extends BaseVADStream {
 
         const inferenceDuration = performance.now() - startTime;
         extraInferenceTime = Math.max(0, extraInferenceTime + inferenceDuration - windowDurationMs);
-        if (extraInferenceTime > SLOW_INFERENCE_THRESHOLD_MS) {
+        // Guard on the per-window inference duration (not the accumulated slack)
+        // to match Python; the accumulated value is still surfaced as the delay.
+        if (inferenceDuration > SLOW_INFERENCE_THRESHOLD_MS) {
           this._logger.warn(
             { extraInferenceTimeMs: extraInferenceTime },
             'VAD slower than realtime',

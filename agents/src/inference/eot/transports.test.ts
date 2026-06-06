@@ -4,7 +4,7 @@
 
 /**
  * Tests for `CloudTransport` (cloud WS body, driven by the unified
- * `AudioTurnDetectorStreamImpl` stream).
+ * `TurnDetectorStreamImpl` stream).
  *
  * Uses an in-process fake WebSocket to drive the transport
  * deterministically. Covers:
@@ -21,8 +21,8 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { AudioTurnDetector, type TurnDetectorOptions } from './base.js';
-import { AudioTurnDetectorStreamImpl } from './detector.js';
+import { BaseStreamingTurnDetector, type BaseStreamingTurnDetectorOptions } from './base.js';
+import { TurnDetectorStreamImpl } from './detector.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 import { CloudTransport, type CloudWebSocket } from './transports.js';
 
@@ -48,9 +48,9 @@ class FakeWS implements CloudWebSocket {
   }
 }
 
-class FakeDetector extends AudioTurnDetector {
+class FakeDetector extends BaseStreamingTurnDetector {
   get model(): TurnDetectorModel {
-    return 'turn-detector';
+    return 'turn-detector-v1';
   }
   stream(): never {
     throw new Error('unused');
@@ -58,7 +58,7 @@ class FakeDetector extends AudioTurnDetector {
 }
 
 interface MakeStreamResult {
-  stream: AudioTurnDetectorStreamImpl;
+  stream: TurnDetectorStreamImpl;
   fakeWs: FakeWS;
   transport: CloudTransport;
 }
@@ -70,9 +70,9 @@ function makeStream(opts: {
 }): MakeStreamResult {
   const fakeWs = new FakeWS();
   const script = [...(opts.connectScript ?? [])];
-  const turnOpts: TurnDetectorOptions = {
+  const turnOpts: BaseStreamingTurnDetectorOptions = {
     sampleRate: 16000,
-    thresholds: new ThresholdOptions('turn-detector'),
+    thresholds: new ThresholdOptions('turn-detector-v1'),
   };
   const detector = new FakeDetector(turnOpts);
   const cloudOpts = {
@@ -96,11 +96,11 @@ function makeStream(opts: {
     return fakeWs;
   };
   const transport = new CloudTransport({ detector, opts: turnOpts, cloudOpts, connect });
-  const stream = new AudioTurnDetectorStreamImpl({
+  const stream = new TurnDetectorStreamImpl({
     detector,
     opts: turnOpts,
     cloudOpts,
-    model: 'turn-detector',
+    model: 'turn-detector-v1',
     transport,
   });
   return { stream, fakeWs, transport };
@@ -172,7 +172,7 @@ describe('CloudToLocalFallback', () => {
       const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
       expect(prob).toBe(1.0);
 
-      await waitForCond(() => stream.model === 'turn-detector-mini');
+      await waitForCond(() => stream.model === 'turn-detector-v1-mini');
       expect(stream.isFallback).toBe(true);
 
       // Let the swapped-in LocalTransport.run() re-acquire the reader and start

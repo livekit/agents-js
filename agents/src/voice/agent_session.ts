@@ -12,12 +12,12 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
-import type { AudioTurnDetector } from '../inference/eot/base.js';
+import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
-  AudioTurnDetector as InferenceAudioTurnDetector,
   LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
+  TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
   type STTModelString,
@@ -209,7 +209,7 @@ export type TurnDetectionMode =
   | 'realtime_llm'
   | 'manual'
   | _TurnDetector
-  | AudioTurnDetector;
+  | BaseStreamingTurnDetector;
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
@@ -497,10 +497,15 @@ export class AgentSession<
     }
 
     // Default turn_detection: when the caller didn't pin a mode or supply a
-    // detector instance, fall back to a fresh inference.AudioTurnDetector so
-    // every session ships with multimodal EOT out of the box.
+    // detector instance (`undefined`/not-given), fall back to a fresh
+    // inference.TurnDetector so every session ships with multimodal EOT
+    // out of the box. An explicit `null` opts out entirely — no detector is
+    // built (mirrors Python `None` vs `NOT_GIVEN`).
+    const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;
     this.turnDetection =
-      resolvedSessionOptions.turnHandling.turnDetection ?? new InferenceAudioTurnDetector();
+      configuredTurnDetection === null
+        ? undefined
+        : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
 

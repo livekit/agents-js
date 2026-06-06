@@ -8,16 +8,17 @@ import * as tts from './tts.js';
 
 export { eot };
 export {
-  AudioTurnDetector,
-  AudioTurnDetectorStreamImpl,
+  TurnDetector,
+  TurnDetectorStreamImpl,
   LOCAL_LANGUAGES,
   CloudTransport,
   LocalTransport,
   ThresholdOptions,
-  type AudioTurnDetectorOptions,
+  type TurnDetectorOptions,
   type CloudTransportOptions,
   type ThresholdOverride,
   type TurnDetectorModel,
+  type TurnDetectorVersion,
 } from './eot/index.js';
 
 export { VAD, type VADOptions, type VADModels } from './vad.js';

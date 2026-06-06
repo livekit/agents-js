@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Audio end-of-turn detector with `turn-detector` → `turn-detector-mini`
+ * Audio end-of-turn detector with `turn-detector-v1` → `turn-detector-v1-mini`
  * (cloud → local) fallback.
  *
  * Port of Python `livekit.agents.inference.eot.detector`.
@@ -15,25 +15,25 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types
 import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import {
-  type AudioTurnDetectionTransport,
-  AudioTurnDetector as AudioTurnDetectorBase,
-  AudioTurnDetectorStream,
+  BaseStreamingTurnDetector,
+  type BaseStreamingTurnDetectorOptions,
+  BaseStreamingTurnDetectorStream,
   DEFAULT_SAMPLE_RATE,
+  type StreamingTurnDetectionTransport,
   SwapAbortError,
-  type TurnDetectorOptions,
 } from './base.js';
-import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
+import { ThresholdOptions, type TurnDetectorModel, type TurnDetectorVersion } from './languages.js';
 import { CloudTransport, type CloudTransportOptions, LocalTransport } from './transports.js';
 
-export interface AudioTurnDetectorOptions {
+export interface TurnDetectorOptions {
   /**
-   * Which turn-detector checkpoint to run. `'turn-detector'` is the full
-   * cloud model (served over the inference gateway); `'turn-detector-mini'`
-   * is the local in-process model. When omitted, auto-selects `'turn-detector'`
-   * on hosted/dev environments (falling back to `'turn-detector-mini'` if cloud
-   * creds are missing) and `'turn-detector-mini'` otherwise.
+   * Which turn-detector version to run. `'v1'` is the full cloud model (served
+   * over the inference gateway; model name `'turn-detector-v1'`); `'v1-mini'`
+   * is the local in-process model (`'turn-detector-v1-mini'`). When omitted,
+   * auto-selects `'v1'` on hosted/dev environments (falling back to `'v1-mini'`
+   * if cloud creds are missing) and `'v1-mini'` otherwise.
    */
-  model?: TurnDetectorModel;
+  version?: TurnDetectorVersion;
   unlikelyThreshold?: number | Record<string, number>;
   baseUrl?: string;
   apiKey?: string;
@@ -42,7 +42,7 @@ export interface AudioTurnDetectorOptions {
   sampleRate?: number;
   connOptions?: APIConnectOptions;
   /**
-   * Inference executor that runs the local `turn-detector-mini` model in the
+   * Inference executor that runs the local `turn-detector-v1-mini` model in the
    * shared inference process. Defaults to the current job's
    * `getJobContext().inferenceExecutor`. `undefined` (no job context / binding
    * unavailable) degrades the local model to a positive-default prediction.
@@ -51,20 +51,21 @@ export interface AudioTurnDetectorOptions {
   executor?: InferenceExecutor;
 }
 
-export class AudioTurnDetector extends AudioTurnDetectorBase {
+export class TurnDetector extends BaseStreamingTurnDetector {
   protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
 
-  constructor(opts: AudioTurnDetectorOptions = {}) {
-    // auto = caller didn't pin a model; missing cloud creds warn-and-
+  constructor(opts: TurnDetectorOptions = {}) {
+    // auto = caller didn't pin a version; missing cloud creds warn-and-
     // fall-back instead of raising.
-    const auto = opts.model === undefined;
-    let resolvedModel: TurnDetectorModel =
-      opts.model ?? (isHosted() || isDevMode() ? 'turn-detector' : 'turn-detector-mini');
+    const auto = opts.version === undefined;
+    const resolvedVersion: TurnDetectorVersion =
+      opts.version ?? (isHosted() || isDevMode() ? 'v1' : 'v1-mini');
+    let resolvedModel: TurnDetectorModel = `turn-detector-${resolvedVersion}`;
 
     let cloudOpts: CloudTransportOptions | undefined;
-    if (resolvedModel === 'turn-detector') {
+    if (resolvedVersion === 'v1') {
       const baseUrl = resolveEnvVar(
         opts.baseUrl,
         ['LIVEKIT_INFERENCE_URL'],
@@ -83,12 +84,12 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
         if (auto) {
           log().warn(
             { missing },
-            "LIVEKIT_INFERENCE_URL is set but creds are missing; falling back to 'turn-detector-mini'",
+            "LIVEKIT_INFERENCE_URL is set but creds are missing; falling back to 'v1-mini'",
           );
-          resolvedModel = 'turn-detector-mini';
+          resolvedModel = 'turn-detector-v1-mini';
         } else {
           throw new Error(
-            `AudioTurnDetector(model='turn-detector') requires ${missing.join(', ')} ` +
+            `TurnDetector(version='v1') requires ${missing.join(', ')} ` +
               '(env or constructor argument).',
           );
         }
@@ -102,7 +103,7 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
       }
     }
 
-    const detectorOpts: TurnDetectorOptions = {
+    const detectorOpts: BaseStreamingTurnDetectorOptions = {
       sampleRate: opts.sampleRate ?? DEFAULT_SAMPLE_RATE,
       thresholds: new ThresholdOptions(resolvedModel, opts.unlikelyThreshold),
     };
@@ -124,8 +125,8 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
     }
   }
 
-  /** Current model. Starts at the construction-time selection and flips to
-   * `'turn-detector-mini'` after a cloud→local fallback: the detector and its
+  /** Current model name. Starts at the construction-time selection and flips to
+   * `'turn-detector-v1-mini'` after a cloud→local fallback: the detector and its
    * (single) active stream share one mutable `ThresholdOptions`, and the
    * stream writes the swap back here so EOU metrics and `audio_recognition`
    * see a consistent view. The fallback is one-way and sticky. */
@@ -157,12 +158,12 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
     this._warnThresholdOverride();
   }
 
-  override stream(opts: { connOptions?: APIConnectOptions } = {}): AudioTurnDetectorStream {
+  override stream(opts: { connOptions?: APIConnectOptions } = {}): BaseStreamingTurnDetectorStream {
     const cloudOpts =
       this._cloudOpts !== undefined
         ? { ...this._cloudOpts, connOptions: opts.connOptions ?? this._cloudOpts.connOptions }
         : undefined;
-    const stream = new AudioTurnDetectorStreamImpl({
+    const stream = new TurnDetectorStreamImpl({
       detector: this,
       opts: this._opts,
       cloudOpts,
@@ -174,27 +175,27 @@ export class AudioTurnDetector extends AudioTurnDetectorBase {
   }
 }
 
-export interface AudioTurnDetectorStreamImplArgs {
-  detector: AudioTurnDetector;
-  opts: TurnDetectorOptions;
+export interface TurnDetectorStreamImplArgs {
+  detector: TurnDetector;
+  opts: BaseStreamingTurnDetectorOptions;
   cloudOpts: CloudTransportOptions | undefined;
   model: TurnDetectorModel;
-  /** Shared inference executor for the `turn-detector-mini` (local) model
+  /** Shared inference executor for the `turn-detector-v1-mini` (local) model
    * (undefined degrades to a positive-default prediction). */
   executor?: InferenceExecutor;
   /** Optional transport override (for tests). When omitted, a transport is
    * constructed from `model` + `cloudOpts`. */
-  transport?: AudioTurnDetectionTransport;
+  transport?: StreamingTurnDetectionTransport;
 }
 
 /**
- * Stream that owns the `turn-detector` → `turn-detector-mini` (cloud → local)
- * fallback FSM. On cloud transport failure (`transport.run()` raises, or
+ * Stream that owns the `turn-detector-v1` → `turn-detector-v1-mini` (cloud →
+ * local) fallback FSM. On cloud transport failure (`transport.run()` raises, or
  * `predictEndOfTurn` times out), the stream swaps the transport and rescales
  * per-language thresholds in place on the shared `ThresholdOptions`, then writes
  * the model swap back to the owning detector so its view stays consistent.
  */
-export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
+export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
@@ -203,10 +204,10 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   protected _warnedLocalFailure = false;
   private _detLogger = log();
 
-  constructor(args: AudioTurnDetectorStreamImplArgs) {
+  constructor(args: TurnDetectorStreamImplArgs) {
     const transport =
       args.transport ??
-      (args.model === 'turn-detector'
+      (args.model === 'turn-detector-v1'
         ? new CloudTransport({
             detector: args.detector,
             opts: args.opts,
@@ -219,8 +220,8 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     this._executor = args.executor;
   }
 
-  /** This stream's *current* model (flips to `'turn-detector-mini'` after a
-   * cloud→local fallback). The swap is also written back to the owning
+  /** This stream's *current* model name (flips to `'turn-detector-v1-mini'`
+   * after a cloud→local fallback). The swap is also written back to the owning
    * detector, which shares this stream's mutable `ThresholdOptions`. */
   override get model(): TurnDetectorModel {
     return this._model;
@@ -239,7 +240,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     return this._warnedLocalFailure;
   }
   /** @internal Test-visible. */
-  get transport(): AudioTurnDetectionTransport {
+  get transport(): StreamingTurnDetectionTransport {
     return this._transport;
   }
 
@@ -265,12 +266,12 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
     // metrics and `audio_recognition`) without a copy-back. Safe because only
     // one active stream per detector is supported, and the swap is sticky.
     this._opts.thresholds._toLocalFallback();
-    if (this._detector instanceof AudioTurnDetector) {
-      this._detector._setModel('turn-detector-mini');
+    if (this._detector instanceof TurnDetector) {
+      this._detector._setModel('turn-detector-v1-mini');
     }
     this._transport = new LocalTransport({ opts: this._opts, executor: this._executor });
     this._transport.attach(this);
-    this._model = 'turn-detector-mini';
+    this._model = 'turn-detector-v1-mini';
     this._isFallback = true;
   }
 
@@ -323,7 +324,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
           continue;
         }
         const e = err instanceof Error ? err : new Error(String(err));
-        if (this._model === 'turn-detector') {
+        if (this._model === 'turn-detector-v1') {
           this._fallBackToLocal(e);
           continue;
         }
@@ -334,7 +335,7 @@ export class AudioTurnDetectorStreamImpl extends AudioTurnDetectorStream {
   }
 
   protected override _onPredictTimeout(): void {
-    if (this._model === 'turn-detector') {
+    if (this._model === 'turn-detector-v1') {
       // Signal the swap BEFORE mutating model/transport state. The
       // race in `_raceWithSwap` is rejected with `SwapAbortError`
       // immediately, so the main loop exits through the

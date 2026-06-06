@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Tests for the unified `AudioTurnDetector` (auto-select + fallback + server defaults).
+ * Tests for the unified `TurnDetector` (auto-select + fallback + server defaults).
  *
  * Covers:
  *
@@ -28,13 +28,13 @@ import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import type { AudioTurnDetectorStream } from './base.js';
+import type { BaseStreamingTurnDetectorStream } from './base.js';
 import {
-  type AudioTurnDetectionTransport,
+  type BaseStreamingTurnDetectorOptions,
   type FlushSentinel,
-  type TurnDetectorOptions,
+  type StreamingTurnDetectionTransport,
 } from './base.js';
-import { AudioTurnDetector, AudioTurnDetectorStreamImpl } from './detector.js';
+import { TurnDetector, TurnDetectorStreamImpl } from './detector.js';
 import { LOCAL_LANGUAGES, ThresholdOptions } from './languages.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
 import { LocalTransport } from './transports.js';
@@ -55,19 +55,19 @@ interface ScriptedTransportOptions {
   runExc?: Error;
 }
 
-class ScriptedTransport implements AudioTurnDetectionTransport {
+class ScriptedTransport implements StreamingTurnDetectionTransport {
   runBehavior: 'idle' | 'raise' | 'return';
   runExc: Error | undefined;
   runCalls = 0;
   events: Array<[string, unknown]> = [];
-  private _stream: AudioTurnDetectorStream | undefined;
+  private _stream: BaseStreamingTurnDetectorStream | undefined;
 
   constructor(opts: ScriptedTransportOptions = {}) {
     this.runBehavior = opts.runBehavior ?? 'idle';
     this.runExc = opts.runExc;
   }
 
-  attach(stream: AudioTurnDetectorStream): void {
+  attach(stream: BaseStreamingTurnDetectorStream): void {
     this._stream = stream;
   }
   async run(): Promise<void> {
@@ -101,14 +101,14 @@ class ScriptedTransport implements AudioTurnDetectionTransport {
   }
 }
 
-function detectorOpts(detector: AudioTurnDetector): TurnDetectorOptions {
-  return (detector as unknown as { _opts: TurnDetectorOptions })._opts;
+function detectorOpts(detector: TurnDetector): BaseStreamingTurnDetectorOptions {
+  return (detector as unknown as { _opts: BaseStreamingTurnDetectorOptions })._opts;
 }
 
 interface MakeStreamOpts {
-  model?: 'turn-detector' | 'turn-detector-mini';
+  model?: 'turn-detector-v1' | 'turn-detector-v1-mini';
   userThreshold?: number | Record<string, number>;
-  detector?: AudioTurnDetector;
+  detector?: TurnDetector;
 }
 
 /**
@@ -119,16 +119,16 @@ interface MakeStreamOpts {
  * model resolves its thresholds against `LOCAL_LANGUAGES` up front.
  */
 function makeStreamWithTransport(
-  transport: AudioTurnDetectionTransport,
+  transport: StreamingTurnDetectionTransport,
   opts: MakeStreamOpts = {},
-): AudioTurnDetectorStreamImpl {
-  const model = opts.model ?? 'turn-detector';
+): TurnDetectorStreamImpl {
+  const model = opts.model ?? 'turn-detector-v1';
   const detector = opts.detector ?? makeMockDetector(model, opts.userThreshold);
-  const stream = new AudioTurnDetectorStreamImpl({
+  const stream = new TurnDetectorStreamImpl({
     detector,
     opts: detectorOpts(detector),
     cloudOpts:
-      model === 'turn-detector'
+      model === 'turn-detector-v1'
         ? {
             baseUrl: 'ws://test',
             apiKey: 'x',
@@ -142,26 +142,29 @@ function makeStreamWithTransport(
   return stream;
 }
 
-/** Build an `AudioTurnDetector` for assertions without going through env
+/** Build a `TurnDetector` for assertions without going through env
  * resolution — seed a specific model + threshold override for a stream we'll
  * build separately. */
 function makeMockDetector(
-  model: 'turn-detector' | 'turn-detector-mini',
+  model: 'turn-detector-v1' | 'turn-detector-v1-mini',
   userThreshold?: number | Record<string, number>,
-): AudioTurnDetector {
+): TurnDetector {
   // Construct via the public constructor, then override the internal model +
   // shared threshold options to match what we want for the assertion.
   const originalEnv = { ...process.env };
-  if (model === 'turn-detector-mini') {
+  if (model === 'turn-detector-v1-mini') {
     delete process.env.LIVEKIT_REMOTE_EOT_URL;
   } else {
     process.env.LIVEKIT_REMOTE_EOT_URL = 'ws://test';
     process.env.LIVEKIT_API_KEY = 'x';
     process.env.LIVEKIT_API_SECRET = 'x';
   }
-  const det = new AudioTurnDetector();
+  const det = new TurnDetector();
   process.env = originalEnv;
-  const internals = det as unknown as { _model: typeof model; _opts: TurnDetectorOptions };
+  const internals = det as unknown as {
+    _model: typeof model;
+    _opts: BaseStreamingTurnDetectorOptions;
+  };
   internals._model = model;
   internals._opts = { ...internals._opts, thresholds: new ThresholdOptions(model, userThreshold) };
   return det;
@@ -204,8 +207,8 @@ afterEach(() => {
 describe('AutoSelect', () => {
   it('selects local when no remote EOT url', () => {
     void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      const detector = new AudioTurnDetector();
-      expect(detector.model).toBe('turn-detector-mini');
+      const detector = new TurnDetector();
+      expect(detector.model).toBe('turn-detector-v1-mini');
     });
   });
 
@@ -217,8 +220,8 @@ describe('AutoSelect', () => {
         LIVEKIT_API_SECRET: 's',
       },
       () => {
-        const detector = new AudioTurnDetector();
-        expect(detector.model).toBe('turn-detector');
+        const detector = new TurnDetector();
+        expect(detector.model).toBe('turn-detector-v1');
       },
     );
   });
@@ -233,8 +236,8 @@ describe('AutoSelect', () => {
         LIVEKIT_INFERENCE_API_SECRET: undefined,
       },
       () => {
-        const detector = new AudioTurnDetector();
-        expect(detector.model).toBe('turn-detector-mini');
+        const detector = new TurnDetector();
+        expect(detector.model).toBe('turn-detector-v1-mini');
       },
     );
   });
@@ -251,7 +254,7 @@ describe('ExplicitModelErrors', () => {
         LIVEKIT_INFERENCE_API_SECRET: undefined,
       },
       () => {
-        expect(() => new AudioTurnDetector({ model: 'turn-detector' })).toThrow();
+        expect(() => new TurnDetector({ version: 'v1' })).toThrow();
       },
     );
   });
@@ -264,8 +267,8 @@ describe('Fallback', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.model === 'turn-detector-mini');
-    expect(stream.model).toBe('turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
+    expect(stream.model).toBe('turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     expect(stream.warnedCloudFailure).toBe(true);
     expect(transport.events).toContainEqual(['detach', null]);
@@ -277,7 +280,7 @@ describe('Fallback', () => {
     const stream = makeStreamWithTransport(transport);
     const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
     expect(prob).toBe(1.0);
-    expect(stream.model).toBe('turn-detector-mini');
+    expect(stream.model).toBe('turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     await stream.aclose();
   });
@@ -288,19 +291,19 @@ describe('Fallback', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(transport.runCalls).toBe(1);
     stream.warmup();
-    expect(stream.model).toBe('turn-detector-mini');
+    expect(stream.model).toBe('turn-detector-v1-mini');
     await stream.aclose();
   });
 });
 
 describe('MultiStreamOwnership', () => {
   it('multiple streams can be opened off one detector', async () => {
-    let detector!: AudioTurnDetector;
+    let detector!: TurnDetector;
     withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      detector = new AudioTurnDetector({ model: 'turn-detector-mini' });
+      detector = new TurnDetector({ version: 'v1-mini' });
     });
     // Only one stream is active at a time in production; the detector still
     // permits constructing several (they share its `ThresholdOptions`).
@@ -313,7 +316,7 @@ describe('MultiStreamOwnership', () => {
 
 describe('DetectorViewAfterFallback', () => {
   it('detector model + threshold follow the fallback (shared ThresholdOptions)', async () => {
-    let detector!: AudioTurnDetector;
+    let detector!: TurnDetector;
     withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
@@ -321,29 +324,29 @@ describe('DetectorViewAfterFallback', () => {
         LIVEKIT_API_SECRET: 's',
       },
       () => {
-        detector = new AudioTurnDetector({ unlikelyThreshold: 0.5 });
+        detector = new TurnDetector({ unlikelyThreshold: 0.5 });
       },
     );
-    expect(detector.model).toBe('turn-detector');
+    expect(detector.model).toBe('turn-detector-v1');
     // scalar override is resolvable pre-session via the catch-all
     expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.5);
 
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = new AudioTurnDetectorStreamImpl({
+    const stream = new TurnDetectorStreamImpl({
       detector,
       opts: detectorOpts(detector),
       cloudOpts: undefined,
-      model: 'turn-detector',
+      model: 'turn-detector-v1',
       transport,
     });
     // server defaults arrive, then the cloud session fails
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
 
     // Both the stream and the detector (sharing one ThresholdOptions) reflect it.
-    expect(stream.model).toBe('turn-detector-mini');
-    expect(detector.model).toBe('turn-detector-mini');
+    expect(stream.model).toBe('turn-detector-v1-mini');
+    expect(detector.model).toBe('turn-detector-v1-mini');
     const expected = LOCAL_LANGUAGES.en! * (0.5 / SERVER_THRESHOLDS.en!);
     expect(await detector.unlikelyThreshold('en')).toBeCloseTo(expected);
     await stream.aclose();
@@ -356,9 +359,9 @@ describe('LocalFailureRetry', () => {
       runBehavior: 'raise',
       runExc: new Error('local boom'),
     });
-    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-mini' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-v1-mini' });
     await waitFor(() => stream.warnedLocalFailure);
-    expect(stream.model).toBe('turn-detector-mini');
+    expect(stream.model).toBe('turn-detector-v1-mini');
     expect(stream.isFallback).toBe(false);
     expect(stream.warnedLocalFailure).toBe(true);
     expect(stream.transport).toBe(transport);
@@ -373,7 +376,7 @@ describe('WarningDedupe', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     // Trigger a second fallback path directly.
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom2' }));
     // Across both invocations only one warning was emitted — tracked by
@@ -384,7 +387,7 @@ describe('WarningDedupe', () => {
 
   it('local warning logged once per session', async () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-mini' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-v1-mini' });
     stream._onLocalFailure(new Error('a'));
     stream._onLocalFailure(new Error('b'));
     expect(stream.warnedLocalFailure).toBe(true);
@@ -395,7 +398,7 @@ describe('WarningDedupe', () => {
 describe('ResolveThresholds', () => {
   // Cloud-override resolution against the server defaults, via ThresholdOptions.
   function cloud(overrides?: number | Record<string, number>): ThresholdOptions {
-    const opts = new ThresholdOptions('turn-detector', overrides);
+    const opts = new ThresholdOptions('turn-detector-v1', overrides);
     opts._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
     return opts;
   }
@@ -479,7 +482,7 @@ describe('OverrideWarning', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     try {
       withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-        new AudioTurnDetector({ unlikelyThreshold: 0.5 });
+        new TurnDetector({ unlikelyThreshold: 0.5 });
       });
       const warned = warnSpy.mock.calls.some((c) =>
         JSON.stringify(c).includes('non-default turn detection threshold'),
@@ -494,7 +497,7 @@ describe('OverrideWarning', () => {
     const warnSpy = vi.spyOn(log(), 'warn');
     try {
       withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-        new AudioTurnDetector();
+        new TurnDetector();
       });
       const warned = warnSpy.mock.calls.some((c) =>
         JSON.stringify(c).includes('non-default turn detection threshold'),
@@ -508,7 +511,7 @@ describe('OverrideWarning', () => {
 
 describe('UpdateOptions', () => {
   it('re-resolves an active cloud stream against cached server defaults', async () => {
-    let detector!: AudioTurnDetector;
+    let detector!: TurnDetector;
     withEnv(
       {
         LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
@@ -516,15 +519,15 @@ describe('UpdateOptions', () => {
         LIVEKIT_API_SECRET: 's',
       },
       () => {
-        detector = new AudioTurnDetector();
+        detector = new TurnDetector();
       },
     );
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = new AudioTurnDetectorStreamImpl({
+    const stream = new TurnDetectorStreamImpl({
       detector,
       opts: detectorOpts(detector),
       cloudOpts: undefined,
-      model: 'turn-detector',
+      model: 'turn-detector-v1',
       transport,
     });
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
@@ -537,11 +540,11 @@ describe('UpdateOptions', () => {
   });
 
   it('local model updateOptions', async () => {
-    let detector!: AudioTurnDetector;
+    let detector!: TurnDetector;
     withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      detector = new AudioTurnDetector();
+      detector = new TurnDetector();
     });
-    expect(detector.model).toBe('turn-detector-mini');
+    expect(detector.model).toBe('turn-detector-v1-mini');
     detector.updateOptions({ unlikelyThreshold: 0.42 });
     expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.42);
     await detector.aclose();
@@ -554,7 +557,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const stream = makeStreamWithTransport(transport, { userThreshold: 0.5 });
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
       LOCAL_LANGUAGES.en! * (0.5 / SERVER_THRESHOLDS.en!),
@@ -567,7 +570,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const stream = makeStreamWithTransport(transport);
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     // ratio 1.0 → local table unchanged
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(LOCAL_LANGUAGES.en!);
     await stream.aclose();
@@ -578,7 +581,7 @@ describe('ThresholdRescaleOnFallback', () => {
     const stream = makeStreamWithTransport(transport, { userThreshold: { en: 0.55, ja: 0.25 } });
     stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
     stream._fallBackToLocal(new APIConnectionError({ message: 'boom' }));
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(
       LOCAL_LANGUAGES.en! * (0.55 / SERVER_THRESHOLDS.en!),
@@ -599,7 +602,7 @@ describe('ThresholdRescaleOnFallback', () => {
       runExc: new APIConnectionError({ message: 'boom' }),
     });
     const stream = makeStreamWithTransport(transport, { userThreshold: 0.42 });
-    await waitFor(() => stream.model === 'turn-detector-mini');
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     // scalar 0.42 → 0.42 for every language via the catch-all
     expect(await stream.unlikelyThreshold('en')).toBeCloseTo(0.42);
@@ -619,7 +622,7 @@ describe('LocalModelExecutor', () => {
       return { probability: 0.7, inferenceDurationMs: 5 };
     });
     const executor: InferenceExecutor = { doInference };
-    const detector = new AudioTurnDetector({ model: 'turn-detector-mini', executor });
+    const detector = new TurnDetector({ version: 'v1-mini', executor });
     const stream = detector.stream();
     try {
       stream.pushAudio(pcmFrame());
@@ -634,7 +637,7 @@ describe('LocalModelExecutor', () => {
   it('degrades to a positive default when no executor is available', async () => {
     // explicit undefined → constructor falls through to getJobContext()
     // (throws outside a job) → executor stays undefined.
-    const detector = new AudioTurnDetector({ model: 'turn-detector-mini', executor: undefined });
+    const detector = new TurnDetector({ version: 'v1-mini', executor: undefined });
     const stream = detector.stream();
     try {
       const p = await stream.predictEndOfTurn(undefined, { timeoutMs: 1000 });

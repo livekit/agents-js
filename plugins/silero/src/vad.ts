@@ -6,6 +6,7 @@ import {
   VADEventType,
   VADStream as baseStream,
   VAD as baseVAD,
+  inference,
   log,
   mergeFrames,
 } from '@livekit/agents';
@@ -97,8 +98,33 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+  static async load(opts: Partial<VADOptions> = {}): Promise<baseVAD> {
     const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
+
+    // When the requested settings are compatible with the bundled native
+    // implementation in `@livekit/local-inference`, delegate to
+    // `inference.VAD({ model: 'silero' })` so existing call sites transparently
+    // get the faster, COW-shared native path as part of the silero deprecation.
+    // The native lib only ships the 16 kHz model, so any other sample rate
+    // falls back to the legacy onnxruntime path below.
+    if (mergedOpts.sampleRate === 16000) {
+      if (!mergedOpts.forceCPU) {
+        log().warn(
+          'forceCPU=false is ignored when using the bundled native VAD; the ' +
+            'model runs CPU-only. Use a non-16kHz sampleRate to keep the legacy ' +
+            'onnxruntime path that honors forceCPU.',
+        );
+      }
+      return new inference.VAD({
+        model: 'silero',
+        minSpeechDuration: mergedOpts.minSpeechDuration,
+        minSilenceDuration: mergedOpts.minSilenceDuration,
+        prefixPaddingDuration: mergedOpts.prefixPaddingDuration,
+        maxBufferedSpeech: mergedOpts.maxBufferedSpeech,
+        activationThreshold: mergedOpts.activationThreshold,
+      });
+    }
+
     const session = await newInferenceSession(mergedOpts.forceCPU);
     return new VAD(session, mergedOpts);
   }

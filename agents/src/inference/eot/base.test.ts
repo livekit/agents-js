@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * FSM tests for `AudioTurnDetectorStream`.
+ * FSM tests for `BaseStreamingTurnDetectorStream` (the streaming turn-detector FSM).
  *
  * Covers the warmup → activate → deactivate / flush lifecycle and the
  * regression cases:
@@ -22,20 +22,20 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import {
-  type AudioTurnDetectionTransport,
-  AudioTurnDetector,
-  AudioTurnDetectorStream,
+  BaseStreamingTurnDetector,
+  type BaseStreamingTurnDetectorOptions,
+  BaseStreamingTurnDetectorStream,
   type FlushSentinel,
   Status,
-  type TurnDetectorOptions,
+  type StreamingTurnDetectionTransport,
 } from './base.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
-class FakeTransport implements AudioTurnDetectionTransport {
+class FakeTransport implements StreamingTurnDetectionTransport {
   events: Array<[string, string]> = [];
-  private _stream: AudioTurnDetectorStream | undefined;
+  private _stream: BaseStreamingTurnDetectorStream | undefined;
 
-  attach(stream: AudioTurnDetectorStream): void {
+  attach(stream: BaseStreamingTurnDetectorStream): void {
     this._stream = stream;
   }
   async run(): Promise<void> {
@@ -61,19 +61,19 @@ class FakeTransport implements AudioTurnDetectionTransport {
   }
 }
 
-class FakeDetector extends AudioTurnDetector {
+class FakeDetector extends BaseStreamingTurnDetector {
   get model(): TurnDetectorModel {
-    return 'turn-detector';
+    return 'turn-detector-v1';
   }
-  stream(): AudioTurnDetectorStream {
+  stream(): BaseStreamingTurnDetectorStream {
     throw new Error('unused in FSM tests');
   }
 }
 
-class FakeBackend extends AudioTurnDetectorStream {
+class FakeBackend extends BaseStreamingTurnDetectorStream {
   fakeTransport: FakeTransport;
 
-  constructor(opts: TurnDetectorOptions) {
+  constructor(opts: BaseStreamingTurnDetectorOptions) {
     const transport = new FakeTransport();
     super({ detector: new FakeDetector(opts), opts, transport });
     this.fakeTransport = transport;
@@ -96,10 +96,13 @@ class FakeBackend extends AudioTurnDetectorStream {
   }
 }
 
-function makeOpts(thresholds: Record<string, number> = {}): TurnDetectorOptions {
+function makeOpts(thresholds: Record<string, number> = {}): BaseStreamingTurnDetectorOptions {
   // Seed the resolved thresholds via a local-model dict override so `lookup`
   // returns them (unmapped languages fall back to the shipped local table).
-  return { sampleRate: 16000, thresholds: new ThresholdOptions('turn-detector-mini', thresholds) };
+  return {
+    sampleRate: 16000,
+    thresholds: new ThresholdOptions('turn-detector-v1-mini', thresholds),
+  };
 }
 
 function makeStream(thresholds: Record<string, number> = {}): FakeBackend {
@@ -114,7 +117,7 @@ const earlyDeactivated = (events: Array<[string, string]>) =>
 const countStartInference = (events: Array<[string, string]>) =>
   events.filter((e) => e[0] === 'start_inference').length;
 
-describe('AudioTurnDetectionFSM', () => {
+describe('StreamingTurnDetectionFSM', () => {
   it('warmup starts inference', async () => {
     const s = makeStream();
     try {

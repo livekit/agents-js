@@ -5,14 +5,18 @@
 /**
  * Per-language `unlikely` thresholds for the mini detector.
  *
- * The cloud `turn-detector` model receives calibrated defaults from the
+ * The cloud `turn-detector-v1` model receives calibrated defaults from the
  * inference gateway (via the `SessionCreated` message); only the local
- * `turn-detector-mini` model ships a hardcoded table here.
+ * `turn-detector-v1-mini` model ships a hardcoded table here.
  */
 import { APIError } from '../../_exceptions.js';
 import type { LanguageCode } from '../../language.js';
 
-export type TurnDetectorModel = 'turn-detector' | 'turn-detector-mini';
+/** Full model name (used for telemetry/billing via `detector.model`). */
+export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
+
+/** Public `version` constructor argument; maps to a {@link TurnDetectorModel}. */
+export type TurnDetectorVersion = 'v1' | 'v1-mini';
 
 export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
   ar: 0.35,
@@ -90,8 +94,8 @@ function normalizeOverrides(overrides: ThresholdOverride): ThresholdOverride {
  * them changes:
  *
  * - **overrides** — what the user passed (`unlikelyThreshold`), normalized.
- * - **server/shipped defaults** — for `turn-detector-mini` these are the
- *   shipped `LOCAL_LANGUAGES` table; for the cloud `turn-detector` they arrive
+ * - **server/shipped defaults** — for `turn-detector-v1-mini` these are the
+ *   shipped `LOCAL_LANGUAGES` table; for the cloud `turn-detector-v1` they arrive
  *   from the gateway via `_updateDefaults` (the `SessionCreated` message) and
  *   are `undefined` until then.
  * - **materialized** — `thresholds` (per-language map) + `defaultThreshold`
@@ -115,7 +119,7 @@ export class ThresholdOptions {
   constructor(model: TurnDetectorModel, overrides: ThresholdOverride = undefined) {
     this._model = model;
     this._overrides = normalizeOverrides(overrides);
-    if (model === 'turn-detector-mini') {
+    if (model === 'turn-detector-v1-mini') {
       this._serverThresholds = { ...LOCAL_LANGUAGES };
       this._serverDefault = LOCAL_LANGUAGES.en;
     }
@@ -149,7 +153,7 @@ export class ThresholdOptions {
     // A cloud detector reports every language as supported until its server
     // defaults arrive, so the first turn (before `SessionCreated`) isn't
     // skipped by the `audio_recognition` short-circuit.
-    const pending = this._model === 'turn-detector' && this._serverThresholds === undefined;
+    const pending = this._model === 'turn-detector-v1' && this._serverThresholds === undefined;
     return pending || this.lookup(language) !== undefined;
   }
 
@@ -184,7 +188,7 @@ export class ThresholdOptions {
    * `local = LOCAL[lang] * (effective_t / server[lang])`.
    */
   _toLocalFallback(): void {
-    if (this._model === 'turn-detector-mini') {
+    if (this._model === 'turn-detector-v1-mini') {
       return;
     }
 
@@ -201,7 +205,7 @@ export class ThresholdOptions {
       }
     }
 
-    this._model = 'turn-detector-mini';
+    this._model = 'turn-detector-v1-mini';
     this._serverThresholds = { ...LOCAL_LANGUAGES };
     this._serverDefault = LOCAL_LANGUAGES.en;
     this._resolve();

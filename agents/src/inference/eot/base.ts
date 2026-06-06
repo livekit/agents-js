@@ -36,7 +36,7 @@ export enum Status {
  * Cloud-only transport concerns (base URL, credentials, conn options)
  * live on a separate options class owned by the cloud transport.
  */
-export interface TurnDetectorOptions {
+export interface BaseStreamingTurnDetectorOptions {
   sampleRate: number;
   thresholds: ThresholdOptions;
 }
@@ -69,13 +69,13 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
- * Transport adapter for `AudioTurnDetectorStream` — owns the I/O (WebSocket
+ * Transport adapter for `BaseStreamingTurnDetectorStream` — owns the I/O (WebSocket
  * session, in-process predict, etc.). The stream calls these methods
  * directly; transports report predictions back via
  * `stream._handlePrediction(requestId, probability, ...)`.
  */
-export interface AudioTurnDetectionTransport {
-  attach(stream: AudioTurnDetectorStream): void;
+export interface StreamingTurnDetectionTransport {
+  attach(stream: BaseStreamingTurnDetectorStream): void;
   run(): Promise<void>;
   startInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
@@ -84,7 +84,7 @@ export interface AudioTurnDetectionTransport {
   detach(): void;
 }
 
-export type AudioTurnDetectorCallbacks = {
+export type BaseStreamingTurnDetectorCallbacks = {
   metrics_collected: (metrics: EOTInferenceMetrics) => void;
 };
 
@@ -92,27 +92,27 @@ export type AudioTurnDetectorCallbacks = {
  * Abstract base for audio EOT detectors. Holds the threshold table and
  * provides `stream()` to create a per-turn FSM instance.
  *
- * Subclasses (`AudioTurnDetector` in `inference/eot/detector.ts`) wire up
+ * Subclasses (`TurnDetector` in `inference/eot/detector.ts`) wire up
  * concrete transports.
  */
-export abstract class AudioTurnDetector extends (EventEmitter as new () => TypedEmitter<AudioTurnDetectorCallbacks>) {
-  protected _opts: TurnDetectorOptions;
+export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () => TypedEmitter<BaseStreamingTurnDetectorCallbacks>) {
+  protected _opts: BaseStreamingTurnDetectorOptions;
   /**
    * Active streams the detector tracks for bulk teardown via `aclose()`.
    * `Set` rather than `WeakSet` because we need iteration; each stream
-   * removes itself on its own `aclose` (see `AudioTurnDetectorStream.aclose`)
+   * removes itself on its own `aclose` (see `BaseStreamingTurnDetectorStream.aclose`)
    * so the strong refs are released without requiring the caller to call
    * `detector.aclose()`.
    */
-  protected _streams: Set<AudioTurnDetectorStream> = new Set();
+  protected _streams: Set<BaseStreamingTurnDetectorStream> = new Set();
 
-  constructor(opts: TurnDetectorOptions) {
+  constructor(opts: BaseStreamingTurnDetectorOptions) {
     super();
     this._opts = opts;
   }
 
   /** @internal Stream lifecycle hook — called by the stream itself on close. */
-  _unregisterStream(stream: AudioTurnDetectorStream): void {
+  _unregisterStream(stream: BaseStreamingTurnDetectorStream): void {
     this._streams.delete(stream);
   }
 
@@ -138,7 +138,7 @@ export abstract class AudioTurnDetector extends (EventEmitter as new () => Typed
     return this._opts.thresholds.supports(language);
   }
 
-  abstract stream(): AudioTurnDetectorStream;
+  abstract stream(): BaseStreamingTurnDetectorStream;
 
   async aclose(): Promise<void> {
     const streams = Array.from(this._streams);
@@ -168,10 +168,10 @@ export class SwapAbortError extends Error {
   }
 }
 
-export class AudioTurnDetectorStream {
-  protected _detector: AudioTurnDetector;
-  protected _opts: TurnDetectorOptions;
-  protected _transport: AudioTurnDetectionTransport;
+export class BaseStreamingTurnDetectorStream {
+  protected _detector: BaseStreamingTurnDetector;
+  protected _opts: BaseStreamingTurnDetectorOptions;
+  protected _transport: StreamingTurnDetectionTransport;
 
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
@@ -218,9 +218,9 @@ export class AudioTurnDetectorStream {
   protected _swapController = new AbortController();
 
   constructor(args: {
-    detector: AudioTurnDetector;
-    opts: TurnDetectorOptions;
-    transport: AudioTurnDetectionTransport;
+    detector: BaseStreamingTurnDetector;
+    opts: BaseStreamingTurnDetectorOptions;
+    transport: StreamingTurnDetectionTransport;
   }) {
     this._detector = args.detector;
     this._opts = args.opts;
