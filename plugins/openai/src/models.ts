@@ -218,3 +218,44 @@ export function supportsReasoningEffort(model: ChatModels | string): boolean {
     'gpt-5-nano',
   ].includes(model);
 }
+
+// OpenAI models served through Amazon Bedrock's OpenAI-compatible `bedrock-mantle`
+// endpoint. Model IDs omit the `-1:0` suffix used by the bedrock-runtime APIs.
+
+// Models exposed over the Chat Completions API (gpt-oss only).
+export type BedrockChatModels = 'openai.gpt-oss-20b' | 'openai.gpt-oss-120b';
+
+// Models exposed over the Responses API. The gpt-5.x models are Responses-only on
+// Bedrock; gpt-oss supports both Responses and Chat Completions.
+export type BedrockResponsesModels =
+  | 'openai.gpt-5.5'
+  | 'openai.gpt-5.4'
+  | 'openai.gpt-oss-120b'
+  | 'openai.gpt-oss-20b';
+
+/**
+ * Resolve the `bedrock-mantle` base URL for `model`.
+ *
+ * On Bedrock's mantle endpoint the `gpt-oss` open-weight models are served on the `/v1`
+ * path, while the `gpt-5.x` models are served on `/openai/v1` (the only path openai-node's
+ * `BedrockOpenAI` derives). Resolve the `/v1` URL for `gpt-oss` here. For every other case
+ * (explicit `baseURL`, an `AWS_BEDROCK_BASE_URL` override, a non-gpt-oss model, or an
+ * unresolved region) `baseURL` is returned unchanged so the SDK keeps its default behaviour.
+ */
+export function resolveBedrockBaseURL(
+  model: string,
+  awsRegion?: string,
+  baseURL?: string,
+): string | undefined {
+  if (baseURL !== undefined || !model.startsWith('openai.gpt-oss')) {
+    return baseURL;
+  }
+  if (process.env.AWS_BEDROCK_BASE_URL) {
+    return baseURL;
+  }
+  const region = awsRegion ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  if (!region) {
+    return baseURL;
+  }
+  return `https://bedrock-mantle.${region}.api.aws/v1`;
+}

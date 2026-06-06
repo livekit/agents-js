@@ -11,8 +11,9 @@ import {
   log,
   toError,
 } from '@livekit/agents';
-import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import OpenAI, { BedrockOpenAI } from 'openai';
+import type { BedrockResponsesModels, ChatModels } from '../models.js';
+import { resolveBedrockBaseURL } from '../models.js';
 import { WSLLM } from '../ws/llm.js';
 
 export interface LLMOptions {
@@ -399,6 +400,48 @@ export class LLM extends llm.LLM {
     // wrapper instance (e.g. AgentActivity) receive them.
     this.#llm.on('metrics_collected', (metrics) => this.emit('metrics_collected', metrics));
     this.#llm.on('error', (error) => this.emit('error', error));
+  }
+
+  /**
+   * Create a new instance of a Responses API LLM backed by OpenAI models on Amazon Bedrock.
+   *
+   * @remarks
+   * Bedrock serves the `gpt-5.x` models (e.g. `openai.gpt-5.5`, `openai.gpt-5.4`) and the
+   * `gpt-oss` models over the OpenAI-compatible Responses API on the regional `bedrock-mantle`
+   * endpoint. The WebSocket transport is disabled automatically since Bedrock only exposes the
+   * HTTP Responses path.
+   *
+   * This automatically infers the following arguments from their corresponding environment
+   * variables if they are not provided:
+   * - `apiKey` from `AWS_BEARER_TOKEN_BEDROCK`
+   * - `awsRegion` from `AWS_REGION` or `AWS_DEFAULT_REGION`
+   * - `baseURL` from `AWS_BEDROCK_BASE_URL`
+   *
+   * For refreshable credentials, pass `bedrockTokenProvider` instead of `apiKey`; the two are
+   * mutually exclusive.
+   */
+  static withAWSBedrock(
+    opts: {
+      model?: string | BedrockResponsesModels;
+      apiKey?: string;
+      bedrockTokenProvider?: () => Promise<string>;
+      awsRegion?: string;
+      baseURL?: string;
+      temperature?: number;
+    } = {},
+  ): LLM {
+    const model = opts.model ?? 'openai.gpt-5.5';
+    return new LLM({
+      model,
+      temperature: opts.temperature,
+      useWebSocket: false,
+      client: new BedrockOpenAI({
+        apiKey: opts.apiKey,
+        bedrockTokenProvider: opts.bedrockTokenProvider,
+        awsRegion: opts.awsRegion,
+        baseURL: resolveBedrockBaseURL(model, opts.awsRegion, opts.baseURL),
+      }),
+    });
   }
 
   override label(): string {
