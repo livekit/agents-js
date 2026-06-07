@@ -22,10 +22,6 @@ export interface OverlappingSpeechEvent {
  */
 export interface InterruptionOptions {
   sampleRate: number;
-  /**
-   * The threshold for interruption detection. When undefined, the user has not overridden it,
-   * so it is omitted from session.create and the server applies its fetched default.
-   */
   threshold?: number;
   minFrames: number;
   maxAudioDurationInS: number;

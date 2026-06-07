@@ -27,10 +27,6 @@ export interface WsTransportOptions {
   apiKey: string;
   apiSecret: string;
   sampleRate: number;
-  /**
-   * Only set when the user explicitly overrides the threshold; omitted otherwise so the server
-   * applies its fetched default.
-   */
   threshold?: number;
   minFrames: number;
   timeout: number;
@@ -47,8 +43,6 @@ export interface WsTransportState {
 export const wsMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal(MSG_SESSION_CREATED),
-    // The server-recommended interruption threshold. Used as the effective threshold when the
-    // user has not explicitly overridden it.
     default_threshold: z.number().nullish(),
   }),
   z.object({
@@ -148,10 +142,6 @@ async function connectWebSocket(
 export interface WsTransportResult {
   transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
   reconnect: () => Promise<void>;
-  /**
-   * Close the underlying WebSocket directly. The transport's `flush()` only runs on graceful
-   * stream completion, so error/cancel teardown paths must call this to avoid leaking the socket.
-   */
   close: () => void;
 }
 
@@ -223,8 +213,6 @@ export function createWsTransport(
       min_frames: options.minFrames,
       encoding: 's16le',
     };
-    // Only send the threshold when the user explicitly overrode it; otherwise let the server
-    // apply its fetched default.
     if (options.threshold !== undefined) {
       settings.threshold = options.threshold;
     }
@@ -240,8 +228,7 @@ export function createWsTransport(
 
     switch (message.type) {
       case MSG_SESSION_CREATED: {
-        // Observability only — the server makes the actual decision; when we omit the threshold
-        // from session.create it applies its fetched default.
+        // Observability only — the server makes the actual decision.
         logger.debug(
           {
             defaultThreshold: message.default_threshold,

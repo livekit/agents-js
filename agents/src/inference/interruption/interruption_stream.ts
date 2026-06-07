@@ -98,8 +98,6 @@ export class InterruptionStreamBase {
   // Store reconnect function for WebSocket transport
   private wsReconnect?: () => Promise<void>;
 
-  // Direct WebSocket close, used to guarantee the socket is torn down on close() regardless of
-  // how the stream ends (the transport's flush() only runs on graceful completion).
   private wsClose?: () => void;
 
   // Mutable transport options that can be updated via updateOptions()
@@ -313,7 +311,6 @@ export class InterruptionStreamBase {
     );
 
     // Second transform: WebSocket transport layer.
-    // Adaptive interruption is inference-gateway-only and always connects over WebSocket.
     const transportOptions = this.transportOptions;
 
     const wsResult = createWsTransport(
@@ -412,7 +409,6 @@ export class InterruptionStreamBase {
     try {
       if (!this.inputStream.closed) await this.inputStream.close();
     } finally {
-      // Tear down the socket directly (see wsClose); close() is idempotent.
       this.wsClose?.();
       this.resampler?.close();
       this.model.removeStream(this);

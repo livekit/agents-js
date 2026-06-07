@@ -46,11 +46,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
       throw new RangeError('maxAudioDurationInS must be less than or equal to 3.0 seconds');
     }
 
-    // getDefaultInferenceUrl() already resolves LIVEKIT_INFERENCE_URL when set.
     const lkBaseUrl = baseUrl ?? getDefaultInferenceUrl();
 
-    // Adaptive interruption is inference-gateway-only and always connects over WebSocket,
-    // so LiveKit credentials are always required.
     const lkApiKey =
       apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || '';
     if (!lkApiKey) {
