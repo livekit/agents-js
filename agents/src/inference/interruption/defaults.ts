@@ -5,9 +5,9 @@ import type { ApiConnectOptions } from './interruption_stream.js';
 import type { InterruptionOptions } from './types.js';
 
 export const MIN_INTERRUPTION_DURATION_IN_S = 0.025 * 2; // 25ms per frame, 2 consecutive frames
-export const THRESHOLD = 0.5;
+export const THRESHOLD = 0.656;
 export const MAX_AUDIO_DURATION_IN_S = 3.0;
-export const AUDIO_PREFIX_DURATION_IN_S = 0.5;
+export const AUDIO_PREFIX_DURATION_IN_S = 1.0;
 export const DETECTION_INTERVAL_IN_S = 0.1;
 export const REMOTE_INFERENCE_TIMEOUT_IN_S = 0.7;
 export const SAMPLE_RATE = 16000;
