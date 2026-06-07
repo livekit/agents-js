@@ -420,6 +420,9 @@ export function createWsTransport(
         logger.error(e, 'failed to send close message');
       }
     }
+    // The abandoned socket can still emit 'error' during its close handshake; that handler closes
+    // over the shared outputController, so a late error would tear down the replacement stream.
+    activeWs?.removeAllListeners();
     activeWs?.close(1000); // signal normal websocket closure
     activeWs = null;
   }
@@ -453,6 +456,9 @@ export function createWsTransport(
         closeSocket();
         getState().cache.clear(); // abandon the old socket's unanswered in-flight requests
         await ensureConnection();
+        // close() may have raced in during the await; its closeSocket() saw activeWs === null and
+        // was a no-op, so tear down the socket we just opened — else it leaks with live handlers.
+        if (closed) closeSocket();
       })().catch((e: unknown) => {
         outputController?.error(e);
       });
