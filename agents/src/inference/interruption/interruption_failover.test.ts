@@ -11,6 +11,10 @@
 //   - cache-based inference timeout     -> non-retryable APIStatusError (408)
 // and that a non-retryable transport error surfaces as exactly one unrecoverable
 // InterruptionDetectionError (zero recoverable) through AudioRecognition's retry loop.
+//
+// Also covers in-place reconnect on updateOptions: it opens a fresh socket with the updated
+// settings without erroring the stream (so it never consumes a failover retry), while a genuine
+// reconnect failure still surfaces as a stream error.
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +24,7 @@ import { ChatContext } from '../../llm/chat_context.js';
 import { initializeLogger } from '../../log.js';
 import { AudioRecognition, type RecognitionHooks } from '../../voice/audio_recognition.js';
 import { MockWebSocket } from './_mock_ws.js';
+import { apiConnectDefaults } from './defaults.js';
 import { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import { InterruptionStreamBase, InterruptionStreamSentinel } from './interruption_stream.js';
 
@@ -51,6 +56,37 @@ async function waitForInstance(timeoutMs = 2000): Promise<MockSocket> {
     await sleep(5);
   }
   return MockWebSocket.instances[MockWebSocket.instances.length - 1]!;
+}
+
+/** Wait until at least `n` sockets have been constructed and return the nth (1-indexed). */
+async function waitForInstanceCount(n: number, timeoutMs = 2000): Promise<MockSocket> {
+  const start = performance.now();
+  while (MockWebSocket.instances.length < n) {
+    if (performance.now() - start > timeoutMs) {
+      throw new Error(`expected ${n} WebSocket instances, saw ${MockWebSocket.instances.length}`);
+    }
+    await sleep(5);
+  }
+  return MockWebSocket.instances[n - 1]!;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = performance.now();
+  while (!predicate()) {
+    if (performance.now() - start > timeoutMs) {
+      throw new Error('condition not met within timeout');
+    }
+    await sleep(5);
+  }
+}
+
+/** Resolves to 'alive' if the stream has not errored/ended within `ms`. */
+function stillAlive(errPromise: Promise<unknown>, ms = 30): Promise<'alive' | unknown> {
+  return Promise.race([errPromise, sleep(ms).then(() => 'alive' as const)]);
+}
+
+function sessionCreateSettings(ws: MockSocket): Record<string, unknown> {
+  return JSON.parse(String(ws.sent[0])).settings;
 }
 
 function makeAudioFrame(numSamples = 1600, sampleRate = 16000): AudioFrame {
@@ -182,6 +218,85 @@ describe('interruption WebSocket transport failover', () => {
     await stream.close();
 
     expect(ws.readyState).toBe(3); // CLOSED — close() tore the socket down despite the error
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In-place reconnect on updateOptions
+// ---------------------------------------------------------------------------
+
+describe('interruption updateOptions reconnect', () => {
+  it('reconnects in place with the updated threshold without erroring the stream', async () => {
+    const detector = createDetector();
+    const stream = new InterruptionStreamBase(detector, {});
+    const errPromise = readError(stream);
+
+    const ws1 = await waitForInstance();
+    ws1.simulateOpen();
+    await waitFor(() => ws1.sent.length > 0); // session.create #1
+    // No user override → the first session.create omits threshold (server applies its default).
+    expect('threshold' in sessionCreateSettings(ws1)).toBe(false);
+
+    await stream.updateOptions({ threshold: 0.7 });
+
+    // A fresh socket is opened in place and the old one is closed — no error on the stream.
+    const ws2 = await waitForInstanceCount(2);
+    expect(ws2).not.toBe(ws1);
+    expect(ws1.readyState).toBe(3); // old socket closed
+    ws2.simulateOpen();
+    await waitFor(() => ws2.sent.length > 0); // session.create #2
+
+    expect(sessionCreateSettings(ws2).threshold).toBe(0.7);
+    await expect(stillAlive(errPromise)).resolves.toBe('alive');
+
+    await stream.close();
+  });
+
+  it('does not error the stream across more reconnects than the failover budget', async () => {
+    // The original bug: each updateOptions errored the stream and burned one (never-reset) retry,
+    // so exceeding maxRetries killed detection. In-place reconnect must keep the stream live.
+    const detector = createDetector();
+    const stream = new InterruptionStreamBase(detector, {});
+    const errPromise = readError(stream);
+
+    const ws1 = await waitForInstance();
+    ws1.simulateOpen();
+    await waitFor(() => ws1.sent.length > 0);
+
+    const rounds = apiConnectDefaults.maxRetries + 2; // deliberately exceed the retry budget
+    for (let i = 0; i < rounds; i++) {
+      await stream.updateOptions({ threshold: 0.5 + (i + 1) * 0.01 });
+      const ws = await waitForInstanceCount(i + 2);
+      ws.simulateOpen();
+      await waitFor(() => ws.sent.length > 0);
+    }
+
+    expect(MockWebSocket.instances.length).toBe(rounds + 1);
+    await expect(stillAlive(errPromise)).resolves.toBe('alive');
+
+    await stream.close();
+  });
+
+  it('errors the stream when the post-updateOptions reconnect genuinely fails', async () => {
+    // A real reconnect failure (here connection 429) must still surface as a stream error so the
+    // failover path runs.
+    const detector = createDetector();
+    const stream = new InterruptionStreamBase(detector, {});
+    const errPromise = readError(stream);
+
+    const ws1 = await waitForInstance();
+    ws1.simulateOpen();
+    await waitFor(() => ws1.sent.length > 0);
+
+    await stream.updateOptions({ threshold: 0.7 });
+    const ws2 = await waitForInstanceCount(2);
+    ws2.simulateUnexpectedResponse(429); // the reconnect's connect attempt is rejected
+
+    const err = await errPromise;
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect((err as APIStatusError).statusCode).toBe(429);
+
+    await stream.close();
   });
 });
 
