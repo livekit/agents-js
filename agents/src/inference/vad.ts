@@ -63,6 +63,9 @@ export class VAD extends BaseVAD {
     if (model !== 'silero') {
       throw new Error(`Unknown VAD model: ${String(model)}. Supported: 'silero'.`);
     }
+    if (opts.deactivationThreshold !== undefined && opts.deactivationThreshold <= 0) {
+      throw new Error('deactivationThreshold must be greater than 0');
+    }
     this._model = model;
     const activation = opts.activationThreshold ?? defaultVADOptions.activationThreshold;
     this._opts = {

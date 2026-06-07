@@ -4,7 +4,7 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
 import { version } from '../version.js';
 
@@ -95,7 +95,7 @@ export async function connectWs(
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
     const timeout = setTimeout(() => {
-      reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit WebSocket' }));
+      reject(new APITimeoutError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {

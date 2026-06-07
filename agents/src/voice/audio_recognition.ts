@@ -1398,22 +1398,25 @@ export class AudioRecognition {
         const userTurnCtx = this.userTurnContext(userTurnSpan);
 
         if (turnDetector) {
-          await tracer.startActiveSpan(
-            async (span) => {
-              this.logger.debug('Running turn detector model');
+          if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
+            // Unsupported language: produce no span and emit no prediction event.
+            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+          } else {
+            await tracer.startActiveSpan(
+              async (span) => {
+                this.logger.debug('Running turn detector model');
 
-              let endOfTurnProbability = 0.0;
-              let unlikelyThreshold: number | undefined;
-              // Audio detectors cache the resolved prediction for the
-              // current inference window — a non-undefined value here
-              // means `predictEndOfTurn` will short-circuit on cache.
-              const fromCache =
-                turnDetector instanceof BaseStreamingTurnDetectorStream &&
-                turnDetector.lastPrediction !== undefined;
+                // undefined => the prediction never resolved (e.g. inference
+                // threw); gates the span attributes and the emit below.
+                let endOfTurnProbability: number | undefined;
+                let unlikelyThreshold: number | undefined;
+                // Audio detectors cache the resolved prediction for the
+                // current inference window — a non-undefined value here
+                // means `predictEndOfTurn` will short-circuit on cache.
+                const fromCache =
+                  turnDetector instanceof BaseStreamingTurnDetectorStream &&
+                  turnDetector.lastPrediction !== undefined;
 
-              if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
-                this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
-              } else {
                 try {
                   endOfTurnProbability = await turnDetector.predictEndOfTurn(
                     chatCtx,
@@ -1432,7 +1435,7 @@ export class AudioRecognition {
                     return;
                   }
 
-                  if (unlikelyThreshold && endOfTurnProbability < unlikelyThreshold) {
+                  if (unlikelyThreshold !== undefined && endOfTurnProbability < unlikelyThreshold) {
                     endpointingDelay = this.endpointing.maxDelay;
                   }
 
@@ -1454,66 +1457,65 @@ export class AudioRecognition {
                 } catch (error) {
                   this.logger.error(error, 'Error predicting end of turn');
                 }
-              }
 
-              // Emit the prediction event for every turn detector, text or
-              // audio. Text-based detectors (e.g. plugins/livekit) have no
-              // streaming inference window, so `inferenceDurationMs` and
-              // `detectionDelay` are reported as 0 — that's expected, the
-              // event still carries the probability + threshold.
-              //
-              // Audio detectors cache one prediction per inference window
-              // and both EOU triggers in a turn (vad + stt final) read the
-              // same `TurnDetectionEvent`. Dedupe by reference so the event
-              // fires once per window: the abort guard above drops a
-              // superseded bounce cancelled mid-await, and this catches the
-              // race where the first bounce fully completes (and emits) in
-              // the few ms before the second trigger fires. Text detectors
-              // run a fresh (slower) inference each bounce with no cache, so
-              // the abort guard alone is sufficient there.
-              // Text-based detectors return `undefined` here (no streaming
-              // inference window); audio detectors return the cached
-              // `TurnDetectionEvent` for the window. Emit when there's no
-              // window (text / timeout — always fresh) OR the prediction
-              // differs from the last one we forwarded; set the tracker on
-              // every emit (matches Python `_last_emitted_prediction`).
-              const prediction =
-                turnDetector instanceof BaseStreamingTurnDetectorStream
-                  ? turnDetector.lastPrediction
-                  : undefined;
-              if (prediction === undefined || prediction !== this.lastEmittedEotPrediction) {
-                this.lastEmittedEotPrediction = prediction;
-                const inferenceDurationMs = prediction?.inferenceDuration ?? 0;
-                const delayMs = lastSpeakingTime !== undefined ? Date.now() - lastSpeakingTime : 0;
-                this.hooks.onEotPrediction(
-                  createEotPredictionEvent({
-                    probability: endOfTurnProbability,
-                    threshold: unlikelyThreshold ?? 0,
-                    inferenceDurationMs,
-                    delayMs,
-                  }),
+                const prediction =
+                  turnDetector instanceof BaseStreamingTurnDetectorStream
+                    ? turnDetector.lastPrediction
+                    : undefined;
+
+                span.setAttribute(
+                  traceTypes.ATTR_CHAT_CTX,
+                  JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
                 );
-              }
+                if (endOfTurnProbability !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
+                }
+                if (unlikelyThreshold !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold);
+                }
+                span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
+                span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
+                span.setAttribute(traceTypes.ATTR_EOU_FROM_CACHE, fromCache);
+                span.setAttribute(traceTypes.ATTR_EOU_SOURCE, trigger);
 
-              span.setAttribute(
-                traceTypes.ATTR_CHAT_CTX,
-                JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
-              );
-              span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
-              span.setAttribute(traceTypes.ATTR_EOU_UNLIKELY_THRESHOLD, unlikelyThreshold ?? 0);
-              span.setAttribute(traceTypes.ATTR_EOU_DELAY, endpointingDelay);
-              span.setAttribute(traceTypes.ATTR_EOU_LANGUAGE, this.lastLanguage ?? '');
-              span.setAttribute(traceTypes.ATTR_EOU_FROM_CACHE, fromCache);
-              span.setAttribute(traceTypes.ATTR_EOU_SOURCE, trigger);
-              if (prediction?.detectionDelay !== undefined) {
-                span.setAttribute(traceTypes.ATTR_EOU_DETECTION_DELAY, prediction.detectionDelay);
-              }
-            },
-            {
-              name: 'eou_detection',
-              context: userTurnCtx,
-            },
-          );
+                // Emit once the prediction resolved (a failed inference emits
+                // nothing). Audio detectors cache one prediction per inference
+                // window, and both EOU triggers in a turn (vad + stt final) read
+                // the same `TurnDetectionEvent`; dedupe by reference so the event
+                // fires once per window. The abort guard above drops a superseded
+                // bounce cancelled mid-await; this reference check catches the
+                // race where the first bounce completes (and emits) just before
+                // the second trigger fires. Text detectors have no cache
+                // (`prediction === undefined`), so they always emit.
+                if (
+                  endOfTurnProbability !== undefined &&
+                  unlikelyThreshold !== undefined &&
+                  (prediction === undefined || prediction !== this.lastEmittedEotPrediction)
+                ) {
+                  this.lastEmittedEotPrediction = prediction;
+                  const inferenceDurationMs = prediction?.inferenceDuration ?? 0;
+                  const delayMs =
+                    lastSpeakingTime !== undefined ? Date.now() - lastSpeakingTime : 0;
+                  this.hooks.onEotPrediction(
+                    createEotPredictionEvent({
+                      probability: endOfTurnProbability,
+                      threshold: unlikelyThreshold,
+                      inferenceDurationMs,
+                      delayMs,
+                    }),
+                  );
+                }
+
+                if (prediction?.detectionDelay !== undefined) {
+                  span.setAttribute(traceTypes.ATTR_EOU_DETECTION_DELAY, prediction.detectionDelay);
+                }
+              },
+              {
+                name: 'eou_detection',
+                context: userTurnCtx,
+              },
+            );
+          }
         }
 
         let extraSleep = endpointingDelay;

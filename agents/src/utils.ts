@@ -1431,7 +1431,9 @@ export function resolveEnvVar(
   envVars: readonly string[],
   defaultValue = '',
 ): string {
-  if (value !== undefined && value !== '') {
+  // An explicit empty string is a provided value, returned as-is; only
+  // `undefined` falls through to env resolution.
+  if (value !== undefined) {
     return value;
   }
   for (const name of envVars) {
