@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { APIConnectOptions } from '@livekit/agents';
 import { DEFAULT_API_CONNECT_OPTIONS, inference, llm } from '@livekit/agents';
-import { AzureOpenAI, OpenAI } from 'openai';
+import { AzureOpenAI, BedrockOpenAI, OpenAI } from 'openai';
 import type {
+  BedrockChatModels,
   CerebrasChatModels,
   ChatModels,
   DeepSeekChatModels,
@@ -16,6 +17,7 @@ import type {
   TogetherChatModels,
   XAIChatModels,
 } from './models.js';
+import { resolveBedrockBaseURL } from './models.js';
 
 export interface LLMOptions {
   model: string | ChatModels;
@@ -133,6 +135,49 @@ export class LLM extends llm.LLM {
       temperature: opts.temperature,
       user: opts.user,
       client: new AzureOpenAI(opts),
+    });
+  }
+
+  /**
+   * Create a new instance of a Chat Completions LLM backed by OpenAI models on Amazon Bedrock.
+   *
+   * @remarks
+   * Amazon Bedrock exposes an OpenAI-compatible endpoint for OpenAI's open-weight models
+   * (e.g. `openai.gpt-oss-120b`). Only the `gpt-oss` models are available over Chat
+   * Completions on Bedrock; the `gpt-5.x` models are Responses-only — use
+   * `responses.LLM.withAWSBedrock` for those.
+   *
+   * This automatically infers the following arguments from their corresponding environment
+   * variables if they are not provided:
+   * - `apiKey` from `AWS_BEARER_TOKEN_BEDROCK`
+   * - `awsRegion` from `AWS_REGION` or `AWS_DEFAULT_REGION`
+   * - `baseURL` from `AWS_BEDROCK_BASE_URL`
+   *
+   * For refreshable credentials, pass `bedrockTokenProvider` instead of `apiKey`; the two are
+   * mutually exclusive.
+   */
+  static withAWSBedrock(
+    opts: {
+      model?: string | BedrockChatModels;
+      apiKey?: string;
+      bedrockTokenProvider?: () => Promise<string>;
+      awsRegion?: string;
+      baseURL?: string;
+      user?: string;
+      temperature?: number;
+    } = {},
+  ): LLM {
+    const model = opts.model ?? 'openai.gpt-oss-120b';
+    return new LLM({
+      model,
+      temperature: opts.temperature,
+      user: opts.user,
+      client: new BedrockOpenAI({
+        apiKey: opts.apiKey,
+        bedrockTokenProvider: opts.bedrockTokenProvider,
+        awsRegion: opts.awsRegion,
+        baseURL: resolveBedrockBaseURL(model, opts.awsRegion, opts.baseURL),
+      }),
     });
   }
 

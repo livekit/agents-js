@@ -2,6 +2,10 @@
   "$schema": "https://turborepo.org/schema.json",
   "globalEnv": [
     "ASSEMBLYAI_API_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_BEDROCK_BASE_URL",
+    "AWS_DEFAULT_REGION",
+    "AWS_REGION",
     "AZURE_API_KEY",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_DEPLOYMENT",
