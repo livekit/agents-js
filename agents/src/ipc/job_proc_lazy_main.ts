@@ -133,6 +133,7 @@ const startJob = (
       const closePromise = once(closeEvent, 'close').then((close) => {
         logger.debug('shutting down');
         shutdown = true;
+        safeSend({ case: 'shuttingDown', value: undefined });
         safeSend({ case: 'exiting', value: { reason: close[1] } });
       });
 
@@ -299,8 +300,13 @@ const startJob = (
           break;
         }
         case 'shutdownRequest': {
+          safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {
+            safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
+            clearTimeout(orphanedTimeout);
+            process.off('message', messageHandler);
+            break;
           }
           closeEvent.emit('close', 'shutdownRequest');
           clearTimeout(orphanedTimeout);

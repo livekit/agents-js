@@ -99,6 +99,8 @@ const ORPHANED_TIMEOUT = 15 * 1000;
           break;
         case 'shutdownRequest':
           logger.debug('inference process received shutdown request');
+          process.send!({ case: 'shutdownRequestAck' });
+          process.send!({ case: 'shuttingDown' });
           clearTimeout(orphanedTimeout);
           // Remove our message handler to stop processing new messages
           process.off('message', messageHandler);

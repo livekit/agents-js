@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import pidusage from 'pidusage';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, IdleTimeoutError, waitUntilTimeout } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
 const MEMORY_MONITOR_INTERVAL = 5000;
@@ -45,6 +45,8 @@ export abstract class SupervisedProc {
   #lastMemoryWarnMB = 0;
   protected init = new Future();
   #join = new Future();
+  #shutdownAck = new Future();
+  #shuttingDown = new Future();
   #logger = log().child({ runningJob: this.#runningJob });
 
   constructor(
@@ -150,6 +152,10 @@ export abstract class SupervisedProc {
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {
+        case 'shutdownRequestAck': {
+          this.resolveFuture(this.#shutdownAck);
+          break;
+        }
         case 'pongResponse': {
           const delay = Date.now() - msg.value.timestamp;
           if (delay > this.#opts.highPingThreshold) {
@@ -159,11 +165,17 @@ export abstract class SupervisedProc {
           break;
         }
         case 'exiting': {
+          this.resolveFuture(this.#shuttingDown);
           this.#logger.child({ reason: msg.value.reason }).debug('job exiting');
+          break;
+        }
+        case 'shuttingDown': {
+          this.resolveFuture(this.#shuttingDown);
           break;
         }
         case 'done': {
           this.#closing = true;
+          this.resolveShutdownFutures();
           this.proc!.off('message', listener);
           break;
         }
@@ -176,11 +188,18 @@ export abstract class SupervisedProc {
         .child({ err })
         .warn('job process exited unexpectedly; this likely means the error above caused a crash');
       this.clearTimers();
+      this.resolveShutdownFutures();
       this.#join.resolve();
+    });
+
+    this.proc!.on('disconnect', () => {
+      // No more shutdown phase messages can arrive once the IPC channel is closed.
+      this.resolveShutdownFutures();
     });
 
     this.proc!.on('exit', () => {
       this.clearTimers();
+      this.resolveShutdownFutures();
       this.#join.resolve();
     });
 
@@ -231,16 +250,36 @@ export abstract class SupervisedProc {
 
     if (this.proc?.connected) {
       this.proc.send({ case: 'shutdownRequest' });
+    } else {
+      this.resolveShutdownFutures();
     }
 
-    const timer = setTimeout(() => {
+    try {
+      await waitUntilTimeout(this.#shutdownAck.await, this.#opts.closeTimeout);
+    } catch (error) {
+      if (!(error instanceof IdleTimeoutError)) {
+        throw error;
+      }
+      this.#logger.error('job did not ack shutdown in time');
+      this.proc!.kill();
+    }
+
+    if (!this.#shuttingDown.done) {
+      await this.#shuttingDown.await;
+    }
+
+    try {
+      await waitUntilTimeout(this.#join.await, this.#opts.closeTimeout);
+    } catch (error) {
+      if (!(error instanceof IdleTimeoutError)) {
+        throw error;
+      }
       this.#logger.error('job shutdown is taking too much time');
       this.proc!.kill();
-    }, this.#opts.closeTimeout);
-    await this.#join.await.then(() => {
-      clearTimeout(timer);
-      this.clearTimers();
-    });
+    }
+
+    await this.#join.await;
+    this.clearTimers();
   }
 
   async launchJob(info: RunningJobInfo) {
@@ -311,5 +350,16 @@ export abstract class SupervisedProc {
     clearTimeout(this.#pongTimeout);
     clearInterval(this.#pingInterval);
     clearInterval(this.#memoryMonitorInterval);
+  }
+
+  private resolveFuture(future: Future) {
+    if (!future.done) {
+      future.resolve();
+    }
+  }
+
+  private resolveShutdownFutures() {
+    this.resolveFuture(this.#shutdownAck);
+    this.resolveFuture(this.#shuttingDown);
   }
 }
