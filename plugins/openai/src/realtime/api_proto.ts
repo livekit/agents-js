@@ -280,6 +280,7 @@ export interface ConversationResource {
 }
 
 export type ResponseStatusDetails =
+  | string
   | {
       type: 'incomplete';
       reason: 'max_output_tokens' | 'content_filter' | string;

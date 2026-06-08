@@ -1846,7 +1846,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const statusDetails = event.response.status_details;
     if (event.response.status === 'failed') {
-      const errorBody = statusDetails?.type === 'failed' ? statusDetails.error : undefined;
+      const errorBody =
+        typeof statusDetails !== 'string' && statusDetails?.type === 'failed'
+          ? statusDetails.error
+          : undefined;
       const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
       const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
 
@@ -1858,9 +1861,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         recoverable: true,
       });
     } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
-      const statusType = statusDetails?.type;
-      const statusReason =
-        statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      let statusType: string | undefined;
+      let statusReason: string | undefined;
+      if (typeof statusDetails === 'string') {
+        statusType = statusDetails;
+      } else {
+        statusType = statusDetails?.type;
+        statusReason =
+          statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      }
 
       this.#logger.debug(
         {

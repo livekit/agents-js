@@ -119,6 +119,24 @@ describe('RealtimeSession response.done status handling', () => {
       message: 'rate limited',
     });
   });
+
+  it('handles string response.done status details', () => {
+    const session = createResponseDoneSession();
+
+    expect(() =>
+      session.handleResponseDone({
+        type: 'response.done',
+        event_id: 'evt_response_incomplete',
+        response: {
+          id: 'resp_incomplete',
+          object: 'realtime.response',
+          status: 'incomplete',
+          status_details: 'incomplete',
+          output: [],
+        },
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe('RealtimeSession input_audio_transcription delta handling', () => {
