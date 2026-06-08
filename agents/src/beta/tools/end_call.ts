@@ -19,16 +19,7 @@ import type { UnknownUserData } from '../../voice/run_context.js';
 /** How long to wait for the agent's goodbye reply to play out before forcing shutdown. */
 const END_CALL_REPLY_TIMEOUT = 5000;
 
-/**
- * `events.once` typed against {@link AgentSessionCallbacks}, resolving to the event payload (e.g.
- * `CloseEvent`) — every session event is single-arg — instead of the raw `any[]` tuple. The cast
- * `events.once` forces is confined here.
- *
- * If `signal` aborts before the event fires, `events.once` rejects with an AbortError. Since these
- * waits are fire-and-forget (or race losers), an uncaught rejection would surface as an unhandled
- * rejection — so we absorb the abort and resolve to `undefined`, letting callers treat "aborted"
- * as a normal (typed) outcome. Other rejections (e.g. an emitter `error`) still propagate.
- */
+/** Typed wrapper around `events.once`; abort resolves to `undefined`, other errors propagate. */
 function onceEvent<E extends keyof AgentSessionCallbacks>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- callbacks don't depend on UserData
   session: AgentSession<any>,
@@ -137,22 +128,24 @@ export function createEndCallTool<UserData = UnknownUserData>({
             ? AbortSignal.any([abortSignal, controller.signal])
             : controller.signal;
 
-          void onceEvent(session, AgentSessionEventTypes.Close, { signal }).then((event) => {
-            if (!event) return; // signal aborted before close fired
-            controller.abort(); // stop the delayed-shutdown race
+          void onceEvent(session, AgentSessionEventTypes.Close, { signal })
+            .then((event) => {
+              if (!event) return; // signal aborted before close fired
+              controller.abort(); // stop the delayed-shutdown race
 
-            const jobCtx = getJobContext(false);
-            if (!jobCtx) return;
+              const jobCtx = getJobContext(false);
+              if (!jobCtx) return;
 
-            if (deleteRoom) {
-              jobCtx.addShutdownCallback(async () => {
-                log().info('deleting the room because the user ended the call');
-                await jobCtx.deleteRoom();
-              });
-            }
+              if (deleteRoom) {
+                jobCtx.addShutdownCallback(async () => {
+                  log().info('deleting the room because the user ended the call');
+                  await jobCtx.deleteRoom();
+                });
+              }
 
-            jobCtx.shutdown(String(event.reason));
-          });
+              jobCtx.shutdown(String(event.reason));
+            })
+            .catch((error) => log().error({ error }, 'error during end call shutdown'));
 
           ctx.speechHandle.addDoneCallback(() => {
             if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {

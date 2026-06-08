@@ -608,34 +608,30 @@ export function tool(tool: any): any {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isTool(tool: any): tool is Tool {
-  return tool && tool[TOOL_SYMBOL] === true;
+  return !!tool && tool[TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
-  const isTool = tool && tool[TOOL_SYMBOL] === true;
-  const isFunctionTool = tool[FUNCTION_TOOL_SYMBOL] === true;
-  return isTool && isFunctionTool;
+  return isTool(tool) && (tool as FunctionTool<any, any, any>)[FUNCTION_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isProviderTool(tool: any): tool is ProviderTool {
-  const isTool = tool && tool[TOOL_SYMBOL] === true;
-  const isProviderTool = tool[PROVIDER_TOOL_SYMBOL] === true;
-  return isTool && isProviderTool;
+  return isTool(tool) && (tool as ProviderTool)[PROVIDER_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isToolset(value: any): value is Toolset {
-  return value && value[TOOLSET_SYMBOL] === true;
+  return !!value && value[TOOLSET_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isToolError(error: any): error is ToolError {
-  return error && error[TOOL_ERROR_SYMBOL] === true;
+  return !!error && error[TOOL_ERROR_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isAgentHandoff(handoff: any): handoff is AgentHandoff {
-  return handoff && handoff[HANDOFF_SYMBOL] === true;
+  return !!handoff && handoff[HANDOFF_SYMBOL] === true;
 }

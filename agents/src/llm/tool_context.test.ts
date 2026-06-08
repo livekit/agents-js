@@ -631,7 +631,7 @@ describe('Toolset', () => {
   it('lets subclasses override lifecycle hooks', async () => {
     const events: string[] = [];
     class Recording extends Toolset {
-      override async setup(): Promise<void> {
+      override async setup(_ctx: ToolsetContext): Promise<void> {
         events.push(`setup:${this.id}`);
       }
       override async aclose(): Promise<void> {
