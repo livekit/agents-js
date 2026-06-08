@@ -14,6 +14,7 @@ import type {
 } from '../llm/index.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
+import type { FlushSentinel } from '../types.js';
 import { readStream, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent, AgentOptions, AgentTask, AgentTaskOptions, ModelSettings } from './agent.js';
@@ -184,7 +185,7 @@ export function createAgentV2<UserData>(
       chatCtx: ChatContext,
       toolCtx: ToolContext,
       modelSettings: ModelSettings,
-    ): Promise<ReadableStream<ChatChunk | string> | null> {
+    ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
       return this.hookAdapter.llmNode(chatCtx, toolCtx, modelSettings, () =>
         super.llmNode(chatCtx, toolCtx, modelSettings),
       );
@@ -278,7 +279,7 @@ export function createAgentTaskV2<ResultT, UserData>(
       chatCtx: ChatContext,
       toolCtx: ToolContext,
       modelSettings: ModelSettings,
-    ): Promise<ReadableStream<ChatChunk | string> | null> {
+    ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
       return this.hookAdapter.llmNode(chatCtx, toolCtx, modelSettings, () =>
         super.llmNode(chatCtx, toolCtx, modelSettings),
       );
@@ -357,8 +358,8 @@ class AgentHookAdapter<UserData, ContextT extends AgentContext<UserData>> {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
-    fallback: () => Promise<ReadableStream<ChatChunk | string> | null>,
-  ): Promise<ReadableStream<ChatChunk | string> | null> {
+    fallback: () => Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null>,
+  ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
     if (!this.hooks.llmNode) {
       return fallback();
     }
