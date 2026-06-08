@@ -205,6 +205,10 @@ export class LLM extends llm.LLM {
   }): LLMStream {
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
+    if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
+      extras.httpOptions = this.#opts.httpOptions;
+    }
+
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
 
     if (toolChoice) {
@@ -367,15 +371,18 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(this.connOptions.timeoutMs),
+      };
+
       const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
           ...this.#extraKwargs,
           systemInstruction,
-          httpOptions: this.#extraKwargs.httpOptions ?? {
-            timeout: Math.floor(this.connOptions.timeoutMs),
-          },
+          httpOptions,
           tools,
         },
       });
