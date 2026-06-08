@@ -367,16 +367,39 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
+      const cachedContent = this.#extraKwargs.cachedContent;
+      const usingCache = cachedContent !== undefined;
+      const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
+
+      if (usingCache) {
+        const dropped = ['tools', 'toolConfig'].filter((key) => key in requestConfig);
+        if (tools && !dropped.includes('tools')) {
+          dropped.push('tools');
+        }
+        if (systemInstruction) {
+          dropped.push('systemInstruction');
+        }
+        if (dropped.length > 0) {
+          this.logger.warn(
+            { dropped, cachedContent },
+            'dropping fields from Gemini request because cachedContent is set; these fields must be baked into the CachedContent resource',
+          );
+        }
+        delete requestConfig.tools;
+        delete requestConfig.toolConfig;
+      } else {
+        requestConfig.systemInstruction = systemInstruction;
+        requestConfig.tools = tools;
+      }
+
       const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
-          ...this.#extraKwargs,
-          systemInstruction,
+          ...requestConfig,
           httpOptions: this.#extraKwargs.httpOptions ?? {
             timeout: Math.floor(this.connOptions.timeoutMs),
           },
-          tools,
         },
       });
 
