@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall } from '../../llm/chat_context.js';
-import { tool } from '../../llm/tool_context.js';
+import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
@@ -75,6 +75,7 @@ describe('withMockTools', () => {
   it('routes performToolExecutions to the mock when set, original otherwise', async () => {
     let realCalled = false;
     const realTool = tool({
+      name: 'greet',
       description: 'real',
       parameters: z.object({ name: z.string() }),
       execute: async ({ name }) => {
@@ -83,7 +84,7 @@ describe('withMockTools', () => {
       },
     });
 
-    const toolCtx = { greet: realTool };
+    const toolCtx = new ToolContext([realTool]);
     const speechHandle = SpeechHandle.create({ allowInterruptions: false });
     const agent = new AgentA();
 
@@ -139,11 +140,12 @@ describe('withMockTools', () => {
 
   it('propagates thrown errors from mocks as tool errors', async () => {
     const realTool = tool({
+      name: 'failing',
       description: 'real',
       parameters: z.object({}),
       execute: async () => 'ok',
     });
-    const toolCtx = { failing: realTool };
+    const toolCtx = new ToolContext([realTool]);
     const speechHandle = SpeechHandle.create({ allowInterruptions: false });
     const session = { currentAgent: new AgentA() } as never;
 
