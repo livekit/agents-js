@@ -23,6 +23,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import type { Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -41,7 +42,6 @@ import {
   ToolContext,
   type ToolContextEntry,
   ToolFlag,
-  Toolset,
   isFunctionTool,
   isToolset,
 } from '../llm/index.js';
@@ -786,14 +786,18 @@ export class AgentActivity implements RecognitionHooks {
     const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
     const oldToolsets = oldToolCtx.toolsets;
     const newToolCtx = new ToolContext(tools);
-    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
     const newToolsets = newToolCtx.toolsets;
-    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
-    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
     const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
     const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
 
+    // Resolve added factory toolsets before re-flattening, so their tools are included in the
+    // advertised set (newToolNames is computed below, after resolution).
     await this.setupToolsetList(addedToolsets);
+    newToolCtx.updateTools(newToolCtx.tools);
+    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
+    const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
+    const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
+
     this.agent._toolCtx = newToolCtx;
     await this.closeToolsetList(removedToolsets);
 
@@ -4185,6 +4189,8 @@ export class AgentActivity implements RecognitionHooks {
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
     await this.setupToolsetList(this.agent.toolCtx.toolsets);
+    // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
+    this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
 
   private async closeToolsets(): Promise<void> {
@@ -4193,8 +4199,33 @@ export class AgentActivity implements RecognitionHooks {
     await this.closeToolsetList(this.agent.toolCtx.toolsets);
   }
 
+  /**
+   * Refresh the agent's tool context after a dynamic toolset pushed a new tool list (via
+   * `ToolsetContext.updateTools`), routing through updateTools so history, chat context, and the
+   * realtime session stay in sync. The next LLM turn picks up the new tools automatically.
+   */
+  private async onToolsetToolsChanged(): Promise<void> {
+    if (!this._toolsetsSetup) return;
+    const current = this.agent._toolCtx;
+    if (new ToolContext(current.tools).equals(current)) return;
+    // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
+    await this.updateTools(current.tools);
+  }
+
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
-    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.setup()));
+    const outputs = await Promise.allSettled(
+      toolsets.map((ts) =>
+        ts.setup({
+          // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+          updateTools: (tools) => {
+            ts._setTools(tools);
+            void this.onToolsetToolsChanged().catch((error) =>
+              this.logger.error({ error }, 'error re-advertising toolset tools'),
+            );
+          },
+        }),
+      ),
+    );
     for (const output of outputs) {
       if (output.status === 'rejected') {
         this.logger.error({ error: output.reason }, 'error setting up toolset');

@@ -12,3 +12,10 @@ export {
   type WarmTransferTaskOptions,
 } from './workflows/index.js';
 export { Instructions } from '../llm/index.js';
+export {
+  END_CALL_DESCRIPTION,
+  createEndCallTool,
+  type EndCallToolCalledEvent,
+  type EndCallToolCompletedEvent,
+  type EndCallToolOptions,
+} from './tools/index.js';

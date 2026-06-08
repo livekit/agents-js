@@ -11,6 +11,7 @@ import {
   ToolContext,
   type ToolOptions,
   Toolset,
+  type ToolsetContext,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
@@ -617,9 +618,13 @@ describe('Toolset', () => {
     expect(ts.tools).toEqual([a, b]);
   });
 
+  const fakeToolsetContext = (
+    updateTools: (tools: readonly Tool[]) => void = () => {},
+  ): ToolsetContext => ({ updateTools });
+
   it('default setup and aclose are no-ops', async () => {
     const ts = new Toolset({ id: 'noop', tools: [] });
-    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.setup(fakeToolsetContext())).resolves.toBeUndefined();
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
@@ -635,20 +640,17 @@ describe('Toolset', () => {
     }
 
     const ts = new Recording({ id: 'rec', tools: [] });
-    await ts.setup();
+    await ts.setup(fakeToolsetContext());
     await ts.aclose();
     expect(events).toEqual(['setup:rec', 'close:rec']);
   });
 
-  it('Toolset.create() composes lifecycle callbacks without subclassing', async () => {
+  it('Toolset.create() resolves a static tools list eagerly and composes aclose', async () => {
     const a = makeFn('a');
     const events: string[] = [];
     const ts = Toolset.create({
       id: 'composed',
       tools: [a],
-      setup: async () => {
-        events.push('setup');
-      },
       aclose: async () => {
         events.push('close');
       },
@@ -656,37 +658,38 @@ describe('Toolset', () => {
 
     expect(ts).toBeInstanceOf(Toolset);
     expect(ts.id).toBe('composed');
-    expect(ts.tools).toEqual([a]);
+    expect(ts.tools).toEqual([a]); // static tools available before activation
 
-    await ts.setup();
+    await ts.setup(fakeToolsetContext());
     await ts.aclose();
-    expect(events).toEqual(['setup', 'close']);
+    expect(events).toEqual(['close']);
   });
 
-  it('Toolset.create() defaults setup and aclose to no-ops when callbacks are omitted', async () => {
+  it('Toolset.create() defaults aclose to a no-op when omitted', async () => {
     const ts = Toolset.create({ id: 'bare', tools: [] });
-    await expect(ts.setup()).resolves.toBeUndefined();
+    await expect(ts.setup(fakeToolsetContext())).resolves.toBeUndefined();
     await expect(ts.aclose()).resolves.toBeUndefined();
   });
 
-  it('Toolset.create() accepts a tools thunk, re-evaluated on every access (dynamic)', () => {
+  it('lets setup push tools after activation via ctx.updateTools', async () => {
     const a = makeFn('a');
     const b = makeFn('b');
-    const current: Tool[] = [a];
-    let calls = 0;
+    let push!: (tools: readonly Tool[]) => void;
     const ts = Toolset.create({
-      id: 'dynamic',
-      tools: () => {
-        calls += 1;
-        return current;
+      id: 'mcp',
+      setup: async ({ updateTools }) => {
+        push = updateTools;
       },
+      tools: [],
     });
-    // Each access re-invokes the thunk so the toolset reflects the current source-of-truth.
-    expect(ts.tools).toEqual([a]);
-    expect(calls).toBe(1);
-    current.push(b);
+
+    // Mimic the runtime: ctx.updateTools writes the toolset's current tools.
+    await ts.setup(fakeToolsetContext((tools) => ts._setTools(tools)));
+    expect(ts.tools).toEqual([]);
+
+    // A dynamic source (e.g. an MCP server) pushes its tools after connecting.
+    push([a, b]);
     expect(ts.tools).toEqual([a, b]);
-    expect(calls).toBe(2);
   });
 
   it('is flattened into a ToolContext: function tools merged, toolset tracked', () => {

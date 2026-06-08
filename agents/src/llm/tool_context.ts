@@ -211,6 +211,15 @@ export interface ToolCompletedEvent<UserData = UnknownUserData> {
   output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
 }
 
+/** Context passed to a {@link Toolset}'s `setup` hook when it activates. */
+export interface ToolsetContext {
+  /**
+   * Replace the toolset's tools. Useful for dynamic sources
+   * (e.g. an MCP server) whose tools are discovered after `setup` or change at runtime.
+   */
+  updateTools(tools: readonly Tool[]): void;
+}
+
 /**
  * Function tools of a `ToolContext`, sorted by name for deterministic provider payloads.
  * Provider tools are intentionally excluded — callers that need them iterate `flatten()`.
@@ -239,7 +248,7 @@ export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
 export class Toolset {
   readonly #id: string;
 
-  readonly #tools: Tool[];
+  #tools: readonly Tool[];
 
   readonly [TOOLSET_SYMBOL] = true as const;
 
@@ -249,9 +258,10 @@ export class Toolset {
   }
 
   /**
-   * Compose a `Toolset` with inline `setup` / `aclose` hooks instead of subclassing. `tools`
-   * may also be a thunk that is re-evaluated on every `.tools` access, so the toolset can
-   * expose a dynamic list that changes after `setup()` runs.
+   * For when your tools share something that needs setup or cleanup, like a DB pool, an open MCP
+   * client, or listeners on a shared bus. `setup` runs once at activation, `aclose` once at
+   * teardown. If the tool list itself is dynamic (e.g. an MCP server), push it from `setup` via
+   * {@link ToolsetContext.updateTools}.
    *
    * @example Static tool list with a shared backing resource
    * ```ts
@@ -260,20 +270,26 @@ export class Toolset {
    *   return Toolset.create({
    *     id: 'postgres',
    *     tools: [queryOrders, queryCustomers],
-   *     setup: () => pool.connect(),
    *     aclose: () => pool.end(),
    *   });
    * }
    * ```
    *
-   * @example Dynamic tool list
+   * @example Dynamic tool list bound to an external source
    * ```ts
    * function createMcpToolset(url: string): Toolset {
    *   const client = new MCPClient({ url });
    *   return Toolset.create({
    *     id: 'mcp_remote',
-   *     tools: () => client.getTools(),
-   *     setup: () => client.connect(),
+   *     // setup connects and wires listeners that push the server's tools whenever they change;
+   *     // the runtime re-advertises without re-running anything.
+   *     setup: async ({ updateTools }) => {
+   *       const sync = async () => updateTools(await client.listTools());
+   *       client.on('connect', sync);
+   *       client.on('tool_list_changed', sync);
+   *       await client.connect();
+   *     },
+   *     tools: [],
    *     aclose: () => client.disconnect(),
    *   });
    * }
@@ -291,48 +307,49 @@ export class Toolset {
     return this.#tools;
   }
 
-  async setup(): Promise<void> {}
+  /**
+   * Replace the toolset's current tools. Backs {@link ToolsetContext.updateTools}; the runtime
+   * re-flattens and re-advertises after calling it.
+   *
+   * @internal
+   */
+  _setTools(tools: readonly Tool[]): void {
+    this.#tools = [...tools];
+  }
+
+  async setup(_ctx: ToolsetContext): Promise<void> {}
 
   async aclose(): Promise<void> {}
 }
 
-/** Options accepted by `Toolset.create()` — id + tools plus optional lifecycle hooks. */
+/** Options accepted by `Toolset.create()` — id + tools plus optional setup/teardown hooks. */
 export interface ToolsetCreateOptions {
   id: string;
   /**
-   * Either a static list of tools, or a thunk re-evaluated on every `tools` access — useful
-   * when the underlying source (e.g. an MCP discovery loop) can produce a dynamic tool list.
+   * One-time async initialization run when the toolset activates — e.g. connecting to a server
+   * and wiring listeners. Push a changed tool list via {@link ToolsetContext.updateTools}.
    */
-  tools: readonly Tool[] | (() => readonly Tool[]);
-  /** Invoked when the toolset becomes active in an `AgentActivity`. */
-  setup?: () => Promise<void>;
-  /** Invoked when the toolset is being torn down. */
+  setup?: (ctx: ToolsetContext) => Promise<void>;
+  /** The toolset's initial tools. */
+  tools: readonly Tool[];
+  /** Invoked when the toolset is being torn down. Release awaitable resources here. */
   aclose?: () => Promise<void>;
 }
 
 /** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
 class ToolsetFactory extends Toolset {
-  readonly #toolsSource: readonly Tool[] | (() => readonly Tool[]);
-
-  readonly #setupFn?: () => Promise<void>;
+  readonly #setupFn?: (ctx: ToolsetContext) => Promise<void>;
 
   readonly #acloseFn?: () => Promise<void>;
 
-  constructor({ id, tools, setup, aclose }: ToolsetCreateOptions) {
-    // Pass [] to super and override the `tools` getter so a thunk can be re-evaluated on
-    // every access (lets callers expose a dynamic tool list).
-    super({ id, tools: [] });
-    this.#toolsSource = tools;
+  constructor({ id, setup, tools, aclose }: ToolsetCreateOptions) {
+    super({ id, tools });
     this.#setupFn = setup;
     this.#acloseFn = aclose;
   }
 
-  override get tools(): readonly Tool[] {
-    return typeof this.#toolsSource === 'function' ? this.#toolsSource() : this.#toolsSource;
-  }
-
-  override async setup(): Promise<void> {
-    if (this.#setupFn) await this.#setupFn();
+  override async setup(ctx: ToolsetContext): Promise<void> {
+    if (this.#setupFn) await this.#setupFn(ctx);
   }
 
   override async aclose(): Promise<void> {
@@ -389,7 +406,7 @@ export class ToolContext<UserData = UnknownUserData> {
 
   /** A copy of all provider tools in the tool context, including those in tool sets. */
   get providerTools(): ProviderTool[] {
-    return this._providerTools;
+    return [...this._providerTools];
   }
 
   /** A copy of all toolsets registered in the context. */
