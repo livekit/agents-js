@@ -69,11 +69,9 @@ describe('Generation + Tool Execution', () => {
       description: 'weather',
       parameters: z.object({ location: z.string() }),
       execute: async ({ location }, { abortSignal }) => {
-        if (abortSignal) {
-          abortSignal.addEventListener('abort', () => {
-            toolAborted = true;
-          });
-        }
+        abortSignal.addEventListener('abort', () => {
+          toolAborted = true;
+        });
         // 6s delay
         await delay(6000);
         return `Sunny in ${location}`;
@@ -190,11 +188,9 @@ describe('Generation + Tool Execution', () => {
       description: 'longOp',
       parameters: z.object({ ms: z.number() }),
       execute: async ({ ms }, { abortSignal }) => {
-        if (abortSignal) {
-          abortSignal.addEventListener('abort', () => {
-            aborted = true;
-          });
-        }
+        abortSignal.addEventListener('abort', () => {
+          aborted = true;
+        });
         await delay(ms);
         return 'done';
       },

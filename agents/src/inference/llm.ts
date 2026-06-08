@@ -17,7 +17,10 @@ import {
 } from './utils.js';
 
 export type OpenAIModels =
+  | 'openai/gpt-5.5'
   | 'openai/gpt-5.4'
+  | 'openai/gpt-5.4-mini'
+  | 'openai/gpt-5.4-nano'
   | 'openai/gpt-5.3-chat-latest'
   | 'openai/gpt-5.2'
   | 'openai/gpt-5.2-chat-latest'
@@ -31,20 +34,23 @@ export type OpenAIModels =
   | 'openai/gpt-4.1-nano'
   | 'openai/gpt-4o'
   | 'openai/gpt-4o-mini'
+  | 'openai/chat-latest'
   | 'openai/gpt-oss-120b';
 
 export type GoogleModels =
-  | 'google/gemini-3-pro'
+  | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
+  | 'google/gemini-3.1-flash-lite'
+  | 'google/gemini-3.5-flash'
   | 'google/gemini-2.5-pro'
   | 'google/gemini-2.5-flash'
-  | 'google/gemini-2.5-flash-lite'
-  | 'google/gemini-2.0-flash'
-  | 'google/gemini-2.0-flash-lite';
+  | 'google/gemini-2.5-flash-lite';
 
-export type MoonshotModels = 'moonshotai/kimi-k2-instruct';
+export type MoonshotModels = 'moonshotai/kimi-k2.5' | 'moonshotai/kimi-k2.6';
 
 export type DeepSeekModels = 'deepseek-ai/deepseek-v3' | 'deepseek-ai/deepseek-v3.2';
+
+export type ZAIModels = 'zai/glm-5.1';
 
 export type XAIModels =
   | 'xai/grok-4-1-fast-non-reasoning'
@@ -57,6 +63,7 @@ type ChatCompletionPredictionContentParam =
   Expand<OpenAI.Chat.Completions.ChatCompletionPredictionContent>;
 type WebSearchOptions = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams.WebSearchOptions>;
 type ToolChoice = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams['tool_choice']>;
+type ResponseFormat = Expand<OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']>;
 type Verbosity = 'low' | 'medium' | 'high';
 
 export interface ChatCompletionOptions extends Record<string, unknown> {
@@ -88,8 +95,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
 
   // livekit-typed arguments
   tool_choice?: ToolChoice;
-  // TODO(brian): support response format
-  // response_format?: OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format']
+  response_format?: ResponseFormat;
 }
 
 export type LLMModels =
@@ -97,6 +103,7 @@ export type LLMModels =
   | GoogleModels
   | MoonshotModels
   | DeepSeekModels
+  | ZAIModels
   | XAIModels
   | AnyString;
 
@@ -275,7 +282,6 @@ export class LLM extends llm.LLM {
     parallelToolCalls,
     toolChoice,
     inferenceClass,
-    // TODO(AJS-270): Add response_format parameter support
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
@@ -284,7 +290,6 @@ export class LLM extends llm.LLM {
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     inferenceClass?: InferenceClass;
-    // TODO(AJS-270): Add responseFormat parameter
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
     const toolCtx = llm.toToolContext(toolCtxInput);
@@ -314,8 +319,6 @@ export class LLM extends llm.LLM {
 
     const resolvedInferenceClass =
       inferenceClass !== undefined ? inferenceClass : this.opts.inferenceClass;
-
-    // TODO(AJS-270): Add response_format support here
 
     modelOptions = { ...modelOptions, ...this.opts.modelOptions };
 

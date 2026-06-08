@@ -9,12 +9,13 @@ import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import { initializeLogger, log } from '../log.js';
-import { Future, shortuuid } from '../utils.js';
+import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
+const SESSION_CLOSE_TIMEOUT = 60 * 1000;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -167,11 +168,33 @@ const startJob = (
 
     // Close the primary agent session if it exists
     if (ctx._primaryAgentSession) {
-      await ctx._primaryAgentSession.close();
+      const sessionClosePromise = ctx._primaryAgentSession.close();
+      try {
+        await waitUntilTimeout(sessionClosePromise, SESSION_CLOSE_TIMEOUT);
+      } catch (error) {
+        if (!(error instanceof IdleTimeoutError)) {
+          throw error;
+        }
+
+        void sessionClosePromise.catch((sessionCloseError) =>
+          logger.debug(
+            { error: sessionCloseError },
+            'AgentSession.close() rejected after shutdown timeout',
+          ),
+        );
+        logger.error(
+          { timeout: SESSION_CLOSE_TIMEOUT },
+          'AgentSession.close() timed out; proceeding with shutdown so registered callbacks still run.',
+        );
+      }
     }
 
     // Generate and save/upload session report
-    await ctx._onSessionEnd();
+    try {
+      await ctx._onSessionEnd();
+    } catch (error) {
+      logger.error({ error }, 'error in ctx._onSessionEnd');
+    }
 
     await room.disconnect();
     logger.debug('disconnected from room');

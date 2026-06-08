@@ -32,6 +32,7 @@ export {
   SessionHost,
   SessionTransport,
   RoomSessionTransport,
+  TcpSessionTransport,
 } from './remote_session.js';
 export * from './events.js';
 export {

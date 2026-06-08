@@ -116,7 +116,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 
 ### Remote Sessions (`voice/remote_session.ts`)
 
-Wire protocol for distributed agents via LiveKit room message channels. `SessionTransport` abstraction with `RoomSessionTransport` implementation.
+Wire protocol for distributed agents. `SessionTransport` abstraction with `RoomSessionTransport` (LiveKit room channels) and `TcpSessionTransport` (raw TCP socket) implementations.
 
 ### Plugins (`plugins/`)
 
@@ -125,7 +125,7 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 Plugin capabilities by type:
 
 - **LLM**: openai, google, baseten, mistralai
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld, cartesia
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
@@ -161,7 +161,7 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **Framework**: Vitest with 5s default timeout.
 - **Pattern**: `*.test.ts` files co-located with source.
 - **Snapshots**: Used in LLM chat/tool context tests (`agents/src/llm/__snapshots__/`).
-- **Inference LLM tests**: Always use full model names from `agents/src/inference/models.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
+- **Inference LLM tests**: Always use full model names from `agents/src/inference/llm.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
 - **Test plugin**: `@livekit/agents-plugins-test` provides mock LLM, STT, TTS for unit tests without external APIs.
 - **STT testing utilities**: `stt.testing.FakeSTT` (from `@livekit/agents`) provides a configurable test harness for unit testing STT infrastructure (e.g. `FallbackAdapter`) with scripted transcripts, exceptions, timeouts, and observability channels.
 - **PR validation for major changes**: Verify `restaurant_agent.ts` and `realtime_agent.ts` work properly in [Agent Playground](https://agents-playground.livekit.io).

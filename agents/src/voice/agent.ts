@@ -29,7 +29,7 @@ import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
-import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
+import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
@@ -330,7 +330,7 @@ export class Agent<UserData = any> {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<ChatChunk | string> | null> {
+  ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
     return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 

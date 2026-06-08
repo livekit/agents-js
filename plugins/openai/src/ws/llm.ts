@@ -580,6 +580,15 @@ export class WSLLMStream extends llm.LLMStream {
           ],
         },
       };
+    } else if (event.item.type === 'message' && event.item.phase !== undefined) {
+      return {
+        id: this.#responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase: event.item.phase } },
+        },
+      };
     }
     return undefined;
   }

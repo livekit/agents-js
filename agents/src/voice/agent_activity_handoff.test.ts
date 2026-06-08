@@ -114,7 +114,7 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
-  it('reuses when the new agent inherits the same sttNode implementation', async () => {
+  it('does not reuse when the new agent inherits the same custom sttNode implementation', async () => {
     const sharedStt = { id: 'shared-stt' };
 
     class AgentA extends Agent {
@@ -130,8 +130,8 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
 
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
-    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
-    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).toHaveBeenCalledTimes(1);
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
   it('does not reuse when the old activity has no audioRecognition', async () => {

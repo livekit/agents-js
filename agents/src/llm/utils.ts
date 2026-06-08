@@ -147,7 +147,11 @@ export const createToolOptions = <UserData extends UnknownUserData>(
   toolCallId: string,
   userData: UserData = {} as UserData,
 ): ToolOptions<UserData> => {
-  return { ctx: { userData }, toolCallId } as unknown as ToolOptions<UserData>;
+  return {
+    ctx: { userData },
+    toolCallId,
+    abortSignal: new AbortController().signal,
+  } as unknown as ToolOptions<UserData>;
 };
 
 /** @internal */
