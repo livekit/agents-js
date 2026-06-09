@@ -795,6 +795,24 @@ class SyncedAudioOutput extends AudioOutput {
     this.nextInChainAudio.clearBuffer();
   }
 
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    // captureFrame() bumps this wrapper's playbackSegmentsCount (via super.captureFrame) and
+    // then forwards to nextInChainAudio. The downstream sink may *drop* a frame at its
+    // interrupt-gate (a cancel-while-paused barge-in) without counting it — and this wrapper's
+    // finishedCount is only driven by the downstream's playback-finished events. So under
+    // barge-in this wrapper's segment count drifts ahead of what the downstream will ever
+    // finish, and waitForPlayout() — awaited by the agent reply pipeline before it marks the
+    // generation done — would block forever. The downstream's
+    // own outstanding segments still finish and propagate up; only this wrapper's excess is
+    // unrecoverable, so reconcile it here before waiting. onPlaybackFinished no-ops past
+    // balance, so this can never over-count.
+    const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
+    for (let i = 0; i < drift; i++) {
+      super.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+    return super.waitForPlayout();
+  }
+
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
