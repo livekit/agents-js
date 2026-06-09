@@ -193,6 +193,40 @@ describe('interruption WebSocket transport failover', () => {
     await stream.close();
   });
 
+  it('errors when session.created reports no threshold and the user did not override', async () => {
+    const detector = createDetector();
+    const stream = new InterruptionStreamBase(detector, {});
+
+    const errPromise = readError(stream);
+    const ws = await waitForInstance();
+    ws.simulateOpen();
+    await sleep(5);
+    ws.simulateMessage({ type: 'session.created' });
+
+    const err = await errPromise;
+
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect((err as APIStatusError).statusCode).toBe(500);
+    expect((err as APIError).retryable).toBe(false);
+
+    await stream.close();
+  });
+
+  it('does not error when session.created carries a default_threshold', async () => {
+    const detector = createDetector();
+    const stream = new InterruptionStreamBase(detector, {});
+
+    const errPromise = readError(stream);
+    const ws = await waitForInstance();
+    ws.simulateOpen();
+    await sleep(5);
+    ws.simulateMessage({ type: 'session.created', default_threshold: 0.42 });
+    await sleep(5);
+
+    await stream.close();
+    expect(await errPromise).toBeUndefined();
+  });
+
   it('closes the underlying WebSocket on teardown even after the transport errored', async () => {
     // The transport's flush() only runs on graceful stream completion. When the stream is torn
     // down via an error (here a 408 inference timeout) the socket is still open, so close() must

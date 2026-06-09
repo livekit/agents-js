@@ -73,9 +73,7 @@ type WsMessage = z.infer<typeof wsMessageSchema>;
 
 /**
  * Resolve the effective interruption threshold for observability only — the server makes the
- * actual decision. Precedence: user override, then server default. Returns null when neither is
- * known, so the log reports an honest "unknown" rather than a hardcoded value that may disagree
- * with the server.
+ * actual decision. Precedence: user override, then server default; null when neither is known.
  */
 export function resolveEffectiveThreshold(
   threshold: number | undefined,
@@ -243,6 +241,16 @@ export function createWsTransport(
 
     switch (message.type) {
       case MSG_SESSION_CREATED: {
+        if (options.threshold === undefined && message.default_threshold == null) {
+          outputController?.error(
+            new APIStatusError({
+              message:
+                'adaptive interruption session created without a threshold: no user override and the server did not report a default_threshold',
+              options: { statusCode: 500, retryable: false },
+            }),
+          );
+          break;
+        }
         // Observability only — the server makes the actual decision.
         logger.debug(
           {
@@ -255,11 +263,6 @@ export function createWsTransport(
           },
           'adaptive interruption session created',
         );
-        if (options.threshold === undefined && message.default_threshold == null) {
-          logger.warn(
-            'adaptive interruption session created without a threshold from the server; the effective threshold is unknown',
-          );
-        }
         break;
       }
 

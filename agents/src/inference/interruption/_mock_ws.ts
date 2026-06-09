@@ -50,4 +50,9 @@ export class MockWebSocket extends EventEmitter {
   simulateUnexpectedResponse(statusCode: number): void {
     this.emit('unexpected-response', {}, { statusCode });
   }
+
+  /** Simulate a server message frame carrying a JSON payload. */
+  simulateMessage(payload: unknown): void {
+    this.emit('message', Buffer.from(JSON.stringify(payload)));
+  }
 }
