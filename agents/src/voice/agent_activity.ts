@@ -3748,6 +3748,43 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
 
     if (this._mainTask) {
+      // Drain deadlock guard (#836). A resume-triggered drain can run from inside one of this
+      // activity's own speech tasks — e.g. an `AgentTask.run()` `finally` invoked from a
+      // function tool that completes the task, which calls `_updateActivity(..., 'resume')`
+      // -> `drain()` -> here. In that case awaiting `_mainTask.result` is a self-await: the
+      // mainTask cannot reach its drain loop-exit until that in-flight speech task
+      // de-registers from `speechTasks`, and that speech task cannot finish until this await
+      // returns. The result is a permanent hang — the parent never resumes and the agent goes
+      // silent until the participant disconnects.
+      //
+      // The same deadlock can arise one step removed: a barge-in cascade can leave this drain
+      // running from a non-reentrant context while the mainTask is held only by "zombie"
+      // speech tasks — already done, or whose handle was interrupted by the cascade — that
+      // have not de-registered from `speechTasks` yet. The mainTask still cannot reach its
+      // loop-exit, so awaiting its result deadlocks just the same.
+      //
+      // Skip the self-await in both cases; the mainTask is still reaped by the subsequent
+      // `close()` -> `cancelAndWait`. External drains (agent handoff, session close, pause)
+      // run outside this activity's speech tasks and with live (non-zombie) pending work, so
+      // they still wait as before. See https://github.com/livekit/agents-js/issues/836.
+      const currentTask = Task.current();
+      const reentrant = !!currentTask && this.speechTasks.has(currentTask as Task<void>);
+      const pending = this.getDrainPendingSpeechTasks();
+      const allZombie =
+        pending.length > 0 &&
+        pending.every((task) => {
+          if (task.done) return true;
+          const info = _getActivityTaskInfo(task);
+          return !!info?.speechHandle?.interrupted;
+        });
+      if (reentrant || allZombie) {
+        this.logger.debug(
+          { reentrant, allZombie, pending: pending.map((task) => task.name) },
+          'skipping mainTask self-await during drain to avoid a deadlock (reentrant from one of ' +
+            "this activity's own speech tasks, or mainTask held only by interrupted/done speech tasks)",
+        );
+        return;
+      }
       // When pausing/draining, we ensure that all speech_tasks complete fully.
       // This means that even if the SpeechHandle themselves have finished,
       // we still wait for the entire execution (e.g function_tools)
