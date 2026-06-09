@@ -165,12 +165,13 @@ describe('init timeout rejection handling', () => {
     );
 
     await proc.start();
-    // initialize() returns normally: child responds at 200ms, once() resolves,
-    // but init was already rejected at 50ms — run() gets the rejection.
-    await proc.initialize();
+    // initialize() now fails fast: the timeout fires at 50ms and rejects the
+    // call itself (the child's 200ms response arrives too late). The rejection
+    // must be delivered to the caller, not escape as an unhandled rejection.
+    await expect(proc.initialize()).rejects.toThrow('runner initialization timed out');
 
     // Give the event loop a tick for any unhandled rejection to surface
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 200));
 
     process.off('unhandledRejection', handler);
     proc.proc?.kill();
@@ -204,7 +205,7 @@ describe('init timeout rejection handling', () => {
     const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
 
     await proc.start();
-    await proc.initialize();
+    await proc.initialize().catch(() => {}); // times out at 50ms
 
     // join() must resolve within a reasonable time, not hang forever
     const result = await Promise.race([

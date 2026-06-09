@@ -179,12 +179,10 @@ export abstract class SupervisedProc {
   }
 
   async initialize() {
-    const timer = setTimeout(() => {
-      this.init.reject(new Error('runner initialization timed out'));
-    }, this.#opts.initializeTimeout);
     if (!this.proc?.connected) {
-      this.init.reject(new Error('process not connected'));
-      return;
+      const err = new Error('process not connected');
+      this.init.reject(err);
+      throw err;
     }
     this.proc.send({
       case: 'initializeRequest',
@@ -195,13 +193,42 @@ export abstract class SupervisedProc {
         highPingThreshold: this.#opts.highPingThreshold,
       },
     });
-    await once(this.proc!, 'message').then(([msg]: IPCMessage[]) => {
-      clearTimeout(timer);
-      if (msg!.case !== 'initializeResponse') {
-        throw new Error('first message must be InitializeResponse');
-      }
+
+    // Race the first message against child exit and the timeout: a child that
+    // crashes before sending initializeResponse would otherwise leave the
+    // `once('message')` pending forever and hang the caller.
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('runner initialization timed out')),
+        this.#opts.initializeTimeout,
+      );
     });
-    this.init.resolve();
+    const onMessage = once(this.proc!, 'message', { signal: abort.signal }).then(
+      ([msg]: IPCMessage[]) => {
+        if (msg!.case !== 'initializeResponse') {
+          throw new Error('first message must be InitializeResponse');
+        }
+      },
+    );
+    const onExit = once(this.proc!, 'exit', { signal: abort.signal }).then(([code, signal]) => {
+      throw new Error(`process exited before initializing (code ${code}, signal ${signal})`);
+    });
+
+    try {
+      await Promise.race([onMessage, onExit, timeout]);
+      this.init.resolve();
+    } catch (err) {
+      this.init.reject(err as Error);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      // Swallow the AbortError from whichever listener lost the race.
+      onMessage.catch(() => {});
+      onExit.catch(() => {});
+    }
   }
 
   async close() {
