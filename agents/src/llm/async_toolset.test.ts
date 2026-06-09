@@ -19,15 +19,4 @@ describe('AsyncToolset', () => {
     expect(toolset.tools).toEqual([lookup]);
     expect(toolset._executor).toBeDefined();
   });
-
-  it('rejects the legacy onDuplicateCall option', () => {
-    expect(() =>
-      AsyncToolset.create({
-        id: 'booking',
-        tools: [lookup],
-        // @ts-expect-error - legacy Python option must be rejected at runtime
-        onDuplicateCall: 'confirm',
-      }),
-    ).toThrow(/onDuplicateCall/);
-  });
 });

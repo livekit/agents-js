@@ -8,20 +8,13 @@ import { Toolset, type ToolsetCreateOptions } from './tool_context.js';
 
 export interface AsyncToolsetCreateOptions extends ToolsetCreateOptions {
   toolHandling?: ToolHandlingOptions;
-  onDuplicateCall?: unknown;
 }
 
 export class AsyncToolset extends Toolset {
   readonly _executor = new ToolExecutor({ owningActivity: null });
   private readonly asyncToolOptionsOverride?: ToolHandlingOptions['asyncOptions'];
 
-  private constructor({ id, tools, toolHandling, onDuplicateCall }: AsyncToolsetCreateOptions) {
-    if (onDuplicateCall !== undefined) {
-      throw new TypeError(
-        'AsyncToolset(onDuplicateCall=...) has been deprecated; set `onDuplicate` on each tool instead.',
-      );
-    }
-
+  private constructor({ id, tools, toolHandling }: AsyncToolsetCreateOptions) {
     super({ id, tools });
     this.asyncToolOptionsOverride = toolHandling?.asyncOptions;
   }
