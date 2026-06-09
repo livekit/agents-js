@@ -12,9 +12,9 @@ import { SpeechHandle } from './speech_handle.js';
 import { ToolExecutor, getRunningTasks } from './tool_executor.js';
 
 describe('ToolExecutor', () => {
-  function buildRunContext(name: string = 'slow_lookup') {
+  function buildRunContext(name: string = 'slow_lookup', callId: string = `call_${name}`) {
     const functionCall = FunctionCall.create({
-      callId: `call_${name}`,
+      callId,
       name,
       args: '{"query":"flights"}',
     });
@@ -122,6 +122,65 @@ describe('ToolExecutor', () => {
 
     neverFinish.resolve();
     await executor.waitForAll();
+  });
+
+  it('rejects concurrent duplicate calls when onDuplicate is reject', async () => {
+    const executor = new ToolExecutor();
+    const first = buildRunContext('concurrent_dedupe', 'concurrent_dedupe_1');
+    const second = buildRunContext('concurrent_dedupe', 'concurrent_dedupe_2');
+    const neverFinish = new Future<void>();
+    const lookup = tool({
+      name: 'concurrent_dedupe',
+      description: 'Concurrent dedupe lookup',
+      flags: ToolFlag.CANCELLABLE,
+      onDuplicate: 'reject',
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await neverFinish.await;
+        return 'done';
+      },
+    });
+
+    const outputs = await Promise.all([
+      executor.execute({ tool: lookup, runCtx: first.runCtx, rawArguments: {} }),
+      executor.execute({ tool: lookup, runCtx: second.runCtx, rawArguments: {} }),
+    ]);
+
+    expect(outputs.filter((output) => String(output).includes('started'))).toHaveLength(1);
+    expect(
+      outputs.filter((output) =>
+        String(output).includes('Same tool `concurrent_dedupe` is already running'),
+      ),
+    ).toHaveLength(1);
+
+    neverFinish.resolve();
+    await executor.waitForAll();
+  });
+
+  it('returns from cancel even when a cancellable tool ignores abortSignal', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('non_cooperative_cancel');
+    const neverFinish = new Future<void>();
+    const lookup = tool({
+      name: 'non_cooperative_cancel',
+      description: 'Non-cooperative cancellable lookup',
+      flags: ToolFlag.CANCELLABLE,
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await neverFinish.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+
+    const cancelled = await Promise.race([
+      executor.cancel(runCtx.functionCall.callId).then(() => 'cancelled'),
+      new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 25)),
+    ]);
+
+    expect(cancelled).toBe('cancelled');
+    expect(getRunningTasks(runCtx.session)).toHaveLength(0);
   });
 
   it('keeps running task visibility scoped to one session', async () => {

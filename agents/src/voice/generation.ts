@@ -1054,10 +1054,6 @@ export function performToolExecutions({
         continue;
       }
 
-      if (!toolOutput.firstToolStartedFuture.done) {
-        toolOutput.firstToolStartedFuture.resolve();
-      }
-
       onToolExecutionStarted(toolCall);
 
       logger.info(
@@ -1147,6 +1143,11 @@ export function performToolExecutions({
                 runCtx,
                 rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
+                onUserToolStarted: () => {
+                  if (!toolOutput.firstToolStartedFuture.done) {
+                    toolOutput.firstToolStartedFuture.resolve();
+                  }
+                },
               });
             },
           );

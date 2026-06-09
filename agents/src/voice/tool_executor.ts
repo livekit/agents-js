@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Mutex } from '@livekit/mutex';
 import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
@@ -99,20 +100,21 @@ type ToolExecutorActivity = {
 };
 
 type RunningTask = {
-  ctx: RunContext;
+  ctx: RunContext<any>;
   promise: Promise<void>;
   controller: AbortController;
+  firstUpdateFuture: Future<unknown>;
   executor: ToolExecutor;
   allowCancellation: boolean;
 };
 
 type PendingUpdate = {
-  ctx: RunContext;
+  ctx: RunContext<any>;
   items: [FunctionCall, FunctionCallOutput];
   target: ToolExecutorAgent;
 };
 
-const runningTasks = new WeakMap<AgentSession, Map<string, RunningTask>>();
+const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 
 export const getRunningTasksTool = tool({
   name: 'lk_agents_get_running_tasks',
@@ -145,6 +147,7 @@ export const cancelTaskTool = tool({
 
 export class ToolExecutor {
   private runningTasks = new Map<string, RunningTask>();
+  private duplicateLock = new Mutex();
   private pendingUpdates: PendingUpdate[] = [];
   private _replyTask?: Promise<void>;
   toolOptions: AsyncToolOptions;
@@ -188,11 +191,13 @@ export class ToolExecutor {
     runCtx,
     rawArguments,
     abortSignal,
+    onUserToolStarted,
   }: {
     tool: FunctionTool<Parameters, UserData, Result>;
     runCtx: RunContext<UserData>;
     rawArguments: Parameters;
     abortSignal?: AbortSignal;
+    onUserToolStarted?: () => void;
   }): Promise<unknown> {
     const callId = runCtx.functionCall.callId;
     const functionName = runCtx.functionCall.name;
@@ -201,52 +206,66 @@ export class ToolExecutor {
       tool.onDuplicate === 'confirm' ? Boolean(args[CONFIRM_DUPLICATE_PARAM]) : undefined;
     delete args[CONFIRM_DUPLICATE_PARAM];
 
-    const duplicateResult = await this.checkDuplicate(functionName, {
-      onDuplicate: tool.onDuplicate,
-      confirmDuplicate,
-    });
-    if (duplicateResult !== undefined) return duplicateResult;
+    const unlock = await this.duplicateLock.lock();
+    try {
+      const duplicateResult = await this.checkDuplicate(functionName, {
+        onDuplicate: tool.onDuplicate,
+        confirmDuplicate,
+      });
+      if (duplicateResult !== undefined) return duplicateResult;
 
-    if (this.runningTasks.has(callId)) {
-      throw new Error(`Task already running for call_id: ${callId}`);
+      if (this.runningTasks.has(callId)) {
+        throw new Error(`Task already running for call_id: ${callId}`);
+      }
+
+      const firstUpdateFuture = new Future<unknown>();
+      runCtx._attachExecutor(this, firstUpdateFuture);
+
+      const controller = new AbortController();
+      const abort = () => {
+        queueMicrotask(() => {
+          controller.abort();
+          if (!firstUpdateFuture.done) {
+            firstUpdateFuture.reject(new Error('tool call was aborted'));
+          }
+        });
+      };
+      abortSignal?.addEventListener('abort', abort, { once: true });
+
+      const promise = this.runTool({
+        tool,
+        runCtx,
+        rawArguments: args as Parameters,
+        firstUpdateFuture,
+        controller,
+        onUserToolStarted,
+      }).finally(() => {
+        this.runningTasks.delete(callId);
+        runningTasks.get(runCtx.session)?.delete(callId);
+        abortSignal?.removeEventListener('abort', abort);
+        runCtx._detachExecutor();
+      });
+
+      const task: RunningTask = {
+        ctx: runCtx,
+        promise,
+        controller,
+        firstUpdateFuture,
+        executor: this,
+        allowCancellation: Boolean(tool.flags & ToolFlag.CANCELLABLE),
+      };
+      this.runningTasks.set(callId, task);
+      let sessionTasks = runningTasks.get(runCtx.session);
+      if (!sessionTasks) {
+        sessionTasks = new Map();
+        runningTasks.set(runCtx.session, sessionTasks);
+      }
+      sessionTasks.set(callId, task);
+
+      return firstUpdateFuture.await;
+    } finally {
+      unlock();
     }
-
-    const firstUpdateFuture = new Future<unknown>();
-    runCtx._attachExecutor(this, firstUpdateFuture);
-
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    abortSignal?.addEventListener('abort', abort, { once: true });
-
-    const promise = this.runTool({
-      tool,
-      runCtx,
-      rawArguments: args as Parameters,
-      firstUpdateFuture,
-      controller,
-    }).finally(() => {
-      this.runningTasks.delete(callId);
-      runningTasks.get(runCtx.session)?.delete(callId);
-      abortSignal?.removeEventListener('abort', abort);
-      runCtx._detachExecutor();
-    });
-
-    const task: RunningTask = {
-      ctx: runCtx,
-      promise,
-      controller,
-      executor: this,
-      allowCancellation: Boolean(tool.flags & ToolFlag.CANCELLABLE),
-    };
-    this.runningTasks.set(callId, task);
-    let sessionTasks = runningTasks.get(runCtx.session);
-    if (!sessionTasks) {
-      sessionTasks = new Map();
-      runningTasks.set(runCtx.session, sessionTasks);
-    }
-    sessionTasks.set(callId, task);
-
-    return firstUpdateFuture.await;
   }
 
   async waitForAll(): Promise<void> {
@@ -267,7 +286,13 @@ export class ToolExecutor {
       );
     }
     task.controller.abort();
-    await task.promise.catch(() => undefined);
+    if (!task.firstUpdateFuture.done) {
+      task.firstUpdateFuture.resolve(undefined);
+    }
+    this.runningTasks.delete(callId);
+    runningTasks.get(task.ctx.session)?.delete(callId);
+    task.ctx._detachExecutor();
+    void task.promise.catch(() => undefined);
     return true;
   }
 
@@ -276,7 +301,8 @@ export class ToolExecutor {
     await Promise.allSettled(
       tasks.map(async (task) => {
         if (task.allowCancellation) {
-          task.controller.abort();
+          await this.cancel(task.ctx.functionCall.callId);
+          return;
         }
         await task.promise;
       }),
@@ -286,13 +312,20 @@ export class ToolExecutor {
   async aclose(): Promise<void> {
     this.pendingUpdates = [];
     const tasks = [...this.runningTasks.values()];
-    for (const task of tasks) task.controller.abort();
-    await Promise.allSettled(tasks.map((task) => task.promise));
+    for (const task of tasks) {
+      task.controller.abort();
+      if (!task.firstUpdateFuture.done) {
+        task.firstUpdateFuture.resolve(undefined);
+      }
+      runningTasks.get(task.ctx.session)?.delete(task.ctx.functionCall.callId);
+      task.ctx._detachExecutor();
+      void task.promise.catch(() => undefined);
+    }
     this.runningTasks.clear();
   }
 
   // Ref: python livekit/agents/voice/tool_executor.py:417-522
-  async enqueueReply(ctx: RunContext, items: [FunctionCall, FunctionCallOutput]): Promise<void> {
+  async enqueueReply(ctx: RunContext<any>, items: [FunctionCall, FunctionCallOutput]): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);
@@ -319,21 +352,25 @@ export class ToolExecutor {
     rawArguments,
     firstUpdateFuture,
     controller,
+    onUserToolStarted,
   }: {
     tool: FunctionTool<Parameters, UserData, Result>;
     runCtx: RunContext<UserData>;
     rawArguments: Parameters;
     firstUpdateFuture: Future<unknown>;
     controller: AbortController;
+    onUserToolStarted?: () => void;
   }): Promise<void> {
     let output: unknown;
     let exception: unknown;
     try {
-      output = await tool.execute(rawArguments, {
+      const toolPromise = tool.execute(rawArguments, {
         ctx: runCtx,
         toolCallId: runCtx.functionCall.callId,
         abortSignal: controller.signal,
       });
+      onUserToolStarted?.();
+      output = await toolPromise;
     } catch (error) {
       exception = error;
     }
@@ -353,6 +390,9 @@ export class ToolExecutor {
     }
 
     if (exception !== undefined || output === undefined || output === null) {
+      return;
+    }
+    if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
     }
     const pair = runCtx._makeUpdatePair(output, '_final');

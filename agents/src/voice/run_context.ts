@@ -22,17 +22,17 @@ export interface RunContextUpdateOptions {
   template?: PromptTemplate<UpdatePromptArgs>;
 }
 
-export interface AttachedToolExecutor<UserData = UnknownUserData> {
+export interface AttachedToolExecutor {
   toolOptions: {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
   };
-  enqueueReply(ctx: RunContext<UserData>, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
+  enqueueReply(ctx: RunContext, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
   replyTask?: Promise<void>;
 }
 
 export class RunContext<UserData = UnknownUserData> {
   private readonly initialStepIdx: number;
-  private _executor?: AttachedToolExecutor<UserData>;
+  private _executor?: AttachedToolExecutor;
   private _firstUpdateFuture?: Future<unknown>;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
   constructor(
@@ -107,10 +107,7 @@ export class RunContext<UserData = UnknownUserData> {
     return session.waitForIdleAndHold(fn);
   }
 
-  _attachExecutor(
-    executor: AttachedToolExecutor<UserData>,
-    firstUpdateFuture: Future<unknown>,
-  ): void {
+  _attachExecutor(executor: AttachedToolExecutor, firstUpdateFuture: Future<unknown>): void {
     if (this._firstUpdateFuture !== undefined) {
       throw new Error('Executor already attached');
     }
