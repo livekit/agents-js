@@ -6,9 +6,11 @@ import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
 import {
+  CONFIRM_DUPLICATE_PARAM,
   ProviderTool,
   type Tool,
   ToolContext,
+  ToolFlag,
   type ToolOptions,
   Toolset,
   type ToolsetContext,
@@ -100,6 +102,97 @@ describe('Tool Context', () => {
         createToolOptions('123', { name: 'John' }),
       );
       expect(result).toBe('The weather in San Francisco is sunny, John');
+    });
+
+    it('defaults to allow duplicate calls and no flags', () => {
+      const testFunction = tool({
+        name: 'defaultDuplicatePolicy',
+        description: 'Test default duplicate policy',
+        execute: async () => 'ok',
+      });
+
+      expect(testFunction.onDuplicate).toBe('allow');
+      expect(testFunction.flags).toBe(ToolFlag.NONE);
+    });
+
+    it('stores cancellable flag and duplicate policy', () => {
+      const testFunction = tool({
+        name: 'cancellableDuplicatePolicy',
+        description: 'Test duplicate policy',
+        execute: async () => 'ok',
+        flags: ToolFlag.CANCELLABLE,
+        onDuplicate: 'replace',
+      });
+
+      expect(testFunction.onDuplicate).toBe('replace');
+      expect(testFunction.flags & ToolFlag.CANCELLABLE).toBeTruthy();
+    });
+
+    it('injects and strips confirm duplicate parameter for zod schemas', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const testFunction = tool({
+        name: 'confirmDuplicateZod',
+        description: 'Test confirm duplicate with zod',
+        parameters: z.object({
+          query: z.string(),
+        }),
+        onDuplicate: 'confirm',
+        execute: async (args) => {
+          receivedArgs = args;
+          return 'ok';
+        },
+      });
+
+      const params = oaiParams(testFunction.parameters);
+      expect(params.properties).toHaveProperty(CONFIRM_DUPLICATE_PARAM);
+      expect(params.required).toContain(CONFIRM_DUPLICATE_PARAM);
+
+      const result = await testFunction.execute(
+        { query: 'flights', [CONFIRM_DUPLICATE_PARAM]: true },
+        createToolOptions('confirm-zod'),
+      );
+
+      expect(result).toBe('ok');
+      expect(receivedArgs).toEqual({ query: 'flights' });
+    });
+
+    it('injects and strips confirm duplicate parameter for raw JSON schemas', async () => {
+      let receivedArgs: Record<string, unknown> | undefined;
+      const testFunction = tool({
+        name: 'confirmDuplicateRaw',
+        description: 'Test confirm duplicate with raw schema',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+        },
+        onDuplicate: 'confirm',
+        execute: async (args) => {
+          receivedArgs = args;
+          return 'ok';
+        },
+      });
+
+      expect(testFunction.parameters).toMatchObject({
+        properties: {
+          [CONFIRM_DUPLICATE_PARAM]: {
+            type: ['boolean', 'null'],
+          },
+        },
+      });
+      expect((testFunction.parameters as { required: string[] }).required).toContain(
+        CONFIRM_DUPLICATE_PARAM,
+      );
+
+      const result = await testFunction.execute(
+        { query: 'flights', [CONFIRM_DUPLICATE_PARAM]: true },
+        createToolOptions('confirm-raw'),
+      );
+
+      expect(result).toBe('ok');
+      expect(receivedArgs).toEqual({ query: 'flights' });
     });
 
     it('should properly type a callable function', async () => {

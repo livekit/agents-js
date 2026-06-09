@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  type JSONObject,
   type ToolChoice,
   type ToolContext,
   ToolError,
@@ -58,6 +59,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -949,6 +951,13 @@ export function performToolExecutions({
     output: [],
     firstToolStartedFuture: new Future(),
   };
+  const activityExecutor =
+    (session as unknown as { activity?: { _toolExecutor?: ToolExecutor } }).activity
+      ?._toolExecutor ?? new ToolExecutor();
+  const executorByName = buildExecutorMap({
+    toolsets: toolCtx.toolsets,
+    defaultExecutor: activityExecutor,
+  });
 
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
@@ -1131,9 +1140,12 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
-                ctx: new RunContext(session, speechHandle, toolCall),
-                toolCallId: toolCall.callId,
+              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const executor = executorByName.get(toolCall.name) ?? activityExecutor;
+              return await executor.execute({
+                tool,
+                runCtx,
+                rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
               });
             },

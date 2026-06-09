@@ -43,6 +43,7 @@ import {
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
+import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
 
@@ -140,6 +141,7 @@ export interface AgentOptions<UserData> {
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   turnHandling?: TurnHandlingOptions;
+  toolHandling?: ToolHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
   /** @deprecated use turnHandling.turnDetection instead */
@@ -171,6 +173,9 @@ export class Agent<UserData = any> {
   /** @internal */
   _toolCtx: ToolContext<UserData>;
 
+  /** @internal */
+  _asyncToolOptions?: ToolHandlingOptions['asyncOptions'];
+
   static create<UserData = unknown>(options: AgentCreateOptions<UserData>): Agent<UserData> {
     return createAgentV2(Agent, options);
   }
@@ -187,6 +192,7 @@ export class Agent<UserData = any> {
     tts,
     allowInterruptions,
     turnHandling,
+    toolHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
   }: AgentOptions<UserData>) {
@@ -219,6 +225,7 @@ export class Agent<UserData = any> {
     });
     this._turnHandling =
       Object.keys(resolvedTurnHandling).length > 0 ? resolvedTurnHandling : undefined;
+    this._asyncToolOptions = toolHandling?.asyncOptions;
 
     this._vad = vad;
 
