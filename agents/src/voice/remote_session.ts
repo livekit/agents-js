@@ -10,6 +10,7 @@ import EventEmitter from 'events';
 import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatItem,
   FunctionCall as FCItem,
@@ -24,6 +25,7 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
+import { SimulationVerdict } from '../simulation.js';
 import { Future, Task, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
@@ -881,6 +883,11 @@ export class SessionHost {
   private async handleRequest(req: pb.SessionRequest): Promise<void> {
     if (!this.session) return;
 
+    const dynamicRequest = req.request as { case?: string; value?: unknown };
+    if (dynamicRequest.case === 'finalizeSimulation') {
+      return this.handleFinalizeSimulation(req.requestId, dynamicRequest.value);
+    }
+
     switch (req.request.case) {
       case 'ping':
         return this.sendResponse(req.requestId, {
@@ -916,6 +923,43 @@ export class SessionHost {
       case 'updateIo':
         return this.handleUpdateIo(req.requestId, req.request.value);
     }
+  }
+
+  private async handleFinalizeSimulation(requestId: string, value: unknown): Promise<void> {
+    const req = value as { provisionalSuccess?: boolean; provisionalReason?: string };
+    const jobCtx = getJobContext(false);
+    const simCtx = jobCtx?.simulationContext();
+    let userVerdict: { success: boolean; reason: string } | undefined;
+
+    if (simCtx) {
+      simCtx._beginFinalize({
+        simulatorVerdict: new SimulationVerdict(
+          req.provisionalSuccess ?? false,
+          req.provisionalReason ?? '',
+        ),
+        run: { id: simCtx.simulationRunId },
+      });
+
+      await jobCtx?._simulationEndFunc?.(simCtx);
+      if (simCtx.userVerdict) {
+        userVerdict = simCtx.userVerdict;
+      }
+    }
+
+    await this.transport.sendMessage(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'response',
+          value: new pb.SessionResponse({
+            requestId,
+            response: {
+              case: 'finalizeSimulation',
+              value: { userVerdict },
+            } as unknown as pb.SessionResponse['response'],
+          }),
+        },
+      }),
+    );
   }
 
   private async handleUpdateIo(
@@ -1265,6 +1309,71 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       throw new Error('unexpected response type');
     }
     return resp.response.value;
+  }
+
+  async updateIo(
+    {
+      inputAudioEnabled,
+      outputAudioEnabled,
+      outputTranscriptionEnabled,
+    }: {
+      inputAudioEnabled?: boolean;
+      outputAudioEnabled?: boolean;
+      outputTranscriptionEnabled?: boolean;
+    },
+    responseTimeout = 60000,
+  ): Promise<pb.SessionResponse_UpdateIOResponse> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'updateIo',
+            value: new pb.SessionRequest_UpdateIO({
+              input:
+                inputAudioEnabled === undefined
+                  ? undefined
+                  : new pb.SessionRequest_UpdateIO_Input({ audioEnabled: inputAudioEnabled }),
+              output: new pb.SessionRequest_UpdateIO_Output({
+                audioEnabled: outputAudioEnabled,
+                transcriptionEnabled: outputTranscriptionEnabled,
+              }),
+            }),
+          },
+        }),
+      responseTimeout,
+    );
+    if (resp.response.case !== 'updateIo') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async finalizeSimulation(
+    {
+      provisionalSuccess,
+      provisionalReason = '',
+    }: {
+      provisionalSuccess: boolean;
+      provisionalReason?: string;
+    },
+    responseTimeout = 60000,
+  ): Promise<unknown> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'finalizeSimulation',
+            value: { provisionalSuccess, provisionalReason },
+          } as unknown as pb.SessionRequest['request'],
+        }),
+      responseTimeout,
+    );
+    if ((resp.response as { case?: string }).case !== 'finalizeSimulation') {
+      throw new Error('unexpected response type');
+    }
+    return (resp.response as { value?: unknown }).value;
   }
 
   async fetchRtcStats(): Promise<pb.SessionResponse_GetRTCStatsResponse> {
