@@ -12,7 +12,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { MockWebSocket } from './_mock_ws.js';
-import { THRESHOLD } from './defaults.js';
 import { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
 import { resolveEffectiveThreshold, wsMessageSchema } from './ws_transport.js';
@@ -122,7 +121,7 @@ describe('resolveEffectiveThreshold', () => {
     expect(resolveEffectiveThreshold(undefined, 0.3)).toBe(0.3);
   });
 
-  it('falls back to THRESHOLD when the server is silent', () => {
-    expect(resolveEffectiveThreshold(undefined, null)).toBe(THRESHOLD);
+  it('returns null when neither the user nor the server provides a value', () => {
+    expect(resolveEffectiveThreshold(undefined, null)).toBeNull();
   });
 });

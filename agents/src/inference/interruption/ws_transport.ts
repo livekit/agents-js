@@ -9,7 +9,6 @@ import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exce
 import { log } from '../../log.js';
 import { Event } from '../../utils.js';
 import { buildMetadataHeaders, createAccessToken } from '../utils.js';
-import { THRESHOLD } from './defaults.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
@@ -74,19 +73,21 @@ type WsMessage = z.infer<typeof wsMessageSchema>;
 
 /**
  * Resolve the effective interruption threshold for observability only — the server makes the
- * actual decision. Precedence: user override, then server default, then THRESHOLD backup.
+ * actual decision. Precedence: user override, then server default. Returns null when neither is
+ * known, so the log reports an honest "unknown" rather than a hardcoded value that may disagree
+ * with the server.
  */
 export function resolveEffectiveThreshold(
   threshold: number | undefined,
   defaultThreshold: number | null | undefined,
-): number {
+): number | null {
   if (threshold !== undefined) {
     return threshold;
   }
   if (defaultThreshold != null) {
     return defaultThreshold;
   }
-  return THRESHOLD;
+  return null;
 }
 
 /**
@@ -254,6 +255,11 @@ export function createWsTransport(
           },
           'adaptive interruption session created',
         );
+        if (options.threshold === undefined && message.default_threshold == null) {
+          logger.warn(
+            'adaptive interruption session created without a threshold from the server; the effective threshold is unknown',
+          );
+        }
         break;
       }
 
