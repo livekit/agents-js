@@ -2,10 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { log } from '@livekit/agents';
-import { type APIConnectOptions, AnamException, type PersonaConfig } from './types.js';
+import {
+  type APIConnectOptions,
+  AnamException,
+  type PersonaConfig,
+  type SessionOptions,
+} from './types.js';
 
 const DEFAULT_API_URL = 'https://api.anam.ai';
 
+/** @public */
 export class AnamAPI {
   constructor(
     private apiKey: string,
@@ -121,6 +127,7 @@ export class AnamAPI {
     personaConfig: PersonaConfig;
     livekitUrl?: string;
     livekitToken?: string;
+    sessionOptions?: SessionOptions;
   }) {
     const pc = params.personaConfig;
     const personaPayload = {
@@ -137,6 +144,23 @@ export class AnamAPI {
       livekitUrl: params.livekitUrl,
       livekitToken: params.livekitToken,
     };
+
+    if (
+      params.sessionOptions &&
+      (params.sessionOptions.videoWidth !== undefined ||
+        params.sessionOptions.videoHeight !== undefined)
+    ) {
+      if (
+        params.sessionOptions.videoWidth === undefined ||
+        params.sessionOptions.videoHeight === undefined
+      ) {
+        throw new Error('videoWidth and videoHeight must be set together (both or neither)');
+      }
+      payload.sessionOptions = {
+        videoWidth: params.sessionOptions.videoWidth,
+        videoHeight: params.sessionOptions.videoHeight,
+      };
+    }
 
     return this.post<{ sessionToken: string }>(this.tokenPath, payload);
   }
