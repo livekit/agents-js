@@ -5,7 +5,9 @@ import { Job, JobType, Room as RoomModel } from '@livekit/protocol';
 import { Room } from '@livekit/rtc-node';
 import { pathToFileURL } from 'node:url';
 import { type Agent, isAgent } from './generator.js';
+import { InferenceRunner } from './inference_runner.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from './job.js';
 import { log } from './log.js';
 import { Future, shortuuid } from './utils.js';
@@ -13,17 +15,19 @@ import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './voice/console_io
 import { TcpSessionTransport } from './voice/remote_session.js';
 import { defaultInitializeProcessFunc } from './worker.js';
 
+const formatErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 /**
- * The LiveKit inference gateway runs in a child process for real jobs. The
- * in-process console runner has no such child, so gateway-backed models are
- * unsupported here — use a plugin model instead. Plugin models never touch this
- * executor, so a normal console agent works fine.
+ * Fallback executor used when no local inference runners are registered.
+ * Cloud inference models (`inference.LLM` & co.) connect to the gateway
+ * directly and never touch this executor; only plugins that register an
+ * {@link InferenceRunner} (e.g. the livekit turn detector) do, and those get a
+ * real {@link InferenceProcExecutor} in {@link runConsole} instead.
  */
 class ConsoleInferenceExecutor implements InferenceExecutor {
   async doInference(): Promise<unknown> {
-    throw new Error(
-      'the LiveKit inference gateway is not available in console mode; use a plugin model instead',
-    );
+    throw new Error('no inference runners registered; cannot run local inference');
   }
 }
 
@@ -80,6 +84,7 @@ export async function runConsole({
 
   const consoleInst = AgentsConsole.getInstance();
   consoleInst.enabled = true;
+  consoleInst.record = record;
   consoleInst.transport = transport;
   consoleInst.audioInput = audioInput;
   consoleInst.audioOutput = audioOutput;
@@ -114,41 +119,83 @@ export async function runConsole({
   process.once('SIGINT', onShutdown);
   process.once('SIGTERM', onShutdown);
 
-  const ctx = new JobContext(
-    proc,
-    info,
-    room,
-    () => {},
-    onShutdown,
-    new ConsoleInferenceExecutor(),
-  );
-
   logger.info({ host, port }, 'starting console session');
 
+  let inferenceProc: InferenceProcExecutor | undefined;
+  let ctx: JobContext | undefined;
   try {
-    await runWithJobContextAsync(ctx, async () => agent.entry(ctx));
+    // Plugins that registered an InferenceRunner (e.g. the livekit turn
+    // detector) run inference in a supervised child process, same as the
+    // worker path. Without any runners the fallback executor just raises if
+    // reached.
+    let inferenceExecutor: InferenceExecutor = new ConsoleInferenceExecutor();
+    if (Object.keys(InferenceRunner.registeredRunners).length > 0) {
+      inferenceProc = new InferenceProcExecutor({
+        runners: InferenceRunner.registeredRunners,
+        initializeTimeout: 30000,
+        closeTimeout: 5000,
+        memoryWarnMB: 2000,
+        memoryLimitMB: 0,
+        pingInterval: 5000,
+        pingTimeout: 60000,
+        highPingThreshold: 2500,
+      });
+      try {
+        await inferenceProc.start();
+        await inferenceProc.initialize();
+      } catch (error) {
+        throw new Error(
+          `the inference process failed to start (${formatErrorMessage(error)}); ` +
+            'if your agent uses a plugin with local model files (e.g. the livekit ' +
+            'turn detector), make sure they are downloaded: npx livekit-agents download-files',
+        );
+      }
+      inferenceExecutor = inferenceProc;
+    }
+
+    const jobCtx = new JobContext(proc, info, room, () => {}, onShutdown, inferenceExecutor);
+    ctx = jobCtx;
+    await runWithJobContextAsync(jobCtx, async () => agent.entry(jobCtx));
     await shutdown.await;
   } finally {
     process.off('SIGINT', onShutdown);
     process.off('SIGTERM', onShutdown);
-    if (ctx._primaryAgentSession) {
-      await ctx._primaryAgentSession.close();
-    }
-    try {
-      await ctx._onSessionEnd();
-    } catch (error) {
-      logger.error({ error }, 'error in ctx._onSessionEnd');
-    }
-    await transport.close();
-    await room.disconnect();
 
-    // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
-    // worker path does; runConsole bypasses the ProcPool so it must drain them.
-    const results = await Promise.allSettled(ctx.shutdownCallbacks.map((cb) => cb()));
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        logger.error({ error: result.reason }, 'error while running shutdown callback');
+    // Guard every teardown step so one failure can't skip the rest — most
+    // importantly the inference child shutdown at the end.
+    const guarded = async (step: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (error) {
+        logger.error({ error }, `error in ${step}`);
       }
+    };
+
+    const session = ctx?._primaryAgentSession;
+    if (session) {
+      await guarded('AgentSession.close', () => session.close());
+    }
+    const jobCtx = ctx;
+    if (jobCtx) {
+      await guarded('ctx._onSessionEnd', () => jobCtx._onSessionEnd());
+    }
+    await guarded('transport.close', () => transport.close());
+    await guarded('room.disconnect', () => room.disconnect());
+
+    if (jobCtx) {
+      // Run job shutdown callbacks (e.g. AvatarSession.aclose) like the normal
+      // worker path does; runConsole bypasses the ProcPool so it must drain them.
+      const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          logger.error({ error: result.reason }, 'error while running shutdown callback');
+        }
+      }
+    }
+
+    const proc_ = inferenceProc;
+    if (proc_) {
+      await guarded('inference process close', () => proc_.close());
     }
   }
 }

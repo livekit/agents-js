@@ -14,6 +14,7 @@ import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
@@ -22,7 +23,8 @@ import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
 import type { AgentSession } from './voice/agent_session.js';
-import { type SessionReport, createSessionReport } from './voice/report.js';
+import { AgentsConsole } from './voice/console_io.js';
+import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
@@ -154,7 +156,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
-    this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
+    // In console mode, recordings land in a local user-visible directory
+    // (mirrors python's AgentsConsole); real jobs use a temp dir.
+    const agentsConsole = AgentsConsole.getInstance();
+    this._sessionDirectory = agentsConsole.enabled
+      ? agentsConsole.sessionDirectory
+      : path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
 
   get proc(): JobProcess<ProcessUserData> {
@@ -366,7 +373,19 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
     const report = this.makeSessionReport(session);
 
-    // TODO(brian): Implement CLI/console
+    // Console recording: dump the session report to a local file (mirrors python).
+    const agentsConsole = AgentsConsole.getInstance();
+    if (agentsConsole.enabled && agentsConsole.record) {
+      try {
+        await mkdir(this._sessionDirectory, { recursive: true });
+        await writeFile(
+          path.join(this._sessionDirectory, 'session_report.json'),
+          JSON.stringify(sessionReportToJSON(report), null, 2),
+        );
+      } catch (error) {
+        this.#logger.error({ error }, 'failed to save the session report');
+      }
+    }
 
     // Upload session report to LiveKit Cloud if enabled. A fake job (console
     // mode) has no backing cloud URL, so skip the upload entirely.
