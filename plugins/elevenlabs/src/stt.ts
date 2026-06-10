@@ -804,6 +804,10 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
+        if (this.#opts.serverVad !== null) {
+          this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          this.#speaking = false;
+        }
       } else if (this.#speaking) {
         this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
         this.#speaking = false;

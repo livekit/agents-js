@@ -256,7 +256,6 @@ describe('ElevenLabs STT', () => {
             words: [{ text: 'hello', start: 0.1, end: 0.4 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript', text: '' }));
         setTimeout(() => ws.close(), 20);
       });
     });
@@ -334,7 +333,6 @@ describe('ElevenLabs STT', () => {
             words: [{ text: 'kept', start: 0, end: 0.2 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript_with_timestamps', text: '' }));
       });
     });
 
