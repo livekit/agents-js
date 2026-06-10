@@ -425,8 +425,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   async captureFrame(frame: AudioFrame): Promise<void> {
     await this.startedFuture.await;
 
-    super.captureFrame(frame);
-
     if (!this.playbackEnabledFuture.done) {
       this.audioSource.clearQueue();
       // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
@@ -435,6 +433,11 @@ export class ParticipantAudioOutput extends AudioOutput {
         return;
       }
     }
+
+    // Count the segment only after the pause/interrupt gate: a frame that bails here (interrupted
+    // while paused) must not bump playbackSegmentsCount, or it stays ahead of playbackFinishedCount
+    // forever and the next waitForPlayout() hangs.
+    super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
