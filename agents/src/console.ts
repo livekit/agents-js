@@ -132,7 +132,9 @@ export async function runConsole({
     if (Object.keys(InferenceRunner.registeredRunners).length > 0) {
       inferenceProc = new InferenceProcExecutor({
         runners: InferenceRunner.registeredRunners,
-        initializeTimeout: 30000,
+        // 5 minutes, matching python: loading model files into the child can
+        // be slow on first run.
+        initializeTimeout: 5 * 60 * 1000,
         closeTimeout: 5000,
         memoryWarnMB: 2000,
         memoryLimitMB: 0,
