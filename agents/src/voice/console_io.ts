@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import * as path from 'node:path';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { Future, Task } from '../utils.js';
+import type { AgentSession } from './agent_session.js';
 import { AudioInput, AudioOutput } from './io.js';
 import type { SessionTransport } from './remote_session.js';
 
@@ -188,5 +190,76 @@ export class TcpAudioOutput extends AudioOutput {
 
     this.pushedDurationMs = 0;
     this.interrupted = new Future();
+  }
+}
+
+/**
+ * Process-wide singleton that carries the console transport (and audio IO) from
+ * the `console` CLI runner into the {@link AgentSession} that starts inside the
+ * agent entrypoint. Mirrors python `AgentsConsole`.
+ *
+ * The runner sets {@link enabled} and the transport; `AgentSession._startImpl`
+ * then calls {@link acquireIo} to wire the session and build its `SessionHost`.
+ *
+ * @experimental
+ */
+export class AgentsConsole {
+  private static _instance?: AgentsConsole;
+
+  static getInstance(): AgentsConsole {
+    if (!AgentsConsole._instance) {
+      AgentsConsole._instance = new AgentsConsole();
+    }
+    return AgentsConsole._instance;
+  }
+
+  /** @internal — reset the process-wide singleton (test only). */
+  static _reset(): void {
+    AgentsConsole._instance = undefined;
+  }
+
+  enabled = false;
+  record = false;
+  transport?: SessionTransport;
+  audioInput?: TcpAudioInput;
+  audioOutput?: TcpAudioOutput;
+
+  /**
+   * Directory where console recordings (audio + session report) are written,
+   * relative to the working directory. Mirrors python's `AgentsConsole`.
+   */
+  readonly sessionDirectory: string;
+
+  private acquired = false;
+
+  private constructor() {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    this.sessionDirectory = path.join(
+      'console-recordings',
+      `session-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
+    );
+  }
+
+  get ioAcquired(): boolean {
+    return this.acquired;
+  }
+
+  /** Wire the session's IO for console mode. */
+  acquireIo(session: AgentSession): void {
+    if (this.acquired) {
+      throw new Error('the console IO was already acquired by another session');
+    }
+    this.acquired = true;
+
+    // Attach the audio bridges, enabled by default (voice mode). A text-mode
+    // driver disables them at runtime with an `update_io` request (audio off),
+    // so one wiring path serves both modes.
+    session.input.audio = this.audioInput ?? null;
+    session.output.audio = this.audioOutput ?? null;
+    // TODO(follow-up PR): Route audio through a TranscriptSynchronizer and set
+    // output.transcription to its text output, so transcripts stay in sync with
+    // playout. We leave transcription unset for now (the Go CLI owns the TUI).
+    session.output.transcription = null;
   }
 }

@@ -707,8 +707,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('Tools are missing in the session update event');
     }
 
-    // TODO(brian): these logics below are noops I think, leaving it here to keep
-    // parity with the python but we should remove them later
+    // TODO(brian): these logics below are noops I think; remove them later.
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
     const retainedTools = Object.fromEntries(
       Object.entries(_tools).filter(
