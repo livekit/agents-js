@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
 import { z } from 'zod';
+import * as z4 from 'zod/v4';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
-import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
+import { isZod4Schema, isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -634,13 +635,14 @@ export function tool(tool: any): any {
 // Ref: python livekit/agents/llm/tool_context.py:398-411
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function injectConfirmDuplicateParameter(parameters: any): any {
-  const confirmSchema = z.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION);
-
   if (isZodSchema(parameters)) {
     const maybeObjectSchema = parameters as {
       extend?: (shape: Record<string, unknown>) => unknown;
     };
     if (typeof maybeObjectSchema.extend === 'function') {
+      const confirmSchema = isZod4Schema(parameters)
+        ? z4.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION)
+        : z.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION);
       return maybeObjectSchema.extend({ [CONFIRM_DUPLICATE_PARAM]: confirmSchema });
     }
     throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
