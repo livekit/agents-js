@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Audio EOT (end-of-turn) detector base, stream state machine, and the
- * transport interface that concrete cloud/local backends implement.
+ * Audio EOT (end-of-turn) detector base, the per-window inference stream, and
+ * the transport interface that concrete cloud/local backends implement.
  *
  * Concrete implementations live in `agents/src/inference/eot/`.
  *
@@ -15,7 +15,6 @@ import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { LanguageCode } from '../../language.js';
-import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -24,11 +23,6 @@ import type { ThresholdOptions, TurnDetectorModel } from './languages.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
-
-export enum Status {
-  IDLE = 'idle',
-  ACTIVE = 'active',
-}
 
 /**
  * Options shared by the audio EOT stream and every transport.
@@ -72,15 +66,14 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
  * Transport adapter for `BaseStreamingTurnDetectorStream` — owns the I/O (WebSocket
  * session, in-process predict, etc.). The stream calls these methods
  * directly; transports report predictions back via
- * `stream._handlePrediction(requestId, probability, ...)`.
+ * `stream._resolvePrediction(requestId, probability, ...)`.
  */
 export interface StreamingTurnDetectionTransport {
   attach(stream: BaseStreamingTurnDetectorStream): void;
   run(): Promise<void>;
-  startInference(requestId: string): void;
+  runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
   flush(sentinel: FlushSentinel): Promise<void>;
-  stopInference(reason?: string): void;
   detach(): void;
 }
 
@@ -148,18 +141,18 @@ export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () 
 }
 
 /**
- * Per-turn FSM:
+ * Per-window inference stream. A thin transport-facing surface: per-request
+ * state is one `(requestId, requestFut)` pair.
  *
- * - `warmup()` opens an inference window (transport.startInference).
- * - `activate(trigger)` flips IDLE→ACTIVE; commits early if a confident
- *   prediction already resolved during warmup.
- * - `deactivate(trigger)` clears the request id, resolves the in-flight
- *   future with 0.0, calls transport.stopInference.
- * - `flush(reason)` deactivates and signals turn boundary to
- *   the transport via a `FlushSentinel`. Clears the cached prediction so
- *   it can't leak into the next turn.
- * - `predictEndOfTurn(chatCtx?, { timeoutMs })` returns a probability,
- *   defaulting to 1.0 on timeout.
+ * - `predict()` starts a request and returns its future, superseding any
+ *   previous request.
+ * - the transport's single prediction completes the request by resolving the
+ *   future via `_resolvePrediction`.
+ * - `cancelInference()` / `flush(reason)` close a pending request, resolving
+ *   its future with a default event so waiters never hang.
+ *
+ * All policy (when to start a request, await timeout, turn commits) lives in
+ * `AudioRecognition`.
  */
 export class SwapAbortError extends Error {
   constructor() {
@@ -178,33 +171,11 @@ export class BaseStreamingTurnDetectorStream {
   private _audioResampler: AudioResampler | undefined;
   private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
 
-  protected _status: Status = Status.IDLE;
-  protected _preemptiveRequestId: string | undefined;
-  protected _preemptiveRequestFut: Future<number> | undefined;
-  /**
-   * Latest resolved prediction in the current inference window. Cleared
-   * when a new window starts (next warmup) or on commit (flush). Lets
-   * `predictEndOfTurn` return immediately when a prediction is already
-   * in hand.
-   */
-  protected _lastPrediction: TurnDetectionEvent | undefined;
-  /**
-   * Most recent detected language, pushed by `AudioRecognition` on each STT
-   * transcript. Used by the inline early-deactivation check (`_isLikely`) to
-   * resolve the per-language unlikely-EOT threshold.
-   */
-  protected _lastLanguage: LanguageCode | undefined;
-  /**
-   * True between VAD start-of-speech (when `deactivate('vad sos')` re-arms it)
-   * and the next `flush()` — i.e. a user turn is open and `predictEndOfTurn`
-   * should run. When false, predict short-circuits to a positive default (the
-   * audio EOT model has already committed; an STT final arriving after has
-   * nothing fresh to evaluate). Initialized true so the first turn isn't
-   * gated before any flush.
-   */
-  protected _userTurnStarted = true;
-  /** Warn once per stream when predict is called after a commit. */
-  protected _latePredictWarned = false;
+  /** Id of the in-flight inference request, or `undefined` when idle. */
+  protected _requestId: string | undefined;
+  /** Future for the in-flight request; resolves to the prediction event (or
+   * a default event when the request is cancelled / flushed). */
+  protected _requestFut: Future<TurnDetectionEvent> | undefined;
 
   protected _mainTask: Task<void>;
   protected _logger = log();
@@ -254,111 +225,53 @@ export class BaseStreamingTurnDetectorStream {
     return this._opts.thresholds.supports(language);
   }
 
-  /**
-   * Record the most recent detected language so the inline early-deactivation
-   * check can resolve the unlikely-EOT threshold. Pushed by `AudioRecognition`
-   * on each STT transcript.
-   */
-  updateLanguage(language: LanguageCode | undefined): void {
-    this._lastLanguage = language;
-  }
-
-  /**
-   * A prediction at or above `unlikelyThreshold` is no longer "unlikely" — it's
-   * a confident end-of-turn. Mirrors that method's `undefined → "en"` fallback:
-   * an unknown language still gets the English threshold; an explicitly
-   * unsupported code misses the table and is never treated as likely.
-   */
-  protected _isLikely(probability: number): boolean {
-    const threshold = this._opts.thresholds.lookup(this._lastLanguage);
-    return threshold !== undefined && probability >= threshold;
-  }
-
   // endregion
 
-  // region: state machine
+  // region: inference requests
 
-  get isActive(): boolean {
-    return this._status === Status.ACTIVE;
-  }
-
-  get isInferenceRunning(): boolean {
-    return this._preemptiveRequestId !== undefined;
-  }
-
-  get preemptiveRequestId(): string | undefined {
-    return this._preemptiveRequestId;
-  }
-
-  get status(): Status {
-    return this._status;
-  }
-
-  get lastPrediction(): TurnDetectionEvent | undefined {
-    return this._lastPrediction;
-  }
-
-  /** Start an inference window if one isn't already open. Returns the
-   * in-flight future. Idempotent. */
-  warmup(): Future<number> {
-    if (this._preemptiveRequestId === undefined) {
-      const requestId = shortuuid('turn_request_');
-      this._preemptiveRequestId = requestId;
-      this._preemptiveRequestFut = new Future<number>();
-      // New inference window — drop any cached prediction from the previous
-      // window so `predictEndOfTurn` won't return stale.
-      this._lastPrediction = undefined;
-      this._transport.startInference(requestId);
+  /** Start a new inference request and return its future, superseding any
+   * previous request. */
+  predict(): Future<TurnDetectionEvent> {
+    if (this._audioChannel.closed) {
+      const fut = new Future<TurnDetectionEvent>();
+      fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(1.0));
+      return fut;
     }
-    if (this._preemptiveRequestFut === undefined) {
-      throw new Error('eot detection warmup failed, no request future');
-    }
-    return this._preemptiveRequestFut;
+
+    this.cancelInference(); // supersede any previous request
+    const fut = new Future<TurnDetectionEvent>();
+    this._requestId = shortuuid('turn_request_');
+    this._requestFut = fut;
+    // A transport may resolve synchronously (e.g. the local no-executor path
+    // defaults to 1.0 inline), which clears `_requestFut` via
+    // `_resolvePrediction`. Hold a local reference so we still return the
+    // resolved future rather than `undefined`.
+    this._transport.runInference(this._requestId);
+    return fut;
   }
 
-  activate(_trigger?: string): void {
-    if (this._status === Status.ACTIVE) {
-      return;
-    }
-    if (this._preemptiveRequestId === undefined) {
-      this._logger.trace(
-        'eot detector not warmed up before activation, likely due to overlapping speech',
-      );
-      this.warmup();
-    }
-    this._status = Status.ACTIVE;
-    // A prediction may have resolved during the preemptive warmup window,
-    // before activation. We deliberately hold off acting on the threshold
-    // until now: a confident EOT only commits once VAD confirms end-of-speech
-    // (the trigger that calls `activate`).
-    if (
-      this._lastPrediction !== undefined &&
-      this._isLikely(this._lastPrediction.endOfTurnProbability)
-    ) {
-      this.deactivate('positive eou prediction');
-    }
-  }
-
-  deactivate(trigger?: string): void {
-    // Mirror Python: clear the "turn committed" guard at the top so a VAD
-    // start-of-speech (which calls `deactivate('vad sos')`) re-arms the
-    // user turn even if the FSM was already idle.
-    this._userTurnStarted = true;
-    if (this._preemptiveRequestId === undefined && this._status === Status.IDLE) {
-      return;
-    }
-    this._preemptiveRequestId = undefined;
-    if (this._preemptiveRequestFut !== undefined) {
-      if (!this._preemptiveRequestFut.done) {
-        this._preemptiveRequestFut.resolve(0.0);
+  /** Close the current inference request (new speech, turn boundary,
+   * prediction timeout, mode change) and fall back if needed. */
+  cancelInference(opts: { timedOut?: boolean } = {}): void {
+    if (this._requestId !== undefined) {
+      const fut = this._requestFut;
+      this._requestId = undefined;
+      this._requestFut = undefined;
+      if (fut !== undefined && !fut.done) {
+        fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(0.0));
       }
-      this._preemptiveRequestFut = undefined;
     }
-    this._status = Status.IDLE;
-    this._transport.stopInference(trigger);
+
+    // trigger fallback immediately (the subclass timeout hook checks the
+    // model + signals the transport swap; the base hook is a no-op).
+    if (opts.timedOut) {
+      this._onPredictTimeout();
+    }
   }
 
   flush(reason?: string): void {
+    // Idempotent: a second call sends another sentinel that transports
+    // treat as a no-op (cloud: redundant session_flush; local: empty trim).
     if (this._audioChannel.closed) {
       return;
     }
@@ -370,14 +283,15 @@ export class BaseStreamingTurnDetectorStream {
       reason,
     };
     void this._audioChannel.write(sentinel);
-    // Turn boundary — the cached prediction belongs to the turn we just
-    // closed and must not leak into the next one.
-    this._lastPrediction = undefined;
-    this.deactivate(reason);
-    // Close the user turn AFTER deactivate (which re-arms the guard on its
-    // way out): until the next VAD start-of-speech calls `deactivate('vad sos')`
-    // to flip it back on, `predictEndOfTurn` short-circuits.
-    this._userTurnStarted = false;
+    this.cancelInference();
+  }
+
+  protected static _defaultEvent(probability: number): TurnDetectionEvent {
+    return {
+      type: 'eot_prediction',
+      endOfTurnProbability: probability,
+      lastSpeakingTimeMs: Date.now(),
+    };
   }
 
   // endregion
@@ -448,10 +362,11 @@ export class BaseStreamingTurnDetectorStream {
   // region: results
 
   /**
-   * Accept a prediction from a transport. The stream owns dedup (by
-   * requestId), future resolution, and the inline early-deactivate.
+   * Accept a prediction from a transport. A stale response (request id
+   * mismatch) is ignored; otherwise the in-flight future resolves with the
+   * full `TurnDetectionEvent` and the request completes.
    */
-  _handlePrediction(
+  _resolvePrediction(
     requestId: string,
     probability: number,
     opts: { inferenceDuration?: number; detectionDelay?: number } = {},
@@ -461,108 +376,20 @@ export class BaseStreamingTurnDetectorStream {
     if (this._closing) {
       return;
     }
-    if (requestId !== this._preemptiveRequestId) {
+    if (requestId !== this._requestId) {
       return;
     }
-    if (this._preemptiveRequestFut !== undefined && !this._preemptiveRequestFut.done) {
-      this._preemptiveRequestFut.resolve(probability);
-    }
-    const event: TurnDetectionEvent = {
-      type: 'eot_prediction',
-      endOfTurnProbability: probability,
-      lastSpeakingTimeMs: Date.now(),
-      detectionDelay: opts.detectionDelay,
-      inferenceDuration: opts.inferenceDuration,
-    };
-    this._lastPrediction = event;
-    // Early-deactivate: stop inference as soon as a confident EOT lands so a
-    // later intra-speech silence can warm up a fresh window. Only while active
-    // — predictions during preemptive warmup are cached and re-checked in
-    // `activate()`. `deactivate` just sends a non-blocking `stopInference`, so
-    // calling it inline from the transport's prediction callback is safe (no
-    // reentrant await).
-    if (this.isActive && this._isLikely(probability)) {
-      this.deactivate('positive eou prediction');
-    }
-  }
-
-  /**
-   * Run a warmup inference and wait for a prediction within `timeoutMs`.
-   *
-   * Returns the cached prediction if one has already arrived for the
-   * current inference window. `chatCtx` is accepted (and ignored) so the
-   * call site stays uniform with text-based `_TurnDetector` impls.
-   */
-  async predictEndOfTurn(
-    _chatCtx?: ChatContext,
-    optsOrTimeoutMs?: { timeoutMs?: number } | number,
-  ): Promise<number> {
-    // Accept both the options-bag form (FSM-native) and the positional-ms
-    // form (matches the `_TurnDetector` Protocol so audio detectors are a
-    // drop-in for text-based detectors).
-    const opts: { timeoutMs?: number } =
-      typeof optsOrTimeoutMs === 'number' ? { timeoutMs: optsOrTimeoutMs } : optsOrTimeoutMs ?? {};
-    if (this._lastPrediction !== undefined) {
-      return this._lastPrediction.endOfTurnProbability;
-    }
-    if (!this._userTurnStarted) {
-      if (!this._latePredictWarned) {
-        this._latePredictWarned = true;
-        this._logger.warn(
-          'predictEndOfTurn called after the audio eot model already committed ' +
-            'the turn (likely a late stt final). consider raising `minDelay` in ' +
-            'the endpointing options to accommodate slow stt. subsequent ' +
-            'occurrences on this stream will log at debug level.',
-        );
-      } else {
-        this._logger.debug('stt transcript arrived after a turn commit, short-circuiting');
-      }
-      return 1.0;
-    }
-
-    const timeoutMs = opts.timeoutMs ?? 500;
-    let fut: Future<number> | undefined;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    try {
-      fut = this.warmup();
-      this.activate();
-      const winner = await Promise.race([
-        fut.await.then((v) => ({ kind: 'value', v }) as const),
-        new Promise<{ kind: 'timeout' }>((resolve) => {
-          timeoutId = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
-        }),
-      ]);
-      if (winner.kind === 'value') {
-        return winner.v;
-      }
-      throw new Error('__eot_predict_timeout__');
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.message === '__eot_predict_timeout__';
-      if (!isTimeout) throw err;
-      // Contract on timeout: we couldn't tell within `timeoutMs`, so assume
-      // the turn is over. Resolve the future with 1.0 (so any concurrent
-      // waiter sees the same value) and deactivate the inference window
-      // (a stale prediction arriving later must not fire an event).
-      this._logger.warn(
-        {
-          timeoutMs,
-          requestId: this._preemptiveRequestId,
-          default: 1.0,
-        },
-        'eot prediction timed out, returning a default value',
-      );
-      if (fut !== undefined && !fut.done) {
-        fut.resolve(1.0);
-      }
-      this.deactivate('predict_end_of_turn timeout');
-      this._onPredictTimeout();
-      // Positive default so minEndpointingDelay applies.
-      return 1.0;
-    } finally {
-      // Always release the timer — on the value path the timeout would
-      // otherwise keep the event loop alive until it fires, and N
-      // concurrent turns would queue N pending timers.
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    const fut = this._requestFut;
+    this._requestId = undefined;
+    this._requestFut = undefined;
+    if (fut !== undefined && !fut.done) {
+      fut.resolve({
+        type: 'eot_prediction',
+        endOfTurnProbability: probability,
+        lastSpeakingTimeMs: Date.now(),
+        detectionDelay: opts.detectionDelay,
+        inferenceDuration: opts.inferenceDuration,
+      });
     }
   }
 
@@ -581,16 +408,11 @@ export class BaseStreamingTurnDetectorStream {
   }
 
   async aclose(): Promise<void> {
-    this.endInput();
+    this.endInput(); // the flush inside closes the in-flight request
     this._closing = true;
     this._swapController.abort();
     await cancelAndWait([this._mainTask]);
-    if (this._preemptiveRequestFut !== undefined && !this._preemptiveRequestFut.done) {
-      this._preemptiveRequestFut.resolve(0.0);
-    }
-    this._preemptiveRequestFut = undefined;
-    this._preemptiveRequestId = undefined;
-    this._status = Status.IDLE;
+    this.cancelInference(); // defensive, normally a no-op
     // Drop our strong reference on the parent detector so callers that
     // forget `detector.aclose()` don't leak the stream graph.
     this._detector._unregisterStream(this);

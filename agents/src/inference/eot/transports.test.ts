@@ -11,7 +11,7 @@
  *
  * - Retry counter resets after a successful connect (so transient drops
  *   across the session lifetime don't accumulate toward `maxRetry`).
- * - All outbound messages are FIFO-ordered on the wire, even when control
+ * - All outbound messages are FIFO-ordered on the wire, even when `runInference`
  *   hooks fire synchronously between two awaited audio frames.
  *
  * Port of Python `tests/test_turn_detection_cloud_stream.py`.
@@ -164,13 +164,14 @@ describe('CloudToLocalFallback', () => {
       stream.pushAudio(pcmFrame());
       await tick();
 
-      // Predict timeout triggers a cloud→local fallback. The orphaned cloud
-      // drain must release the shared reader lock before the real
-      // `LocalTransport.run()` re-acquires it — otherwise `getReader()` throws
-      // "ReadableStream is locked", which the FSM mis-reports as a local
+      // A timed-out cancelInference triggers a cloud→local fallback. The
+      // orphaned cloud drain must release the shared reader lock before the
+      // real `LocalTransport.run()` re-acquires it — otherwise `getReader()`
+      // throws "ReadableStream is locked", which is mis-reported as a local
       // failure.
-      const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
-      expect(prob).toBe(1.0);
+      const fut = stream.predict();
+      stream.cancelInference({ timedOut: true });
+      await fut.await;
 
       await waitForCond(() => stream.model === 'turn-detector-v1-mini');
       expect(stream.isFallback).toBe(true);
@@ -191,7 +192,7 @@ describe('CloudStreamSendOrdering', () => {
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {
       await waitUntilConnected(transport);
-      stream.warmup();
+      stream.predict();
       stream.pushAudio(pcmFrame());
       await drainSendQueue(transport);
 
@@ -206,20 +207,26 @@ describe('CloudStreamSendOrdering', () => {
     }
   });
 
-  it('inferenceStart precedes inferenceStop (FIFO)', async () => {
+  it('consecutive inferenceStarts are serialized in call order', async () => {
+    // Two `runInference` hooks back-to-back (a predict superseding another)
+    // used to race at `ws.send`; the unified send channel serializes them in
+    // call order.
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {
       await waitUntilConnected(transport);
-      stream.warmup();
-      stream.deactivate('vad sos');
+      stream.predict();
+      const firstId = (stream as unknown as { _requestId?: string })._requestId;
+      stream.predict();
+      const secondId = (stream as unknown as { _requestId?: string })._requestId;
       await drainSendQueue(transport);
 
-      const kinds = fakeWs.sent.map((m) => m.message.case);
-      const startIdx = kinds.indexOf('inferenceStart');
-      const stopIdx = kinds.indexOf('inferenceStop');
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeLessThan(stopIdx);
+      const startIds: (string | undefined)[] = [];
+      for (const m of fakeWs.sent) {
+        if (m.message.case === 'inferenceStart') {
+          startIds.push(m.message.value.requestId);
+        }
+      }
+      expect(startIds).toEqual([firstId, secondId]);
     } finally {
       await stream.aclose();
     }

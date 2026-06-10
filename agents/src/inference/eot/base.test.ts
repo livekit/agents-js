@@ -3,31 +3,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * FSM tests for `BaseStreamingTurnDetectorStream` (the streaming turn-detector FSM).
+ * Inference-request lifecycle tests for `BaseStreamingTurnDetectorStream`.
  *
- * Covers the warmup → activate → deactivate / flush lifecycle and the
- * regression cases:
- *
- * - `deactivate()` from a pre-active state must stop the inference cleanly
- *   so a late prediction for the cancelled request isn't acted on by the
- *   next activate.
- * - a confident prediction (at or above the per-language threshold)
- *   early-deactivates inline while active, or at `activate()` if it resolved
- *   during warmup.
- * - `predictEndOfTurn` timeout must leave the FSM consistent so the next
- *   `warmup()` can proceed.
+ * The stream is a thin transport-facing surface: per-request state is one
+ * `(requestId, requestFut)` pair. `predict` starts a request and returns its
+ * future, superseding any previous request; the transport's single prediction
+ * completes the request by resolving the future; `cancelInference`/`flush`
+ * close a pending request, resolving its future with a default event so
+ * waiters never hang. All policy (when to start a request, await timeout, turn
+ * commits) lives in `AudioRecognition` and is covered by
+ * `voice/audio_recognition_turn_detection.test.ts`.
  *
  * Port of Python `tests/test_turn_detection_fsm.py`.
  */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
+import type { Future } from '../../utils.js';
 import {
   BaseStreamingTurnDetector,
   type BaseStreamingTurnDetectorOptions,
   BaseStreamingTurnDetectorStream,
   type FlushSentinel,
-  Status,
   type StreamingTurnDetectionTransport,
+  type TurnDetectionEvent,
 } from './base.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
@@ -44,11 +42,8 @@ class FakeTransport implements StreamingTurnDetectionTransport {
     }
     await this._stream._drainAudioChannel();
   }
-  startInference(requestId: string): void {
-    this.events.push(['start_inference', requestId]);
-  }
-  stopInference(reason?: string): void {
-    this.events.push(['stop_inference', reason ?? '']);
+  runInference(requestId: string): void {
+    this.events.push(['run_inference', requestId]);
   }
   async pushFrame(_frame: AudioFrame): Promise<void> {
     // no-op
@@ -62,11 +57,13 @@ class FakeTransport implements StreamingTurnDetectionTransport {
 }
 
 class FakeDetector extends BaseStreamingTurnDetector {
+  // Mirror Python's `_make_stream` default (the local mini model) so the
+  // timed-out-cancel test sees a non-cloud model and skips the fallback.
   get model(): TurnDetectorModel {
-    return 'turn-detector-v1';
+    return 'turn-detector-v1-mini';
   }
   stream(): BaseStreamingTurnDetectorStream {
-    throw new Error('unused in FSM tests');
+    throw new Error('unused in request-lifecycle tests');
   }
 }
 
@@ -83,16 +80,17 @@ class FakeBackend extends BaseStreamingTurnDetectorStream {
     return this.fakeTransport.events;
   }
 
+  /** Mirror what a transport would do: hand the prediction to the stream. */
   simulatePrediction(requestId: string, probability: number): void {
-    this._handlePrediction(requestId, probability);
+    this._resolvePrediction(requestId, probability);
   }
 
   // Exposed for assertions.
-  get status(): Status {
-    return this._status;
+  get requestId(): string | undefined {
+    return this._requestId;
   }
-  get preemptiveRequestFut() {
-    return this._preemptiveRequestFut;
+  get requestFut(): Future<TurnDetectionEvent> | undefined {
+    return this._requestFut;
   }
 }
 
@@ -109,279 +107,161 @@ function makeStream(thresholds: Record<string, number> = {}): FakeBackend {
   return new FakeBackend(makeOpts(thresholds));
 }
 
-/** Did the stream record an early-deactivate (`stop_inference` with the
- * positive-EOT trigger)? */
-const earlyDeactivated = (events: Array<[string, string]>) =>
-  events.some((e) => e[0] === 'stop_inference' && e[1] === 'positive eou prediction');
+const countRunInference = (events: Array<[string, string]>) =>
+  events.filter((e) => e[0] === 'run_inference').length;
 
-const countStartInference = (events: Array<[string, string]>) =>
-  events.filter((e) => e[0] === 'start_inference').length;
-
-describe('StreamingTurnDetectionFSM', () => {
-  it('warmup starts inference', async () => {
+describe('AudioTurnDetectionRequests', () => {
+  it('predict starts inference', async () => {
     const s = makeStream();
     try {
-      const fut = s.warmup();
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.isInferenceRunning).toBe(true);
-      expect(s.preemptiveRequestId).toBeDefined();
+      const fut = s.predict();
+      expect(s.requestId).toBeDefined();
       expect(fut.done).toBe(false);
-      expect(s.events).toEqual([['start_inference', s.preemptiveRequestId!]]);
+      expect(s.events).toEqual([['run_inference', s.requestId!]]);
     } finally {
       await s.aclose();
     }
   });
 
-  it('warmup is idempotent', async () => {
+  it('predict supersedes previous request', async () => {
     const s = makeStream();
     try {
-      s.warmup();
-      const firstId = s.preemptiveRequestId;
-      s.warmup();
-      expect(s.preemptiveRequestId).toBe(firstId);
-      expect(countStartInference(s.events)).toBe(1);
+      const oldFut = s.predict();
+      const oldId = s.requestId;
+      const newFut = s.predict();
+
+      expect(newFut).not.toBe(oldFut);
+      expect(s.requestId).not.toBe(oldId);
+      expect(oldFut.done).toBe(true);
+      expect((await oldFut.await).endOfTurnProbability).toBe(0.0);
+      expect(countRunInference(s.events)).toBe(2);
     } finally {
       await s.aclose();
     }
   });
 
-  it('activate from warmed up', async () => {
+  it('cancelInference closes the request', async () => {
     const s = makeStream();
     try {
-      s.warmup();
-      s.activate('vad eos');
-      expect(s.status).toBe(Status.ACTIVE);
-      expect(s.isInferenceRunning).toBe(true);
-    } finally {
-      await s.aclose();
-    }
-  });
+      const fut = s.predict();
+      s.cancelInference();
 
-  it('activate without warmup auto-warms-up', async () => {
-    const s = makeStream();
-    try {
-      s.activate('manual');
-      expect(s.status).toBe(Status.ACTIVE);
-      expect(countStartInference(s.events)).toBe(1);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('deactivate during preemptive phase stops inference', async () => {
-    const s = makeStream();
-    try {
-      s.warmup();
-      s.deactivate('vad sos');
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.preemptiveRequestId).toBeUndefined();
-      expect(s.isInferenceRunning).toBe(false);
-      expect(s.events).toContainEqual(['stop_inference', 'vad sos']);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('late prediction after deactivate not acted on', async () => {
-    const s = makeStream({ en: 0.5 });
-    try {
-      s.warmup();
-      const cancelledId = s.preemptiveRequestId!;
-      s.deactivate('vad sos');
-
-      s.simulatePrediction(cancelledId, 0.9);
-      // Request-id mismatch → dropped, not cached for a later activate().
-      expect(s.lastPrediction).toBeUndefined();
-
-      s.warmup();
-      s.activate('vad eos');
-      // No cached prediction for the fresh window → activate must not
-      // early-deactivate; inference stays running.
-      expect(s.isInferenceRunning).toBe(true);
-      expect(earlyDeactivated(s.events)).toBe(false);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('deactivate when idle is a no-op', async () => {
-    const s = makeStream();
-    try {
-      s.deactivate('vad sos');
-      expect(s.events).toEqual([]);
-      expect(s.status).toBe(Status.IDLE);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('deactivate during warmup resolves future with zero', async () => {
-    const s = makeStream();
-    try {
-      const fut = s.warmup();
-      s.deactivate();
+      expect(s.requestId).toBeUndefined();
       expect(fut.done).toBe(true);
-      expect(await fut.await).toBe(0.0);
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.preemptiveRequestId).toBeUndefined();
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
     } finally {
       await s.aclose();
     }
   });
 
-  it('predictEndOfTurn timeout leaves fsm consistent', async () => {
+  it('cancelInference when idle is a no-op', async () => {
     const s = makeStream();
     try {
-      const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 10 });
-      expect(prob).toBe(1.0);
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.preemptiveRequestId).toBeUndefined();
-      expect(s.preemptiveRequestFut).toBeUndefined();
-      expect(s.events).toContainEqual(['stop_inference', 'predict_end_of_turn timeout']);
+      s.cancelInference();
+      expect(s.events).toEqual([]);
     } finally {
       await s.aclose();
     }
   });
 
-  it('predictEndOfTurn timeout allows next warmup', async () => {
+  it('late prediction after cancelInference is dropped', async () => {
     const s = makeStream();
     try {
-      await s.predictEndOfTurn(undefined, { timeoutMs: 10 });
-      const fut = s.warmup();
-      expect(s.preemptiveRequestId).toBeDefined();
-      expect(fut.done).toBe(false);
+      const fut = s.predict();
+      const cancelledId = s.requestId!;
+      expect(cancelledId).toBeDefined();
+
+      s.cancelInference();
+      s.simulatePrediction(cancelledId, 0.9);
+      // cancelInference default (0.0), not the late 0.9.
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
+
+      const nextFut = s.predict();
+      expect(nextFut).not.toBe(fut);
+      expect(nextFut.done).toBe(false);
+      expect(countRunInference(s.events)).toBe(2);
     } finally {
       await s.aclose();
     }
   });
 
-  it('flush deactivates and emits stop_inference', async () => {
+  it('prediction completes the request', async () => {
     const s = makeStream();
     try {
-      s.warmup();
-      s.activate();
+      const fut = s.predict();
+      const requestId = s.requestId!;
+      expect(requestId).toBeDefined();
+
+      s.simulatePrediction(requestId, 0.3);
+      expect(fut.done).toBe(true);
+      expect((await fut.await).endOfTurnProbability).toBe(0.3);
+      expect(s.requestId).toBeUndefined();
+    } finally {
+      await s.aclose();
+    }
+  });
+
+  it('flush closes the request', async () => {
+    const s = makeStream();
+    try {
+      const fut = s.predict();
       s.flush('turn committed');
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.isInferenceRunning).toBe(false);
-      expect(s.events).toContainEqual(['stop_inference', 'turn committed']);
+      expect(s.requestId).toBeUndefined();
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
     } finally {
       await s.aclose();
     }
   });
 
-  it('positive prediction while active early-deactivates', async () => {
-    const s = makeStream({ en: 0.5 });
-    try {
-      s.warmup();
-      s.activate('vad eos');
-      const requestId = s.preemptiveRequestId!;
-
-      s.simulatePrediction(requestId, 0.9); // >= 0.5
-      expect(s.isInferenceRunning).toBe(false);
-      expect(s.events).toContainEqual(['stop_inference', 'positive eou prediction']);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('subthreshold prediction while active keeps running', async () => {
-    const s = makeStream({ en: 0.5 });
-    try {
-      s.warmup();
-      s.activate('vad eos');
-      const requestId = s.preemptiveRequestId!;
-
-      s.simulatePrediction(requestId, 0.3); // < 0.5
-      expect(s.isInferenceRunning).toBe(true);
-      expect(s.lastPrediction?.endOfTurnProbability).toBe(0.3);
-      expect(earlyDeactivated(s.events)).toBe(false);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('preemptive positive prediction acted on at activate', async () => {
-    const s = makeStream({ en: 0.5 });
-    try {
-      s.warmup();
-      const requestId = s.preemptiveRequestId!;
-      s.simulatePrediction(requestId, 0.9);
-      // Cached, but not active yet → inference still running.
-      expect(s.isInferenceRunning).toBe(true);
-      expect(s.lastPrediction?.endOfTurnProbability).toBe(0.9);
-
-      s.activate('vad eos');
-      expect(s.isInferenceRunning).toBe(false);
-      expect(s.events).toContainEqual(['stop_inference', 'positive eou prediction']);
-    } finally {
-      await s.aclose();
-    }
-  });
-});
-
-describe('PredictOnSilenceGuard', () => {
-  it('predict short-circuits after flush', async () => {
+  it('flush does not overwrite a resolved prediction', async () => {
     const s = makeStream();
     try {
+      const fut = s.predict();
+      const requestId = s.requestId!;
+      expect(requestId).toBeDefined();
+      s.simulatePrediction(requestId, 0.7);
+
       s.flush('turn committed');
-      const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 1000 });
-      expect(prob).toBe(1.0);
-      expect(countStartInference(s.events)).toBe(0);
-      expect(s.preemptiveRequestId).toBeUndefined();
+      expect((await fut.await).endOfTurnProbability).toBe(0.7);
+      expect(s.requestId).toBeUndefined();
     } finally {
       await s.aclose();
     }
   });
 
-  it('predict runs after deactivate("vad sos")', async () => {
+  it('predict after endInput returns a resolved default', async () => {
     const s = makeStream();
     try {
-      s.flush('turn committed');
-      s.deactivate('vad sos');
-      const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 10 });
-      expect(prob).toBe(1.0); // timed out
-      expect(countStartInference(s.events)).toBe(1);
+      s.endInput();
+      // `endInput` closes the audio channel asynchronously; wait for it.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const fut = s.predict();
+      expect(fut.done).toBe(true);
+      expect((await fut.await).endOfTurnProbability).toBe(1.0);
+      expect(s.events.some((e) => e[0] === 'run_inference')).toBe(false);
     } finally {
       await s.aclose();
     }
   });
 
-  it('predict returns cached prediction before short-circuit', async () => {
+  it('aclose resolves a pending future', async () => {
     const s = makeStream();
-    try {
-      s.warmup();
-      const requestId = s.preemptiveRequestId!;
-      s.simulatePrediction(requestId, 0.4);
-      const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 1000 });
-      expect(prob).toBe(0.4);
-    } finally {
-      await s.aclose();
-    }
+    const fut = s.predict();
+    await s.aclose();
+    expect(fut.done).toBe(true);
+    expect((await fut.await).endOfTurnProbability).toBe(0.0);
   });
 
-  it('deactivate("vad sos") stops in-flight inference', async () => {
+  it('timed-out cancelInference does not fall back for the local model', async () => {
+    // `timedOut: true` only promotes the cloud→local fallback for the cloud
+    // model; the base stream (mini model) just closes the request — the cloud
+    // case is covered in detector.test.ts.
     const s = makeStream();
     try {
-      s.warmup();
-      s.activate();
-      expect(s.isInferenceRunning).toBe(true);
-
-      s.deactivate('vad sos');
-
-      expect(s.isInferenceRunning).toBe(false);
-      expect(s.status).toBe(Status.IDLE);
-      expect(s.events).toContainEqual(['stop_inference', 'vad sos']);
-    } finally {
-      await s.aclose();
-    }
-  });
-
-  it('initial state does not short-circuit', async () => {
-    const s = makeStream();
-    try {
-      const prob = await s.predictEndOfTurn(undefined, { timeoutMs: 10 });
-      expect(prob).toBe(1.0); // timeout default
-      expect(countStartInference(s.events)).toBe(1);
+      const fut = s.predict();
+      s.cancelInference({ timedOut: true });
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
+      expect(s.model).toBe('turn-detector-v1-mini');
     } finally {
       await s.aclose();
     }

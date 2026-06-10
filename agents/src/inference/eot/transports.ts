@@ -31,7 +31,6 @@ const AudioEncoding = AgentInference.AudioEncoding;
 const ClientMessageCtor = AgentInference.ClientMessage;
 const ServerMessageCtor = AgentInference.ServerMessage;
 const InferenceStart = AgentInference.InferenceStart;
-const InferenceStop = AgentInference.InferenceStop;
 const InputAudio = AgentInference.InputAudio;
 const SessionClose = AgentInference.SessionClose;
 const SessionCreate = AgentInference.SessionCreate;
@@ -165,7 +164,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._streamRef = new WeakRef(stream);
   }
 
-  startInference(requestId: string): void {
+  runInference(requestId: string): void {
     const snapshot = this._buf.read();
     const task = this._predict(requestId, snapshot);
     this._tasks.add(task);
@@ -184,7 +183,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
             'defaulting predictions to 1.0 so turns still commit after minDelay',
         );
       }
-      stream._handlePrediction(requestId, 1.0);
+      stream._resolvePrediction(requestId, 1.0);
       return;
     }
 
@@ -213,7 +212,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     }
     const freshStream = this._streamRef?.deref();
     if (freshStream === undefined) return;
-    freshStream._handlePrediction(requestId, prob, { inferenceDuration: inferenceDurationMs });
+    freshStream._resolvePrediction(requestId, prob, { inferenceDuration: inferenceDurationMs });
   }
 
   async pushFrame(frame: AudioFrame): Promise<void> {
@@ -224,11 +223,6 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     if (this._buf.length > 0) {
       this._buf.shift(this._buf.length);
     }
-  }
-
-  stopInference(_reason?: string): void {
-    // In-flight predictions run to completion; `_predict` drops stale results.
-    return;
   }
 
   detach(): void {
@@ -253,7 +247,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
  *
  * Maintains one inference session against the LiveKit Agent Gateway:
  * connect → `SessionCreate` → three concurrent tasks (drain audio, send,
- * receive) → protobuf encode/decode → `stream._handlePrediction(...)` +
+ * receive) → protobuf encode/decode → `stream._resolvePrediction(...)` +
  * `EOTInferenceMetrics` on the detector. Mirrors Python `_CloudTransport`.
  *
  * All outbound messages flow through a single FIFO send channel so control
@@ -314,19 +308,10 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     return this._ws !== undefined && this._ws.readyState === WS_OPEN;
   }
 
-  startInference(requestId: string): void {
+  runInference(requestId: string): void {
     this._enqueue(
       new ClientMessageCtor({
         message: { case: 'inferenceStart', value: new InferenceStart({ requestId }) },
-      }),
-    );
-  }
-
-  stopInference(_reason?: string): void {
-    this._enqueue(
-      new ClientMessageCtor({
-        message: { case: 'inferenceStop', value: new InferenceStop() },
-        createdAt: nowTimestamp(),
       }),
     );
   }
@@ -411,7 +396,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
       const requestSentAtMs = timestampToMs(stats?.latestClientCreatedAt);
       const detectionDelayMs = requestSentAtMs > 0 ? Date.now() - requestSentAtMs : 0;
       const inferenceDurationMs = durationToMs(stats?.serverE2eLatency);
-      stream._handlePrediction(msg.requestId ?? '', prediction.probability, {
+      stream._resolvePrediction(msg.requestId ?? '', prediction.probability, {
         detectionDelay: detectionDelayMs,
         inferenceDuration: inferenceDurationMs,
       });

@@ -84,17 +84,14 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
     // cancels via `aclose`).
     await new Promise(() => undefined);
   }
-  startInference(requestId: string): void {
-    this.events.push(['start_inference', requestId]);
+  runInference(requestId: string): void {
+    this.events.push(['run_inference', requestId]);
   }
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.events.push(['push_frame', frame]);
   }
   async flush(sentinel: FlushSentinel): Promise<void> {
     this.events.push(['flush', sentinel]);
-  }
-  stopInference(reason?: string): void {
-    this.events.push(['stop_inference', reason]);
   }
   detach(): void {
     this.events.push(['detach', null]);
@@ -275,11 +272,15 @@ describe('Fallback', () => {
     await stream.aclose();
   });
 
-  it('fallback on predict timeout', async () => {
+  it('fallback on timed-out cancelInference', async () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
     const stream = makeStreamWithTransport(transport);
-    const prob = await stream.predictEndOfTurn(undefined, { timeoutMs: 10 });
-    expect(prob).toBe(1.0);
+    const fut = stream.predict();
+    // A timed-out cancel (driven by AudioRecognition's eou bounce) closes the
+    // request and promotes the cloud→local fallback.
+    stream.cancelInference({ timedOut: true });
+    expect((await fut.await).endOfTurnProbability).toBe(0.0);
+    await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(stream.model).toBe('turn-detector-v1-mini');
     expect(stream.isFallback).toBe(true);
     await stream.aclose();
@@ -293,7 +294,7 @@ describe('Fallback', () => {
     const stream = makeStreamWithTransport(transport);
     await waitFor(() => stream.model === 'turn-detector-v1-mini');
     expect(transport.runCalls).toBe(1);
-    stream.warmup();
+    stream.predict();
     expect(stream.model).toBe('turn-detector-v1-mini');
     await stream.aclose();
   });
@@ -626,8 +627,8 @@ describe('LocalModelExecutor', () => {
     const stream = detector.stream();
     try {
       stream.pushAudio(pcmFrame());
-      const p = await stream.predictEndOfTurn(undefined, { timeoutMs: 1000 });
-      expect(p).toBe(0.7);
+      const ev = await stream.predict().await;
+      expect(ev.endOfTurnProbability).toBe(0.7);
       expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
     } finally {
       await stream.aclose();
@@ -640,8 +641,8 @@ describe('LocalModelExecutor', () => {
     const detector = new TurnDetector({ version: 'v1-mini', executor: undefined });
     const stream = detector.stream();
     try {
-      const p = await stream.predictEndOfTurn(undefined, { timeoutMs: 1000 });
-      expect(p).toBe(1.0);
+      const ev = await stream.predict().await;
+      expect(ev.endOfTurnProbability).toBe(1.0);
     } finally {
       await stream.aclose();
     }

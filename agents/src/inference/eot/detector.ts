@@ -289,9 +289,10 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   }
 
   protected _emitDefaultForInflight(): void {
-    const requestId = this._preemptiveRequestId;
+    // Positive default so any waiter commits after minEndpointingDelay.
+    const requestId = this._requestId;
     if (requestId !== undefined) {
-      this._handlePrediction(requestId, 1.0);
+      this._resolvePrediction(requestId, 1.0);
     }
   }
 
