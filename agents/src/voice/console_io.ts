@@ -250,10 +250,9 @@ export class AgentsConsole {
     // so one wiring path serves both modes.
     session.input.audio = this.audioInput ?? null;
     session.output.audio = this.audioOutput ?? null;
-    // TODO(follow-up PR): python routes audio through a TranscriptSynchronizer
-    // and sets output.transcription to its text output, so transcripts stay in
-    // sync with playout. We leave transcription unset for now (the Go CLI owns
-    // the TUI); wire a synchronizer here for full parity.
+    // TODO(follow-up PR): Route audio through a TranscriptSynchronizer and set
+    // output.transcription to its text output, so transcripts stay in sync with
+    // playout. We leave transcription unset for now (the Go CLI owns the TUI).
     session.output.transcription = null;
   }
 }

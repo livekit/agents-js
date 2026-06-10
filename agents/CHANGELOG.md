@@ -198,7 +198,7 @@
 
 ### Minor Changes
 
-- `voice.AMD` reaches feature parity with python. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
+- `voice.AMD` reaches feature completion. - [#1390](https://github.com/livekit/agents-js/pull/1390) ([@toubatbrian](https://github.com/toubatbrian))
 
 ### Patch Changes
 
@@ -310,7 +310,7 @@
 
 ### Patch Changes
 
-- replcae sentencetokenizer with wordtokenizer for python parity - [#1312](https://github.com/livekit/agents-js/pull/1312) ([@tinalenguyen](https://github.com/tinalenguyen))
+- replcae sentencetokenizer with wordtokenizer - [#1312](https://github.com/livekit/agents-js/pull/1312) ([@tinalenguyen](https://github.com/tinalenguyen))
 
 - add `preserveFunctionCallHistory` option to `AgentTask` and `TaskGroup` and use function call history in Phonic plugin - [#1285](https://github.com/livekit/agents-js/pull/1285) ([@qionghuang6](https://github.com/qionghuang6))
 

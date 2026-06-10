@@ -222,7 +222,7 @@ export abstract class SupervisedProc {
     } catch (err) {
       this.init.reject(err as Error);
       // On timeout (or a bad first message) the child is still alive — kill it
-      // so a failed initialize doesn't leak the process (python parity).
+      // so a failed initialize doesn't leak the process.
       if (this.proc && this.proc.exitCode === null && !this.proc.killed) {
         this.proc.kill();
       }

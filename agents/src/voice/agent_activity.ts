@@ -2842,7 +2842,7 @@ export class AgentActivity implements RecognitionHooks {
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
 
-      // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
+      // Increment step count on the existing handle.
       speechHandle._numSteps += 1;
 
       // Avoid setting tool_choice to "required" or a specific function when
@@ -2850,7 +2850,7 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice =
         schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
-      // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
+      // Reuse the same speechHandle for the tool response.
       const toolResponseTask = this.createSpeechTask({
         taskFn: () =>
           this.pipelineReplyTask(

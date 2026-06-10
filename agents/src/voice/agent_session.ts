@@ -561,7 +561,7 @@ export class AgentSession<
       }
 
       // `lk console --record` forces audio recording even if the session was
-      // started with `record: false` (python parity).
+      // started with `record: false`.
       const consoleForcesRecord = consoleInst.enabled && consoleInst.record;
       if (this.input.audio && this.output.audio && (this._enableRecording || consoleForcesRecord)) {
         this._recorderIO = new RecorderIO({ agentSession: this });
@@ -569,7 +569,7 @@ export class AgentSession<
         this.output.audio = this._recorderIO.recordOutput(this.output.audio);
 
         // Start recording to the session directory. In console mode the disk
-        // write is gated on --record (python parity).
+        // write is gated on --record.
         if (consoleForcesRecord || !consoleInst.enabled) {
           const sessionDir = ctx.sessionDirectory;
           if (sessionDir) {

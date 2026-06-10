@@ -76,7 +76,7 @@ describe('BoundedCache', () => {
     expect(result?.predictionDurationInS).toBe(0.1);
   });
 
-  it('pop without predicate removes the oldest entry (python parity)', () => {
+  it('pop without predicate removes the oldest entry', () => {
     const cache = new BoundedCache<number, Entry>(10);
     cache.set(1, new Entry(1));
     cache.set(2, new Entry(2));
