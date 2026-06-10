@@ -60,6 +60,10 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
     this.#runners = runners;
   }
 
+  protected get processKind(): string {
+    return 'inference';
+  }
+
   createProcess(): ChildProcess {
     const forkUrl = new URL(`./inference_proc_lazy_main${currentFileExtension}`, import.meta.url);
 
