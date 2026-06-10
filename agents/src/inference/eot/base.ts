@@ -500,16 +500,26 @@ export class BaseStreamingTurnDetectorStream {
    */
   protected async _raceWithSwap<T>(inner: Promise<T>): Promise<T> {
     const signal = this._swapController.signal;
+    let onAbort: (() => void) | undefined;
     const abortPromise = new Promise<never>((_, reject) => {
       if (signal.aborted) {
         reject(new SwapAbortError());
         return;
       }
-      signal.addEventListener('abort', () => reject(new SwapAbortError()), { once: true });
+      onAbort = () => reject(new SwapAbortError());
+      signal.addEventListener('abort', onAbort, { once: true });
     });
+    // If `inner` wins the race, the abort listener would otherwise stay
+    // registered and reject this now-orphaned promise when `aclose()` later
+    // aborts the controller — surfacing as an unhandledRejection. Swallow it
+    // (the race result is already settled) and remove the listener below.
+    abortPromise.catch(() => {});
     try {
       return await Promise.race([inner, abortPromise]);
     } finally {
+      if (onAbort !== undefined) {
+        signal.removeEventListener('abort', onAbort);
+      }
       if (signal.aborted) {
         // Reset for the next iteration of the subclass loop.
         this._swapController = new AbortController();
