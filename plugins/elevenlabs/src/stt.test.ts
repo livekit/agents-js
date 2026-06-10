@@ -280,7 +280,7 @@ describe('ElevenLabs STT', () => {
       expect(url.pathname).toBe('/speech-to-text/realtime');
       expect(url.searchParams.get('model_id')).toBe('scribe_v2_realtime');
       expect(url.searchParams.get('audio_format')).toBe('pcm_16000');
-      expect(url.searchParams.get('commit_strategy')).toBe('vad');
+      expect(url.searchParams.get('commit_strategy')).toBe('manual');
       expect(url.searchParams.get('include_language_detection')).toBe('true');
       expect(receivedMessages[0]).toMatchObject({
         message_type: 'input_audio_chunk',
@@ -334,7 +334,6 @@ describe('ElevenLabs STT', () => {
             words: [{ text: 'kept', start: 0, end: 0.2 }],
           }),
         );
-        ws.send(JSON.stringify({ message_type: 'committed_transcript_with_timestamps', text: '' }));
       });
     });
 
@@ -364,6 +363,7 @@ describe('ElevenLabs STT', () => {
 
       const url = new URL(`ws://127.0.0.1${requestUrl}`);
       expect(url.searchParams.get('language_code')).toBe('en');
+      expect(url.searchParams.get('commit_strategy')).toBe('vad');
       expect(url.searchParams.get('include_language_detection')).toBeNull();
       expect(url.searchParams.get('include_timestamps')).toBe('true');
       expect(url.searchParams.get('vad_silence_threshold_secs')).toBe('0.5');
@@ -393,14 +393,18 @@ describe('ElevenLabs STT', () => {
       const stream = eleven.stream();
 
       await waitUntil(() => urls.length === 1);
-      eleven.updateOptions({ serverVad: null });
+      eleven.updateOptions({ serverVad: { vadSilenceThresholdSecs: 0.5 } });
       await waitUntil(() => urls.length === 2, 2000);
+      eleven.updateOptions({ serverVad: null });
+      await waitUntil(() => urls.length === 3, 2000);
       stream.close();
 
       const first = new URL(`ws://127.0.0.1${urls[0]}`);
       const second = new URL(`ws://127.0.0.1${urls[1]}`);
-      expect(first.searchParams.get('commit_strategy')).toBe('vad');
-      expect(second.searchParams.get('commit_strategy')).toBe('manual');
+      const third = new URL(`ws://127.0.0.1${urls[2]}`);
+      expect(first.searchParams.get('commit_strategy')).toBe('manual');
+      expect(second.searchParams.get('commit_strategy')).toBe('vad');
+      expect(third.searchParams.get('commit_strategy')).toBe('manual');
     } finally {
       await closeWebSocketServer(wss);
     }
