@@ -220,6 +220,39 @@ describe('init timeout rejection handling', () => {
 
     expect(result).toBe('resolved');
   });
+
+  it('kills the child when initialize times out', async () => {
+    // A child that never responds would survive a failed initialize() —
+    // initialize() must kill it so the process doesn't leak.
+    const hangScript = join(tmpdir(), 'test_hang_init_child.mjs');
+    writeFileSync(hangScript, `setInterval(() => {}, 1000);`);
+
+    const { SupervisedProc } = await import('./supervised_proc.js');
+    class TestProc extends SupervisedProc {
+      createProcess() {
+        return fork(hangScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+      }
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
+
+    await proc.start();
+    const exited = new Promise<void>((r) => proc.proc!.on('exit', () => r()));
+    await expect(proc.initialize()).rejects.toThrow('runner initialization timed out');
+
+    const result = await Promise.race([
+      exited.then(() => 'exited'),
+      new Promise((r) => setTimeout(() => r('timeout'), 2000)),
+    ]);
+
+    proc.proc?.kill();
+    try {
+      unlinkSync(hangScript);
+    } catch {}
+
+    expect(result).toBe('exited');
+  });
 });
 
 describe('timer cleanup', () => {
