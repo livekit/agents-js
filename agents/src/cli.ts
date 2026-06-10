@@ -135,6 +135,12 @@ export const runApp = (opts: ServerOptions) => {
     .command('start')
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
+    .addOption(
+      new Option(
+        '--simulation',
+        'Run under an agent simulation with worker load limit disabled',
+      ).hideHelp(),
+    )
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
@@ -143,6 +149,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      opts.simulation = commandOptions.simulation;
       runServer({
         opts,
         production: true,
