@@ -560,15 +560,21 @@ export class AgentSession<
         );
       }
 
-      if (this.input.audio && this.output.audio && this._enableRecording) {
+      // `lk console --record` forces audio recording even if the session was
+      // started with `record: false`.
+      const consoleForcesRecord = consoleInst.enabled && consoleInst.record;
+      if (this.input.audio && this.output.audio && (this._enableRecording || consoleForcesRecord)) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
         this.output.audio = this._recorderIO.recordOutput(this.output.audio);
 
-        // Start recording to session directory
-        const sessionDir = ctx.sessionDirectory;
-        if (sessionDir) {
-          tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+        // Start recording to the session directory. In console mode the disk
+        // write is gated on --record.
+        if (consoleForcesRecord || !consoleInst.enabled) {
+          const sessionDir = ctx.sessionDirectory;
+          if (sessionDir) {
+            tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+          }
         }
       }
     }

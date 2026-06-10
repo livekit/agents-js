@@ -96,7 +96,7 @@ const alwaysTrueTurnDetector: _TurnDetector = {
   predictEndOfTurn: async () => 1.0,
 };
 
-describe('AudioRecognition user_turn span parity', () => {
+describe('AudioRecognition user_turn span', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   it('creates user_turn and parents eou_detection under it (stt mode)', async () => {

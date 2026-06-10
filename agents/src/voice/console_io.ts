@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import * as path from 'node:path';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { Future, Task } from '../utils.js';
@@ -211,11 +212,27 @@ export class AgentsConsole {
   }
 
   enabled = false;
+  record = false;
   transport?: SessionTransport;
   audioInput?: TcpAudioInput;
   audioOutput?: TcpAudioOutput;
 
+  /**
+   * Directory where console recordings (audio + session report) are written,
+   * relative to the working directory. Mirrors python's `AgentsConsole`.
+   */
+  readonly sessionDirectory: string;
+
   private acquired = false;
+
+  private constructor() {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    this.sessionDirectory = path.join(
+      'console-recordings',
+      `session-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
+    );
+  }
 
   get ioAcquired(): boolean {
     return this.acquired;
@@ -233,10 +250,9 @@ export class AgentsConsole {
     // so one wiring path serves both modes.
     session.input.audio = this.audioInput ?? null;
     session.output.audio = this.audioOutput ?? null;
-    // TODO(follow-up PR): python routes audio through a TranscriptSynchronizer
-    // and sets output.transcription to its text output, so transcripts stay in
-    // sync with playout. We leave transcription unset for now (the Go CLI owns
-    // the TUI); wire a synchronizer here for full parity.
+    // TODO(follow-up PR): Route audio through a TranscriptSynchronizer and set
+    // output.transcription to its text output, so transcripts stay in sync with
+    // playout. We leave transcription unset for now (the Go CLI owns the TUI).
     session.output.transcription = null;
   }
 }
