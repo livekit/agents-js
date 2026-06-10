@@ -11,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as lemonslice from '@livekit/agents-plugin-lemonslice';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import { fileURLToPath } from 'node:url';
 
 initializeLogger({ pretty: true });
@@ -35,7 +34,6 @@ export default defineAgent({
           model: 'cartesia/sonic-3',
           voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
         }),
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
         turnHandling: {
           interruption: {
             resumeFalseInterruption: false,

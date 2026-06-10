@@ -9,7 +9,6 @@ import {
   inference,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
@@ -50,7 +49,6 @@ export default defineAgent({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     await session.start({

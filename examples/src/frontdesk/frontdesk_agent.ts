@@ -12,7 +12,6 @@ import {
 } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -224,7 +223,6 @@ export default defineAgent({
         model: 'gpt-4.1',
       }),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: userdata,
       voiceOptions: {
         maxToolSteps: 1,

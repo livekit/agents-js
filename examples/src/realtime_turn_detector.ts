@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, voice } from '@livekit/agents';
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  defineAgent,
+  inference,
+  voice,
+} from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 
@@ -21,7 +27,7 @@ export default defineAgent({
         turnDetection: null,
         inputAudioTranscription: null,
       }),
-      turnDetection: new livekit.turnDetector.EnglishModel(),
+      turnDetection: new inference.TurnDetector(),
     });
 
     await session.start({

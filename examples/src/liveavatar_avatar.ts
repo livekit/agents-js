@@ -12,7 +12,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as liveavatar from '@livekit/agents-plugin-liveavatar';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
@@ -34,7 +33,6 @@ export default defineAgent({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       voiceOptions: {
         preemptiveGeneration: true,
       },

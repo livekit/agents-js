@@ -11,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as anam from '@livekit/agents-plugin-anam';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +38,6 @@ export default defineAgent({
         turnDetection: null,
         inputAudioTranscription: null,
       }),
-      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
     await session.start({

@@ -14,7 +14,6 @@ import {
   logMetrics,
   tool,
 } from '@livekit/agents';
-// import * as livekit from '@livekit/agents-plugin-livekit';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -71,11 +70,8 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        // turn detection determines when the agent should respond. See https://docs.livekit.io/agents/build/turns
-        turnDetection: new inference.TurnDetector(),
-        // To use the local on-device text turn detector instead, re-enable the
-        // `@livekit/agents-plugin-livekit` import above and use:
-        // turnDetection: new livekit.turnDetector.MultilingualModel(),
+        // turn detection defaults to the multimodal inference.TurnDetector when unset.
+        // See https://docs.livekit.io/agents/build/turns
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,

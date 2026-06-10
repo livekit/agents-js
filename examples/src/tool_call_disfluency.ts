@@ -11,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -57,7 +56,6 @@ export default defineAgent({
     const session = new voice.AgentSession({
       llm: new openai.realtime.RealtimeModel(),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     await session.start({

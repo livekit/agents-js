@@ -11,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as hume from '@livekit/agents-plugin-hume';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
@@ -34,7 +33,6 @@ export default defineAgent({
       stt: 'deepgram/nova-3',
       llm: 'openai/gpt-4.1-mini',
       tts,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       voiceOptions: {
         preemptiveGeneration: true,
       },

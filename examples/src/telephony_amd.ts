@@ -10,7 +10,6 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import { TrackKind } from '@livekit/rtc-node';
 import { RoomServiceClient, SipClient } from 'livekit-server-sdk';
 import { fileURLToPath } from 'node:url';
@@ -52,9 +51,6 @@ export default defineAgent({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
-      },
       preemptiveGeneration: true,
     });
 
