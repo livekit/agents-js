@@ -4232,6 +4232,13 @@ export class AgentActivity implements RecognitionHooks {
   private async closeToolsets(): Promise<void> {
     if (!this._toolsetsSetup) return;
     this._toolsetsSetup = false;
+    // agent-scoped AsyncToolsets run on their own executors; drain them (cancel
+    // cancellable, await non-cancellable) so a non-cancellable async tool finishes
+    // instead of being hard-cancelled by the aclose() below.
+    const agentAsyncToolsets = this.agent.toolCtx.toolsets.filter(
+      (ts): ts is AsyncToolset => ts instanceof AsyncToolset,
+    );
+    await Promise.allSettled(agentAsyncToolsets.map((ts) => ts._executor.drain()));
     await this.closeToolsetList(this.agent.toolCtx.toolsets);
   }
 
