@@ -1319,7 +1319,7 @@ export class AudioRecognition {
         // Reset VAD so that incorrect end of turn from STT can be corrected by VAD interruption.
         // If user is still speaking (an immediate VAD SOS will interrupt the agent).
         // Default-bundled VAD is treated as absent here — only user-supplied VADs
-        // are reset/flushed.
+        // are reset/flushed, matching the matrix in PR_DESCRIPTION.
         if (this.hasUserVad && this.vadSpeechStarted) {
           if (this.vadStream) {
             this.vadStream.flush();
