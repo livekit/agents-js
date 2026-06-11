@@ -79,7 +79,7 @@ export interface DeepgramOptions {
   /** Keywords with boost values. */
   keywords?: Array<[string, number]>;
   /** Key terms for recognition. */
-  keyterms?: string[];
+  keyterm?: string | string[];
   /** Enable profanity filter. */
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
