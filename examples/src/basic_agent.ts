@@ -43,10 +43,6 @@ export default defineAgent({
     const logger = log();
 
     const session = new AgentSession({
-      // Explicit VAD (cheap to construct; the silero model lazy-loads on the
-      // first stream). Passing it rather than relying on the auto-provisioned
-      // default marks `isDefault=false`, which is what enables adaptive interruption.
-      vad: new inference.VAD(),
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({

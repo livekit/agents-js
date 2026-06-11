@@ -667,8 +667,12 @@ export class AudioRecognition {
 
     let speakingWon = false;
     try {
+      const innerPromise = inner(innerController);
+      // When the speaking branch wins, the race settles before finally aborts
+      // innerController, leaving innerPromise's rejection uncaught without this.
+      void innerPromise.catch(() => {});
       await Promise.race([
-        inner(innerController),
+        innerPromise,
         this.userSpeakingEvent.waitOnce(controller.signal).then(() => {
           speakingWon = true;
         }),
