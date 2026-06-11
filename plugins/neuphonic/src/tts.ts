@@ -323,14 +323,15 @@ const getQueryParamString = (opts: TTSOptions): string => {
  * Returns all model parameters as an object in snake_case.
  * @param opts - The TTSOptions object.
  */
-const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
-  const params: Record<string, string | number> = {};
+const getModelParams = (opts: TTSOptions): Record<string, string | number> => {
+  const params: Record<string, string | number> = {
+    lang_code: getBaseLanguage(opts.langCode),
+    encoding: opts.encoding,
+    sampling_rate: opts.sampleRate,
+  };
 
   if (opts.voiceId) params.voice_id = opts.voiceId;
   if (opts.model) params.model = opts.model;
-  if (opts.langCode) params.lang_code = getBaseLanguage(opts.langCode);
-  if (opts.encoding) params.encoding = opts.encoding;
-  if (opts.sampleRate) params.sampling_rate = opts.sampleRate;
   if (opts.speed) params.speed = opts.speed;
 
   return params;
