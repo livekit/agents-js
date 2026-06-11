@@ -136,8 +136,8 @@ function sampleRateFromFormat(encoding: TTSEncoding): number {
 }
 
 function synthesizeUrl(opts: ResolvedTTSOptions): string {
-  const { baseURL, voiceId, model, encoding, streamingLatency } = opts;
-  let url = `${baseURL}/text-to-speech/${voiceId}/stream?model_id=${model}&output_format=${encoding}`;
+  const { baseURL, voiceId, encoding, streamingLatency } = opts;
+  let url = `${baseURL}/text-to-speech/${voiceId}/stream?output_format=${encoding}&enable_logging=${String(opts.enableLogging).toLowerCase()}`;
   if (streamingLatency !== undefined) {
     url += `&optimize_streaming_latency=${streamingLatency}`;
   }
@@ -837,6 +837,13 @@ export class ChunkedStream extends tts.ChunkedStream {
     const voiceSettings = this.#opts.voiceSettings
       ? stripUndefined(this.#opts.voiceSettings)
       : undefined;
+    const extraParams: Record<string, string | boolean> = {};
+    if (this.#opts.language) {
+      extraParams.language_code = getBaseLanguage(this.#opts.language);
+    }
+    if (this.#opts.applyLanguageTextNormalization !== undefined) {
+      extraParams.apply_language_text_normalization = this.#opts.applyLanguageTextNormalization;
+    }
 
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
@@ -852,6 +859,8 @@ export class ChunkedStream extends tts.ChunkedStream {
           text: this.inputText,
           model_id: this.#opts.model,
           voice_settings: voiceSettings,
+          apply_text_normalization: this.#opts.applyTextNormalization,
+          ...extraParams,
         }),
         signal: this.abortSignal,
       });
