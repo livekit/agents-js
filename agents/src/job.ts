@@ -223,8 +223,6 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return this.#simulationContext;
     }
 
-    this.#simulationResolved = true;
-
     let metadata = '';
     for (const participant of this.#room.remoteParticipants.values()) {
       if (!Object.hasOwn(participant.attributes, ATTRIBUTE_SIMULATOR)) {
@@ -242,8 +240,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       metadata = (this.#info.job as proto.Job & { metadata?: string }).metadata || '';
     }
     if (!metadata) {
+      // The simulator participant is only visible once the room is connected; a pre-connect miss
+      // must not prevent a later lookup from finding the simulator dispatch.
+      this.#simulationResolved = this.#room.isConnected;
       return undefined;
     }
+
+    this.#simulationResolved = true;
 
     let dispatch: SimulationDispatch;
     try {
