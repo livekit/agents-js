@@ -190,6 +190,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     if (!this.capturing) {
       this.resetState();
       this.capturing = true;
+      // resetState() clears latestText, but the caller already set it to the
+      // payload for this capture (captureText, line above). Re-assign so the
+      // subsequent flush republishes the correct text for segments whose first
+      // event is already final (no prior interims).
+      this.latestText = text;
     }
 
     try {
@@ -214,7 +219,12 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
+    // Snapshot latestText now so a subsequent captureText() for the next
+    // segment doesn't overwrite the text this flush is meant to publish.
+    const textToFlush = this.latestText;
+    this.flushTask = Task.from((controller) =>
+      this.flushTaskImpl(currWriter, textToFlush, controller.signal),
+    );
   }
 
   private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
@@ -243,7 +253,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     });
   }
 
-  private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
+  private async flushTaskImpl(
+    writer: TextStreamWriter | null,
+    text: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
@@ -266,7 +280,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
           if (signal.aborted || !tmpWriter) {
             return;
           }
-          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          await Promise.race([tmpWriter.write(text), abortPromise]);
           if (signal.aborted) {
             return;
           }
