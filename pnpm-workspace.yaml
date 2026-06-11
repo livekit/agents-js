@@ -12,6 +12,8 @@ minimumReleaseAgeExclude:
   - ws@8.20.1
   # Renovate security update: vitest@4.1.0
   - vitest@4.1.0
+  # Renovate security update: turbo@2.9.14
+  - turbo@2.9.14
 
 catalog:
   '@livekit/rtc-node': ^0.13.29
