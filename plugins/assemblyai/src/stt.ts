@@ -72,8 +72,12 @@ export interface STTOptions {
   maxTurnSilence?: number;
   formatTurns?: boolean;
   keytermsPrompt?: string[];
-  /** Only supported with the `u3-rt-pro` model. */
+  /** Only supported with the `u3-rt-pro` model family. */
   prompt?: string;
+  /** Only supported with the `u3-rt-pro` model family. */
+  agentContext?: string;
+  /** Only supported with the `u3-rt-pro` model family. Set at connection time only. */
+  previousContextNTurns?: number;
   vadThreshold?: number;
   /**
    * Enable speaker diarization. Note: AssemblyAI will return per-word speaker
@@ -134,7 +138,14 @@ export class STT extends stt.STT {
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     if (!isU3ProModel(speechModel)) {
-      for (const param of ['prompt', 'voiceFocus', 'voiceFocusThreshold', 'mode'] as const) {
+      for (const param of [
+        'prompt',
+        'agentContext',
+        'previousContextNTurns',
+        'voiceFocus',
+        'voiceFocusThreshold',
+        'mode',
+      ] as const) {
         if (opts[param] !== undefined) {
           throw new Error(
             `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
@@ -226,6 +237,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
     if (opts.prompt !== undefined) configMsg.prompt = opts.prompt;
+    if (opts.agentContext !== undefined) configMsg.agent_context = opts.agentContext;
     if (opts.keytermsPrompt !== undefined) configMsg.keyterms_prompt = opts.keytermsPrompt;
     if (opts.maxTurnSilence !== undefined) configMsg.max_turn_silence = opts.maxTurnSilence;
     if (opts.minTurnSilence !== undefined) configMsg.min_turn_silence = opts.minTurnSilence;
@@ -311,6 +323,8 @@ export class SpeechStream extends stt.SpeechStream {
           : undefined,
       language_detection: languageDetection,
       prompt: this.#opts.prompt,
+      agent_context: this.#opts.agentContext,
+      previous_context_n_turns: this.#opts.previousContextNTurns,
       vad_threshold: this.#opts.vadThreshold,
       speaker_labels: this.#opts.speakerLabels,
       max_speakers: this.#opts.maxSpeakers,
