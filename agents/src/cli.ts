@@ -24,7 +24,7 @@ const formatErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 const runServer = async (args: CliArgs) => {
-  initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
+  initializeLogger({ pretty: !args.production, level: args.opts.logLevel, compact: !!args.room });
   const logger = log();
 
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.

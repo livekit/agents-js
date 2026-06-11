@@ -11,6 +11,7 @@ import { type PinoLogObject, emitToOtel } from './telemetry/pino_otel_transport.
 export type LoggerOptions = {
   pretty: boolean;
   level?: string;
+  compact?: boolean;
 };
 
 // Use Symbol.for() + globalThis to create process-wide singletons.
@@ -40,10 +41,13 @@ export const log = () => {
   return logger;
 };
 
-const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
+const createLogger = ({ pretty, level, compact }: LoggerOptions): Logger => {
   const logLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    {
+      stream: pretty ? pinoPretty({ colorize: true, singleLine: compact }) : process.stdout,
+      level: logLevel,
+    },
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
@@ -54,9 +58,9 @@ const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
 };
 
 /** @internal */
-export const initializeLogger = ({ pretty, level }: LoggerOptions) => {
-  globals[LOGGER_OPTIONS_KEY] = { pretty, level };
-  globals[LOGGER_KEY] = createLogger({ pretty, level });
+export const initializeLogger = ({ pretty, level, compact }: LoggerOptions) => {
+  globals[LOGGER_OPTIONS_KEY] = { pretty, level, compact };
+  globals[LOGGER_KEY] = createLogger({ pretty, level, compact });
 };
 
 /**
