@@ -7,6 +7,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../../_exceptions.js';
 import { log } from '../../log.js';
+import { Event } from '../../utils.js';
 import { buildMetadataHeaders, createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { OverlappingSpeechEvent } from './types.js';
@@ -26,7 +27,7 @@ export interface WsTransportOptions {
   apiKey: string;
   apiSecret: string;
   sampleRate: number;
-  threshold: number;
+  threshold?: number;
   minFrames: number;
   timeout: number;
   connectTimeout: number;
@@ -39,9 +40,10 @@ export interface WsTransportState {
   cache: BoundedCache<number, InterruptionCacheEntry>;
 }
 
-const wsMessageSchema = z.discriminatedUnion('type', [
+export const wsMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal(MSG_SESSION_CREATED),
+    default_threshold: z.number().nullish(),
   }),
   z.object({
     type: z.literal(MSG_SESSION_CLOSED),
@@ -70,6 +72,23 @@ const wsMessageSchema = z.discriminatedUnion('type', [
 type WsMessage = z.infer<typeof wsMessageSchema>;
 
 /**
+ * Resolve the effective interruption threshold for observability only — the server makes the
+ * actual decision. Precedence: user override, then server default; null when neither is known.
+ */
+export function resolveEffectiveThreshold(
+  threshold: number | undefined,
+  defaultThreshold: number | null | undefined,
+): number | null {
+  if (threshold !== undefined) {
+    return threshold;
+  }
+  if (defaultThreshold != null) {
+    return defaultThreshold;
+  }
+  return null;
+}
+
+/**
  * Creates a WebSocket connection and waits for it to open.
  */
 async function connectWebSocket(
@@ -83,39 +102,46 @@ async function connectWebSocket(
     headers: { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` },
   });
 
-  await new ThrowsPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
-    (resolve, reject) => {
-      const timeout = setTimeout(() => {
-        ws.terminate();
-        reject(
-          new APITimeoutError({
-            message: 'WebSocket connection timeout',
-            options: { retryable: false },
-          }),
-        );
-      }, options.connectTimeout);
-      ws.once('open', () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      ws.once('unexpected-response', (_req, res) => {
-        clearTimeout(timeout);
-        ws.terminate();
-        const statusCode = res.statusCode ?? -1;
-        reject(
-          new APIStatusError({
-            message: `WebSocket connection rejected with status ${statusCode}`,
-            options: { statusCode, retryable: false },
-          }),
-        );
-      });
-      ws.once('error', (err: Error) => {
-        clearTimeout(timeout);
-        ws.terminate();
-        reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
-      });
-    },
-  );
+  try {
+    await new ThrowsPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
+      (resolve, reject) => {
+        const timeout = setTimeout(() => {
+          ws.terminate();
+          reject(
+            new APITimeoutError({
+              message: 'WebSocket connection timeout',
+              options: { retryable: false },
+            }),
+          );
+        }, options.connectTimeout);
+        ws.once('open', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        ws.once('unexpected-response', (_req, res) => {
+          clearTimeout(timeout);
+          ws.terminate();
+          const statusCode = res.statusCode ?? -1;
+          reject(
+            new APIStatusError({
+              message: `WebSocket connection rejected with status ${statusCode}`,
+              options: { statusCode, retryable: false },
+            }),
+          );
+        });
+        ws.once('error', (err: Error) => {
+          clearTimeout(timeout);
+          ws.terminate();
+          reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
+        });
+      },
+    );
+  } finally {
+    // Drop the connection-phase once() listeners so a later socket error can't fire the stale
+    // once('error') alongside the operational on('error'). Safe to remove all: the message handler
+    // is attached after this returns.
+    ws.removeAllListeners();
+  }
 
   return ws;
 }
@@ -123,6 +149,7 @@ async function connectWebSocket(
 export interface WsTransportResult {
   transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
   reconnect: () => Promise<void>;
+  close: () => void;
 }
 
 /**
@@ -141,8 +168,14 @@ export function createWsTransport(
   getAndResetNumRequests?: () => number,
 ): WsTransportResult {
   const logger = log();
-  let ws: WebSocket | null = null;
+  let activeWs: WebSocket | null = null;
   let outputController: TransformStreamDefaultController<OverlappingSpeechEvent> | null = null;
+
+  // `reconnecting` is the in-flight reconnect; transform() awaits it so it never sends on a socket
+  // being torn down. `closed` lets the background watcher exit its loop.
+  const reconnectEvent = new Event();
+  let reconnecting: Promise<void> | null = null;
+  let closed = false;
 
   function setupMessageHandler(socket: WebSocket): void {
     socket.on('message', (data: WebSocket.Data) => {
@@ -182,31 +215,56 @@ export function createWsTransport(
   async function ensureConnection(): Promise<
     Throws<void, APIStatusError | APITimeoutError | APIConnectionError>
   > {
-    if (ws && ws.readyState === WebSocket.OPEN) return;
+    if (activeWs && activeWs.readyState === WebSocket.OPEN) return;
 
-    ws = await connectWebSocket(options);
-    setupMessageHandler(ws);
+    activeWs = await connectWebSocket(options);
+    setupMessageHandler(activeWs);
 
+    const settings: Record<string, unknown> = {
+      sample_rate: options.sampleRate,
+      num_channels: 1,
+      min_frames: options.minFrames,
+      encoding: 's16le',
+    };
+    if (options.threshold !== undefined) {
+      settings.threshold = options.threshold;
+    }
     const sessionCreateMsg = JSON.stringify({
       type: MSG_SESSION_CREATE,
-      settings: {
-        sample_rate: options.sampleRate,
-        num_channels: 1,
-        threshold: options.threshold,
-        min_frames: options.minFrames,
-        encoding: 's16le',
-      },
+      settings,
     });
-    ws.send(sessionCreateMsg);
+    activeWs.send(sessionCreateMsg);
   }
 
   function handleMessage(message: WsMessage): void {
     const state = getState();
 
     switch (message.type) {
-      case MSG_SESSION_CREATED:
-        logger.debug('WebSocket session created');
+      case MSG_SESSION_CREATED: {
+        if (options.threshold === undefined && message.default_threshold == null) {
+          outputController?.error(
+            new APIStatusError({
+              message:
+                'adaptive interruption session created without a threshold: no user override and the server did not report a default_threshold',
+              options: { statusCode: 500, retryable: false },
+            }),
+          );
+          break;
+        }
+        // Observability only — the server makes the actual decision.
+        logger.debug(
+          {
+            defaultThreshold: message.default_threshold,
+            effectiveThreshold: resolveEffectiveThreshold(
+              options.threshold,
+              message.default_threshold,
+            ),
+            userOverride: options.threshold !== undefined,
+          },
+          'adaptive interruption session created',
+        );
         break;
+      }
 
       case MSG_INTERRUPTION_DETECTED: {
         const createdAt = message.created_at;
@@ -325,7 +383,9 @@ export function createWsTransport(
   }
 
   function sendAudioData(audioSlice: Int16Array): void {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    // Backstop for a genuine unexpected drop: throws a retryable error so the stream fails over. An
+    // intentional reconnect is awaited in transform() before we get here, so it won't fire then.
+    if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({ message: 'WebSocket not connected' });
     }
 
@@ -355,29 +415,69 @@ export function createWsTransport(
     combined.set(new Uint8Array(header), 0);
     combined.set(audioBytes, 8);
 
-    ws.send(combined);
+    activeWs.send(combined);
     onRequestSent?.();
   }
 
-  function close(): void {
-    if (ws?.readyState === WebSocket.OPEN) {
+  // Close the current socket without ending the transport (used by both close() and reconnect).
+  function closeSocket(): void {
+    if (activeWs?.readyState === WebSocket.OPEN) {
       const closeMsg = JSON.stringify({ type: MSG_SESSION_CLOSE });
       try {
-        ws.send(closeMsg);
+        activeWs.send(closeMsg);
       } catch (e: unknown) {
         logger.error(e, 'failed to send close message');
       }
     }
-    ws?.close(1000); // signal normal websocket closure
-    ws = null;
+    // The abandoned socket can still emit 'error' during its close handshake; that handler closes
+    // over the shared outputController, so a late error would tear down the replacement stream.
+    activeWs?.removeAllListeners();
+    activeWs?.close(1000); // signal normal websocket closure
+    activeWs = null;
+  }
+
+  function close(): void {
+    closed = true;
+    reconnectEvent.set(); // wake the watcher so it exits its loop
+    closeSocket();
   }
 
   /**
-   * Reconnect the WebSocket with updated options.
-   * This is called when options are updated via updateOptions().
+   * Request an in-place reconnect to apply updated options (threshold / min frames): it does not
+   * error the stream and does not consume a failover retry. The work happens in reconnectWatcher().
    */
   async function reconnect(): Promise<void> {
-    close();
+    if (closed) return;
+    reconnectEvent.set();
+  }
+
+  // Background loop that reconnects in place when reconnect() fires, so applying new options keeps
+  // the stream alive and off the failover retry path.
+  async function reconnectWatcher(): Promise<void> {
+    while (!closed) {
+      await reconnectEvent.wait();
+      if (closed) break;
+      reconnectEvent.clear();
+
+      // `.catch` keeps `reconnecting` non-rejecting (transform awaits it); a genuine reconnect
+      // failure is routed to the stream as an error — a legitimate retry.
+      const done = (async () => {
+        closeSocket();
+        getState().cache.clear(); // abandon the old socket's unanswered in-flight requests
+        await ensureConnection();
+        // close() may have raced in during the await; its closeSocket() saw activeWs === null and
+        // was a no-op, so tear down the socket we just opened — else it leaks with live handlers.
+        if (closed) closeSocket();
+      })().catch((e: unknown) => {
+        outputController?.error(e);
+      });
+      reconnecting = done;
+      try {
+        await done;
+      } finally {
+        if (reconnecting === done) reconnecting = null;
+      }
+    }
   }
 
   const transport = new TransformStream<
@@ -390,13 +490,18 @@ export function createWsTransport(
         await ensureConnection().catch((e) => {
           controller.error(e);
         });
+        void reconnectWatcher();
       },
 
-      transform(chunk, controller) {
+      async transform(chunk, controller) {
         if (!(chunk instanceof Int16Array)) {
           controller.enqueue(chunk);
           return;
         }
+
+        // Wait out any in-flight reconnect so we don't send on a socket being torn down. It never
+        // rejects — a failed reconnect has already errored the stream via outputController.
+        if (reconnecting) await reconnecting;
 
         // Only forwards buffered audio while overlap speech is actively on.
         const state = getState();
@@ -434,5 +539,5 @@ export function createWsTransport(
     { highWaterMark: 2 },
   );
 
-  return { transport, reconnect };
+  return { transport, reconnect, close };
 }
