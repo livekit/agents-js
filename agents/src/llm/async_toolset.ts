@@ -53,6 +53,7 @@ export class AsyncToolset extends Toolset {
 
   override async aclose(): Promise<void> {
     await super.aclose();
+    await this._executor.drain();
     await this._executor.aclose();
   }
 }

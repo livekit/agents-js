@@ -425,8 +425,6 @@ export class ParticipantAudioOutput extends AudioOutput {
   async captureFrame(frame: AudioFrame): Promise<void> {
     await this.startedFuture.await;
 
-    super.captureFrame(frame);
-
     if (!this.playbackEnabledFuture.done) {
       this.audioSource.clearQueue();
       // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
@@ -435,6 +433,8 @@ export class ParticipantAudioOutput extends AudioOutput {
         return;
       }
     }
+
+    super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
+import { z } from 'zod';
 import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
@@ -125,14 +126,10 @@ export const getRunningTasksTool = tool({
 export const cancelTaskTool = tool({
   name: 'lk_agents_cancel_task',
   description: 'Cancel a running tool call by call_id.',
-  parameters: {
-    type: 'object',
-    properties: {
-      call_id: { type: 'string' },
-    },
-    required: ['call_id'],
-  },
-  execute: async ({ call_id }: { call_id: string }, { ctx }) => {
+  parameters: z.object({
+    call_id: z.string(),
+  }),
+  execute: async ({ call_id }, { ctx }) => {
     const task = runningTasks.get(ctx.session)?.get(call_id);
     if (!task) {
       throw new ToolError(`Task ${call_id} not found`);
@@ -325,7 +322,10 @@ export class ToolExecutor {
   }
 
   // Ref: python livekit/agents/voice/tool_executor.py:417-522
-  async enqueueReply(ctx: RunContext<any>, items: [FunctionCall, FunctionCallOutput]): Promise<void> {
+  async enqueueReply(
+    ctx: RunContext<any>,
+    items: [FunctionCall, FunctionCallOutput],
+  ): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);

@@ -564,11 +564,30 @@ export function tool<
   flags,
   onDuplicate,
 }: {
+  /** Unique name the model calls the tool by. Must be non-empty. */
   name: string;
+  /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /**
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema.
+   */
   parameters: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments and a
+   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
+   */
   execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
   flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
   onDuplicate?: DuplicateMode;
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
@@ -582,11 +601,27 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
   flags,
   onDuplicate,
 }: {
+  /** Unique name the model calls the tool by. Must be non-empty. */
   name: string;
+  /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /** Omitted in this overload — the tool takes no arguments. */
   parameters?: never;
+  /**
+   * Called when the model invokes the tool. Receives a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
+   */
   execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
   flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
   onDuplicate?: DuplicateMode;
 }): FunctionTool<Record<string, never>, UserData, Result>;
 
