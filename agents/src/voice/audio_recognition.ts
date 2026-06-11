@@ -1506,6 +1506,9 @@ export class AudioRecognition {
           if (!res) break;
           const { done, value: ev } = res;
           if (done) break;
+          // A healthy stream delivering events recovers the failover budget, so a later transient
+          // failure isn't charged against earlier ones.
+          numRetries = 0;
           this.onOverlapSpeechEvent(ev);
         }
         break;

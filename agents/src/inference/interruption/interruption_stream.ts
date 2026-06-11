@@ -10,7 +10,6 @@ import { type StreamChannel, createStreamChannel } from '../../stream/stream_cha
 import { traceTypes } from '../../telemetry/index.js';
 import { FRAMES_PER_SECOND, apiConnectDefaults } from './defaults.js';
 import type { InterruptionDetectionError } from './errors.js';
-import { createHttpTransport } from './http_transport.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import {
@@ -99,13 +98,15 @@ export class InterruptionStreamBase {
   // Store reconnect function for WebSocket transport
   private wsReconnect?: () => Promise<void>;
 
+  private wsClose?: () => void;
+
   // Mutable transport options that can be updated via updateOptions()
   private transportOptions: {
     baseUrl: string;
     apiKey: string;
     apiSecret: string;
     sampleRate: number;
-    threshold: number;
+    threshold?: number;
     minFrames: number;
     timeout: number;
     connectTimeout: number;
@@ -154,8 +155,8 @@ export class InterruptionStreamBase {
       this.options.minFrames = Math.ceil(options.minInterruptionDurationInS * FRAMES_PER_SECOND);
       this.transportOptions.minFrames = this.options.minFrames;
     }
-    // Trigger WebSocket reconnection if using proxy (WebSocket transport)
-    if (this.options.useProxy && this.wsReconnect) {
+    // Trigger WebSocket reconnection to apply updated settings.
+    if (this.wsReconnect) {
       await this.wsReconnect();
     }
   }
@@ -309,30 +310,20 @@ export class InterruptionStreamBase {
       { highWaterMark: 32 },
     );
 
-    // Second transform: transport layer (HTTP or WebSocket based on useProxy)
+    // Second transform: WebSocket transport layer.
     const transportOptions = this.transportOptions;
 
-    let transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
-    if (this.options.useProxy) {
-      const wsResult = createWsTransport(
-        transportOptions,
-        getState,
-        setState,
-        handleSpanUpdate,
-        onRequestSent,
-        getAndResetNumRequests,
-      );
-      transport = wsResult.transport;
-      this.wsReconnect = wsResult.reconnect;
-    } else {
-      transport = createHttpTransport(
-        transportOptions,
-        getState,
-        setState,
-        handleSpanUpdate,
-        getAndResetNumRequests,
-      );
-    }
+    const wsResult = createWsTransport(
+      transportOptions,
+      getState,
+      setState,
+      handleSpanUpdate,
+      onRequestSent,
+      getAndResetNumRequests,
+    );
+    const transport = wsResult.transport;
+    this.wsReconnect = wsResult.reconnect;
+    this.wsClose = wsResult.close;
 
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
@@ -415,9 +406,13 @@ export class InterruptionStreamBase {
   }
 
   async close(): Promise<void> {
-    if (!this.inputStream.closed) await this.inputStream.close();
-    this.resampler?.close();
-    this.model.removeStream(this);
+    try {
+      if (!this.inputStream.closed) await this.inputStream.close();
+    } finally {
+      this.wsClose?.();
+      this.resampler?.close();
+      this.model.removeStream(this);
+    }
   }
 }
 
