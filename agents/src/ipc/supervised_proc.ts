@@ -96,10 +96,9 @@ export abstract class SupervisedProc {
     this.#startedAt = performance.now();
     this.run().catch((err) => {
       this.#logger.child({ err }).warn('supervised process run failed');
-      // Note: we intentionally do NOT kill the child process here. Killing it
-      // would race with initialize()'s `once(proc, 'message')`, causing
-      // initialize() to hang forever and deadlocking the caller (proc_pool).
-      // The child process is cleaned up when the pool shuts down.
+      // initialize() owns killing the child on its own failure paths, so we
+      // don't need to kill it again here. Resolve #join so any pool caller
+      // parked on join() unblocks promptly.
       this.#join.resolve();
     });
   }
@@ -198,12 +197,21 @@ export abstract class SupervisedProc {
   }
 
   async initialize() {
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       this.init.reject(new Error('runner initialization timed out'));
+      try {
+        this.proc?.kill('SIGKILL');
+      } catch {
+        // proc may have already exited; the exit-race below will still settle.
+      }
     }, this.#opts.initializeTimeout);
     if (!this.proc?.connected) {
-      this.init.reject(new Error('process not connected'));
-      return;
+      clearTimeout(timer);
+      const err = new Error('process not connected');
+      this.init.reject(err);
+      throw err;
     }
     this.proc.send({
       case: 'initializeRequest',
@@ -214,12 +222,40 @@ export abstract class SupervisedProc {
         highPingThreshold: this.#opts.highPingThreshold,
       },
     });
-    await once(this.proc!, 'message').then(([msg]: IPCMessage[]) => {
-      clearTimeout(timer);
+
+    // Race three signals so initialize() always settles even when the warming
+    // child dies/hangs without ever sending an IPC message:
+    //   1. firstMessage  — happy path
+    //   2. exited        — child crashed/exited before initializeResponse
+    //   3. this.init     — the timeout above (or any other init rejection)
+    // The losers of the race must pre-attach a `.catch` so the late
+    // post-success `exit` does not surface as an unhandledRejection.
+    const firstMessage = once(this.proc, 'message').then(([msg]: IPCMessage[]) => {
       if (msg!.case !== 'initializeResponse') {
         throw new Error('first message must be InitializeResponse');
       }
     });
+    const exited = once(this.proc, 'exit').then(() => {
+      throw new Error('process exited before initialization completed');
+    });
+    firstMessage.catch(() => {});
+    exited.catch(() => {});
+
+    try {
+      await Promise.race([firstMessage, exited, this.init.await]);
+    } catch (err) {
+      if (!timedOut) {
+        try {
+          this.proc?.kill('SIGKILL');
+        } catch {
+          // already dead
+        }
+      }
+      this.init.reject(err as Error);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     this.init.resolve();
   }
 
