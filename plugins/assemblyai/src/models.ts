@@ -6,6 +6,7 @@ export type STTModels =
   | 'universal-streaming-english'
   | 'universal-streaming-multilingual'
   | 'u3-rt-pro'
+  | 'u3-rt-pro-beta-1'
   // Deprecated alias — AssemblyAI maps this to `u3-rt-pro` server-side, but the
   // Python plugin emits a warning and rewrites it. Kept here so TS users don't
   // break if they already pass it.
