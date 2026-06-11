@@ -29,7 +29,9 @@ const runServer = async (args: CliArgs) => {
 
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+  const server = new AgentServer(
+    new ServerOptions({ ...opts, production: args.production, simulation: !!args.room }),
+  );
 
   if (args.room) {
     server.event.once('worker_registered', () => {
