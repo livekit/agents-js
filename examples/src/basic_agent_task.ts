@@ -16,95 +16,149 @@ import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-class InfoTask extends voice.AgentTask<string> {
-  constructor(private info: string) {
+let nextAppointmentId = 1;
+
+/** Collects a single free-form field from the user and resolves with its value. */
+class CollectInfoTask extends voice.AgentTask<string> {
+  private field: string;
+
+  constructor(field: string, hint?: string) {
     super({
-      instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
-      tts: 'elevenlabs/eleven_turbo_v2_5',
+      instructions:
+        `You collect exactly one piece of information from the user: their ${field}.` +
+        (hint ? ` ${hint}` : '') +
+        ' As soon as the user provides it, call the saveInfo tool with the value.' +
+        ' Do not chitchat, do not ask about anything else.',
       tools: {
-        saveUserInfo: llm.tool({
-          description: `Save the user's ${info} to database`,
+        saveInfo: llm.tool({
+          description: `Save the user's ${field}`,
           parameters: z.object({
-            [info]: z.string(),
+            value: z.string().describe(`The user's ${field}, normalized`),
           }),
-          execute: async (args) => {
-            this.complete(args[info] as string);
-            return `Thanks, collected ${info} successfully: ${args[info]}`;
+          execute: async ({ value }) => {
+            this.complete(value);
+            return `Saved ${field}: ${value}`;
           },
         }),
       },
     });
+    this.field = field;
+  }
+
+  async onEnter() {
+    this.session.generateReply({ userInput: `Ask the user for their ${this.field}.` });
+  }
+}
+
+/** Reads a summary back to the user and resolves true/false. */
+class ConfirmationTask extends voice.AgentTask<boolean> {
+  private summary: string;
+
+  constructor(summary: string) {
+    super({
+      instructions:
+        'Read the summary back to the user and ask them to confirm with yes or no. ' +
+        'Call the confirm tool if they agree, the decline tool if they do not. ' +
+        'Do not discuss anything else.',
+      // per-task TTS override: confirmations use a distinct voice
+      tools: {
+        confirm: llm.tool({
+          description: 'The user confirmed the summary',
+          execute: async () => {
+            this.complete(true);
+            return 'Confirmed';
+          },
+        }),
+        decline: llm.tool({
+          description: 'The user declined or wants to change something',
+          execute: async () => {
+            this.complete(false);
+            return 'Declined';
+          },
+        }),
+      },
+    });
+    this.summary = summary;
   }
 
   async onEnter() {
     this.session.generateReply({
-      userInput: `Ask the user for their ${this.info}`,
+      userInput: `Read this back to the user and ask them to confirm: ${this.summary}`,
     });
   }
 }
 
-class SurveyAgent extends voice.Agent {
+class BillingAgent extends voice.Agent {
   constructor() {
     super({
       instructions:
-        'You orchestrate a short intro survey. Speak naturally and keep the interaction brief.',
+        'You are the billing specialist of a dental clinic. Answer billing questions briefly. ' +
+        'When the billing topic is resolved, call backToFrontDesk.',
       tools: {
-        collectUserInfo: llm.tool({
-          description: 'Call this when user want to provide some information to you',
+        lookupBalance: llm.tool({
+          description: "Look up the caller's outstanding balance",
+          execute: async () => 'The outstanding balance is $120, due June 30.',
+        }),
+        backToFrontDesk: llm.tool({
+          description: 'Return the caller to the front desk when billing is resolved',
+          execute: async () =>
+            llm.handoff({ agent: new FrontDeskAgent(), returns: 'Back at the front desk.' }),
+        }),
+      },
+    });
+  }
+}
+
+class FrontDeskAgent extends voice.Agent {
+  constructor() {
+    super({
+      instructions:
+        'You are the front desk assistant of a dental clinic. Keep responses to one short ' +
+        'sentence. Use bookAppointment to book, updateCallbackNumber to update contact info, ' +
+        'and transferToBilling for billing questions.',
+      tools: {
+        bookAppointment: llm.tool({
+          description: 'Book an appointment for a given service (cleaning, checkup, etc.)',
           parameters: z.object({
-            key: z
-              .string()
-              .describe(
-                'The key of the information to collect, e.g. "name" or "role" should be no space and underscore separated',
-              ),
+            service: z.string().describe('The requested service'),
           }),
-          execute: async ({ key }) => {
-            const value = await new InfoTask(key).run();
-            return `Collected ${key} successfully: ${value}`;
+          execute: async ({ service }) => {
+            // tasks nested inside a tool call: collect missing info, then confirm
+            const time = await new CollectInfoTask('preferred day and time').run();
+            const confirmed = await new ConfirmationTask(`Booking a ${service} on ${time}.`).run();
+            if (!confirmed) {
+              return 'Booking cancelled by the user. Offer to start over.';
+            }
+            const id = `APT-${String(nextAppointmentId++).padStart(3, '0')}`;
+            return `Booked: ${service} on ${time}. Confirmation number ${id}.`;
           },
         }),
-        transferToWeatherAgent: llm.tool({
-          description: 'Call this immediately after user want to know the weather',
+        updateCallbackNumber: llm.tool({
+          description: 'Update the phone number we should call the user back on',
           execute: async () => {
-            const agent = new voice.Agent({
-              instructions:
-                'You are a weather agent. You are responsible for providing the weather information to the user.',
-              tts: 'deepgram/aura-2',
-              tools: {
-                getWeather: llm.tool({
-                  description: 'Get the weather for a given location',
-                  parameters: z.object({
-                    location: z.string().describe('The location to get the weather for'),
-                  }),
-                  execute: async ({ location }) => {
-                    return `The weather in ${location} is sunny today.`;
-                  },
-                }),
-                finishWeatherConversation: llm.tool({
-                  description: 'Call this when you want to finish the weather conversation',
-                  execute: async () => {
-                    return llm.handoff({
-                      agent: new SurveyAgent(),
-                      returns: 'Transfer to survey agent successfully!',
-                    });
-                  },
-                }),
-              },
-            });
-
-            return llm.handoff({ agent, returns: "Let's start the weather conversation!" });
+            const phone = await new CollectInfoTask(
+              'callback phone number',
+              'Expect a sequence of digits; read it back digit by digit when saving.',
+            ).run();
+            return `Callback number updated to ${phone}.`;
           },
+        }),
+        transferToBilling: llm.tool({
+          description: 'Transfer the caller to the billing specialist',
+          execute: async () =>
+            llm.handoff({ agent: new BillingAgent(), returns: 'Transferring to billing.' }),
         }),
       },
     });
   }
 
   async onEnter() {
-    const name = await new InfoTask('name').run();
-    const role = await new InfoTask('role').run();
+    // sequential intake tasks before the main conversation starts
+    const name = await new CollectInfoTask('name').run();
+    const reason = await new CollectInfoTask('reason for the visit').run();
 
     await this.session.say(
-      `Great to meet you ${name}. I noted your role as ${role}. We can continue now.`,
+      `Thanks ${name}. I see you are calling about ${reason}. How can I help from here?`,
     );
   }
 }
@@ -126,9 +180,13 @@ export default defineAgent({
 
     await session.start({
       room: ctx.room,
-      agent: new SurveyAgent(),
+      agent: new FrontDeskAgent(),
     });
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(
+  new ServerOptions({
+    agent: fileURLToPath(import.meta.url),
+  }),
+);
