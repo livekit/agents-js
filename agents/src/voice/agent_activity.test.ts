@@ -76,7 +76,24 @@ function buildMainTaskRunner() {
   const speechQueue = new Heap<HeapItem>((a: HeapItem, b: HeapItem) => b[0] - a[0] || a[1] - b[1]);
   const speechTasks = new Set<Task<void>>();
 
-  const fakeActivity = {
+  const fakeActivity: {
+    q_updated: Future<void>;
+    speechQueue: Heap<HeapItem>;
+    speechTasks: Set<Task<void>>;
+    _currentSpeech: SpeechHandle | undefined;
+    _schedulingPaused: boolean;
+    _authorizationPaused: boolean;
+    _drainBlockedTasks: Task<void>[];
+    _mainTask: { result: Promise<void> } | undefined;
+    logger: {
+      info: () => void;
+      debug: () => void;
+      warn: () => void;
+      error: () => void;
+    };
+    getDrainPendingSpeechTasks?: () => Task<void>[];
+    wakeupMainTask?: () => void;
+  } = {
     q_updated,
     speechQueue,
     speechTasks,
@@ -93,7 +110,7 @@ function buildMainTaskRunner() {
     },
   };
 
-  const proto = AgentActivity.prototype as Record<string, unknown>;
+  const proto = AgentActivity.prototype as unknown as Record<string, unknown>;
   fakeActivity.getDrainPendingSpeechTasks = (
     proto.getDrainPendingSpeechTasks as () => Task<void>[]
   ).bind(fakeActivity);
@@ -292,7 +309,7 @@ describe('AgentActivity - mainTask', () => {
     );
     speechTasks.add(zombieTask);
     vi.mocked(_getActivityTaskInfo).mockImplementation((task: Task<unknown>) =>
-      task === zombieTask ? ({ speechHandle: interruptedHandle } as never) : null,
+      task === zombieTask ? ({ speechHandle: interruptedHandle } as never) : undefined,
     );
 
     const ac = new AbortController();
@@ -308,7 +325,7 @@ describe('AgentActivity - mainTask', () => {
       const result = await raceTimeout(pauseSchedulingTask([]), 2000);
       expect(result).toBe('resolved');
     } finally {
-      vi.mocked(_getActivityTaskInfo).mockReturnValue(null);
+      vi.mocked(_getActivityTaskInfo).mockReturnValue(undefined);
       speechTasks.clear();
       fakeActivity._schedulingPaused = true;
       fakeActivity.q_updated = new Future();
@@ -316,6 +333,48 @@ describe('AgentActivity - mainTask', () => {
       ac.abort();
       await raceTimeout(mainTaskPromise, 2000);
     }
+  });
+
+  it('does not deadlock cancelling a paused speech whose generation never finishes', async () => {
+    const handle = SpeechHandle.create({ allowInterruptions: true });
+    handle._authorizeGeneration();
+
+    const fakeActivity = {
+      cancelSpeechPauseTask: undefined,
+      falseInterruptionTimer: undefined,
+      pausedSpeech: {
+        handle,
+        agentState: 'speaking',
+        timeout: 1000,
+      },
+      logger: {
+        debug: vi.fn(),
+      },
+      agentSession: {
+        sessionOptions: {
+          turnHandling: {
+            interruption: {
+              resumeFalseInterruption: false,
+            },
+          },
+        },
+        output: {
+          audio: undefined,
+        },
+      },
+    };
+
+    const cancelSpeechPause = (
+      AgentActivity.prototype as unknown as {
+        cancelSpeechPause: (options?: { interrupt?: boolean }) => Promise<void>;
+      }
+    ).cancelSpeechPause.bind(fakeActivity);
+
+    const result = await raceTimeout(cancelSpeechPause(), 2000);
+
+    expect(result).toBe('resolved');
+    expect(handle.interrupted).toBe(true);
+    expect(fakeActivity.pausedSpeech).toBeUndefined();
   });
 });
 

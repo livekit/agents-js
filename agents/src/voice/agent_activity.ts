@@ -4074,7 +4074,9 @@ export class AgentActivity implements RecognitionHooks {
       // ensure the generation is done — but only if a generation
       // was actually started
       if (this.pausedSpeech.handle._hasGenerations) {
-        await this.pausedSpeech.handle._waitForGeneration();
+        await this.pausedSpeech.handle.waitIfNotInterrupted([
+          this.pausedSpeech.handle._waitForGeneration(),
+        ]);
       }
     }
     this.pausedSpeech = undefined;
