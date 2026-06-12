@@ -6,7 +6,6 @@ import {
   ServerOptions,
   cli,
   defineAgent,
-  inference,
   llm,
   voice,
 } from '@livekit/agents';
@@ -215,9 +214,6 @@ export default defineAgent({
     const userdata: Userdata = { cal };
 
     const session = new voice.AgentSession({
-      // VAD lazy-loads the bundled silero model on first stream, so no
-      // prewarm hook is needed.
-      vad: new inference.VAD(),
       stt: new deepgram.STT(),
       llm: new openai.LLM({
         model: 'gpt-4.1',
