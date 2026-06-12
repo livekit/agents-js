@@ -35,6 +35,7 @@ const SARVAM_STT_TRANSLATE_WS_URL = 'wss://api.sarvam.ai/speech-to-text-translat
 
 const SAMPLE_RATE = 16000;
 const NUM_CHANNELS = 1;
+const EOS_FALLBACK_TIMEOUT = 1000;
 
 // ---------------------------------------------------------------------------
 // Model-specific option types
@@ -409,6 +410,8 @@ interface SarvamWSTranscriptData {
   transcript?: string;
   language_code?: string | null;
   language_probability?: number | null;
+  speech_start?: number | null;
+  speech_end?: number | null;
   timestamps?: Record<string, unknown> | null;
   diarized_transcript?: Record<string, unknown> | null;
   metrics?: {
@@ -423,6 +426,7 @@ interface SarvamWSEventData {
   timestamp?: string;
   signal_type?: 'START_SPEECH' | 'END_SPEECH';
   occured_at?: number;
+  request_id?: string;
 }
 
 /** type: "error" — server sends data with message and code fields */
@@ -554,6 +558,15 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
+  #audioPosition = 0;
+  #utteranceStartAudioPos = 0;
+  #utteranceSpeechEndAudioPos?: number;
+  #utteranceSpeechEndWallTime?: number;
+  #pendingFinalData?: SarvamWSTranscriptData;
+  #pendingEos = false;
+  #eosFallbackTimer?: ReturnType<typeof setTimeout>;
+  #finalReceivedForUtterance = false;
+  #eosEmittedForUtterance = false;
   label = 'sarvam.SpeechStream';
 
   constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
@@ -581,6 +594,136 @@ export class SpeechStream extends stt.SpeechStream {
 
     this.#opts = resolveOptions({ ...base, ...opts } as STTOptions);
     this.#resetWS.resolve();
+  }
+
+  #maybeSetRequestId(requestId: string | undefined) {
+    if (requestId) {
+      this.#requestId = requestId;
+    }
+  }
+
+  #positiveTime(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    return value;
+  }
+
+  #resetUtteranceState() {
+    this.#cancelEosFallback();
+    this.#pendingFinalData = undefined;
+    this.#pendingEos = false;
+    this.#utteranceStartAudioPos = this.#audioPosition;
+    this.#utteranceSpeechEndAudioPos = undefined;
+    this.#utteranceSpeechEndWallTime = undefined;
+    this.#finalReceivedForUtterance = false;
+    this.#eosEmittedForUtterance = false;
+  }
+
+  #cancelEosFallback() {
+    if (this.#eosFallbackTimer !== undefined) {
+      clearTimeout(this.#eosFallbackTimer);
+      this.#eosFallbackTimer = undefined;
+    }
+  }
+
+  #sendFinalTranscript(
+    transcriptData: SarvamWSTranscriptData,
+    opts: { requireEndTime?: boolean } = {},
+  ): boolean {
+    const transcript = transcriptData.transcript ?? '';
+    if (!transcript) return false;
+
+    const startTime =
+      this.#positiveTime(transcriptData.speech_start) ?? this.#utteranceStartAudioPos;
+    let endTime =
+      this.#positiveTime(transcriptData.speech_end) ??
+      this.#utteranceSpeechEndAudioPos ??
+      this.#positiveTime(transcriptData.metrics?.audio_duration);
+    if (endTime === undefined) {
+      if (opts.requireEndTime) return false;
+      endTime = 0;
+    }
+
+    if (!this.queue.closed) {
+      this.queue.put({
+        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        requestId: transcriptData.request_id ?? this.#requestId,
+        alternatives: [
+          {
+            text: transcript,
+            language: normalizeLanguage(
+              transcriptData.language_code ?? this.#opts.languageCode ?? 'unknown',
+            ),
+            startTime,
+            endTime,
+            confidence: extractConfidence(transcriptData, this.#logger),
+          },
+        ],
+      });
+    }
+    return true;
+  }
+
+  #tryCommitUtterance() {
+    if (
+      this.#pendingFinalData === undefined ||
+      this.#utteranceSpeechEndAudioPos === undefined ||
+      this.#eosEmittedForUtterance
+    ) {
+      return;
+    }
+
+    const committedData = this.#pendingFinalData;
+    if (this.#sendFinalTranscript(committedData, { requireEndTime: true })) {
+      this.#logger.debug(
+        `Sarvam STT utterance committed: end_time=${this.#utteranceSpeechEndAudioPos}`,
+      );
+      this.#emitEndOfSpeech();
+      this.#pendingFinalData = undefined;
+    }
+  }
+
+  #emitEndOfSpeech() {
+    if (this.#eosEmittedForUtterance) return;
+
+    this.#cancelEosFallback();
+    const alternatives: [stt.SpeechData, ...stt.SpeechData[]] | undefined =
+      this.#utteranceSpeechEndAudioPos !== undefined
+        ? [
+            {
+              text: '',
+              language: normalizeLanguage(this.#opts.languageCode ?? 'unknown'),
+              startTime: this.#utteranceStartAudioPos,
+              endTime: this.#utteranceSpeechEndAudioPos,
+              confidence: 0,
+              metadata:
+                this.#utteranceSpeechEndWallTime !== undefined
+                  ? { speechEndWallTime: this.#utteranceSpeechEndWallTime }
+                  : undefined,
+            },
+          ]
+        : undefined;
+
+    if (!this.queue.closed) {
+      this.queue.put({
+        type: stt.SpeechEventType.END_OF_SPEECH,
+        requestId: this.#requestId,
+        alternatives,
+      });
+    }
+    this.#eosEmittedForUtterance = true;
+    this.#pendingEos = false;
+  }
+
+  #scheduleEosFallback() {
+    this.#cancelEosFallback();
+    this.#eosFallbackTimer = setTimeout(() => {
+      this.#eosFallbackTimer = undefined;
+      if (this.#pendingEos && !this.#eosEmittedForUtterance) {
+        this.#emitEndOfSpeech();
+      }
+    }, EOS_FALLBACK_TIMEOUT);
   }
 
   protected async run() {
@@ -717,6 +860,7 @@ export class SpeechStream extends stt.SpeechStream {
                   },
                 }),
               );
+              this.#audioPosition += frame.samplesPerChannel / SAMPLE_RATE;
             }
           }
 
@@ -765,55 +909,79 @@ export class SpeechStream extends stt.SpeechStream {
 
             if (msgType === 'events') {
               const eventData = (json['data'] as SarvamWSEventData | undefined) ?? {};
+              this.#maybeSetRequestId(eventData.request_id);
               const signalType = eventData.signal_type;
 
               if (signalType === 'START_SPEECH') {
                 if (!this.#speaking) {
+                  this.#resetUtteranceState();
                   this.#speaking = true;
-                  putMessage({ type: stt.SpeechEventType.START_OF_SPEECH });
+                  putMessage({
+                    type: stt.SpeechEventType.START_OF_SPEECH,
+                    requestId: this.#requestId,
+                  });
                 }
               } else if (signalType === 'END_SPEECH') {
                 if (this.#speaking) {
                   this.#speaking = false;
-                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  this.#utteranceSpeechEndAudioPos = this.#audioPosition;
+                  this.#utteranceSpeechEndWallTime = Date.now();
+                  this.#pendingEos = true;
+                  this.#tryCommitUtterance();
+                  if (!this.#eosEmittedForUtterance && this.#pendingFinalData === undefined) {
+                    if (this.#finalReceivedForUtterance) {
+                      this.#emitEndOfSpeech();
+                    } else {
+                      this.#scheduleEosFallback();
+                    }
+                  }
                 }
               }
             } else if (msgType === 'data') {
               const td = (json['data'] as SarvamWSTranscriptData | undefined) ?? {};
               const transcript = td.transcript ?? '';
-              const language = normalizeLanguage(
-                td.language_code ?? this.#opts.languageCode ?? 'unknown',
-              );
-              const requestId = td.request_id ?? '';
-              const confidence = extractConfidence(td, this.#logger);
-              this.#requestId = requestId;
+              this.#maybeSetRequestId(td.request_id);
 
               // Log metrics when available
               if (td.metrics) {
                 this.#logger.debug(
                   `Sarvam STT metrics: audio_duration=${td.metrics.audio_duration}s, latency=${td.metrics.processing_latency}s`,
                 );
+                if (typeof td.metrics.audio_duration === 'number' && !this.queue.closed) {
+                  putMessage({
+                    type: stt.SpeechEventType.RECOGNITION_USAGE,
+                    requestId: this.#requestId,
+                    recognitionUsage: { audioDuration: td.metrics.audio_duration },
+                  });
+                }
               }
 
               if (transcript) {
-                if (!this.#speaking) {
+                if (!this.#speaking && !this.#pendingEos && !this.#eosEmittedForUtterance) {
+                  this.#resetUtteranceState();
                   this.#speaking = true;
-                  putMessage({ type: stt.SpeechEventType.START_OF_SPEECH });
+                  putMessage({
+                    type: stt.SpeechEventType.START_OF_SPEECH,
+                    requestId: this.#requestId,
+                  });
                 }
 
-                putMessage({
-                  type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-                  requestId,
-                  alternatives: [
-                    {
-                      text: transcript,
-                      language,
-                      startTime: 0,
-                      endTime: td.metrics?.audio_duration ?? 0,
-                      confidence,
-                    },
-                  ],
-                });
+                const transcriptEndTime = this.#positiveTime(td.speech_end);
+                if (
+                  transcriptEndTime !== undefined &&
+                  this.#utteranceSpeechEndAudioPos === undefined
+                ) {
+                  this.#utteranceSpeechEndAudioPos = transcriptEndTime;
+                  this.#utteranceSpeechEndWallTime = Date.now();
+                }
+
+                if (this.#pendingEos) {
+                  this.#pendingFinalData = td;
+                  this.#finalReceivedForUtterance = true;
+                  this.#tryCommitUtterance();
+                } else if (this.#sendFinalTranscript(td)) {
+                  this.#finalReceivedForUtterance = true;
+                }
               }
             } else if (msgType === 'error') {
               // Server format: { type: "error", data: { message: "...", code: "..." } }
@@ -857,6 +1025,7 @@ export class SpeechStream extends stt.SpeechStream {
       // triggers the ws.once('close') handler inside listenMessage, letting listenTask
       // exit naturally. On close(), the parent abort signal handles it directly.
       wsMonitor.cancel();
+      this.#cancelEosFallback();
       ws.close();
       // Suppress unhandled rejection from orphaned listenTask on reconnect
       listenTask.result.catch(() => {});
