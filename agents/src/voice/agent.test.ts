@@ -486,6 +486,7 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
       llm: undefined,
       close: async () => {},
     };
@@ -527,6 +528,7 @@ describe('Agent', () => {
         agent: oldAgent,
         agentSession: mockSession,
         _onEnterTask: undefined,
+        _addDrainBlockedTasks: vi.fn(),
         llm: undefined,
         close: async () => {},
       };
@@ -639,6 +641,7 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
       llm: undefined,
       close: closeOldActivity,
     };

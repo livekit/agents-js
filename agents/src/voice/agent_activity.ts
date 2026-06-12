@@ -317,6 +317,7 @@ export class AgentActivity implements RecognitionHooks {
   agentSession: AgentSession;
 
   private started = false;
+  private closed = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
@@ -325,7 +326,7 @@ export class AgentActivity implements RecognitionHooks {
   private _schedulingPaused = true;
   private newTurnsBlocked = false;
   private _authorizationPaused = false;
-  private _drainBlockedTasks: Task<any>[] = [];
+  private _drainBlockedTasks: Set<Task<any>> = new Set();
   private _currentSpeech?: SpeechHandle;
   private speechQueue: Heap<[number, number, SpeechHandle]>; // [priority, timestamp, speechHandle]
   private userSilenceEvent = new Event();
@@ -2533,7 +2534,7 @@ export class AgentActivity implements RecognitionHooks {
 
     const toWait: Task<void>[] = [];
     for (const task of this.speechTasks) {
-      if (this._drainBlockedTasks.includes(task)) {
+      if (this._drainBlockedTasks.has(task)) {
         continue;
       }
 
@@ -4764,11 +4765,21 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
   }
 
+  /** @internal */
+  _addDrainBlockedTasks(tasks: Task<any>[]): void {
+    for (const task of tasks) {
+      this._drainBlockedTasks.add(task);
+    }
+    this.wakeupMainTask();
+  }
+
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {
     if (this._schedulingPaused) return;
 
     this._schedulingPaused = true;
-    this._drainBlockedTasks = blockedTasks;
+    if (blockedTasks.length > 0) {
+      this._addDrainBlockedTasks(blockedTasks);
+    }
     this.wakeupMainTask();
 
     if (this._mainTask) {
@@ -4810,6 +4821,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this._schedulingPaused = false;
     this.newTurnsBlocked = false;
+    this._drainBlockedTasks.clear();
     this._mainTask = Task.from(({ signal }) => this.mainTask(signal));
   }
 
@@ -4823,6 +4835,10 @@ export class AgentActivity implements RecognitionHooks {
     const unlock = await this.lock.lock();
 
     try {
+      if (this.closed) {
+        return undefined;
+      }
+
       const span = tracer.startSpan({
         name: 'pause_agent_activity',
         attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
@@ -4905,6 +4921,11 @@ export class AgentActivity implements RecognitionHooks {
 
     const unlock = await this.lock.lock();
     try {
+      if (this.closed) {
+        return;
+      }
+      this.closed = true;
+
       this.cancelPreemptiveGeneration();
 
       // Commit the in-flight assistant turn before teardown (#2041): a room
