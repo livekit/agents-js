@@ -107,9 +107,34 @@ export class STT extends stt.STT {
 
     if (this.#opts.detectLanguage) {
       this.#opts.language = undefined;
-    } else if (
-      this.#opts.language &&
-      getBaseLanguage(this.#opts.language) !== 'en' &&
+    } else {
+      this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+    throw new Error('Recognize is not supported on Deepgram STT');
+  }
+
+  updateOptions(opts: Partial<STTOptions>) {
+    const language =
+      opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language;
+    const model =
+      opts.model !== undefined ? this.#validateModel(opts.model, language) : this.#opts.model;
+
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language,
+      model,
+    };
+  }
+
+  #validateModel(model: STTModels, language?: string) {
+    if (
+      language &&
+      getBaseLanguage(language) !== 'en' &&
       [
         'nova-2-meeting',
         'nova-2-phonecall',
@@ -121,27 +146,15 @@ export class STT extends stt.STT {
         'nova-2-drivethru',
         'nova-2-automotive',
         'nova-3-general',
-      ].includes(this.#opts.model)
+      ].includes(model)
     ) {
       this.#logger.warn(
-        `${this.#opts.model} does not support language ${this.#opts.language}, falling back to nova-2-general`,
+        `${model} does not support language ${language}, falling back to nova-2-general`,
       );
-      this.#opts.model = 'nova-2-general';
+      return 'nova-2-general';
     }
-  }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
-    throw new Error('Recognize is not supported on Deepgram STT');
-  }
-
-  updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = {
-      ...this.#opts,
-      ...opts,
-      language:
-        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
-    };
+    return model;
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
