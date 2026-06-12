@@ -293,3 +293,44 @@ describe('TranscriptionSynchronizer attachment warnings', () => {
     await synchronizer.close();
   });
 });
+
+/**
+ * Simulates a downstream sink (e.g. ParticipantAudioOutput) whose interrupt-gate DROPS a frame
+ * captured while paused: it neither counts the playback segment nor ever emits a playback-finished
+ * for it. The SyncedAudioOutput wrapper, however, counts the segment in its own captureFrame.
+ */
+class DroppingAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(_frame: AudioFrame): Promise<void> {
+    // dropped: no super.captureFrame(), no playback-finished — mirrors the cancel-while-paused gate
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', () => {
+  it('does not strand waitForPlayout() when the downstream sink drops a captured frame', async () => {
+    const synchronizer = new TranscriptionSynchronizer(
+      new DroppingAudioOutput(),
+      new MockTextOutput(),
+    );
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    // The wrapper counts this segment (super.captureFrame); the downstream drops it, so its
+    // finish never propagates back. Without the reconcile in SyncedAudioOutput.waitForPlayout,
+    // the wrapper's segment count is stranded ahead of its finish count and waitForPlayout()
+    // blocks forever — the reply pipeline never marks generation done and the agent goes silent.
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    const result = await Promise.race([
+      synchronizer.audioOutput.waitForPlayout().then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+
+    expect(result).toBe('resolved');
+    await synchronizer.close();
+  });
+});

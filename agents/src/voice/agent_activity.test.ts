@@ -18,7 +18,8 @@ import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { Future } from '../utils.js';
+import { Future, Task } from '../utils.js';
+import { _getActivityTaskInfo } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -32,8 +33,8 @@ vi.mock('./agent.js', () => {
     Agent,
     AgentTask,
     StopResponse,
-    _getActivityTaskInfo: () => null,
-    _setActivityTaskInfo: () => {},
+    _getActivityTaskInfo: vi.fn(() => null),
+    _setActivityTaskInfo: vi.fn(),
     functionCallStorage: {
       getStore: () => undefined,
       enterWith: () => {},
@@ -405,5 +406,161 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression test for the reentrant drain deadlock (#836).
+ *
+ * A sub-task (AgentTask) completion turn calls a tool that completes the task. The
+ * AgentTask.run() finally resumes the parent via _updateActivity(..., 'resume') → drain()
+ * → _pauseSchedulingTask(), which awaits _mainTask.result. When that runs from inside one
+ * of this activity's own in-flight speech tasks, it is a self-await: the mainTask cannot
+ * reach its drain loop-exit (getDrainPendingSpeechTasks() keeps returning the still-
+ * registered speech task) and that task cannot finish until the drain returns.
+ *
+ * Without the fix this deadlocks (raceTimeout → 'timeout'); with the reentrancy guard in
+ * _pauseSchedulingTask it returns immediately (→ 'resolved').
+ *
+ * The second case covers a barge-in cascade: the drain runs from a non-reentrant context
+ * while the mainTask is held only by an interrupted (zombie) speech task that has not
+ * de-registered yet. The narrow reentrancy guard does not catch it — only the all-zombie
+ * short-circuit does.
+ */
+describe('AgentActivity - drain reentrancy (#836)', () => {
+  it('does not deadlock when a resume-triggered drain runs from inside its own speech task', async () => {
+    const q_updated = new Future<void>();
+    type HeapItem = [number, number, SpeechHandle];
+    const speechQueue = new Heap<HeapItem>(
+      (a: HeapItem, b: HeapItem) => b[0] - a[0] || a[1] - b[1],
+    );
+    const speechTasks = new Set<Task<void>>();
+
+    const fakeActivity: Record<string, unknown> = {
+      q_updated,
+      speechQueue,
+      speechTasks,
+      _currentSpeech: undefined,
+      _schedulingPaused: false,
+      _authorizationPaused: false,
+      _drainBlockedTasks: [],
+      _mainTask: undefined,
+      logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} },
+    };
+
+    const proto = AgentActivity.prototype as Record<string, unknown>;
+    fakeActivity.wakeupMainTask = (proto.wakeupMainTask as () => void).bind(fakeActivity);
+    fakeActivity.getDrainPendingSpeechTasks = (
+      proto.getDrainPendingSpeechTasks as () => Task<void>[]
+    ).bind(fakeActivity);
+    const mainTask = (proto.mainTask as (signal: AbortSignal) => Promise<void>).bind(fakeActivity);
+    const pauseSchedulingTask = (
+      proto._pauseSchedulingTask as (blockedTasks: Task<void>[]) => Promise<void>
+    ).bind(fakeActivity);
+
+    // Start the real mainTask loop (empty queue, not yet paused → parks on q_updated).
+    const ac = new AbortController();
+    const mainTaskPromise = mainTask(ac.signal);
+    fakeActivity._mainTask = {
+      get result() {
+        return mainTaskPromise;
+      },
+    };
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Drive the drain from INSIDE a task that is one of the activity's own speech tasks —
+    // exactly as AgentTask.run()'s finally does while the completing turn is still in flight.
+    const drain = Task.from(
+      async () => {
+        speechTasks.add(Task.current() as Task<void>);
+        await pauseSchedulingTask([]);
+      },
+      undefined,
+      'reentrant-drain',
+    );
+
+    const result = await raceTimeout(drain.result, 2000);
+
+    // Cleanup: let the mainTask wind down regardless of outcome.
+    speechTasks.clear();
+    fakeActivity._schedulingPaused = true;
+    fakeActivity.q_updated = new Future();
+    (fakeActivity.q_updated as Future<void>).resolve();
+    ac.abort();
+    await raceTimeout(mainTaskPromise, 2000);
+
+    expect(result).toBe('resolved');
+  });
+
+  it('does not deadlock a non-reentrant drain when the mainTask is held only by interrupted speech tasks', async () => {
+    const q_updated = new Future<void>();
+    type HeapItem = [number, number, SpeechHandle];
+    const speechQueue = new Heap<HeapItem>(
+      (a: HeapItem, b: HeapItem) => b[0] - a[0] || a[1] - b[1],
+    );
+    const speechTasks = new Set<Task<void>>();
+
+    const fakeActivity: Record<string, unknown> = {
+      q_updated,
+      speechQueue,
+      speechTasks,
+      _currentSpeech: undefined,
+      _schedulingPaused: false,
+      _authorizationPaused: false,
+      _drainBlockedTasks: [],
+      _mainTask: undefined,
+      logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} },
+    };
+
+    const proto = AgentActivity.prototype as Record<string, unknown>;
+    fakeActivity.wakeupMainTask = (proto.wakeupMainTask as () => void).bind(fakeActivity);
+    fakeActivity.getDrainPendingSpeechTasks = (
+      proto.getDrainPendingSpeechTasks as () => Task<void>[]
+    ).bind(fakeActivity);
+    const mainTask = (proto.mainTask as (signal: AbortSignal) => Promise<void>).bind(fakeActivity);
+    const pauseSchedulingTask = (
+      proto._pauseSchedulingTask as (blockedTasks: Task<void>[]) => Promise<void>
+    ).bind(fakeActivity);
+
+    // A speech task whose handle was interrupted by a barge-in cascade but that has not yet
+    // de-registered from speechTasks. It never finishes, so the mainTask drain loop can never
+    // reach its loop-exit while it remains pending.
+    const interruptedHandle = { interrupted: true } as unknown as SpeechHandle;
+    const zombieTask = Task.from(
+      () => new Promise<void>(() => {}),
+      undefined,
+      'zombie-speech-task',
+    );
+    speechTasks.add(zombieTask);
+    vi.mocked(_getActivityTaskInfo).mockImplementation((task: Task<unknown>) =>
+      task === zombieTask ? ({ speechHandle: interruptedHandle } as never) : null,
+    );
+
+    // Start the real mainTask loop (empty queue, not yet paused → parks on q_updated).
+    const ac = new AbortController();
+    const mainTaskPromise = mainTask(ac.signal);
+    fakeActivity._mainTask = {
+      get result() {
+        return mainTaskPromise;
+      },
+    };
+    await new Promise((r) => setTimeout(r, 50));
+
+    try {
+      // Drive the drain from a NON-reentrant context (no current task in speechTasks), as a
+      // resume triggered by a barge-in cascade does. The narrow reentrancy guard does not
+      // catch this; only the all-zombie short-circuit prevents the self-await deadlock.
+      const result = await raceTimeout(pauseSchedulingTask([]), 2000);
+      expect(result).toBe('resolved');
+    } finally {
+      // Cleanup: let the mainTask wind down regardless of outcome.
+      vi.mocked(_getActivityTaskInfo).mockReturnValue(null);
+      speechTasks.clear();
+      fakeActivity._schedulingPaused = true;
+      fakeActivity.q_updated = new Future();
+      (fakeActivity.q_updated as Future<void>).resolve();
+      ac.abort();
+      await raceTimeout(mainTaskPromise, 2000);
+    }
   });
 });
