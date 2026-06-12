@@ -18,6 +18,8 @@ import {
 } from '../io.js';
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
+// max time close() waits for transcript forwarding to drain before moving on
+const SEGMENT_CLOSE_TIMEOUT = 5000;
 
 interface TextSyncOptions {
   speed: number;
@@ -551,7 +553,19 @@ class SegmentSynchronizerImpl {
       this.outputStreamWriter.close();
     }
     this.textData.wordStream.close();
-    await this.captureTask;
+
+    const timedOut = Symbol('timedOut');
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      this.captureTask,
+      new Promise<typeof timedOut>((resolve) => {
+        timeout = setTimeout(() => resolve(timedOut), SEGMENT_CLOSE_TIMEOUT);
+      }),
+    ]).finally(() => clearTimeout(timeout));
+
+    if (result === timedOut) {
+      this.logger.warn('SegmentSynchronizerImpl.close timed out draining capture task');
+    }
   }
 }
 
@@ -683,14 +697,23 @@ export class TranscriptionSynchronizer {
 
   private async rotateSegmentTaskImpl(abort: AbortSignal, oldTask?: Task<void>) {
     if (oldTask) {
-      await oldTask.result;
+      try {
+        await oldTask.result;
+      } catch {
+        // Continue rotating so the synchronizer is not left pointing at a closed impl.
+      }
     }
 
     if (abort.aborted) {
       return;
     }
 
-    await this._impl.close();
+    const oldImpl = this._impl;
+    try {
+      await oldImpl.close();
+    } catch (error) {
+      this.logger.error({ error }, 'failed to close segment synchronizer impl during rotation');
+    }
     this._impl = new SegmentSynchronizerImpl(this.options, this.textOutput.nextInChain, true);
 
     if (this._paused) {
