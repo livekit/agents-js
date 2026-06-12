@@ -104,7 +104,7 @@ export async function connectWs(
     }, timeoutMs);
 
     const onOpen = () => {
-      cleanup();
+      clearTimeout(timeout);
       resolve(socket);
     };
 
