@@ -2,17 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
-  Agent,
-  AgentSession,
-  AgentSessionEventTypes,
   type JobContext,
   ServerOptions,
   cli,
   defineAgent,
   inference,
+  llm,
   log,
-  logMetrics,
-  tool,
+  metrics,
+  voice,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -23,12 +21,11 @@ import { z } from 'zod';
 // lazy-loads on first stream.
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    const agent = Agent.create({
+    const agent = new voice.Agent({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: [
-        tool({
-          name: 'getWeather',
+      tools: {
+        getWeather: llm.tool({
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -37,12 +34,12 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-      ],
+      },
     });
 
     const logger = log();
 
-    const session = new AgentSession({
+    const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -101,8 +98,8 @@ export default defineAgent({
     });
 
     // Log metrics as they are emitted
-    session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
-      logMetrics(ev.metrics);
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      metrics.logMetrics(ev.metrics);
     });
 
     // Log usage summary when job shuts down
@@ -115,7 +112,7 @@ export default defineAgent({
       );
     });
 
-    session.on(AgentSessionEventTypes.OverlappingSpeech, (ev) => {
+    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.info({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
