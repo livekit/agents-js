@@ -80,7 +80,8 @@ describe('RealtimeSession.generateReply', () => {
       expect.objectContaining({
         type: 'response.create',
         response: expect.objectContaining({
-          instructions: 'Tell the user what your name is.',
+          instructions:
+            'Your name is Kelly. Always respond in English.\nTell the user what your name is.',
         }),
       }),
     );
