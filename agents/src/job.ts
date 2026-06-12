@@ -90,6 +90,49 @@ export type RunningJobInfo = {
   apiSecret?: string;
 };
 
+export enum SimulationMode {
+  SIMULATION_MODE_UNSPECIFIED = 0,
+  SIMULATION_MODE_TEXT = 1,
+  SIMULATION_MODE_AUDIO = 2,
+}
+
+export type SimulationDispatch = {
+  simulationRunId?: string;
+  simulation_run_id?: string;
+  mode?: string | number;
+  scenario?: unknown;
+};
+
+export class SimulationContext<ProcessUserData = Record<string, unknown>> {
+  #dispatch: SimulationDispatch;
+  #jobContext: JobContext<ProcessUserData>;
+
+  constructor(dispatch: SimulationDispatch, jobContext: JobContext<ProcessUserData>) {
+    this.#dispatch = dispatch;
+    this.#jobContext = jobContext;
+  }
+
+  get scenario(): unknown {
+    return this.#dispatch.scenario;
+  }
+
+  get simulationMode(): SimulationMode {
+    const mode = this.#dispatch.mode;
+    if (mode === SimulationMode.SIMULATION_MODE_AUDIO || mode === 'SIMULATION_MODE_AUDIO') {
+      return SimulationMode.SIMULATION_MODE_AUDIO;
+    }
+    if (mode === SimulationMode.SIMULATION_MODE_TEXT || mode === 'SIMULATION_MODE_TEXT') {
+      return SimulationMode.SIMULATION_MODE_TEXT;
+    }
+    // Simulations predating the mode field were text-only.
+    return SimulationMode.SIMULATION_MODE_TEXT;
+  }
+
+  get jobContext(): JobContext<ProcessUserData> {
+    return this.#jobContext;
+  }
+}
+
 /** Attempted to add a function callback, but the function already exists. */
 export class FunctionExistsError extends Error {
   constructor(msg?: string) {
@@ -119,6 +162,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+  #simulationResolved = false;
+  #simulationContext?: SimulationContext<ProcessUserData>;
 
   /** @internal */
   _primaryAgentSession?: AgentSession;
@@ -170,6 +215,33 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get info(): RunningJobInfo {
     return this.#info;
+  }
+
+  simulationContext(): SimulationContext<ProcessUserData> | undefined {
+    if (this.#simulationResolved) {
+      return this.#simulationContext;
+    }
+
+    this.#simulationResolved = true;
+    const roomMetadata = (this.#room as { metadata?: string }).metadata;
+    const metadata = this.#info.job.metadata || roomMetadata;
+    if (!metadata) {
+      return undefined;
+    }
+
+    let dispatch: SimulationDispatch;
+    try {
+      dispatch = JSON.parse(metadata) as SimulationDispatch;
+    } catch {
+      return undefined;
+    }
+
+    if (!dispatch.simulationRunId && !dispatch.simulation_run_id) {
+      return undefined;
+    }
+
+    this.#simulationContext = new SimulationContext(dispatch, this);
+    return this.#simulationContext;
   }
 
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
