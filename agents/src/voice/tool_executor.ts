@@ -155,6 +155,7 @@ export class ToolExecutor {
   private duplicateLock = new Mutex();
   private pendingUpdates: PendingUpdate[] = [];
   private _replyTask?: Promise<void>;
+  private _replyTaskDone = false;
   toolOptions: AsyncToolOptions;
 
   constructor({
@@ -190,7 +191,6 @@ export class ToolExecutor {
     return [...this.runningTasks.values()].some((task) => task.allowCancellation);
   }
 
-  // Ref: python livekit/agents/voice/tool_executor.py:248-370
   async execute<Parameters extends JSONObject, UserData, Result>({
     tool,
     runCtx,
@@ -295,7 +295,6 @@ export class ToolExecutor {
     if (this._replyTask) await this._replyTask;
   }
 
-  // Ref: python livekit/agents/voice/tool_executor.py:372-415
   async cancel(callId: string): Promise<boolean> {
     const task = this.runningTasks.get(callId);
     if (!task) return false;
@@ -360,39 +359,30 @@ export class ToolExecutor {
       }
     }
 
-    // Wait (bounded) for the non-cancellable tools we let finish. Cancellable
-    // ones were aborted above and are watched by `cancel()`, so they're excluded
-    // here to avoid a duplicate warning. A non-cancellable tool that's too slow
-    // (or ignores abort) keeps running; bound the wait so it can't wedge the
-    // drain, and warn that its execute() isn't finishing in time.
     const inflight = tasks
       .filter((task) => !task.allowCancellation)
       .map((task) => ({ name: task.ctx.functionCall.name, promise: task.toolPromiseRef.promise }))
       .filter((t): t is { name: string; promise: Promise<unknown> } => t.promise !== undefined);
     if (inflight.length === 0) return;
 
-    const pending = new Set(inflight.map((_, i) => i));
-    inflight.forEach((t, i) => void t.promise.then(() => pending.delete(i)));
+    const settled = new Set<number>();
+    inflight.forEach((t, i) => void t.promise.then(() => settled.add(i)));
 
-    const TIMED_OUT = Symbol('drain-timeout');
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const outcome = await Promise.race([
-      Promise.allSettled(inflight.map((t) => t.promise)).then(() => undefined),
-      new Promise<typeof TIMED_OUT>((resolve) => {
-        timer = setTimeout(() => resolve(TIMED_OUT), DRAIN_TOOL_TIMEOUT_MS);
-      }),
-    ]);
-    if (timer) clearTimeout(timer);
+    const timer = setTimeout(() => {
+      const slow = inflight.filter((_, i) => !settled.has(i)).map((t) => t.name);
+      if (slow.length > 0) {
+        log().warn(
+          { tools: slow, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
+          'non-cancellable tool(s) still running after the drain deadline; awaiting their ' +
+            'completion so the deferred result is not dropped. Keep non-cancellable tool work ' +
+            'short, or mark the tool cancellable if it should stop on handoff.',
+        );
+      }
+    }, DRAIN_TOOL_TIMEOUT_MS);
+    timer.unref?.();
 
-    if (outcome === TIMED_OUT) {
-      const stuck = [...pending].map((i) => inflight[i]!.name);
-      log().warn(
-        { tools: stuck, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
-        'tool(s) still running after the drain deadline; their execute() likely does not honor ' +
-          'the abort signal. Make tool execution abortable (observe the provided abortSignal) so ' +
-          'cancellation and agent handoff stay responsive.',
-      );
-    }
+    await Promise.allSettled(inflight.map((t) => t.promise));
+    clearTimeout(timer);
   }
 
   async aclose(): Promise<void> {
@@ -410,7 +400,6 @@ export class ToolExecutor {
     this.runningTasks.clear();
   }
 
-  // Ref: python livekit/agents/voice/tool_executor.py:417-522
   async enqueueReply(
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
@@ -422,10 +411,9 @@ export class ToolExecutor {
     ctx.session.history.insert(items);
 
     this.pendingUpdates.push({ ctx, items, target });
-    if (!this._replyTask) {
-      this._replyTask = this.deliverReply(ctx.session).finally(() => {
-        this._replyTask = undefined;
-      });
+    if (this._replyTask === undefined || this._replyTaskDone) {
+      this._replyTaskDone = false;
+      this._replyTask = this.deliverReply(ctx.session);
       const runState = (
         ctx.session as unknown as {
           _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
@@ -482,8 +470,10 @@ export class ToolExecutor {
       exception = error;
     }
 
-    if (controller.signal.aborted && !firstUpdateFuture.done) {
-      firstUpdateFuture.resolve(undefined);
+    if (controller.signal.aborted) {
+      if (!firstUpdateFuture.done) {
+        firstUpdateFuture.resolve(undefined);
+      }
       return;
     }
 
@@ -496,7 +486,18 @@ export class ToolExecutor {
       return;
     }
 
-    if (exception !== undefined || output === undefined || output === null) {
+    if (exception !== undefined) {
+      log().error(
+        {
+          function: runCtx.functionCall.name,
+          callId: runCtx.functionCall.callId,
+          error: exception,
+        },
+        'exception occurred while executing tool after a progress update',
+      );
+      return;
+    }
+    if (output === undefined || output === null) {
       return;
     }
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
@@ -550,53 +551,50 @@ export class ToolExecutor {
   }
 
   private async deliverReply(session: AgentSession): Promise<void> {
-    if (this.owningActivity) {
-      await this.owningActivity.waitForIdle();
-    } else if ('waitForIdle' in session && typeof session.waitForIdle === 'function') {
-      await session.waitForIdle();
+    try {
+      if (this.owningActivity) {
+        await this.owningActivity.waitForIdle();
+      } else if ('waitForIdle' in session && typeof session.waitForIdle === 'function') {
+        await session.waitForIdle();
+      }
+
+      const updates = [...this.pendingUpdates];
+      this.pendingUpdates = [];
+      const pendingItems = updates.flatMap((update) => update.items);
+      if (pendingItems.length === 0) return;
+
+      const targetAgent = this.owningActivity?.agent ?? getCurrentAgent(session);
+
+      const itemsToInsert = updates
+        .filter((update) => update.target !== targetAgent)
+        .flatMap((update) => update.items);
+
+      let chatCtx: ChatContext | undefined;
+      if (itemsToInsert.length > 0) {
+        chatCtx = targetAgent.chatCtx.copy();
+        chatCtx.insert(itemsToInsert);
+      }
+
+      const lastItem = pendingItems[pendingItems.length - 1]!;
+      const targetItems = targetAgent.chatCtx.items;
+      const atTail =
+        targetItems.length > 0 && targetItems[targetItems.length - 1]!.id === lastItem.id;
+      const callIds = pendingItems
+        .filter((item): item is FunctionCallOutput => item.type === 'function_call_output')
+        .map((item) => item.callId);
+      const instructions = renderTemplate(
+        atTail ? this.toolOptions.replyAtTailTemplate : this.toolOptions.replyMaybeCoveredTemplate,
+        { callIds },
+      );
+
+      session.generateReply({
+        instructions,
+        toolChoice: 'none',
+        chatCtx,
+      });
+    } finally {
+      this._replyTaskDone = true;
     }
-
-    const updates = [...this.pendingUpdates];
-    this.pendingUpdates = [];
-    const pendingItems = updates.flatMap((update) => update.items);
-    if (pendingItems.length === 0) return;
-
-    const targetAgent = this.owningActivity?.agent ?? getCurrentAgent(session);
-    const itemsToInsert = updates
-      .filter((update) => update.target !== targetAgent)
-      .flatMap((update) => update.items);
-    let chatCtx: ChatContext | undefined;
-    if (itemsToInsert.length > 0) {
-      chatCtx = targetAgent.chatCtx.copy();
-      chatCtx.insert(itemsToInsert);
-    }
-
-    const lastItem = pendingItems[pendingItems.length - 1]!;
-    const targetItems = targetAgent.chatCtx.items;
-    const atTail =
-      targetItems.length > 0 && targetItems[targetItems.length - 1]!.id === lastItem.id;
-    const callIds = pendingItems
-      .filter((item): item is FunctionCallOutput => item.type === 'function_call_output')
-      .map((item) => item.callId);
-    const instructions = renderTemplate(
-      atTail ? this.toolOptions.replyAtTailTemplate : this.toolOptions.replyMaybeCoveredTemplate,
-      { callIds },
-    );
-
-    const generator = session as unknown as {
-      generateReply?: (options: {
-        instructions: string;
-        toolChoice: 'none';
-        chatCtx?: ChatContext;
-      }) => {
-        addDoneCallback?: (callback: (speech: unknown) => void) => void;
-      };
-    };
-    generator.generateReply?.({
-      instructions,
-      toolChoice: 'none',
-      chatCtx,
-    });
   }
 }
 
@@ -608,7 +606,6 @@ export function hasCancellableTool(tools: readonly ToolContextEntry[]): boolean 
   return false;
 }
 
-// Ref: python livekit/agents/voice/tool_executor.py:580-602
 export function buildExecutorMap({
   toolsets,
   defaultExecutor,

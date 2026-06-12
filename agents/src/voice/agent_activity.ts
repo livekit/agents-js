@@ -824,7 +824,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(newToolCtx);
+      await this.realtimeSession.updateTools(this.tools);
     }
 
     if (this.llm instanceof LLM) {
@@ -1973,13 +1973,9 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
-            this.tools.tools.flatMap((t): ToolContextEntry[] => {
-              const keepFn = (fn: ToolContextEntry): boolean =>
-                isToolset(fn) || !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
-              if (isToolset(t)) {
-                return t.tools.filter(keepFn) as ToolContextEntry[];
-              }
-              return keepFn(t) ? [t] : [];
+            this.tools.tools.filter((t): boolean => {
+              if (isToolset(t) || !isFunctionTool(t)) return true;
+              return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
             }),
           )
         : this.tools;
