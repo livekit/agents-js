@@ -781,6 +781,24 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  async updateInstructions(instructions: string | Instructions): Promise<void> {
+    this.agent._instructions = instructions;
+
+    const configUpdate = new AgentConfigUpdate({ instructions });
+    this.agent._chatCtx.insert(configUpdate);
+    this.agentSession.history.insert(configUpdate);
+
+    if (this.realtimeSession) {
+      await this.realtimeSession.updateInstructions(renderInstructions(instructions));
+    } else {
+      updateInstructions({
+        chatCtx: this.agent._chatCtx,
+        instructions,
+        addIfMissing: true,
+      });
+    }
+  }
+
   async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
     const oldToolCtx = this.agent._toolCtx;
     const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));

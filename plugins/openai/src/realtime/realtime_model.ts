@@ -842,7 +842,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    const handle = this.createResponse({ instructions, userInitiated: true });
+    // In OpenAI realtime, the session-level instructions are completely replaced by the
+    // per-response instructions for this response. Prepend the session instructions so they
+    // are preserved (parity with the Python implementation).
+    let responseInstructions = instructions;
+    if (instructions && this.instructions) {
+      responseInstructions = `${this.instructions}\n${instructions}`;
+    }
+
+    const handle = this.createResponse({
+      instructions: responseInstructions,
+      userInitiated: true,
+    });
     this.textModeRecoveryRetries = 0;
 
     const onAbort = () => {
