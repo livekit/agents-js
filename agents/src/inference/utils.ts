@@ -4,7 +4,7 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
 import { version } from '../version.js';
 
@@ -90,17 +90,26 @@ export async function connectWs(
   return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off('open', onOpen);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+    };
+
     const timeout = setTimeout(() => {
-      reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit WebSocket' }));
+      cleanup();
+      socket.terminate();
+      reject(new APITimeoutError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {
-      clearTimeout(timeout);
+      cleanup();
       resolve(socket);
     };
 
     const onError = (err: unknown) => {
-      clearTimeout(timeout);
+      cleanup();
       if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
         reject(
           new APIStatusError({
@@ -114,7 +123,7 @@ export async function connectWs(
     };
 
     const onClose = (code: number) => {
-      clearTimeout(timeout);
+      cleanup();
       if (code !== 1000) {
         reject(
           new APIConnectionError({
