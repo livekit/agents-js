@@ -110,6 +110,7 @@ export async function connectWs(
 
     const onError = (err: unknown) => {
       cleanup();
+      socket.terminate();
       if (err && typeof err === 'object' && 'code' in err && (err as any).code === 429) {
         reject(
           new APIStatusError({
