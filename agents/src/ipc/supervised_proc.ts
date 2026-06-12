@@ -229,6 +229,15 @@ export abstract class SupervisedProc {
     }
     this.#closing = true;
 
+    if (!this.init.done) {
+      this.init.reject(new Error('process closed before initialization completed'));
+      this.proc?.kill();
+      await this.#join.await.then(() => {
+        this.clearTimers();
+      });
+      return;
+    }
+
     if (this.proc?.connected) {
       this.proc.send({ case: 'shutdownRequest' });
     }
