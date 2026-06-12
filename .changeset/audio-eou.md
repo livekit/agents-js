@@ -1,10 +1,10 @@
 ---
-"@livekit/agents": minor
-"@livekit/agents-plugin-silero": minor
-"@livekit/agents-plugins-livekit": minor
+"@livekit/agents": patch
+"@livekit/agents-plugin-silero": patch
+"@livekit/agents-plugins-livekit": patch
 ---
 
-feat(core): multimodal end-of-turn detection with cloud → local fallback (AGT-2520)
+feat(core): audio end-of-turn detection with cloud → local fallback (AGT-2520)
 
 - New `inference.TurnDetector`: WebSocket cloud EOT transport (`version: 'v1'`, model name `turn-detector-v1`) with automatic fallback to the local native model (`version: 'v1-mini'`, model name `turn-detector-v1-mini`) via `@livekit/local-inference`. Auto-selects `'v1'` when `LIVEKIT_REMOTE_EOT_URL` is set, `'v1-mini'` otherwise. The `version` is the constructor knob; telemetry/billing report the full model name via `detector.model`.
 - The local EOT model runs in the shared inference process (the same `InferenceProcExecutor` the text turn detector uses), loaded once per worker host (~138 MB) instead of in every job worker. The runner is registered by default when the native binding is available, so the inference process spawns on worker startup; on platforms where the binding can't load, local EOT degrades to a positive-default prediction and the worker still starts. (This is a JS-specific divergence from Python, which keeps EOT in-process and relies on forkserver COW sharing.)

@@ -498,7 +498,7 @@ export class AgentSession<
 
     // Default turn_detection: when the caller didn't pin a mode or supply a
     // detector instance (`undefined`/not-given), fall back to a fresh
-    // inference.TurnDetector so every session ships with multimodal EOT
+    // inference.TurnDetector so every session ships with audio EOT
     // out of the box. An explicit `null` opts out entirely — no detector is
     // built (mirrors Python `None` vs `NOT_GIVEN`).
     const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;

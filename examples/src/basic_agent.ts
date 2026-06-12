@@ -63,7 +63,7 @@ export default defineAgent({
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        // turn detection defaults to the multimodal inference.TurnDetector when unset.
+        // turn detection defaults to the audio inference.TurnDetector when unset.
         // See https://docs.livekit.io/agents/build/turns
         interruption: {
           // Enable false-interruption auto-resume behavior.
