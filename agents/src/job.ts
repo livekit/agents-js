@@ -17,6 +17,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { ATTRIBUTE_SIMULATOR, ATTRIBUTE_SIMULATOR_DISPATCH } from './constants.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
@@ -90,6 +91,49 @@ export type RunningJobInfo = {
   apiSecret?: string;
 };
 
+export enum SimulationMode {
+  SIMULATION_MODE_UNSPECIFIED = 0,
+  SIMULATION_MODE_TEXT = 1,
+  SIMULATION_MODE_AUDIO = 2,
+}
+
+export type SimulationDispatch = {
+  simulationRunId?: string;
+  simulation_run_id?: string;
+  mode?: string | number;
+  scenario?: unknown;
+};
+
+export class SimulationContext<ProcessUserData = Record<string, unknown>> {
+  #dispatch: SimulationDispatch;
+  #jobContext: JobContext<ProcessUserData>;
+
+  constructor(dispatch: SimulationDispatch, jobContext: JobContext<ProcessUserData>) {
+    this.#dispatch = dispatch;
+    this.#jobContext = jobContext;
+  }
+
+  get scenario(): unknown {
+    return this.#dispatch.scenario;
+  }
+
+  get simulationMode(): SimulationMode {
+    const mode = this.#dispatch.mode;
+    if (mode === SimulationMode.SIMULATION_MODE_AUDIO || mode === 'SIMULATION_MODE_AUDIO') {
+      return SimulationMode.SIMULATION_MODE_AUDIO;
+    }
+    if (mode === SimulationMode.SIMULATION_MODE_TEXT || mode === 'SIMULATION_MODE_TEXT') {
+      return SimulationMode.SIMULATION_MODE_TEXT;
+    }
+    // Simulations predating the mode field were text-only.
+    return SimulationMode.SIMULATION_MODE_TEXT;
+  }
+
+  get jobContext(): JobContext<ProcessUserData> {
+    return this.#jobContext;
+  }
+}
+
 /** Attempted to add a function callback, but the function already exists. */
 export class FunctionExistsError extends Error {
   constructor(msg?: string) {
@@ -119,6 +163,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+  #simulationResolved = false;
+  #simulationContext?: SimulationContext<ProcessUserData>;
 
   /** @internal */
   _primaryAgentSession?: AgentSession;
@@ -170,6 +216,47 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get info(): RunningJobInfo {
     return this.#info;
+  }
+
+  simulationContext(): SimulationContext<ProcessUserData> | undefined {
+    if (this.#simulationResolved) {
+      return this.#simulationContext;
+    }
+
+    let metadata = '';
+    for (const participant of this.#room.remoteParticipants.values()) {
+      if (!Object.hasOwn(participant.attributes, ATTRIBUTE_SIMULATOR)) {
+        continue;
+      }
+
+      metadata = participant.attributes[ATTRIBUTE_SIMULATOR_DISPATCH] || '';
+      if (metadata) {
+        break;
+      }
+    }
+
+    if (!metadata) {
+      // The simulator joins before the agent, so a miss is only final once the room is
+      // connected and a remote participant is visible.
+      this.#simulationResolved = this.#room.isConnected && this.#room.remoteParticipants.size > 0;
+      return undefined;
+    }
+
+    this.#simulationResolved = true;
+
+    let dispatch: SimulationDispatch;
+    try {
+      dispatch = JSON.parse(metadata) as SimulationDispatch;
+    } catch {
+      return undefined;
+    }
+
+    if (!(dispatch.simulationRunId || dispatch.simulation_run_id)) {
+      return undefined;
+    }
+
+    this.#simulationContext = new SimulationContext(dispatch, this);
+    return this.#simulationContext;
   }
 
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
@@ -258,6 +345,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
     await this.#room.connect(this.#info.url, this.#info.token, opts);
     this.#onConnect();
+
+    // Always registered: the callback ignores participants without the simulator attribute, and
+    // gating on simulationContext() here would race the participant-list sync.
+    this.#room.on(RoomEvent.ParticipantDisconnected, this.onSimulatorDisconnected);
 
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);
 
@@ -410,6 +501,15 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }
+
+  private onSimulatorDisconnected = (p: RemoteParticipant) => {
+    if (!Object.hasOwn(p.attributes, ATTRIBUTE_SIMULATOR)) {
+      return;
+    }
+
+    this.#logger.debug('simulator disconnected, shutting down the job');
+    this.shutdown('simulation completed');
+  };
 
   /**
    * Adds a promise to be awaited whenever a new participant joins the room.
