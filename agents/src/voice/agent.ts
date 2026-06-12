@@ -366,6 +366,15 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
+  async updateInstructions(instructions: string | Instructions): Promise<void> {
+    if (!this._agentActivity) {
+      this._instructions = instructions;
+      return;
+    }
+
+    await this._agentActivity.updateInstructions(instructions);
+  }
+
   // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
   async updateTools(tools: readonly ToolContextEntry<UserData>[]): Promise<void> {
     if (!this._agentActivity) {
