@@ -19,7 +19,6 @@ export class AsyncToolset extends Toolset {
     this.asyncToolOptionsOverride = toolHandling?.asyncOptions;
   }
 
-  // Ref: python livekit/agents/llm/async_toolset.py:37-93
   static override create(options: AsyncToolsetCreateOptions): AsyncToolset {
     return new AsyncToolset(options);
   }
@@ -38,16 +37,14 @@ export class AsyncToolset extends Toolset {
       this._executor.setToolOptions(this.asyncToolOptionsOverride);
       return;
     }
-    const activityOptions = (activity as unknown as { agent?: { _asyncToolOptions?: unknown } })
-      ?.agent?._asyncToolOptions;
+    const activityOptions = activity?.agent?._asyncToolOptions;
     if (activityOptions) {
-      this._executor.setToolOptions(activityOptions as ToolHandlingOptions['asyncOptions']);
+      this._executor.setToolOptions(activityOptions);
       return;
     }
-    const sessionOptions = (session as unknown as { _asyncToolOptions?: unknown })
-      ._asyncToolOptions;
+    const sessionOptions = session._asyncToolOptions;
     if (sessionOptions) {
-      this._executor.setToolOptions(sessionOptions as ToolHandlingOptions['asyncOptions']);
+      this._executor.setToolOptions(sessionOptions);
     }
   }
 

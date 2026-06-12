@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
-import type { ChatItem } from '../llm/chat_context.js';
 import type { Future } from '../utils.js';
 import type { AgentActivity } from './agent_activity.js';
 import type { AgentSession } from './agent_session.js';
@@ -66,7 +65,6 @@ export class RunContext<UserData = UnknownUserData> {
     this.speechHandle.allowInterruptions = false;
   }
 
-  // Ref: python livekit/agents/voice/events.py:165-224
   async update(message: unknown, options: RunContextUpdateOptions = {}): Promise<void> {
     const updateStep = this._updates.length;
     const renderedMessage =
@@ -98,13 +96,7 @@ export class RunContext<UserData = UnknownUserData> {
 
   async foreground<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {
     await this._drainPendingReply();
-    const session = this.session as unknown as {
-      waitForIdleAndHold?: <R>(fn: (activity: AgentActivity) => Promise<R> | R) => Promise<R>;
-    };
-    if (!session.waitForIdleAndHold) {
-      throw new Error('RunContext.foreground requires AgentSession.waitForIdleAndHold');
-    }
-    return session.waitForIdleAndHold(fn);
+    return this.session.waitForIdleAndHold(fn);
   }
 
   _attachExecutor(executor: AttachedToolExecutor, firstUpdateFuture: Future<unknown>): void {
@@ -129,7 +121,6 @@ export class RunContext<UserData = UnknownUserData> {
     }
   }
 
-  // Ref: python livekit/agents/voice/events.py:250-277
   _makeUpdatePair(message: unknown, callIdSuffix: string = ''): [FunctionCall, FunctionCallOutput] {
     const fncCall = FunctionCall.create({
       callId: `${this.functionCall.callId}${callIdSuffix}`,

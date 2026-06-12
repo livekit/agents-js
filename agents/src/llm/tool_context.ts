@@ -667,7 +667,6 @@ export function tool(tool: any): any {
   };
 }
 
-// Ref: python livekit/agents/llm/tool_context.py:398-411
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function injectConfirmDuplicateParameter(parameters: any): any {
   if (isZodSchema(parameters)) {
@@ -702,7 +701,6 @@ function injectConfirmDuplicateParameter(parameters: any): any {
   };
 }
 
-// Ref: python livekit/agents/llm/tool_context.py:362-395
 function wrapConfirmDuplicateExecute<
   Parameters extends JSONObject,
   UserData = UnknownUserData,
