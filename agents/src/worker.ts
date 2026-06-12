@@ -169,7 +169,7 @@ export class ServerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 500,
+    jobMemoryWarnMB = 1000,
     jobMemoryLimitMB = 0,
   }: {
     /**
