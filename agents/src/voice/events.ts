@@ -282,14 +282,14 @@ export const createUserTurnExceededEvent = ({
 
 export type ErrorEvent = {
   type: 'error';
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown;
-  source: LLM | STT | TTS | RealtimeModel | unknown;
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError;
+  source?: LLM | STT | TTS | RealtimeModel;
   createdAt: number;
 };
 
 export const createErrorEvent = (
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown,
-  source: LLM | STT | TTS | RealtimeModel | unknown,
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
+  source?: LLM | STT | TTS | RealtimeModel,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({
   type: 'error',
