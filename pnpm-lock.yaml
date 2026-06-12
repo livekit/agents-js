@@ -553,7 +553,7 @@ importers:
         version: 3.1.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.0)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -726,7 +726,7 @@ importers:
         version: 0.4.0
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.0)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1070,7 +1070,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.0)(zod@4.3.6)
       zod:
         specifier: ^3.25.76 || ^4.1.8
         version: 4.3.6
@@ -1098,7 +1098,7 @@ importers:
     dependencies:
       phonic:
         specifier: ^0.31.10
-        version: 0.31.12
+        version: 0.31.17
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -4398,8 +4398,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.31.12:
-    resolution: {integrity: sha512-y4WKcivisgCYAfsahYs3n18W+uB9PrHDUaooAT8gCGn5MjO+nBMljnBhamqURn8vit2ZFh47ZOED54KY15Ln3w==}
+  phonic@0.31.17:
+    resolution: {integrity: sha512-KsLRQkZ/EA1MBHgTK3mrjOMLv5q/2hXWh1jvEoisZKHna77/FuNtvAcYpPhiHErEtLiuZiIEzUNvY50vqpYrJw==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -5158,6 +5158,18 @@ packages:
 
   ws@8.20.1:
     resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -8291,6 +8303,11 @@ snapshots:
       ws: 8.20.1
       zod: 4.3.6
 
+  openai@6.8.1(ws@8.21.0)(zod@4.3.6):
+    optionalDependencies:
+      ws: 8.21.0
+      zod: 4.3.6
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -8363,9 +8380,9 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.31.12:
+  phonic@0.31.17:
     dependencies:
-      ws: 8.20.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -9302,6 +9319,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.20.1: {}
+
+  ws@8.21.0: {}
 
   yallist@4.0.0: {}
 
