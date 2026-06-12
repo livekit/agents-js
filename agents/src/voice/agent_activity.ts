@@ -1001,16 +1001,16 @@ export class AgentActivity implements RecognitionHooks {
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (ev.type === 'realtime_model_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'stt_error') {
-      const errorEvent = createErrorEvent(ev.error, this.stt);
+      const errorEvent = createErrorEvent(ev, this.stt);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'tts_error') {
-      const errorEvent = createErrorEvent(ev.error, this.tts);
+      const errorEvent = createErrorEvent(ev, this.tts);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'llm_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     }
 
