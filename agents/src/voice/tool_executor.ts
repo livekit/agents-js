@@ -16,9 +16,14 @@ import {
   isFunctionTool,
   tool,
 } from '../llm/tool_context.js';
+import { log } from '../log.js';
 import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
+
+// Upper bound on how long `drain()` waits for in-flight tool promises to settle
+// after the executor has signalled abort.
+const DRAIN_TOOL_TIMEOUT_MS = Number(process.env.LK_DRAIN_PLAYOUT_TIMEOUT_MS) || 5_000;
 
 export interface DuplicatePromptArgs {
   functionName: string;
@@ -107,6 +112,9 @@ type RunningTask = {
   firstUpdateFuture: Future<unknown>;
   executor: ToolExecutor;
   allowCancellation: boolean;
+  // Guarded handle to the raw user `execute()` promise (never rejects). `drain()`
+  // waits on this to detect tools that keep running after being aborted.
+  toolPromiseRef: { promise?: Promise<unknown> };
 };
 
 type PendingUpdate = {
@@ -229,6 +237,21 @@ export class ToolExecutor {
       };
       abortSignal?.addEventListener('abort', abort, { once: true });
 
+      // Once a tool goes non-blocking (it called ctx.update and detached from its
+      // owning speech), a speech interruption must NOT abort it — async tools are
+      // meant to survive interruptions and deliver their result later (matches
+      // Python, where the exe_task is independent and only cancel()/drain() stop it).
+      // Stop forwarding the speech abort to this tool; explicit cancel()/drain()/
+      // aclose() still abort it directly via task.controller.
+      void firstUpdateFuture.await
+        .then(() => {
+          if (runCtx.functionCall.extra.__livekit_agents_tool_non_blocking === true) {
+            abortSignal?.removeEventListener('abort', abort);
+          }
+        })
+        .catch(() => {});
+
+      const toolPromiseRef: { promise?: Promise<unknown> } = {};
       const promise = this.runTool({
         tool,
         runCtx,
@@ -236,6 +259,7 @@ export class ToolExecutor {
         firstUpdateFuture,
         controller,
         onUserToolStarted,
+        toolPromiseRef,
       }).finally(() => {
         this.runningTasks.delete(callId);
         runningTasks.get(runCtx.session)?.delete(callId);
@@ -250,6 +274,7 @@ export class ToolExecutor {
         firstUpdateFuture,
         executor: this,
         allowCancellation: Boolean(tool.flags & ToolFlag.CANCELLABLE),
+        toolPromiseRef,
       };
       this.runningTasks.set(callId, task);
       let sessionTasks = runningTasks.get(runCtx.session);
@@ -282,28 +307,92 @@ export class ToolExecutor {
         `Tool call ${callId} is not cancellable because interruptions are disallowed`,
       );
     }
+
     task.controller.abort();
     if (!task.firstUpdateFuture.done) {
       task.firstUpdateFuture.resolve(undefined);
     }
+
     this.runningTasks.delete(callId);
     runningTasks.get(task.ctx.session)?.delete(callId);
     task.ctx._detachExecutor();
     void task.promise.catch(() => undefined);
+    // We've abandoned the wait, but the user's execute() may ignore the abort
+    // signal and keep running. Error if it hasn't stopped by the deadline.
+    this.errorIfCancelledToolKeepsRunning(task.ctx.functionCall, task.toolPromiseRef.promise);
     return true;
+  }
+
+  /**
+   * Fire-and-forget watcher: a cancelled tool whose `execute()` hasn't settled by the
+   * deadline is ignoring its abort signal. Surface it so the dev can make execute abortable —
+   * abandoning the promise alone leaves the work running invisibly.
+   */
+  private errorIfCancelledToolKeepsRunning(
+    call: FunctionCall,
+    rawPromise: Promise<unknown> | undefined,
+  ): void {
+    if (!rawPromise) return;
+    let settled = false;
+    void rawPromise.then(() => {
+      settled = true;
+    });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      log().error(
+        { tool: call.name, callId: call.callId, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
+        `tool ${call.name} was cancelled but its execute() is still running after the deadline; it likely ` +
+          'does not honor the abort signal. Observe the provided abortSignal in execute() so ' +
+          'cancellation actually stops the work.',
+      );
+    }, DRAIN_TOOL_TIMEOUT_MS);
+    timer.unref?.();
+    void rawPromise.finally(() => clearTimeout(timer));
   }
 
   async drain(): Promise<void> {
     const tasks = [...this.runningTasks.values()];
-    await Promise.allSettled(
-      tasks.map(async (task) => {
-        if (task.allowCancellation) {
-          await this.cancel(task.ctx.functionCall.callId);
-          return;
-        }
-        await task.promise;
+
+    // Cancellable tools: signal abort + abandon. Non-cancellable: let them run.
+    for (const task of tasks) {
+      if (task.allowCancellation) {
+        await this.cancel(task.ctx.functionCall.callId);
+      }
+    }
+
+    // Wait (bounded) for the non-cancellable tools we let finish. Cancellable
+    // ones were aborted above and are watched by `cancel()`, so they're excluded
+    // here to avoid a duplicate warning. A non-cancellable tool that's too slow
+    // (or ignores abort) keeps running; bound the wait so it can't wedge the
+    // drain, and warn that its execute() isn't finishing in time.
+    const inflight = tasks
+      .filter((task) => !task.allowCancellation)
+      .map((task) => ({ name: task.ctx.functionCall.name, promise: task.toolPromiseRef.promise }))
+      .filter((t): t is { name: string; promise: Promise<unknown> } => t.promise !== undefined);
+    if (inflight.length === 0) return;
+
+    const pending = new Set(inflight.map((_, i) => i));
+    inflight.forEach((t, i) => void t.promise.then(() => pending.delete(i)));
+
+    const TIMED_OUT = Symbol('drain-timeout');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      Promise.allSettled(inflight.map((t) => t.promise)).then(() => undefined),
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), DRAIN_TOOL_TIMEOUT_MS);
       }),
-    );
+    ]);
+    if (timer) clearTimeout(timer);
+
+    if (outcome === TIMED_OUT) {
+      const stuck = [...pending].map((i) => inflight[i]!.name);
+      log().warn(
+        { tools: stuck, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
+        'tool(s) still running after the drain deadline; their execute() likely does not honor ' +
+          'the abort signal. Make tool execution abortable (observe the provided abortSignal) so ' +
+          'cancellation and agent handoff stay responsive.',
+      );
+    }
   }
 
   async aclose(): Promise<void> {
@@ -353,6 +442,7 @@ export class ToolExecutor {
     firstUpdateFuture,
     controller,
     onUserToolStarted,
+    toolPromiseRef,
   }: {
     tool: FunctionTool<Parameters, UserData, Result>;
     runCtx: RunContext<UserData>;
@@ -360,16 +450,33 @@ export class ToolExecutor {
     firstUpdateFuture: Future<unknown>;
     controller: AbortController;
     onUserToolStarted?: () => void;
+    toolPromiseRef: { promise?: Promise<unknown> };
   }): Promise<void> {
     let output: unknown;
     let exception: unknown;
-    try {
-      const toolPromise = tool.execute(rawArguments, {
+
+    // Wrap so a synchronous throw inside execute() also becomes a rejection.
+    const toolPromise = (async () =>
+      tool.execute(rawArguments, {
         ctx: runCtx,
         toolCallId: runCtx.functionCall.callId,
         abortSignal: controller.signal,
-      });
-      onUserToolStarted?.();
+      }))();
+
+    // Guarded handle for drain() — never rejects, so abandoning it can't surface
+    // as an unhandled rejection.
+    toolPromiseRef.promise = toolPromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    onUserToolStarted?.();
+
+    // Await the tool to completion. Cancellation responsiveness is handled by
+    // `cancel()` (abandons this wait) and `drain()` (bounds the wait on the raw
+    // promise via `toolPromiseRef`), so we must NOT abandon a tool that finishes
+    // around the same time an abort fires — doing so dropped its output and left
+    // the function call without an output (dangling), wedging later turns.
+    try {
       output = await toolPromise;
     } catch (error) {
       exception = error;

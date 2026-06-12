@@ -596,6 +596,17 @@ export class TranscriptionSynchronizer {
    * @internal */
   _paused: boolean = false;
 
+  /**
+   * Segments that were rotated out by an incoming `capture_text` *before* their own
+   * `on_playback_finished` arrived (the "should not happen" path in `_SyncedTextOutput`).
+   * Each still owes one `on_playback_finished`; when it arrives it must settle that
+   * already-closed segment instead of the freshly-rotated current `_impl` (which now holds
+   * the *next* reply's text). Without this, the stale interrupted verdict tears down the new
+   * reply's leading segment and drops its transcript.
+   * @internal
+   */
+  _pendingRotatedSegments: SegmentSynchronizerImpl[] = [];
+
   private logger = log();
 
   constructor(
@@ -774,6 +785,14 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
+    // If a previous (interrupted) speech was rotated out early by an incoming capture_text,
+    // this flush belongs to that already-closed segment. Applying endAudioInput to the current
+    // `_impl` would mark the NEXT reply's audio as ended and trigger a spurious rotation that
+    // drops its transcript. Skip it; the pending stale playback_finished finalizes the old one.
+    if (this.synchronizer._pendingRotatedSegments.length > 0) {
+      return;
+    }
+
     if (!this.pushedDuration) {
       // For timed texts, audio goes directly to room without going through synchronizer.
       // If text was pushed but no audio, still end audio input so text can be processed.
@@ -807,6 +826,21 @@ class SyncedAudioOutput extends AudioOutput {
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
     if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       super.onPlaybackFinished(ev);
+      return;
+    }
+
+    // If a segment was rotated out by an incoming capture_text before its own
+    // playback_finished arrived, this event belongs to that already-closed segment — not the
+    // freshly-rotated current `_impl` (which holds the next reply). Settle the old one and
+    // leave the current segment untouched, so the new reply's leading text isn't dropped.
+    const pendingRotated = this.synchronizer._pendingRotatedSegments.shift();
+    if (pendingRotated) {
+      super.onPlaybackFinished({
+        playbackPosition: ev.playbackPosition,
+        interrupted: ev.interrupted,
+        synchronizedTranscript: pendingRotated.synchronizedTranscript,
+      });
+      this.pushedDuration = 0.0;
       return;
     }
 
@@ -876,6 +910,10 @@ class SyncedTextOutput extends TextOutput {
       this.logger.warn(
         'SegmentSynchronizerImpl text marked as ended in capture text, rotating segment',
       );
+      // This segment's text input already ended but its on_playback_finished hasn't arrived
+      // yet (interrupt + fast next reply). Remember it so the still-pending playback_finished
+      // settles *this* segment, not the new one we're about to rotate in.
+      this.synchronizer._pendingRotatedSegments.push(this.synchronizer._impl);
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
     }

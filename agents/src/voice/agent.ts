@@ -643,13 +643,24 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       throw new Error(`${this.constructor.name} must be executed inside an AgentActivity context`);
     }
 
-    currentTask.addDoneCallback(() => {
-      if (this.future.done) return;
+    // A non-blocking tool (one that called ctx.update) detaches from its speech
+    // task, so that task completes before a later ctx.foreground/AgentTask does.
+    // Binding the guard below to the already-finished task would fire it
+    // immediately and tear the AgentTask down; the tool's still-running promise
+    // and the foreground hold keep it alive instead.
+    const ownerIsNonBlocking =
+      taskInfo.functionCall?.extra.__livekit_agents_tool_non_blocking === true;
+    if (!ownerIsNonBlocking) {
+      currentTask.addDoneCallback(() => {
+        if (this.future.done) return;
 
-      // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
-      this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
-      this.complete(new Error(`The Task finished before ${this.constructor.name} was completed.`));
-    });
+        // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
+        this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
+        this.complete(
+          new Error(`The Task finished before ${this.constructor.name} was completed.`),
+        );
+      });
+    }
 
     const oldAgent = oldActivity.agent;
     const session = oldActivity.agentSession;

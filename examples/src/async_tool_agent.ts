@@ -46,19 +46,41 @@ function today(): string {
   }).format(new Date());
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+// Abortable sleep: rejects as soon as `signal` fires so a cancelled/handed-off
+// tool stops waiting instead of running the timer to completion.
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
-async function collectText(stream: llm.LLMStream): Promise<string> {
+async function collectText(stream: llm.LLMStream, signal?: AbortSignal): Promise<string> {
   let text = '';
+  // `LLM.chat()` has no abort param, so close the stream to interrupt inference.
+  const onAbort = () => stream.close();
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     for await (const chunk of stream) {
+      if (signal?.aborted) break;
       if (chunk.delta?.content) {
         text += chunk.delta.content;
       }
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     stream.close();
   }
   return text;
@@ -128,13 +150,14 @@ function createTravelAgent() {
       date: string;
     },
     ctx: RunContext,
+    signal: AbortSignal,
   ): Promise<string> {
     await ctx.update(
       `Searching flights from ${origin} to ${destination} on ${date}. ` +
         'This will take a couple of minutes.',
     );
 
-    await sleep(30_000);
+    await sleep(30_000, signal);
 
     const airlines = sample(['United', 'Delta', 'American', 'JetBlue', 'Southwest', 'Alaska'], 3);
     const prices = Object.fromEntries(airlines.map((airline) => [airline, randomInt(180, 650)]));
@@ -157,11 +180,14 @@ function createTravelAgent() {
           'You are capturing the email address of the user for the flight booking.',
         ).run();
       });
+      // The foreground hold can resolve right as we're cancelled; bail before the
+      // final wait so a cancelled booking doesn't push a confirmation.
+      if (signal.aborted) throw new Error('aborted');
       userEmail = email.emailAddress;
       logger.info({ email: userEmail }, 'Captured user email address');
     }
 
-    await sleep(40_000);
+    await sleep(40_000, signal);
 
     const confirmation = `FL-${randomInt(100000, 999999)}`;
     return (
@@ -180,22 +206,24 @@ function createTravelAgent() {
       interests: string;
     },
     ctx: RunContext,
+    signal: AbortSignal,
   ): Promise<string> {
     await ctx.update(`Looking up the best spots in ${destination} for you.`);
 
-    const sources = await search(destination, interests, ctx.session.history);
+    const sources = await search(destination, interests, ctx.session.history, signal);
     if (sources.length === 0) {
       return `Could not find information about ${destination}.`;
     }
 
     logger.info({ count: sources.length, destination }, 'Found tour guide sources');
-    return summarize(destination, interests, sources, ctx.session.history);
+    return summarize(destination, interests, sources, ctx.session.history, signal);
   }
 
   async function search(
     destination: string,
     interests: string,
     chatCtx: ChatContext,
+    signal: AbortSignal,
   ): Promise<SearchResult[]> {
     logger.info({ destination, interests }, 'Planning search queries');
     const planCtx = chatCtx.copy({ excludeFunctionCall: true, excludeInstructions: true });
@@ -208,7 +236,7 @@ function createTravelAgent() {
         'Output only the queries, one per line, nothing else.',
     });
 
-    const planResponse = await collectText(thinkingLLM.chat({ chatCtx: planCtx }));
+    const planResponse = await collectText(thinkingLLM.chat({ chatCtx: planCtx }), signal);
     const queries = planResponse
       .split('\n')
       .map((query) => query.trim())
@@ -218,12 +246,13 @@ function createTravelAgent() {
 
     const results: SearchResult[] = [];
     for (const query of queries) {
-      results.push(...(await searchDuckDuckGo(query)));
+      if (signal.aborted) break;
+      results.push(...(await searchDuckDuckGo(query, signal)));
     }
     return results.slice(0, 12);
   }
 
-  async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
+  async function searchDuckDuckGo(query: string, signal: AbortSignal): Promise<SearchResult[]> {
     const url = new URL('https://api.duckduckgo.com/');
     url.searchParams.set('q', query);
     url.searchParams.set('format', 'json');
@@ -232,6 +261,7 @@ function createTravelAgent() {
 
     const response = await fetch(url, {
       headers: { accept: 'application/json' },
+      signal,
     });
     if (!response.ok) {
       logger.warn({ status: response.status, query }, 'DuckDuckGo search failed');
@@ -285,6 +315,7 @@ function createTravelAgent() {
     interests: string,
     sources: SearchResult[],
     chatCtx: ChatContext,
+    signal: AbortSignal,
   ): Promise<string> {
     const summaryCtx = chatCtx.copy({ excludeFunctionCall: true, excludeInstructions: true });
     const sourceText = sources
@@ -302,7 +333,7 @@ function createTravelAgent() {
         `Conversation context:\n${compactHistory(chatCtx)}\n\nSearch results:\n${sourceText}`,
     });
 
-    return collectText(thinkingLLM.chat({ chatCtx: summaryCtx }));
+    return collectText(thinkingLLM.chat({ chatCtx: summaryCtx }), signal);
   }
 
   return Agent.create({
@@ -326,7 +357,7 @@ function createTravelAgent() {
           destination: z.string().describe('Arrival city or airport code'),
           date: z.string().describe('Travel date, for example 2026-04-15'),
         }),
-        execute: (args, options) => bookFlight(args, options.ctx),
+        execute: (args, options) => bookFlight(args, options.ctx, options.abortSignal),
       }),
       llm.tool({
         name: 'tour_guide',
@@ -340,7 +371,7 @@ function createTravelAgent() {
             .string()
             .describe('What the user is interested in, such as street food, museums, or nightlife'),
         }),
-        execute: (args, options) => tourGuide(args, options.ctx),
+        execute: (args, options) => tourGuide(args, options.ctx, options.abortSignal),
       }),
     ],
     onEnter: (ctx) => {

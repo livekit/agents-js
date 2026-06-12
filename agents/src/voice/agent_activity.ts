@@ -37,7 +37,6 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
-  type Tool,
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
@@ -1700,8 +1699,30 @@ export class AgentActivity implements RecognitionHooks {
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
     const controller = new AbortController();
-    await this.waitForInactive(options, controller.signal);
-    await this.agentSession._waitForIdleHoldReleased();
+
+    while (true) {
+      await this.waitForInactive(options, controller.signal);
+      if (!(await this.agentSession._waitForIdleHoldReleased())) {
+        break;
+      }
+    }
+  }
+
+  private async waitForEndOfTurn(signal: AbortSignal): Promise<void> {
+    if (this.audioRecognition) {
+      await this.waitForOrAbort(
+        this.audioRecognition.waitForEndOfTurnTask(),
+        signal,
+        'error waiting for end-of-turn task',
+      );
+    }
+    if (this._userTurnCompletedTask && !this._userTurnCompletedTask.done) {
+      await this.waitForOrAbort(
+        this._userTurnCompletedTask.result,
+        signal,
+        'error waiting for user-turn-completed task',
+      );
+    }
   }
 
   private async waitForInactive(
@@ -1719,13 +1740,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (waitForAgent) {
-        if (this.audioRecognition) {
-          await this.waitForOrAbort(
-            this.audioRecognition.waitForEndOfTurnTask(),
-            signal,
-            'error waiting for end-of-turn task',
-          );
-        }
+        await this.waitForEndOfTurn(signal);
 
         if (!this._currentSpeech && this.speechQueue.size() === 0) {
           agentActive = false;
@@ -1749,6 +1764,7 @@ export class AgentActivity implements RecognitionHooks {
         if (userActive) {
           await delay(0, { signal });
         }
+        await this.waitForEndOfTurn(signal);
       }
     }
   }
@@ -3801,9 +3817,10 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
 
     if (this._mainTask) {
-      // When pausing/draining, we ensure that all speech_tasks complete fully.
-      // This means that even if the SpeechHandle themselves have finished,
-      // we still wait for the entire execution (e.g function_tools)
+      // Wait for all speech tasks to complete fully (including function tools).
+      // Tool-level wedges are bounded inside `ToolExecutor.drain()` (it races the
+      // abort signal and warns on non-abortable tools), so this wait stays
+      // responsive without a blanket timer here.
       await this._mainTask.result;
     }
   }
@@ -4212,18 +4229,22 @@ export class AgentActivity implements RecognitionHooks {
     // already initialized.
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
+
     const sessionToolsets = new ToolContext(this.agentSession.tools).toolsets;
     const agentToolsets = this.agent.toolCtx.toolsets;
+
     for (const toolset of new ToolContext(sessionToolsets).toolsets) {
       if (toolset instanceof AsyncToolset) {
         toolset._attachActivity({ activity: null, session: this.agentSession });
       }
     }
+
     for (const toolset of new ToolContext(agentToolsets).toolsets) {
       if (toolset instanceof AsyncToolset) {
         toolset._attachActivity({ activity: this, session: this.agentSession });
       }
     }
+
     await this.setupToolsetList([...sessionToolsets, ...agentToolsets]);
     // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
     this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
@@ -4232,13 +4253,7 @@ export class AgentActivity implements RecognitionHooks {
   private async closeToolsets(): Promise<void> {
     if (!this._toolsetsSetup) return;
     this._toolsetsSetup = false;
-    // agent-scoped AsyncToolsets run on their own executors; drain them (cancel
-    // cancellable, await non-cancellable) so a non-cancellable async tool finishes
-    // instead of being hard-cancelled by the aclose() below.
-    const agentAsyncToolsets = this.agent.toolCtx.toolsets.filter(
-      (ts): ts is AsyncToolset => ts instanceof AsyncToolset,
-    );
-    await Promise.allSettled(agentAsyncToolsets.map((ts) => ts._executor.drain()));
+    // down, so a non-cancellable async tool finishes instead of being cancelled.
     await this.closeToolsetList(this.agent.toolCtx.toolsets);
   }
 

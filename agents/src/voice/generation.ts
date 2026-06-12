@@ -59,7 +59,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
+import { buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -946,14 +946,6 @@ export function performToolExecutions({
     output: [],
     firstToolStartedFuture: new Future(),
   };
-  const activityExecutor =
-    (session as unknown as { activity?: { _toolExecutor?: ToolExecutor } }).activity
-      ?._toolExecutor ?? new ToolExecutor();
-  const executorByName = buildExecutorMap({
-    toolsets: toolCtx.toolsets,
-    defaultExecutor: activityExecutor,
-  });
-
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
@@ -962,6 +954,19 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+
+    const activity = session._activity;
+    if (!activity) {
+      logger.error({ speechId: speechHandle.id }, 'no active AgentActivity to execute tools');
+      return;
+    }
+
+    // Route AsyncToolset members to their own executor so session-scoped async
+    // tools survive handoff; everything else falls back to the activity executor.
+    const executorByName = buildExecutorMap({
+      toolsets: toolCtx.toolsets,
+      defaultExecutor: activity._toolExecutor,
+    });
 
     const tasks: Task<void>[] = [];
     while (!signal.aborted) {
@@ -1132,7 +1137,7 @@ export function performToolExecutions({
             { functionCall: toolCall, speechHandle },
             async () => {
               const runCtx = new RunContext(session, speechHandle, toolCall);
-              const executor = executorByName.get(toolCall.name) ?? activityExecutor;
+              const executor = executorByName.get(toolCall.name) ?? activity._toolExecutor;
               return await executor.execute({
                 tool,
                 runCtx,

@@ -183,6 +183,70 @@ describe('ToolExecutor', () => {
     expect(getRunningTasks(runCtx.session)).toHaveLength(0);
   });
 
+  // An abortable tool that resolves as soon as its abortSignal fires — mirrors how
+  // the example tools (abortable sleep / fetch signal) honor cancellation.
+  function abortableTool(name: string, started: Future<void>, stopped: Future<void>) {
+    return tool({
+      name,
+      description: 'Abortable cancellable lookup',
+      flags: ToolFlag.CANCELLABLE,
+      execute: async (_, { ctx, abortSignal }) => {
+        await ctx.update('started');
+        started.resolve();
+        await new Promise<void>((resolve) => {
+          if (abortSignal.aborted) return resolve();
+          abortSignal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        stopped.resolve();
+        return 'done';
+      },
+    });
+  }
+
+  it('explicit cancel aborts the tool so an abortable execute() actually stops', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('abortable_cancel');
+    const started = new Future<void>();
+    const stopped = new Future<void>();
+
+    await executor.execute({
+      tool: abortableTool('abortable_cancel', started, stopped),
+      runCtx,
+      rawArguments: {},
+    });
+    await started.await;
+    expect(stopped.done).toBe(false);
+
+    await executor.cancel(runCtx.functionCall.callId);
+    // The tool observes the abort signal and stops on its own (no deadline needed).
+    await Promise.race([
+      stopped.await,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('tool never stopped')), 1000)),
+    ]);
+    expect(stopped.done).toBe(true);
+  });
+
+  it('drain (handoff) aborts cancellable tools so an abortable execute() stops', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('abortable_drain');
+    const started = new Future<void>();
+    const stopped = new Future<void>();
+
+    await executor.execute({
+      tool: abortableTool('abortable_drain', started, stopped),
+      runCtx,
+      rawArguments: {},
+    });
+    await started.await;
+
+    await executor.drain();
+    await Promise.race([
+      stopped.await,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('tool never stopped')), 1000)),
+    ]);
+    expect(stopped.done).toBe(true);
+  });
+
   it('keeps running task visibility scoped to one session', async () => {
     const executor = new ToolExecutor();
     const first = buildRunContext('session_scoped_lookup');

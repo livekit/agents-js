@@ -1249,11 +1249,18 @@ export class AgentSession<
     }
   }
 
-  /** @internal */
-  async _waitForIdleHoldReleased(): Promise<void> {
+  /**
+   * Wait until any foreground idle-hold (`waitForIdleAndHold`) is released.
+   * Returns `true` if it actually waited for a release — callers use that to
+   * re-verify idleness, since work may have resumed during the hold.
+   * @internal
+   */
+  async _waitForIdleHoldReleased(): Promise<boolean> {
     if (this.idleHolds > 0 && !idleHoldStorage.getStore()) {
       await this.idleReleased.wait();
+      return true;
     }
+    return false;
   }
 
   async close(): Promise<void> {
