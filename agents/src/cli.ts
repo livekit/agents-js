@@ -20,16 +20,18 @@ type CliArgs = {
   participantIdentity?: string;
 };
 
+type ServerRunnerArgs = Omit<CliArgs, 'opts'> & {
+  logLevel?: string;
+  server: AgentServer;
+};
+
 const formatErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const runServer = async (args: CliArgs) => {
-  initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
+export const runAgentServer = async (args: ServerRunnerArgs) => {
+  initializeLogger({ pretty: !args.production, level: args.logLevel });
   const logger = log();
-
-  // though `production` is defined in ServerOptions, it will always be overridden by CLI.
-  const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+  const server = args.server;
 
   if (args.room) {
     server.event.once('worker_registered', () => {
@@ -77,6 +79,14 @@ const runServer = async (args: CliArgs) => {
     logger.fatal('closing worker due to error.');
     process.exit(1);
   }
+};
+
+const runServer = async (args: CliArgs) => {
+  // though `production` is defined in ServerOptions, it will always be overridden by CLI.
+  const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
+  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+
+  await runAgentServer({ ...args, logLevel: args.opts.logLevel, server });
 };
 
 /**
