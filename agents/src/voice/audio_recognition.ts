@@ -414,8 +414,8 @@ export class AudioRecognition {
     }
   }
 
-  async start(options?: { sttPipeline?: STTPipeline }) {
-    this.startSttTasks(options?.sttPipeline);
+  async start(options?: { sttPipeline?: STTPipeline; inputStartedAt?: number }) {
+    this.startSttTasks(options?.sttPipeline, options?.inputStartedAt);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
@@ -1286,14 +1286,14 @@ export class AudioRecognition {
     );
   }
 
-  private startSttTasks(reusePipeline?: STTPipeline) {
+  private startSttTasks(reusePipeline?: STTPipeline, inputStartedAt?: number) {
     if (!this.stt) return;
 
     this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt);
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
-    this._inputStartedAt = undefined;
+    this._inputStartedAt = inputStartedAt;
     this.sttOwnershipTransferred = false;
 
     const pipeline = this.sttPipeline;

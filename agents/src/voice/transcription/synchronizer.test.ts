@@ -293,3 +293,35 @@ describe('TranscriptionSynchronizer attachment warnings', () => {
     await synchronizer.close();
   });
 });
+
+class DroppingAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(_frame: AudioFrame): Promise<void> {
+    // dropped: no super.captureFrame(), no playback-finished event
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', () => {
+  it('does not strand waitForPlayout() when the downstream sink drops a captured frame', async () => {
+    const synchronizer = new TranscriptionSynchronizer(
+      new DroppingAudioOutput(),
+      new MockTextOutput(),
+    );
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    const result = await Promise.race([
+      synchronizer.audioOutput.waitForPlayout().then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+
+    expect(result).toBe('resolved');
+    await synchronizer.close();
+  });
+});

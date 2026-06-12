@@ -127,6 +127,7 @@ interface OnEnterData {
 
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
+  sttInputStartedAt?: number;
   rtSession?: RealtimeSession;
 }
 
@@ -539,8 +540,12 @@ export class AgentActivity implements RecognitionHooks {
 
     if (reuseResources?.sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
-      await this.audioRecognition.start({ sttPipeline: reuseResources.sttPipeline });
+      await this.audioRecognition.start({
+        sttPipeline: reuseResources.sttPipeline,
+        inputStartedAt: reuseResources.sttInputStartedAt,
+      });
       reuseResources.sttPipeline = undefined; // ownership transferred
+      reuseResources.sttInputStartedAt = undefined;
     } else {
       await this.audioRecognition.start();
     }
@@ -580,6 +585,7 @@ export class AgentActivity implements RecognitionHooks {
         Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
+        resources.sttInputStartedAt = this.audioRecognition.inputStartedAt;
       }
 
       // rt session
@@ -3748,6 +3754,31 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
 
     if (this._mainTask) {
+      // Drain deadlock guard. A resume-triggered drain can run from inside one of
+      // this activity's own speech tasks; awaiting _mainTask.result there is a
+      // self-await because mainTask cannot exit until that same speech task
+      // de-registers from speechTasks. A barge-in cascade can also leave mainTask
+      // held only by already-done or interrupted "zombie" speech tasks. In both
+      // cases, skip the await; close()/cancelAndWait still reaps mainTask.
+      const currentTask = Task.current();
+      const reentrant = !!currentTask && this.speechTasks.has(currentTask as Task<void>);
+      const pending = this.getDrainPendingSpeechTasks();
+      const allZombie =
+        pending.length > 0 &&
+        pending.every((task) => {
+          if (task.done) return true;
+          const info = _getActivityTaskInfo(task);
+          return !!info?.speechHandle?.interrupted;
+        });
+
+      if (reentrant || allZombie) {
+        this.logger.debug(
+          { reentrant, allZombie, pending: pending.map((task) => task.name) },
+          'skipping mainTask self-await during drain to avoid a deadlock',
+        );
+        return;
+      }
+
       // When pausing/draining, we ensure that all speech_tasks complete fully.
       // This means that even if the SpeechHandle themselves have finished,
       // we still wait for the entire execution (e.g function_tools)

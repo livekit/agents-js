@@ -795,6 +795,14 @@ class SyncedAudioOutput extends AudioOutput {
     this.nextInChainAudio.clearBuffer();
   }
 
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
+    for (let i = 0; i < drift; i++) {
+      super.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+    return super.waitForPlayout();
+  }
+
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
