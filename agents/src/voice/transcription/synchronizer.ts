@@ -603,9 +603,14 @@ export class TranscriptionSynchronizer {
    * already-closed segment instead of the freshly-rotated current `_impl` (which now holds
    * the *next* reply's text). Without this, the stale interrupted verdict tears down the new
    * reply's leading segment and drops its transcript.
+   *
+   * `acceptedDownstream` records whether the next-in-chain audio output counted the segment:
+   * accepted segments owe a *real* finish from downstream, dropped segments owe a *synthetic*
+   * drift finish from `waitForPlayout()` — pairing by kind keeps a synthetic finish from
+   * consuming an entry whose real finish is still in flight.
    * @internal
    */
-  _pendingRotatedSegments: SegmentSynchronizerImpl[] = [];
+  _pendingRotatedSegments: { impl: SegmentSynchronizerImpl; acceptedDownstream: boolean }[] = [];
 
   private logger = log();
 
@@ -712,12 +717,26 @@ export class TranscriptionSynchronizer {
 
 class SyncedAudioOutput extends AudioOutput {
   private pushedDuration: number = 0.0;
+  /** Whether the downstream output counted the segment currently being captured. */
+  private segmentAccepted = false;
+  private segmentOpen = false;
+  /** Acceptance verdict of the most recently flushed segment. */
+  private lastSegmentAccepted = false;
 
   constructor(
     public synchronizer: TranscriptionSynchronizer,
     private nextInChainAudio: AudioOutput,
   ) {
     super(nextInChainAudio.sampleRate, nextInChainAudio, { pause: true });
+  }
+
+  /**
+   * Whether the segment a rotation is about to queue was accepted downstream — the open
+   * segment's live verdict if frames are still flowing, else the last flushed segment's.
+   * @internal
+   */
+  get _rotationCandidateAccepted(): boolean {
+    return this.segmentOpen ? this.segmentAccepted : this.lastSegmentAccepted;
   }
 
   pause(): void {
@@ -741,8 +760,16 @@ class SyncedAudioOutput extends AudioOutput {
     // capture_frame isn't completed
     await this.synchronizer.barrier();
 
+    if (!this.segmentOpen) {
+      this.segmentOpen = true;
+      this.segmentAccepted = false;
+    }
+    const downstreamCapturedBefore = this.nextInChainAudio.capturedPlayoutSegments;
     await super.captureFrame(frame);
     await this.nextInChainAudio.captureFrame(frame); // passthrough audio
+    if (this.nextInChainAudio.capturedPlayoutSegments > downstreamCapturedBefore) {
+      this.segmentAccepted = true;
+    }
 
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
@@ -780,6 +807,10 @@ class SyncedAudioOutput extends AudioOutput {
   flush() {
     super.flush();
     this.nextInChainAudio.flush();
+    if (this.segmentOpen) {
+      this.segmentOpen = false;
+      this.lastSegmentAccepted = this.segmentAccepted;
+    }
 
     if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
       return;
@@ -817,13 +848,44 @@ class SyncedAudioOutput extends AudioOutput {
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
     const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
     for (let i = 0; i < drift; i++) {
-      // route the synthetic finish through our own override (not the base
-      // class) so the synchronizer marks the segment finished, attaches the
-      // synchronized transcript, and rotates — the dropped segment was
-      // captured through the synchronizer like any other
-      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+      this.settleDriftFinish();
     }
     return super.waitForPlayout();
+  }
+
+  /**
+   * Synthetic finish for a segment the downstream output dropped. Routed through the
+   * synchronizer like a real finish (mark finished, attach transcript, rotate), but paired
+   * only with queue entries that were *not* accepted downstream — an accepted entry's real
+   * finish is still in flight and must settle it instead.
+   */
+  private settleDriftFinish(): void {
+    const ev: PlaybackFinishedEvent = { playbackPosition: 0, interrupted: true };
+    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+      super.onPlaybackFinished(ev);
+      return;
+    }
+
+    const queue = this.synchronizer._pendingRotatedSegments;
+    const idx = queue.findIndex((entry) => !entry.acceptedDownstream);
+    if (idx >= 0) {
+      const [entry] = queue.splice(idx, 1);
+      super.onPlaybackFinished({
+        ...ev,
+        synchronizedTranscript: entry!.impl.synchronizedTranscript,
+      });
+      this.pushedDuration = 0.0;
+      return;
+    }
+
+    // the dropped segment is the current one
+    this.synchronizer._impl.markPlaybackFinished(ev.playbackPosition, ev.interrupted);
+    super.onPlaybackFinished({
+      ...ev,
+      synchronizedTranscript: this.synchronizer._impl.synchronizedTranscript,
+    });
+    this.synchronizer.rotateSegment();
+    this.pushedDuration = 0.0;
   }
 
   // this is going to be automatically called by the next_in_chain
@@ -845,12 +907,16 @@ class SyncedAudioOutput extends AudioOutput {
     // playback_finished arrived, this event belongs to that already-closed segment — not the
     // freshly-rotated current `_impl` (which holds the next reply). Settle the old one and
     // leave the current segment untouched, so the new reply's leading text isn't dropped.
-    const pendingRotated = this.synchronizer._pendingRotatedSegments.shift();
-    if (pendingRotated) {
+    // Real finishes can only be for segments the downstream accepted; dropped entries are
+    // settled by `settleDriftFinish` instead.
+    const queue = this.synchronizer._pendingRotatedSegments;
+    const idx = queue.findIndex((entry) => entry.acceptedDownstream);
+    if (idx >= 0) {
+      const [entry] = queue.splice(idx, 1);
       super.onPlaybackFinished({
         playbackPosition: ev.playbackPosition,
         interrupted: ev.interrupted,
-        synchronizedTranscript: pendingRotated.synchronizedTranscript,
+        synchronizedTranscript: entry!.impl.synchronizedTranscript,
       });
       this.pushedDuration = 0.0;
       return;
@@ -925,7 +991,10 @@ class SyncedTextOutput extends TextOutput {
       // This segment's text input already ended but its on_playback_finished hasn't arrived
       // yet (interrupt + fast next reply). Remember it so the still-pending playback_finished
       // settles *this* segment, not the new one we're about to rotate in.
-      this.synchronizer._pendingRotatedSegments.push(this.synchronizer._impl);
+      this.synchronizer._pendingRotatedSegments.push({
+        impl: this.synchronizer._impl,
+        acceptedDownstream: this.synchronizer.audioOutput._rotationCandidateAccepted,
+      });
       this.synchronizer.rotateSegment();
       await this.synchronizer.barrier();
     }
