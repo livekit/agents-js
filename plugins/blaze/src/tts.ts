@@ -928,8 +928,9 @@ export class TTS extends tts.TTS {
 
   /**
    * Update TTS options at runtime.
+   * Note: `sampleRate` is fixed at construction time and cannot be changed here.
    */
-  updateOptions(opts: Partial<Omit<TTSOptions, 'config'>>): void {
+  updateOptions(opts: Partial<Omit<TTSOptions, 'config' | 'sampleRate'>>): void {
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.speakerId !== undefined) this.#opts.speakerId = opts.speakerId;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
