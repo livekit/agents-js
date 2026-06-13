@@ -434,6 +434,10 @@ export class ParticipantAudioOutput extends AudioOutput {
       }
     }
 
+    // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
+    // bumps playbackSegmentsCount; if a frame interrupted-while-paused bailed at the gate after
+    // that bump, the count would strand ahead of playbackFinishedCount and the next
+    // waitForPlayout() would hang forever. See #1662.
     super.captureFrame(frame);
 
     if (!this.firstFrameEmitted) {

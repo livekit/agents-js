@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../src/log.js';
 import {
   Event,
@@ -20,6 +20,10 @@ import {
 describe('utils', () => {
   // initialize logger
   initializeLogger({ pretty: true, level: 'debug' });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   describe('Queue', () => {
     it('aborts a pending get', async () => {
@@ -235,29 +239,39 @@ describe('utils', () => {
     });
 
     it('should handle task that checks abort signal manually', async () => {
-      const arr: number[] = [];
-      const task = Task.from(async (controller) => {
-        for (let i = 0; i < 10; i++) {
-          if (controller.signal.aborted) {
-            throw new Error('Task was aborted');
-          }
-          await delay(10);
-          arr.push(i);
-        }
-        return 'completed';
-      });
-
-      await delay(35);
-      task.cancel();
-
-      expect(arr).toEqual([0, 1, 2]);
+      // fake timers: with real timers the exact tick count is scheduling-
+      // dependent and flakes on loaded CI runners
+      vi.useFakeTimers();
       try {
-        await task.result;
-      } catch (error: unknown) {
-        expect((error as Error).message).toBe('Task was aborted');
-      }
+        const arr: number[] = [];
+        const task = Task.from(async (controller) => {
+          for (let i = 0; i < 10; i++) {
+            if (controller.signal.aborted) {
+              throw new Error('Task was aborted');
+            }
+            await delay(10);
+            arr.push(i);
+          }
+          return 'completed';
+        });
 
-      expect(task.done).toBe(true);
+        await vi.advanceTimersByTimeAsync(35);
+        task.cancel();
+
+        expect(arr).toEqual([0, 1, 2]);
+        // the pending (signal-less) delay must elapse for the loop to reach
+        // its manual abort checkpoint
+        await vi.advanceTimersByTimeAsync(10);
+        try {
+          await task.result;
+        } catch (error: unknown) {
+          expect((error as Error).message).toBe('Task was aborted');
+        }
+
+        expect(task.done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should handle cleanup in finally block', async () => {
@@ -525,18 +539,16 @@ describe('utils', () => {
     });
 
     it('should timeout if task does not respond to cancellation', async () => {
+      vi.useFakeTimers();
       const task = Task.from(async () => {
         await delay(1000);
       });
 
       // This should timeout because the task ignores cancellation
-      try {
-        await task.cancelAndWait(200);
-        expect.fail('Task should have timed out');
-      } catch (error: unknown) {
-        expect(error).instanceof(Error);
-        expect((error as Error).message).toBe('Task cancellation timed out');
-      }
+      const result = task.cancelAndWait(200);
+      const rejection = expect(result).rejects.toThrow('Task cancellation timed out');
+      await vi.advanceTimersByTimeAsync(200);
+      await rejection;
     });
 
     it('should handle task that completes before timeout', async () => {
@@ -695,10 +707,11 @@ describe('utils', () => {
     });
 
     it('wait after 2 seconds is still pending before set', async () => {
+      vi.useFakeTimers();
       const event = new Event();
       const waiter = event.wait();
 
-      await delay(2000);
+      await vi.advanceTimersByTimeAsync(2000);
       expect(await isPending(waiter)).toBe(true);
 
       event.set();

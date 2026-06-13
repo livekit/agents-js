@@ -515,8 +515,15 @@ export class AgentSession<
     event: K,
     ...args: Parameters<AgentSessionCallbacks[K]>
   ): boolean {
-    const eventData = args[0] as AgentEvent;
-    this._recordedEvents.push(eventData);
+    // Only retain events when recording is actually enabled. Otherwise this
+    // array grows unbounded for the entire (potentially hours-long) session,
+    // pinning every event's graph (SpeechHandle, OTel spans/contexts, streams)
+    // and leaking memory even though the events are never reported. The buffer
+    // is only consumed by makeSessionReport() when recording is enabled.
+    if (this._enableRecording) {
+      const eventData = args[0] as AgentEvent;
+      this._recordedEvents.push(eventData);
+    }
     return super.emit(event, ...args);
   }
 

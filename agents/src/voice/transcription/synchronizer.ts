@@ -814,6 +814,18 @@ class SyncedAudioOutput extends AudioOutput {
     this.nextInChainAudio.clearBuffer();
   }
 
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const drift = this.pendingPlayoutSegments - this.nextInChainAudio.pendingPlayoutSegments;
+    for (let i = 0; i < drift; i++) {
+      // route the synthetic finish through our own override (not the base
+      // class) so the synchronizer marks the segment finished, attaches the
+      // synchronized transcript, and rotates — the dropped segment was
+      // captured through the synchronizer like any other
+      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+    return super.waitForPlayout();
+  }
+
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
