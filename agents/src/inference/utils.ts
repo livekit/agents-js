@@ -56,6 +56,7 @@ export async function createAccessToken(
 /**
  * Build metadata headers for inference requests.
  * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
+ * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -71,15 +72,16 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
+    // for hosted agents where job context is always present
     const workerToken = process.env.LIVEKIT_WORKER_TOKEN;
     if (workerToken) {
       headers['X-LiveKit-Worker-Token'] = workerToken;
     }
-    if (ctx.room.isConnected) {
-      const agentSid = ctx.agent?.sid;
-      if (agentSid) {
-        headers['X-LiveKit-Agent-Id'] = agentSid;
-      }
+    // Only emit the agent SID once the room is connected: before connection the
+    // local participant SID is unset/placeholder and would leak into requests.
+    const agentSid = ctx.agent?.sid;
+    if (ctx.room.isConnected && agentSid) {
+      headers['X-LiveKit-Agent-Id'] = agentSid;
     }
   }
 

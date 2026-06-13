@@ -853,7 +853,7 @@ export class SessionHost {
       {
         case: 'error',
         value: new pb.AgentSessionEvent_Error({
-          message: event.error ? String(event.error) : 'Unknown error',
+          message: event.error ? event.error.label : 'Unknown error',
         }),
       },
       event.createdAt,

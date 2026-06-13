@@ -690,9 +690,10 @@ export class AudioRecognition {
 
   async start(options?: {
     sttPipeline?: STTPipeline;
+    inputStartedAt?: number;
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
   }) {
-    this.startSttTasks(options?.sttPipeline);
+    this.startSttTasks(options?.sttPipeline, options?.inputStartedAt);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
@@ -1119,8 +1120,12 @@ export class AudioRecognition {
       firstAlternative !== undefined &&
       firstAlternative.endTime > 0 &&
       inputStartedAt !== undefined;
+    // clamp to now: a reused STT stream's clock can be far ahead of this
+    // activity's input epoch (e.g. after a handoff), and a future
+    // lastSpeakingTime would stall the EOU bounce task for that long
+    // (1.4.5 silence regression from #1603; see audio_recognition_eou.test.ts)
     const sttLastSpeakingTime = hasSTTEndTime
-      ? firstAlternative.endTime * 1000 + inputStartedAt
+      ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
       : Date.now();
 
     switch (ev.type) {
@@ -1754,14 +1759,14 @@ export class AudioRecognition {
     );
   }
 
-  private startSttTasks(reusePipeline?: STTPipeline) {
+  private startSttTasks(reusePipeline?: STTPipeline, inputStartedAt?: number) {
     if (!this.stt) return;
 
     this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt);
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
-    this._inputStartedAt = undefined;
+    this._inputStartedAt = inputStartedAt;
     this.sttOwnershipTransferred = false;
 
     const pipeline = this.sttPipeline;
@@ -2019,6 +2024,9 @@ export class AudioRecognition {
           if (!res) break;
           const { done, value: ev } = res;
           if (done) break;
+          // A healthy stream delivering events recovers the failover budget, so a later transient
+          // failure isn't charged against earlier ones.
+          numRetries = 0;
           this.onOverlapSpeechEvent(ev);
         }
         break;

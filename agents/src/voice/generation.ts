@@ -836,8 +836,14 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
+  // The audio output is shared across overlapping segments, so ignore a
+  // PLAYBACK_STARTED from another segment until we capture our own first frame.
+  // Resolving `firstFrameFut` early skips resampler creation and pushes an
+  // unresampled frame (`RtcError: sample_rate and num_channels don't match`).
+  let hasCapturedOwnFrame = false;
+
   const onPlaybackStarted = (ev: { createdAt: number }) => {
-    if (!out.firstFrameFut.done) {
+    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
       out.firstFrameFut.resolve(ev.createdAt);
     }
   };
@@ -859,14 +865,13 @@ async function forwardAudio(
         out.startedForwardingAt = Date.now();
       }
 
-      if (
-        !out.firstFrameFut.done &&
-        audioOutput.sampleRate &&
-        audioOutput.sampleRate !== frame.sampleRate &&
-        !resampler
-      ) {
-        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, 1);
+      if (audioOutput.sampleRate && audioOutput.sampleRate !== frame.sampleRate && !resampler) {
+        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, frame.channels);
       }
+
+      // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
+      // the first captureFrame is attributed to this segment.
+      hasCapturedOwnFrame = true;
 
       if (resampler) {
         for (const f of resampler.push(frame)) {

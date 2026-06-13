@@ -105,6 +105,60 @@ describe('TTS stream idle timeout', () => {
     expect(audioOut.firstFrameFut.done).toBe(true);
   });
 
+  it('ignores PLAYBACK_STARTED from another segment before its own first frame', async () => {
+    // Stalled stream so the forwarder is still waiting on its first read when a
+    // stray event (from an interrupted overlapping segment) arrives; the idle
+    // timeout then ends the loop without this segment ever capturing a frame.
+    const stalledStream = new ReadableStream<AudioFrame>({ start() {} });
+
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+
+    // Reject path is expected (no first frame ever captured).
+    audioOut.firstFrameFut.await.catch(() => {});
+
+    vi.useFakeTimers();
+
+    audioOutput.onPlaybackStarted(Date.now());
+    expect(audioOut.firstFrameFut.done).toBe(false);
+
+    const taskPromise = task.result;
+    await vi.advanceTimersByTimeAsync(600);
+    await taskPromise;
+
+    vi.useRealTimers();
+
+    expect(audioOutput.capturedFrames.length).toBe(0);
+    expect(audioOut.firstFrameFut.rejected).toBe(true);
+  });
+
+  it('resamples a rate-mismatched frame even after a stray PLAYBACK_STARTED', async () => {
+    // Output is 24kHz; frames are 16kHz and must be resampled regardless of any
+    // stray PLAYBACK_STARTED resolving firstFrameFut early.
+    const stream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(createSilentFrame(16000));
+        controller.enqueue(createSilentFrame(16000));
+        controller.close();
+      },
+    });
+
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
+
+    audioOutput.onPlaybackStarted(Date.now());
+
+    await task.result;
+
+    expect(audioOut.firstFrameFut.done).toBe(true);
+    expect(audioOutput.capturedFrames.length).toBeGreaterThan(0);
+    for (const f of audioOutput.capturedFrames) {
+      expect(f.sampleRate).toBe(24000);
+    }
+  });
+
   it('performTTSInference completes when TTS node returns stalled stream', async () => {
     const stalledTtsStream = new ReadableStream<AudioFrame>({
       start(controller) {
