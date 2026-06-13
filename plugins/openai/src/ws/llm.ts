@@ -447,7 +447,7 @@ export class WSLLMStream extends llm.LLMStream {
     )) as OpenAI.Responses.ResponseInputItem[];
 
     const tools = this.toolCtx
-      ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+      ? Object.entries(this.toolCtx).map(([name, func]) => {
           const oaiParams = {
             type: 'function' as const,
             name,

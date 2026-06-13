@@ -212,7 +212,7 @@ export class LLMStream extends llm.LLMStream {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
       if (this.toolCtx && Object.keys(this.toolCtx).length > 0) {
-        for (const [name, func] of llm.sortedToolEntries(this.toolCtx)) {
+        for (const [name, func] of Object.entries(this.toolCtx)) {
           toolsList.push({
             type: 'function' as const,
             function: {
