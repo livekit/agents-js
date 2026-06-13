@@ -11,7 +11,12 @@ import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
-import type { ToolChoice, ToolContext } from './tool_context.js';
+import {
+  type ToolChoice,
+  type ToolContext,
+  type ToolCtxInput,
+  toToolContext,
+} from './tool_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -91,7 +96,12 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
     extraKwargs,
   }: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    /**
+     * Tools to advertise to the LLM. Accepts either a `ToolContext` instance or a raw
+     * `(FunctionTool | ProviderTool)[]` array — the array form is normalized into a
+     * `ToolContext` internally so callers don't have to construct one themselves.
+     */
+    toolCtx?: ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -134,13 +144,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       connOptions,
     }: {
       chatCtx: ChatContext;
-      toolCtx?: ToolContext;
+      toolCtx?: ToolCtxInput;
       connOptions: APIConnectOptions;
     },
   ) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
-    this.#toolCtx = toolCtx;
+    this.#toolCtx = toToolContext(toolCtx);
     this._connOptions = connOptions;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {

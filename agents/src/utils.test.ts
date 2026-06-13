@@ -14,6 +14,7 @@ import {
   delay,
   isPending,
   resampleStream,
+  toStream,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -33,6 +34,84 @@ describe('utils', () => {
       controller.abort();
 
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+  });
+
+  describe('toStream', () => {
+    it('converts an async iterable into a ReadableStream', async () => {
+      async function* source() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 2 });
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 3 });
+      await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+    });
+
+    it('propagates errors from the async iterable', async () => {
+      const expectedError = new Error('source failed');
+      async function* source() {
+        yield 1;
+        throw expectedError;
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await expect(reader.read()).rejects.toBe(expectedError);
+    });
+
+    it('runs async iterable cleanup when the stream is canceled mid-stream', async () => {
+      let cleanupRan = false;
+      async function* source() {
+        try {
+          yield 1;
+          yield 2;
+        } finally {
+          cleanupRan = true;
+        }
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await reader.cancel('stop early');
+
+      expect(cleanupRan).toBe(true);
+    });
+
+    it('does not wait for a pending next value when canceled mid-stream', async () => {
+      let releaseNextValue: (() => void) | undefined;
+      let cleanupRan = false;
+      async function* source() {
+        try {
+          yield 1;
+          await new Promise<void>((resolve) => {
+            releaseNextValue = resolve;
+          });
+          yield 2;
+        } finally {
+          cleanupRan = true;
+        }
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      const pendingRead = reader.read();
+      await delay(1);
+      await expect(
+        Promise.race([reader.cancel('stop early'), delay(10).then(() => 'timeout')]),
+      ).resolves.not.toBe('timeout');
+      releaseNextValue?.();
+      await expect(pendingRead).resolves.toEqual({ done: true, value: undefined });
+
+      expect(cleanupRan).toBe(true);
     });
   });
 
@@ -160,29 +239,39 @@ describe('utils', () => {
     });
 
     it('should handle task that checks abort signal manually', async () => {
-      const arr: number[] = [];
-      const task = Task.from(async (controller) => {
-        for (let i = 0; i < 10; i++) {
-          if (controller.signal.aborted) {
-            throw new Error('Task was aborted');
-          }
-          await delay(10);
-          arr.push(i);
-        }
-        return 'completed';
-      });
-
-      await delay(35);
-      task.cancel();
-
-      expect(arr).toEqual([0, 1, 2]);
+      // fake timers: with real timers the exact tick count is scheduling-
+      // dependent and flakes on loaded CI runners
+      vi.useFakeTimers();
       try {
-        await task.result;
-      } catch (error: unknown) {
-        expect((error as Error).message).toBe('Task was aborted');
-      }
+        const arr: number[] = [];
+        const task = Task.from(async (controller) => {
+          for (let i = 0; i < 10; i++) {
+            if (controller.signal.aborted) {
+              throw new Error('Task was aborted');
+            }
+            await delay(10);
+            arr.push(i);
+          }
+          return 'completed';
+        });
 
-      expect(task.done).toBe(true);
+        await vi.advanceTimersByTimeAsync(35);
+        task.cancel();
+
+        expect(arr).toEqual([0, 1, 2]);
+        // the pending (signal-less) delay must elapse for the loop to reach
+        // its manual abort checkpoint
+        await vi.advanceTimersByTimeAsync(10);
+        try {
+          await task.result;
+        } catch (error: unknown) {
+          expect((error as Error).message).toBe('Task was aborted');
+        }
+
+        expect(task.done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should handle cleanup in finally block', async () => {

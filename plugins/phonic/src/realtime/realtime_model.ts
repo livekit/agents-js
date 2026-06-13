@@ -239,7 +239,7 @@ interface GenerationState {
  * Realtime session for Phonic (https://docs.phonic.co/)
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeModelOptions;
@@ -290,7 +290,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   async updateInstructions(instructions: string): Promise<void> {
@@ -367,23 +367,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    this._tools = { ...tools };
-    this.toolDefinitions = Object.entries(tools)
-      .filter(([_, tool]) => llm.isFunctionTool(tool))
-      .map(([name, tool]) => ({
-        type: 'custom_websocket',
+    this._tools = tools.copy();
+    // TODO: support provider tools in the Phonic schema.
+    this.toolDefinitions = tools
+      .flatten()
+      .filter(llm.isFunctionTool)
+      .map((t) => ({
+        type: 'custom_websocket' as const,
         tool_schema: {
-          type: 'function',
+          type: 'function' as const,
           function: {
-            name,
-            description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters),
+            name: t.name,
+            description: t.description,
+            parameters: llm.toJsonSchema(t.parameters),
             strict: true,
           },
         },
         tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-        // Tool chaining and tool calls during speech are not supported at this time
-        // for ease of implementation within the RealtimeSession generations framework
         wait_for_speech_before_tool_call: true,
         allow_tool_chaining: false,
       }));
@@ -405,17 +405,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.instructions = instructions;
     }
     if (tools !== undefined) {
-      this._tools = { ...tools };
-      this.toolDefinitions = Object.entries(tools)
-        .filter(([, tool]) => llm.isFunctionTool(tool))
-        .map(([name, tool]) => ({
-          type: 'custom_websocket',
+      this._tools = tools.copy();
+      // TODO: support provider tools in the Phonic schema.
+      this.toolDefinitions = tools
+        .flatten()
+        .filter(llm.isFunctionTool)
+        .map((t) => ({
+          type: 'custom_websocket' as const,
           tool_schema: {
-            type: 'function',
+            type: 'function' as const,
             function: {
-              name,
-              description: tool.description,
-              parameters: llm.toJsonSchema(tool.parameters),
+              name: t.name,
+              description: t.description,
+              parameters: llm.toJsonSchema(t.parameters),
               strict: true,
             },
           },

@@ -20,7 +20,8 @@ import {
   LLM,
   RealtimeModel,
   type ToolChoice,
-  type ToolContext,
+  ToolContext,
+  type ToolContextEntry,
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
@@ -33,11 +34,26 @@ import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentCreateOptions,
+  type AgentTaskCreateOptions,
+  createAgentTaskV2,
+  createAgentV2,
+} from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
+
+export type {
+  AgentContext,
+  AgentCreateOptions,
+  AgentHookNodeResult,
+  AgentHooks,
+  AgentTaskContext,
+  AgentTaskCreateOptions,
+} from './agent_v2.js';
 
 // speechHandle identifies which SpeechHandle owns the current tool call, enabling
 // SpeechHandle.waitForPlayout() to distinguish self-wait (deadlock) from waiting
@@ -118,7 +134,7 @@ export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
   chatCtx?: ChatContext;
-  tools?: ToolContext<UserData>;
+  tools?: readonly ToolContextEntry<UserData>[];
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -153,7 +169,11 @@ export class Agent<UserData = any> {
   _instructions: string | Instructions;
 
   /** @internal */
-  _tools?: ToolContext<UserData>;
+  _toolCtx: ToolContext<UserData>;
+
+  static create<UserData = unknown>(options: AgentCreateOptions<UserData>): Agent<UserData> {
+    return createAgentV2(Agent, options);
+  }
 
   constructor({
     id,
@@ -185,10 +205,10 @@ export class Agent<UserData = any> {
     }
 
     this._instructions = instructions;
-    this._tools = { ...tools };
+    this._toolCtx = new ToolContext<UserData>(tools ?? []);
     this._chatCtx = chatCtx
       ? chatCtx.copy({
-          toolCtx: this._tools,
+          toolCtx: this._toolCtx,
         })
       : ChatContext.empty();
 
@@ -259,7 +279,7 @@ export class Agent<UserData = any> {
   }
 
   get toolCtx(): ToolContext<UserData> {
-    return { ...this._tools };
+    return this._toolCtx.copy();
   }
 
   get session(): AgentSession<UserData> {
@@ -346,11 +366,20 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
-  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
-  async updateTools(tools: ToolContext): Promise<void> {
+  async updateInstructions(instructions: string | Instructions): Promise<void> {
     if (!this._agentActivity) {
-      this._tools = { ...tools };
-      this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+      this._instructions = instructions;
+      return;
+    }
+
+    await this._agentActivity.updateInstructions(instructions);
+  }
+
+  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
+  async updateTools(tools: readonly ToolContextEntry<UserData>[]): Promise<void> {
+    if (!this._agentActivity) {
+      this._toolCtx = new ToolContext<UserData>(tools);
+      this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });
       return;
     }
 
@@ -556,6 +585,12 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
   private _preserveFunctionCallHistory: boolean;
 
   #logger = log();
+
+  static create<ResultT = unknown, UserData = unknown>(
+    options: AgentTaskCreateOptions<ResultT, UserData>,
+  ): AgentTask<ResultT, UserData> {
+    return createAgentTaskV2<ResultT, UserData>(AgentTask, options);
+  }
 
   constructor(options: AgentTaskOptions<UserData>) {
     const { preserveFunctionCallHistory = false, ...rest } = options;

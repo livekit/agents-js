@@ -26,6 +26,7 @@ export default defineAgent({
     const logger = log();
 
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: 'Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -38,9 +39,7 @@ export default defineAgent({
 
     const agent = new voice.Agent({
       instructions: 'You are a helpful assistant. Always speak in English.',
-      tools: {
-        getWeather,
-      },
+      tools: [getWeather],
     });
 
     const session = new voice.AgentSession({

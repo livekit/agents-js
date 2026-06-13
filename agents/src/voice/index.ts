@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-export { Agent, AgentTask, StopResponse, type AgentOptions, type ModelSettings } from './agent.js';
+export {
+  Agent,
+  AgentTask,
+  StopResponse,
+  type AgentContext,
+  type AgentCreateOptions,
+  type AgentHookNodeResult,
+  type AgentHooks,
+  type AgentOptions,
+  type AgentTaskContext,
+  type AgentTaskCreateOptions,
+  type ModelSettings,
+} from './agent.js';
 export * from './amd.js';
 export {
   AgentSession,
@@ -29,6 +41,8 @@ export {
   type PlaybackFinishedEvent,
   type PlaybackStartedEvent,
   type TimedString,
+  createTimedString,
+  isTimedString,
 } from './io.js';
 export * from './report.js';
 export * from './room_io/index.js';

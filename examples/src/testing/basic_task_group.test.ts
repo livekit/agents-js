@@ -82,8 +82,9 @@ class CollectNameTask extends voice.AgentTask<string> {
     super({
       instructions:
         'Collect the user name from the latest user message. As soon as you have it, call save_name.',
-      tools: {
-        save_name: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_name',
           description: 'Save the user name.',
           parameters: z.object({ name: z.string().describe('The user name') }),
           execute: async ({ name }) => {
@@ -91,7 +92,7 @@ class CollectNameTask extends voice.AgentTask<string> {
             return `Saved name: ${name}`;
           },
         }),
-      },
+      ],
     });
     this.ready = ready;
   }
@@ -108,8 +109,9 @@ class CollectEmailTask extends voice.AgentTask<string> {
     super({
       instructions:
         'Collect the user email from the latest user message. As soon as you have it, call save_email.',
-      tools: {
-        save_email: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'save_email',
           description: 'Save the user email.',
           parameters: z.object({ email: z.string().describe('The user email') }),
           execute: async ({ email }) => {
@@ -117,7 +119,7 @@ class CollectEmailTask extends voice.AgentTask<string> {
             return `Saved email: ${email}`;
           },
         }),
-      },
+      ],
     });
     this.ready = ready;
   }

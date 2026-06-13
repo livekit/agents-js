@@ -4,7 +4,7 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, type ToolContext, ToolError, tool } from '../llm/index.js';
+import { FunctionCall, ToolContext, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
@@ -70,6 +70,7 @@ describe('Generation + Tool Execution', () => {
     // Tool that takes > 5 seconds
     let toolAborted = false;
     const getWeather = tool({
+      name: 'getWeather',
       description: 'weather',
       parameters: z.object({ location: z.string() }),
       execute: async ({ location }, { abortSignal }) => {
@@ -92,7 +93,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_test', _itemAdded: () => {} } as any,
-      toolCtx: { getWeather } as any,
+      toolCtx: new ToolContext([getWeather]) as any,
       toolCallStream,
       controller: replyAbortController,
       onToolExecutionStarted: () => {},
@@ -123,6 +124,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ msg: z.string() }),
       execute: async ({ msg }) => `echo: ${msg}`,
@@ -138,7 +140,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_test2', _itemAdded: () => {} } as any,
-      toolCtx: { echo } as any,
+      toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -154,6 +156,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const removeOrderItem = tool({
+      name: 'removeOrderItem',
       description: 'remove order item',
       parameters: z.object({ orderId: z.array(z.string()) }),
       execute: async ({ orderId }) => orderId.join(','),
@@ -170,7 +173,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as AgentSession,
       speechHandle: { id: 'speech_repair', _itemAdded: () => {} } as unknown as SpeechHandle,
-      toolCtx: { removeOrderItem } as unknown as ToolContext,
+      toolCtx: new ToolContext([removeOrderItem]) as unknown as ToolContext,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -189,6 +192,7 @@ describe('Generation + Tool Execution', () => {
 
     let aborted = false;
     const longOp = tool({
+      name: 'longOp',
       description: 'longOp',
       parameters: z.object({ ms: z.number() }),
       execute: async ({ ms }, { abortSignal }) => {
@@ -210,7 +214,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_abort', _itemAdded: () => {} } as any,
-      toolCtx: { longOp } as any,
+      toolCtx: new ToolContext([longOp]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -229,6 +233,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ msg: z.string() }),
       execute: async ({ msg }) => `echo: ${msg}`,
@@ -245,7 +250,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_invalid', _itemAdded: () => {} } as any,
-      toolCtx: { echo } as any,
+      toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -267,6 +272,7 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ msg: z.string() }),
       execute: async ({ msg }) => `echo: ${msg}`,
@@ -283,7 +289,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_bad_json', _itemAdded: () => {} } as any,
-      toolCtx: { echo } as any,
+      toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -304,6 +310,7 @@ describe('Generation + Tool Execution', () => {
     // The tool throws a regular Error whose message contains internals (db URL,
     // credentials) we must NOT forward to the LLM (and from there to end users).
     const sensitive = tool({
+      name: 'sensitive',
       description: 'sensitive',
       parameters: z.object({}),
       execute: async () => {
@@ -321,7 +328,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_generic_err', _itemAdded: () => {} } as any,
-      toolCtx: { sensitive } as any,
+      toolCtx: new ToolContext([sensitive]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -345,6 +352,7 @@ describe('Generation + Tool Execution', () => {
     // Tools that intend to give the LLM a corrective hint opt in by throwing
     // ToolError — its message is forwarded as-is.
     const checked = tool({
+      name: 'checked',
       description: 'checked',
       parameters: z.object({ qty: z.number() }),
       execute: async ({ qty }) => {
@@ -365,7 +373,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_tool_error', _itemAdded: () => {} } as any,
-      toolCtx: { checked } as any,
+      toolCtx: new ToolContext([checked]) as any,
       toolCallStream,
       controller: replyAbortController,
     });
@@ -383,11 +391,13 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     const sum = tool({
+      name: 'sum',
       description: 'sum',
       parameters: z.object({ a: z.number(), b: z.number() }),
       execute: async ({ a, b }) => a + b,
     });
     const upper = tool({
+      name: 'upper',
       description: 'upper',
       parameters: z.object({ s: z.string() }),
       execute: async ({ s }) => s.toUpperCase(),
@@ -408,7 +418,7 @@ describe('Generation + Tool Execution', () => {
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
       speechHandle: { id: 'speech_multi', _itemAdded: () => {} } as any,
-      toolCtx: { sum, upper } as any,
+      toolCtx: new ToolContext([sum, upper]) as any,
       toolCallStream,
       controller: replyAbortController,
     });

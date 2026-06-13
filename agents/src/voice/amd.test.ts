@@ -7,7 +7,7 @@ import type { ChatContext } from '../llm/chat_context.js';
 import { FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
+import type { ToolChoice, ToolCtxInput } from '../llm/tool_context.js';
 import type { SpeechEvent, SpeechStream } from '../stt/stt.js';
 import { STT } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
@@ -48,7 +48,7 @@ class StaticLLM extends LLM {
     connOptions: _connOptions,
   }: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    toolCtx?: ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -270,7 +270,7 @@ describe('AMD', () => {
       }
       chat({}: {
         chatCtx: ChatContext;
-        toolCtx?: ToolContext;
+        toolCtx?: ToolCtxInput;
         connOptions?: APIConnectOptions;
       }): LLMStream {
         return {
@@ -547,7 +547,7 @@ describe('AMD', () => {
       label(): string {
         return 'postpone-llm';
       }
-      chat({}: { chatCtx: ChatContext; toolCtx?: ToolContext }): LLMStream {
+      chat({}: { chatCtx: ChatContext; toolCtx?: ToolCtxInput }): LLMStream {
         callCount += 1;
         const isFirst = callCount === 1;
         return {

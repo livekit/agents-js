@@ -23,6 +23,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import type { Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -36,12 +37,16 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
+  type Tool,
   type ToolChoice,
-  type ToolContext,
+  ToolContext,
+  type ToolContextEntry,
   ToolFlag,
+  isFunctionTool,
+  isToolset,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
-import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
+import { isSameToolChoice } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
   EOUMetrics,
@@ -221,6 +226,7 @@ export class AgentActivity implements RecognitionHooks {
   private toolChoice: ToolChoice | null = null;
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
+  private _toolsetsSetup = false;
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -422,6 +428,8 @@ export class AgentActivity implements RecognitionHooks {
 
     this.agent._agentActivity = this;
 
+    await this.setupToolsets();
+
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
 
@@ -486,7 +494,12 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    const initialTools = Object.keys(this.tools);
+    // Surface every tool the agent advertises at start — function tools by name and provider
+    // tools by id.
+    const initialTools = [
+      ...Object.keys(this.agent._toolCtx.functionTools),
+      ...this.agent._toolCtx.providerTools.map((t) => t.id),
+    ];
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
         instructions: this.agent.instructions,
@@ -622,7 +635,8 @@ export class AgentActivity implements RecognitionHooks {
         // tools update is supported or tools are the same
         reusable =
           reusable &&
-          (capabilities.midSessionToolsUpdate || isSameToolContext(this.tools, newActivity.tools));
+          (capabilities.midSessionToolsUpdate ||
+            this.agent._toolCtx.equals(newActivity.agent._toolCtx));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
@@ -777,13 +791,43 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async updateTools(tools: ToolContext): Promise<void> {
-    const oldToolNames = new Set(Object.keys(this.tools));
-    const newToolNames = new Set(Object.keys(tools));
+  async updateInstructions(instructions: string | Instructions): Promise<void> {
+    this.agent._instructions = instructions;
+
+    const configUpdate = new AgentConfigUpdate({ instructions });
+    this.agent._chatCtx.insert(configUpdate);
+    this.agentSession.history.insert(configUpdate);
+
+    if (this.realtimeSession) {
+      await this.realtimeSession.updateInstructions(renderInstructions(instructions));
+    } else {
+      updateInstructions({
+        chatCtx: this.agent._chatCtx,
+        instructions,
+        addIfMissing: true,
+      });
+    }
+  }
+
+  async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
+    const oldToolCtx = this.agent._toolCtx;
+    const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
+    const oldToolsets = oldToolCtx.toolsets;
+    const newToolCtx = new ToolContext(tools);
+    const newToolsets = newToolCtx.toolsets;
+    const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
+    const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
+
+    // Resolve added factory toolsets before re-flattening, so their tools are included in the
+    // advertised set (newToolNames is computed below, after resolution).
+    await this.setupToolsetList(addedToolsets);
+    newToolCtx.updateTools(newToolCtx.tools);
+    const newToolNames = new Set(Object.keys(newToolCtx.functionTools));
     const toolsAdded = [...newToolNames].filter((name) => !oldToolNames.has(name));
     const toolsRemoved = [...oldToolNames].filter((name) => !newToolNames.has(name));
 
-    this.agent._tools = { ...tools };
+    this.agent._toolCtx = newToolCtx;
+    await this.closeToolsetList(removedToolsets);
 
     if (toolsAdded.length > 0 || toolsRemoved.length > 0) {
       const configUpdate = new AgentConfigUpdate({
@@ -795,12 +839,12 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(tools);
+      await this.realtimeSession.updateTools(newToolCtx);
     }
 
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
-      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: tools }));
+      await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: newToolCtx }));
     }
   }
 
@@ -1455,7 +1499,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       info,
       chatCtx: chatCtx.copy(),
-      tools: { ...this.tools },
+      tools: this.agent._toolCtx.copy(),
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };
@@ -1917,11 +1961,16 @@ export class AgentActivity implements RecognitionHooks {
       const shouldFilterTools =
         onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
 
-      const tools = shouldFilterTools
-        ? Object.fromEntries(
-            Object.entries(this.agent.toolCtx).filter(
-              ([, fnTool]) => !(fnTool.flags & ToolFlag.IGNORE_ON_ENTER),
-            ),
+      const tools: ToolContext = shouldFilterTools
+        ? new ToolContext(
+            this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
+              const keepFn = (fn: Tool): boolean =>
+                !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
+              if (isToolset(t)) {
+                return t.tools.filter(keepFn) as ToolContextEntry[];
+              }
+              return keepFn(t) ? [t] : [];
+            }),
           )
         : this.agent.toolCtx;
 
@@ -2168,7 +2217,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         preemptive.info.newTranscript === userMessage?.textContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
-        isSameToolContext(preemptive.tools, this.tools) &&
+        preemptive.tools.equals(this.agent._toolCtx) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
@@ -4186,8 +4235,68 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSpans?.clear();
     await this.realtimeSession?.close();
     await this.audioRecognition?.close();
+    await this.closeToolsets();
     this.realtimeSession = undefined;
     this.audioRecognition = undefined;
+  }
+
+  private async setupToolsets(): Promise<void> {
+    // Guard against resume() re-entering _startSession on an activity whose toolsets are
+    // already initialized.
+    if (this._toolsetsSetup) return;
+    this._toolsetsSetup = true;
+    await this.setupToolsetList(this.agent.toolCtx.toolsets);
+    // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
+    this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
+  }
+
+  private async closeToolsets(): Promise<void> {
+    if (!this._toolsetsSetup) return;
+    this._toolsetsSetup = false;
+    await this.closeToolsetList(this.agent.toolCtx.toolsets);
+  }
+
+  /**
+   * Refresh the agent's tool context after a dynamic toolset pushed a new tool list (via
+   * `ToolsetContext.updateTools`), routing through updateTools so history, chat context, and the
+   * realtime session stay in sync. The next LLM turn picks up the new tools automatically.
+   */
+  private async onToolsetToolsChanged(): Promise<void> {
+    if (!this._toolsetsSetup) return;
+    const current = this.agent._toolCtx;
+    if (new ToolContext(current.tools).equals(current)) return;
+    // Same toolset entries, so updateTools' setup/close steps are no-ops (no re-entrancy here).
+    await this.updateTools(current.tools);
+  }
+
+  private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(
+      toolsets.map((ts) =>
+        ts.setup({
+          // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+          updateTools: (tools) => {
+            ts._setTools(tools);
+            void this.onToolsetToolsChanged().catch((error) =>
+              this.logger.error({ error }, 'error re-advertising toolset tools'),
+            );
+          },
+        }),
+      ),
+    );
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error setting up toolset');
+      }
+    }
+  }
+
+  private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {
+    const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
+    for (const output of outputs) {
+      if (output.status === 'rejected') {
+        this.logger.error({ error: output.reason }, 'error closing toolset');
+      }
+    }
   }
 }
 

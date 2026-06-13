@@ -2,16 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  Agent,
+  AgentSession,
+  AgentSessionEventTypes,
   type JobContext,
   type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
   inference,
-  llm,
   log,
-  metrics,
-  voice,
+  logMetrics,
+  tool,
 } from '@livekit/agents';
 import * as livekit from '@livekit/agents-plugin-livekit';
 import * as silero from '@livekit/agents-plugin-silero';
@@ -24,11 +26,12 @@ export default defineAgent({
     proc.userData.vad = await silero.VAD.load();
   },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
+    const agent = Agent.create({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -37,12 +40,12 @@ export default defineAgent({
             return `The weather in ${location} is sunny.`;
           },
         }),
-      },
+      ],
     });
 
     const logger = log();
 
-    const session = new voice.AgentSession({
+    const session = new AgentSession({
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
@@ -103,8 +106,8 @@ export default defineAgent({
     });
 
     // Log metrics as they are emitted
-    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
-      metrics.logMetrics(ev.metrics);
+    session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      logMetrics(ev.metrics);
     });
 
     // Log usage summary when job shuts down
@@ -117,7 +120,7 @@ export default defineAgent({
       );
     });
 
-    session.on(voice.AgentSessionEventTypes.OverlappingSpeech, (ev) => {
+    session.on(AgentSessionEventTypes.OverlappingSpeech, (ev) => {
       logger.warn({ type: ev.type, isInterruption: ev.isInterruption }, 'user overlapping speech');
     });
 
