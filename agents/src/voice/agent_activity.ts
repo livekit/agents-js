@@ -540,6 +540,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (reuseResources?.sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
+      // carry the input epoch along with the reused pipeline: its stream clock
+      // is cumulative, so re-stamping inputStartedAt here would push STT-derived
+      // timestamps into the future and stall end-of-turn after every handoff
+      // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
       await this.audioRecognition.start({
         sttPipeline: reuseResources.sttPipeline,
         inputStartedAt: reuseResources.sttInputStartedAt,
@@ -4072,7 +4076,9 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.pausedSpeech.handle.interrupt();
       // ensure the generation is done — but only if a generation
-      // was actually started
+      // was actually started. Must be raced against interrupt: an interrupted
+      // paused speech may never mark its generation done, and an un-raced
+      // await here wedges every subsequent user turn (silence loop, #1124)
       if (this.pausedSpeech.handle._hasGenerations) {
         await this.pausedSpeech.handle.waitIfNotInterrupted([
           this.pausedSpeech.handle._waitForGeneration(),

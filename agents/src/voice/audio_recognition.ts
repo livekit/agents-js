@@ -832,6 +832,7 @@ export class AudioRecognition {
     // clamp to now: a reused STT stream's clock can be far ahead of this
     // activity's input epoch (e.g. after a handoff), and a future
     // lastSpeakingTime would stall the EOU bounce task for that long
+    // (1.4.5 silence regression from #1603; see audio_recognition_eou.test.ts)
     const sttLastSpeakingTime = hasSTTEndTime
       ? Math.min(firstAlternative.endTime * 1000 + inputStartedAt, Date.now())
       : Date.now();

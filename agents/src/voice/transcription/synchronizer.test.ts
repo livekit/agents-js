@@ -324,4 +324,26 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
     expect(result).toBe('resolved');
     await synchronizer.close();
   });
+
+  it('routes the synthetic finish through the synchronizer like a real playback finish', async () => {
+    const synchronizer = new TranscriptionSynchronizer(
+      new DroppingAudioOutput(),
+      new MockTextOutput(),
+    );
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+    const implBefore = (synchronizer as unknown as { _impl: unknown })._impl;
+
+    await synchronizer.audioOutput.captureFrame(frame);
+    const ev = await synchronizer.audioOutput.waitForPlayout();
+
+    // the reconciled segment was captured through the synchronizer, so its
+    // synthetic finish must also mark the segment finished there: the event
+    // carries a synchronized transcript and the segment is rotated
+    expect(ev.interrupted).toBe(true);
+    expect(typeof ev.synchronizedTranscript).toBe('string');
+    await synchronizer.barrier();
+    expect((synchronizer as unknown as { _impl: unknown })._impl).not.toBe(implBefore);
+
+    await synchronizer.close();
+  });
 });
