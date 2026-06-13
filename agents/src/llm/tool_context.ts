@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
 import { z } from 'zod';
+import * as z4 from 'zod/v4';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
-import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
+import { isZod4Schema, isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
@@ -71,6 +72,14 @@ export type ToolChoice =
       };
     };
 
+export type DuplicateMode = 'allow' | 'reject' | 'replace' | 'confirm';
+
+export const CONFIRM_DUPLICATE_PARAM = 'lk_agents_confirm_duplicate';
+
+const CONFIRM_DUPLICATE_DESCRIPTION =
+  'Set this to true to confirm you want to run a duplicate. ' +
+  'Only do this when user confirms the duplication is needed.';
+
 export class ToolError extends Error {
   constructor(message: string) {
     super(message);
@@ -84,6 +93,7 @@ export class ToolError extends Error {
 export const ToolFlag = {
   NONE: 0,
   IGNORE_ON_ENTER: 1 << 0,
+  CANCELLABLE: 1 << 1,
 } as const;
 
 export type ToolFlag = (typeof ToolFlag)[keyof typeof ToolFlag];
@@ -198,6 +208,8 @@ export interface FunctionTool<
 
   flags: number;
 
+  onDuplicate: DuplicateMode;
+
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
@@ -217,7 +229,7 @@ export interface ToolsetContext {
    * Replace the toolset's tools. Useful for dynamic sources
    * (e.g. an MCP server) whose tools are discovered after `setup` or change at runtime.
    */
-  updateTools(tools: readonly Tool[]): void;
+  updateTools(tools: readonly ToolContextEntry[]): void;
 }
 
 /**
@@ -248,11 +260,11 @@ export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
 export class Toolset {
   readonly #id: string;
 
-  #tools: readonly Tool[];
+  #tools: readonly ToolContextEntry[];
 
   readonly [TOOLSET_SYMBOL] = true as const;
 
-  constructor({ id, tools }: { id: string; tools: readonly Tool[] }) {
+  constructor({ id, tools }: { id: string; tools: readonly ToolContextEntry[] }) {
     this.#id = id;
     this.#tools = [...tools];
   }
@@ -303,7 +315,7 @@ export class Toolset {
     return this.#id;
   }
 
-  get tools(): readonly Tool[] {
+  get tools(): readonly ToolContextEntry[] {
     return this.#tools;
   }
 
@@ -313,7 +325,7 @@ export class Toolset {
    *
    * @internal
    */
-  _setTools(tools: readonly Tool[]): void {
+  _setTools(tools: readonly ToolContextEntry[]): void {
     this.#tools = [...tools];
   }
 
@@ -331,7 +343,7 @@ export interface ToolsetCreateOptions {
    */
   setup?: (ctx: ToolsetContext) => Promise<void>;
   /** The toolset's initial tools. */
-  tools: readonly Tool[];
+  tools: readonly ToolContextEntry[];
   /** Invoked when the toolset is being torn down. Release awaitable resources here. */
   aclose?: () => Promise<void>;
 }
@@ -379,7 +391,7 @@ export function toToolContext<UserData = UnknownUserData>(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
-export type ToolContextEntry<UserData = UnknownUserData> =
+export type ToolContextEntry<UserData = any> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   FunctionTool<any, UserData, any> | ProviderTool | Toolset;
 
@@ -550,12 +562,33 @@ export function tool<
   parameters,
   execute,
   flags,
+  onDuplicate,
 }: {
+  /** Unique name the model calls the tool by. Must be non-empty. */
   name: string;
+  /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /**
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema.
+   */
   parameters: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments and a
+   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
+   */
   execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
   flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
 /**
@@ -566,12 +599,30 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
   description,
   execute,
   flags,
+  onDuplicate,
 }: {
+  /** Unique name the model calls the tool by. Must be non-empty. */
   name: string;
+  /** Natural-language description that tells the model when to use this tool. */
   description: string;
+  /** Omitted in this overload — the tool takes no arguments. */
   parameters?: never;
+  /**
+   * Called when the model invokes the tool. Receives a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
+   */
   execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
   flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
 }): FunctionTool<Record<string, never>, UserData, Result>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -580,8 +631,10 @@ export function tool(tool: any): any {
     throw new Error('tool({ name, ... }) requires a non-empty name');
   }
 
+  const onDuplicate: DuplicateMode = tool.onDuplicate ?? 'allow';
+
   // Default parameters to z.object({}) if not provided
-  const parameters = tool.parameters ?? z.object({});
+  let parameters = tool.parameters ?? z.object({});
 
   // if parameters is a Zod schema, ensure it's an object schema
   if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
@@ -593,16 +646,75 @@ export function tool(tool: any): any {
     throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
   }
 
+  if (onDuplicate === 'confirm') {
+    parameters = injectConfirmDuplicateParameter(parameters);
+  }
+
+  const execute =
+    onDuplicate === 'confirm' ? wrapConfirmDuplicateExecute(tool.execute) : tool.execute;
+
   return {
     type: 'function',
     id: tool.name,
     name: tool.name,
     description: tool.description,
     parameters,
-    execute: tool.execute,
+    execute,
     flags: tool.flags ?? ToolFlag.NONE,
+    onDuplicate,
     [TOOL_SYMBOL]: true,
     [FUNCTION_TOOL_SYMBOL]: true,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function injectConfirmDuplicateParameter(parameters: any): any {
+  if (isZodSchema(parameters)) {
+    const maybeObjectSchema = parameters as {
+      extend?: (shape: Record<string, unknown>) => unknown;
+    };
+    if (typeof maybeObjectSchema.extend === 'function') {
+      const confirmSchema = isZod4Schema(parameters)
+        ? z4.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION)
+        : z.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION);
+      return maybeObjectSchema.extend({ [CONFIRM_DUPLICATE_PARAM]: confirmSchema });
+    }
+    throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
+  }
+
+  const properties = {
+    ...(parameters.properties ?? {}),
+    [CONFIRM_DUPLICATE_PARAM]: {
+      type: ['boolean', 'null'],
+      description: CONFIRM_DUPLICATE_DESCRIPTION,
+    },
+  };
+  const required = [...(parameters.required ?? [])];
+  if (!required.includes(CONFIRM_DUPLICATE_PARAM)) {
+    required.push(CONFIRM_DUPLICATE_PARAM);
+  }
+
+  return {
+    ...parameters,
+    properties,
+    required,
+  };
+}
+
+function wrapConfirmDuplicateExecute<
+  Parameters extends JSONObject,
+  UserData = UnknownUserData,
+  Result = unknown,
+>(
+  execute: ToolExecuteFunction<Parameters, UserData, Result>,
+): ToolExecuteFunction<Parameters, UserData, Result> {
+  return async (args, opts) => {
+    if (args && typeof args === 'object' && !Array.isArray(args)) {
+      const stripped = { ...args };
+      delete stripped[CONFIRM_DUPLICATE_PARAM];
+      return execute(stripped, opts);
+    }
+    return execute(args, opts);
   };
 }
 

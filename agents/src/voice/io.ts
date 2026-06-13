@@ -179,6 +179,15 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Monotonic count of playback segments ever captured. Lets chained outputs detect — free of
+   * races with concurrent finishes — whether this output accepted a segment they forwarded.
+   * @internal
+   */
+  get capturedPlayoutSegments(): number {
+    return this.playbackSegmentsCount;
+  }
+
+  /**
    * Called when playback actually starts (first frame is sent to output).
    * Developers building audio sinks should call this when the first frame is captured.
    */
