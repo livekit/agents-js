@@ -239,29 +239,39 @@ describe('utils', () => {
     });
 
     it('should handle task that checks abort signal manually', async () => {
-      const arr: number[] = [];
-      const task = Task.from(async (controller) => {
-        for (let i = 0; i < 10; i++) {
-          if (controller.signal.aborted) {
-            throw new Error('Task was aborted');
-          }
-          await delay(10);
-          arr.push(i);
-        }
-        return 'completed';
-      });
-
-      await delay(35);
-      task.cancel();
-
-      expect(arr).toEqual([0, 1, 2]);
+      // fake timers: with real timers the exact tick count is scheduling-
+      // dependent and flakes on loaded CI runners
+      vi.useFakeTimers();
       try {
-        await task.result;
-      } catch (error: unknown) {
-        expect((error as Error).message).toBe('Task was aborted');
-      }
+        const arr: number[] = [];
+        const task = Task.from(async (controller) => {
+          for (let i = 0; i < 10; i++) {
+            if (controller.signal.aborted) {
+              throw new Error('Task was aborted');
+            }
+            await delay(10);
+            arr.push(i);
+          }
+          return 'completed';
+        });
 
-      expect(task.done).toBe(true);
+        await vi.advanceTimersByTimeAsync(35);
+        task.cancel();
+
+        expect(arr).toEqual([0, 1, 2]);
+        // the pending (signal-less) delay must elapse for the loop to reach
+        // its manual abort checkpoint
+        await vi.advanceTimersByTimeAsync(10);
+        try {
+          await task.result;
+        } catch (error: unknown) {
+          expect((error as Error).message).toBe('Task was aborted');
+        }
+
+        expect(task.done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should handle cleanup in finally block', async () => {
