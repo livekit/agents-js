@@ -31,7 +31,7 @@ import { version } from './version.js';
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
-const PROJECT_TYPE = 'nodejs';
+const WORKER_PROTOCOL_VERSION = 1;
 
 class Default {
   static loadThreshold(production: boolean): number {
@@ -286,6 +286,7 @@ export class AgentServer {
   #httpServer: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #workerLoad = 0;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -374,11 +375,11 @@ export class AgentServer {
 
     const getWorkerInfo = () => ({
       agent_name: opts.agentName,
-      agent_name_is_env: opts.agentNameIsEnv,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
-      project_type: PROJECT_TYPE,
+      worker_load: this.#workerLoad,
+      protocol_version: WORKER_PROTOCOL_VERSION,
     });
 
     this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
@@ -689,6 +690,7 @@ export class AgentServer {
       if (closingWS) clearInterval(loadMonitor);
 
       if (this.#draining) {
+        this.#workerLoad = 1;
         if (currentStatus !== WorkerStatus.WS_FULL) {
           currentStatus = WorkerStatus.WS_FULL;
           this.event.emit(
@@ -711,6 +713,7 @@ export class AgentServer {
       this.#opts
         .loadFunc(this)
         .then((currentLoad: number) => {
+          this.#workerLoad = currentLoad;
           const isFull = currentLoad >= this.#opts.loadThreshold;
           const currentlyAvailable = !isFull;
           currentStatus = currentlyAvailable ? WorkerStatus.WS_AVAILABLE : WorkerStatus.WS_FULL;
