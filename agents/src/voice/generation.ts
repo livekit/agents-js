@@ -870,13 +870,8 @@ async function forwardAudio(
         out.startedForwardingAt = Date.now();
       }
 
-      if (
-        !out.firstFrameFut.done &&
-        audioOutput.sampleRate &&
-        audioOutput.sampleRate !== frame.sampleRate &&
-        !resampler
-      ) {
-        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, 1);
+      if (audioOutput.sampleRate && audioOutput.sampleRate !== frame.sampleRate && !resampler) {
+        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, frame.channels);
       }
 
       // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside

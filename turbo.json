@@ -18,6 +18,9 @@
     "CEREBRAS_API_KEY",
     "DEEPGRAM_API_KEY",
     "DEEPSEEK_API_KEY",
+    "DID_API_KEY",
+    "DID_API_URL",
+    "DID_AGENT_ID",
     "ELEVEN_API_KEY",
     "FIREWORKS_API_KEY",
     "FISH_API_KEY",
@@ -95,14 +98,14 @@
     "MISTRAL_API_KEY",
     "VITEST"
   ],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
     "clean": {
       "dependsOn": ["^clean"],
-      "outputs": [""]
+      "outputs": []
     },
     "clean:build": {
       "dependsOn": ["^clean:build"],

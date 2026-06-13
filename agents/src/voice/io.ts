@@ -170,6 +170,15 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Playback segments captured but not yet finished. Used by chained outputs to detect and
+   * reconcile a segment-count drift against the next output in the chain.
+   * @internal
+   */
+  get pendingPlayoutSegments(): number {
+    return this.playbackSegmentsCount - this.playbackFinishedCount;
+  }
+
+  /**
    * Called when playback actually starts (first frame is sent to output).
    * Developers building audio sinks should call this when the first frame is captured.
    */

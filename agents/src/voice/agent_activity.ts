@@ -132,6 +132,7 @@ interface OnEnterData {
 
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
+  sttInputStartedAt?: number;
   rtSession?: RealtimeSession;
 }
 
@@ -552,8 +553,16 @@ export class AgentActivity implements RecognitionHooks {
 
     if (reuseResources?.sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
-      await this.audioRecognition.start({ sttPipeline: reuseResources.sttPipeline });
+      // carry the input epoch along with the reused pipeline: its stream clock
+      // is cumulative, so re-stamping inputStartedAt here would push STT-derived
+      // timestamps into the future and stall end-of-turn after every handoff
+      // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
+      await this.audioRecognition.start({
+        sttPipeline: reuseResources.sttPipeline,
+        inputStartedAt: reuseResources.sttInputStartedAt,
+      });
       reuseResources.sttPipeline = undefined; // ownership transferred
+      reuseResources.sttInputStartedAt = undefined;
     } else {
       await this.audioRecognition.start();
     }
@@ -593,6 +602,7 @@ export class AgentActivity implements RecognitionHooks {
         Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
+        resources.sttInputStartedAt = this.audioRecognition.inputStartedAt;
       }
 
       // rt session
@@ -1045,16 +1055,16 @@ export class AgentActivity implements RecognitionHooks {
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (ev.type === 'realtime_model_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'stt_error') {
-      const errorEvent = createErrorEvent(ev.error, this.stt);
+      const errorEvent = createErrorEvent(ev, this.stt);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'tts_error') {
-      const errorEvent = createErrorEvent(ev.error, this.tts);
+      const errorEvent = createErrorEvent(ev, this.tts);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'llm_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     }
 
@@ -3797,6 +3807,31 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
 
     if (this._mainTask) {
+      // Drain deadlock guard. A resume-triggered drain can run from inside one of
+      // this activity's own speech tasks; awaiting _mainTask.result there is a
+      // self-await because mainTask cannot exit until that same speech task
+      // de-registers from speechTasks. A barge-in cascade can also leave mainTask
+      // held only by already-done or interrupted "zombie" speech tasks. In both
+      // cases, skip the await; close()/cancelAndWait still reaps mainTask.
+      const currentTask = Task.current();
+      const reentrant = !!currentTask && this.speechTasks.has(currentTask as Task<void>);
+      const pending = this.getDrainPendingSpeechTasks();
+      const allZombie =
+        pending.length > 0 &&
+        pending.every((task) => {
+          if (task.done) return true;
+          const info = _getActivityTaskInfo(task);
+          return !!info?.speechHandle?.interrupted;
+        });
+
+      if (reentrant || allZombie) {
+        this.logger.debug(
+          { reentrant, allZombie, pending: pending.map((task) => task.name) },
+          'skipping mainTask self-await during drain to avoid a deadlock',
+        );
+        return;
+      }
+
       // When pausing/draining, we ensure that all speech_tasks complete fully.
       // This means that even if the SpeechHandle themselves have finished,
       // we still wait for the entire execution (e.g function_tools)
@@ -4090,9 +4125,13 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.pausedSpeech.handle.interrupt();
       // ensure the generation is done — but only if a generation
-      // was actually started
+      // was actually started. Must be raced against interrupt: an interrupted
+      // paused speech may never mark its generation done, and an un-raced
+      // await here wedges every subsequent user turn (silence loop, #1124)
       if (this.pausedSpeech.handle._hasGenerations) {
-        await this.pausedSpeech.handle._waitForGeneration();
+        await this.pausedSpeech.handle.waitIfNotInterrupted([
+          this.pausedSpeech.handle._waitForGeneration(),
+        ]);
       }
     }
     this.pausedSpeech = undefined;
