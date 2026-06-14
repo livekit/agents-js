@@ -23,5 +23,6 @@ export {
   type STTModelUsage,
   type TTSModelUsage,
 } from './model_usage.js';
+export { attachOtelTracer, type AttachOtelTracerOptions, type OtelSpanVariant } from './otel.js';
 export { UsageCollector, type UsageSummary } from './usage_collector.js';
 export { logMetrics } from './utils.js';
