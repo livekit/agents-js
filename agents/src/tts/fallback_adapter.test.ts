@@ -227,4 +227,50 @@ describe('TTS FallbackAdapter', () => {
 
     await adapter.close();
   });
+
+  it('should not mark the primary unavailable when the LLM emits zero text tokens', async () => {
+    // A tool-only LLM turn closes the input stream without pushing any text.
+    // The primary returns no audio because there was nothing to synthesize.
+    // The adapter should treat this as a clean no-op exit and leave the
+    // primary available, rather than marking it unavailable and cascading
+    // through the fallback chain.
+    const primary = new MockTTS('primary');
+    const secondary = new MockTTS('secondary');
+    const adapter = new FallbackAdapter({
+      ttsInstances: [primary, secondary],
+      maxRetryPerTTS: 0,
+      recoveryDelayMs: 60_000,
+    });
+
+    const stream = adapter.stream();
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    );
+
+    const iterate = (async () => {
+      let frameCount = 0;
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) break;
+        frameCount++;
+      }
+      return frameCount;
+    })();
+
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('fallback adapter deadlocked')), 3000),
+    );
+
+    const frameCount = await Promise.race([iterate, timeout]);
+
+    expect(frameCount).toBe(0);
+    expect(adapter.status[0]!.available).toBe(true);
+    expect(adapter.status[1]!.available).toBe(true);
+
+    stream.close();
+    await adapter.close();
+  });
 });

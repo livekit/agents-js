@@ -425,11 +425,15 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
+    let realTokensReceived = 0;
     const readInputLLMStream = (async () => {
       try {
         for await (const input of this.input) {
           if (this.abortController.signal.aborted) break;
           this.tokenBuffer.push(input);
+          if (input !== SynthesizeStream.FLUSH_SENTINEL) {
+            realTokensReceived += 1;
+          }
         }
       } catch (error) {
         this._logger.debug({ error }, 'Error reading input LLM stream');
@@ -565,6 +569,18 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // Silent failures must trigger fallback. See `sawRawAudio` above for
         // why we don't check `audioPushed` here.
         if (!sawRawAudio) {
+          // Wait for the input LLM stream to settle so we can distinguish
+          // "the LLM emitted no text" from "TTS failed before forward could
+          // push anything". If the LLM emitted zero non-sentinel tokens,
+          // empty audio is the correct response — nothing was synthesizable
+          // (e.g. an LLM turn whose only content was a tool call). Treat as
+          // a clean no-op exit instead of marking the provider unavailable
+          // and cascading through the fallback chain.
+          await readInputLLMStream.catch(() => {});
+          if (realTokensReceived === 0) {
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            return;
+          }
           throw new APIConnectionError({
             message: 'TTS stream completed but no audio was received',
           });
