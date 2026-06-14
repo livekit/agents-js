@@ -219,20 +219,37 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    // Snapshot latestText and currentId now. `setParticipant()` calls
-    // `flush()` then `resetState()` synchronously, so without the snapshot
-    // the in-flight flushTaskImpl would read the next segment's
-    // `this.currentId` when it builds its attributes — publishing the prior
-    // turn's text under the new segment id.
+    // Snapshot everything `flushTaskImpl` / `createTextWriter` will read off
+    // `this` before the queued task runs. `setParticipant()` mutates
+    // `participantIdentity`, `trackId`, then calls `flush()` and
+    // `resetState()` (which rotates `currentId`) — all synchronously, so any
+    // field still read lazily after the task is queued can shift under it.
     const textToFlush = this.latestText;
     const segmentIdToFlush = this.currentId;
+    const trackIdToFlush = this.trackId;
+    const participantIdentityToFlush = this.participantIdentity;
     this.flushTask = Task.from((controller) =>
-      this.flushTaskImpl(currWriter, textToFlush, segmentIdToFlush, controller.signal),
+      this.flushTaskImpl(
+        currWriter,
+        textToFlush,
+        segmentIdToFlush,
+        trackIdToFlush,
+        participantIdentityToFlush,
+        controller.signal,
+      ),
     );
   }
 
-  private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
-    if (!this.participantIdentity) {
+  private async createTextWriter(
+    attributes?: Record<string, string>,
+    participantIdentityOverride?: string | null,
+  ): Promise<TextStreamWriter> {
+    // flushTaskImpl threads in a snapshotted participantIdentity so a racing
+    // `setParticipant()` between flush queueing and stream open can't publish
+    // the prior turn under the new participant. Live captures (no override)
+    // still read from `this`.
+    const senderIdentity = participantIdentityOverride ?? this.participantIdentity;
+    if (!senderIdentity) {
       throw new Error('participantIdentity not found');
     }
 
@@ -257,7 +274,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
-      senderIdentity: this.participantIdentity,
+      senderIdentity,
       attributes,
     });
   }
@@ -266,14 +283,16 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     writer: TextStreamWriter | null,
     text: string,
     segmentId: string,
+    trackId: string | undefined,
+    participantIdentity: string | null,
     signal: AbortSignal,
   ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
       [ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID]: segmentId,
     };
-    if (this.trackId) {
-      attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
+    if (trackId) {
+      attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = trackId;
     }
 
     const abortPromise = new Promise<void>((resolve) => {
@@ -287,7 +306,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
             await Promise.race([writer.close(), abortPromise]);
           }
         } else {
-          const tmpWriter = await Promise.race([this.createTextWriter(attributes), abortPromise]);
+          const tmpWriter = await Promise.race([
+            this.createTextWriter(attributes, participantIdentity),
+            abortPromise,
+          ]);
           if (signal.aborted || !tmpWriter) {
             return;
           }
