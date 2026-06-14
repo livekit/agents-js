@@ -219,11 +219,15 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    // Snapshot latestText now so a subsequent captureText() for the next
-    // segment doesn't overwrite the text this flush is meant to publish.
+    // Snapshot latestText and currentId now. `setParticipant()` calls
+    // `flush()` then `resetState()` synchronously, so without the snapshot
+    // the in-flight flushTaskImpl would read the next segment's
+    // `this.currentId` when it builds its attributes — publishing the prior
+    // turn's text under the new segment id.
     const textToFlush = this.latestText;
+    const segmentIdToFlush = this.currentId;
     this.flushTask = Task.from((controller) =>
-      this.flushTaskImpl(currWriter, textToFlush, controller.signal),
+      this.flushTaskImpl(currWriter, textToFlush, segmentIdToFlush, controller.signal),
     );
   }
 
@@ -244,7 +248,12 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
       }
     }
-    attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
+    // Honor a caller-provided SEGMENT_ID — flushTaskImpl snapshots it at
+    // handleFlush time so a racing resetState() can't shift it. Default
+    // (live captures) still reads the current id.
+    if (!attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID]) {
+      attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
+    }
 
     return await this.room.localParticipant.streamText({
       topic: TOPIC_TRANSCRIPTION,
@@ -256,10 +265,12 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   private async flushTaskImpl(
     writer: TextStreamWriter | null,
     text: string,
+    segmentId: string,
     signal: AbortSignal,
   ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
+      [ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID]: segmentId,
     };
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
