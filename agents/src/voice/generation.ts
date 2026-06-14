@@ -7,6 +7,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
 import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import { getJobContext, runWithJobContextAsync } from '../job.js';
 import type { Instructions } from '../llm/chat_context.js';
 import {
   type ChatContext,
@@ -964,6 +965,13 @@ export function performToolExecutions({
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
 
+    // Capture the job context synchronously so it can be re-established inside
+    // each toolTask body. Node 24's AsyncContextFrame does not implicitly
+    // propagate AsyncLocalStorage values across the Task.from() boundary the
+    // way legacy async_hooks did, so getJobContext() inside a tool's execute()
+    // would otherwise throw "no job context found" (see #1255).
+    const currentJobContext = getJobContext(false);
+
     const tasks: Task<void>[] = [];
     while (!signal.aborted) {
       const { done, value: toolCall } = await reader.read();
@@ -1133,16 +1141,18 @@ export function performToolExecutions({
             });
           }
 
-          const toolExecution = functionCallStorage.run(
-            { functionCall: toolCall, speechHandle },
-            async () => {
+          const runToolWithFunctionCallStorage = () =>
+            functionCallStorage.run({ functionCall: toolCall, speechHandle }, async () => {
               return await tool.execute(parsedArgs, {
                 ctx: new RunContext(session, speechHandle, toolCall),
                 toolCallId: toolCall.callId,
                 abortSignal: signal,
               });
-            },
-          );
+            });
+
+          const toolExecution = currentJobContext
+            ? runWithJobContextAsync(currentJobContext, runToolWithFunctionCallStorage)
+            : runToolWithFunctionCallStorage();
 
           await tracableToolExecution(toolExecution);
         },
