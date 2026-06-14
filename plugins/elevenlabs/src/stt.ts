@@ -330,17 +330,16 @@ export class STT extends stt.STT {
     language?: string,
     abortSignal?: AbortSignal,
   ): Promise<stt.SpeechEvent> {
-    if (language !== undefined) {
-      this.#opts.languageCode = normalizeLanguage(language);
-    }
+    const languageCode =
+      language !== undefined ? normalizeLanguage(language) : this.#opts.languageCode;
 
     const wavBytes = createWav(mergeFrames(buffer));
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(wavBytes)], { type: 'audio/x-wav' }), 'audio.wav');
     form.append('model_id', this.#opts.modelId);
     form.append('tag_audio_events', String(this.#opts.tagAudioEvents));
-    if (this.#opts.languageCode) {
-      form.append('language_code', this.#opts.languageCode);
+    if (languageCode) {
+      form.append('language_code', languageCode);
     }
     if (this.#opts.keyterms !== undefined) {
       for (const keyterm of this.#opts.keyterms) {
@@ -369,7 +368,7 @@ export class STT extends stt.STT {
       const startTime = words.length > 0 ? Math.min(...words.map((word) => word.start ?? 0)) : 0;
       const endTime = words.length > 0 ? Math.max(...words.map((word) => word.end ?? 0)) : 0;
       const normalizedLanguage = normalizeLanguage(
-        responseJson.language_code ?? this.#opts.languageCode ?? '',
+        responseJson.language_code ?? languageCode ?? '',
       );
 
       return this.#transcriptionToSpeechEvent(
