@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { Future } from '../../utils.js';
-import { ParticipantAudioOutput } from './_output.js';
+import { Future, type Task } from '../../utils.js';
+import { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './_output.js';
 
 type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
 
@@ -218,5 +218,70 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     expect(output.playbackSegmentsCount).toBe(1);
     expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
     expect(output.pushedDuration).toBeGreaterThan(0);
+  });
+});
+
+describe('ParticipantTranscriptionOutput non-delta final flush', () => {
+  it('snapshots latestText at flush time so a next-segment capture cannot overwrite it', async () => {
+    type FlushTaskImpl = (writer: unknown, text: string, signal: AbortSignal) => Promise<void>;
+    type FlushTarget = ParticipantTranscriptionOutput & {
+      writer: unknown;
+      flushTask: Task<void> | null;
+      latestText: string;
+      flushTaskImpl: FlushTaskImpl;
+      handleFlush: () => void;
+    };
+
+    const output = Object.create(ParticipantTranscriptionOutput.prototype) as FlushTarget;
+    output.writer = null;
+    output.flushTask = null;
+    output.latestText = 'segment-A';
+
+    const flushedTexts: string[] = [];
+    output.flushTaskImpl = vi.fn(async (_writer, text) => {
+      flushedTexts.push(text);
+    });
+
+    output.handleFlush();
+    // Simulate the next segment's first interim landing before the flush task
+    // gets to write — must not corrupt segment A's final text.
+    output.latestText = 'segment-B-interim';
+
+    await output.flushTask!.result;
+
+    expect(flushedTexts).toEqual(['segment-A']);
+  });
+
+  it('preserves latestText through resetState() on a fresh-segment capture (final-only burst)', async () => {
+    type CaptureTarget = ParticipantTranscriptionOutput & {
+      participantIdentity: string | null;
+      capturing: boolean;
+      latestText: string;
+      currentId: string;
+      flushTask: Task<void> | null;
+      writer: unknown;
+      jsonFormat: boolean;
+      room: { isConnected: boolean };
+      logger: { error: () => void };
+      handleCaptureText: (text: string) => Promise<void>;
+      captureText: (text: string) => Promise<void>;
+    };
+
+    const output = Object.create(ParticipantTranscriptionOutput.prototype) as CaptureTarget;
+    output.participantIdentity = 'user-1';
+    output.capturing = false;
+    output.latestText = '';
+    output.currentId = 'SG_initial';
+    output.flushTask = null;
+    output.writer = null;
+    output.jsonFormat = false;
+    output.room = { isConnected: false };
+    output.logger = { error: vi.fn() };
+
+    // First (and only) event for this segment is already a final.
+    await output.captureText('hello world');
+
+    expect(output.capturing).toBe(true);
+    expect(output.latestText).toBe('hello world');
   });
 });
