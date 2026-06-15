@@ -364,18 +364,7 @@ export class AgentServer {
     // still starts (local EOT then degrades to a positive-default prediction).
     maybeRegisterLocalEotRunner();
 
-    if (Object.entries(InferenceRunner.registeredRunners).length) {
-      this.#inferenceExecutor = new InferenceProcExecutor({
-        runners: InferenceRunner.registeredRunners,
-        initializeTimeout: 30000,
-        closeTimeout: 5000,
-        memoryWarnMB: 2000,
-        memoryLimitMB: 0,
-        pingInterval: 5000,
-        pingTimeout: 60000,
-        highPingThreshold: 2500,
-      });
-    }
+    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded({ initializeTimeout: 30000 });
 
     this.#procPool = new ProcPool(
       opts.agent,
