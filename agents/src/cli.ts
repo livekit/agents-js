@@ -158,7 +158,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
-      opts.simulation = globalOptions.simulation || opts.simulation;
+      opts.simulation = commandOptions.simulation || opts.simulation;
       runServer({
         opts,
         production: true,
