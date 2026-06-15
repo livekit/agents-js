@@ -70,21 +70,18 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
    * `undefined` when no plugin has registered an {@link InferenceRunner} (in
    * which case there is nothing to run in a child process).
    *
-   * `initializeTimeout` is the only knob that varies between callers: loading
-   * model files into the child can be slow on first run, so the console grants
-   * a longer window than the worker.
+   * Shared by both the worker and the console, matching python's single
+   * `InferenceProcExecutor` construction.
    */
-  static createIfNeeded({
-    initializeTimeout,
-  }: {
-    initializeTimeout: number;
-  }): InferenceProcExecutor | undefined {
+  static createIfNeeded(): InferenceProcExecutor | undefined {
     if (Object.keys(InferenceRunner.registeredRunners).length === 0) {
       return undefined;
     }
     return new InferenceProcExecutor({
       runners: InferenceRunner.registeredRunners,
-      initializeTimeout,
+      // 5 minutes, matching python: loading model files into the child can be
+      // slow on first run.
+      initializeTimeout: 5 * 60 * 1000,
       closeTimeout: 5000,
       memoryWarnMB: 2000,
       memoryLimitMB: 0,
