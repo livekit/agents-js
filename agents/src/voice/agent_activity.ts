@@ -1512,7 +1512,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       info,
       chatCtx: chatCtx.copy(),
-      tools: this.agent._toolCtx.copy(),
+      tools: this.tools,
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };

@@ -510,14 +510,22 @@ export class ToolExecutor {
 
   private async checkDuplicate(
     functionName: string,
-    { onDuplicate, confirmDuplicate }: { onDuplicate: DuplicateMode; confirmDuplicate?: boolean },
+    {
+      onDuplicate,
+      confirmDuplicate,
+    }: {
+      onDuplicate: DuplicateMode;
+      confirmDuplicate?: boolean;
+    },
   ): Promise<string | undefined> {
-    if (onDuplicate === 'allow') return undefined;
-
     const runningFunctionCalls = [...this.runningTasks.values()]
       .map((task) => task.ctx.functionCall)
       .filter((call) => call.name === functionName);
     if (runningFunctionCalls.length === 0) return undefined;
+
+    if (onDuplicate === 'allow') {
+      return undefined;
+    }
 
     if (onDuplicate === 'replace') {
       const nonCancellable = runningFunctionCalls.filter(
