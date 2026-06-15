@@ -59,7 +59,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { buildExecutorMap } from './tool_executor.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -970,17 +970,17 @@ export function performToolExecutions({
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
 
+    // Production always has an activity (and thus a shared executor). Fall back to a standalone
+    // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
+    // which would leave callers awaiting `firstToolStartedFuture` hanging forever.
     const activity = session._activity;
-    if (!activity) {
-      logger.error({ speechId: speechHandle.id }, 'no active AgentActivity to execute tools');
-      return;
-    }
+    const defaultExecutor = activity?._toolExecutor ?? new ToolExecutor({ owningActivity: null });
 
     // Route AsyncToolset members to their own executor so session-scoped async
     // tools survive handoff; everything else falls back to the activity executor.
     const executorByName = buildExecutorMap({
       toolsets: toolCtx.toolsets,
-      defaultExecutor: activity._toolExecutor,
+      defaultExecutor,
     });
 
     const tasks: Task<void>[] = [];
@@ -1152,7 +1152,7 @@ export function performToolExecutions({
             { functionCall: toolCall, speechHandle },
             async () => {
               const runCtx = new RunContext(session, speechHandle, toolCall);
-              const executor = executorByName.get(toolCall.name) ?? activity._toolExecutor;
+              const executor = executorByName.get(toolCall.name) ?? defaultExecutor;
               return await executor.execute({
                 tool,
                 runCtx,

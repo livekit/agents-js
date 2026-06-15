@@ -413,7 +413,12 @@ export class ToolExecutor {
     this.pendingUpdates.push({ ctx, items, target });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
-      this._replyTask = this.deliverReply(ctx.session);
+      this._replyTask = this.deliverReply(ctx.session).catch((error) => {
+        log().warn(
+          { error },
+          'deliverReply failed; async tool result may not trigger a follow-up reply',
+        );
+      });
       const runState = (
         ctx.session as unknown as {
           _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
@@ -478,8 +483,12 @@ export class ToolExecutor {
     }
 
     if (!firstUpdateFuture.done) {
-      if (exception instanceof Error) {
-        firstUpdateFuture.reject(exception);
+      if (exception !== undefined) {
+        // Propagate non-Error throws too (e.g. `throw "boom"`), otherwise the tool would be
+        // reported as succeeding with an `undefined` output.
+        firstUpdateFuture.reject(
+          exception instanceof Error ? exception : new Error(String(exception)),
+        );
       } else {
         firstUpdateFuture.resolve(output);
       }

@@ -412,6 +412,9 @@ export class AgentSession<
   /** @internal */
   _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
 
+  /** @internal */
+  _sessionToolsetsSetup = false;
+
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
     return (

@@ -4286,19 +4286,29 @@ export class AgentActivity implements RecognitionHooks {
     const sessionToolsets = new ToolContext(this.agentSession.tools).toolsets;
     const agentToolsets = this.agent.toolCtx.toolsets;
 
-    for (const toolset of new ToolContext(sessionToolsets).toolsets) {
+    for (const toolset of sessionToolsets) {
       if (toolset instanceof AsyncToolset) {
         toolset._attachActivity({ activity: null, session: this.agentSession });
       }
     }
 
-    for (const toolset of new ToolContext(agentToolsets).toolsets) {
+    for (const toolset of agentToolsets) {
       if (toolset instanceof AsyncToolset) {
         toolset._attachActivity({ activity: this, session: this.agentSession });
       }
     }
 
-    await this.setupToolsetList([...sessionToolsets, ...agentToolsets]);
+    // Agent toolsets are set up (and torn down) per activity. Session toolsets are set up ONCE for
+    // the session's lifetime — re-running setup() on every handoff would acquire resources (DB
+    // pools, MCP clients, listeners) without a matching aclose(), which only runs once at session
+    // close. closeToolsets() likewise only closes the agent's toolsets.
+    const toSetup = [...agentToolsets];
+    if (!this.agentSession._sessionToolsetsSetup) {
+      this.agentSession._sessionToolsetsSetup = true;
+      toSetup.push(...sessionToolsets);
+    }
+
+    await this.setupToolsetList(toSetup);
     // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
     this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
@@ -4328,11 +4338,17 @@ export class AgentActivity implements RecognitionHooks {
       toolsets.map((ts) =>
         ts.setup({
           // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+          // Route through the session's current activity: a session toolset is set up once (on the
+          // first activity) but its pushes must re-advertise against whatever agent is active now,
+          // not the original (possibly closed) activity.
           updateTools: (tools) => {
             ts._setTools(tools);
-            void this.onToolsetToolsChanged().catch((error) =>
-              this.logger.error({ error }, 'error re-advertising toolset tools'),
-            );
+            const activity = this.agentSession._activity ?? this;
+            void activity
+              .onToolsetToolsChanged()
+              .catch((error) =>
+                activity.logger.error({ error }, 'error re-advertising toolset tools'),
+              );
           },
         }),
       ),
