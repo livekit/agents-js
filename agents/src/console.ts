@@ -128,9 +128,7 @@ export async function runConsole({
     // worker path. Without any runners the fallback executor just raises if
     // reached.
     let inferenceExecutor: InferenceExecutor = new ConsoleInferenceExecutor();
-    // 5 minutes, matching python: loading model files into the child can be
-    // slow on first run.
-    inferenceProc = InferenceProcExecutor.createIfNeeded({ initializeTimeout: 5 * 60 * 1000 });
+    inferenceProc = InferenceProcExecutor.createIfNeeded();
     if (inferenceProc) {
       try {
         await inferenceProc.start();

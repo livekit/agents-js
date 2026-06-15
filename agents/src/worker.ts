@@ -321,7 +321,7 @@ export class AgentServer {
       }
     }
 
-    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded({ initializeTimeout: 30000 });
+    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
     this.#procPool = new ProcPool(
       opts.agent,
