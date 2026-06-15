@@ -19,7 +19,6 @@ import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
-import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
@@ -322,18 +321,7 @@ export class AgentServer {
       }
     }
 
-    if (Object.entries(InferenceRunner.registeredRunners).length) {
-      this.#inferenceExecutor = new InferenceProcExecutor({
-        runners: InferenceRunner.registeredRunners,
-        initializeTimeout: 30000,
-        closeTimeout: 5000,
-        memoryWarnMB: 2000,
-        memoryLimitMB: 0,
-        pingInterval: 5000,
-        pingTimeout: 60000,
-        highPingThreshold: 2500,
-      });
-    }
+    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded({ initializeTimeout: 30000 });
 
     this.#procPool = new ProcPool(
       opts.agent,
