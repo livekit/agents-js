@@ -368,6 +368,8 @@ To connect and talk to your agent:
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
 
+The LiveKit turn detection models are licensed under the [LiveKit Model License](MODEL_LICENSE).
+
 <!--BEGIN_REPO_NAV-->
 <br/><table>
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>

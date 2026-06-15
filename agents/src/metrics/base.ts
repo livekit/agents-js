@@ -15,6 +15,7 @@ export type AgentMetrics =
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
+  | EOTInferenceMetrics
   | RealtimeModelMetrics
   | InterruptionMetrics
   | AvatarMetrics;
@@ -194,6 +195,25 @@ export type RealtimeModelMetrics = {
    */
   outputTokenDetails: RealtimeModelMetricsOutputTokenDetails;
   /** Metadata for model provider and name tracking. */
+  metadata?: MetricsMetadata;
+};
+
+/**
+ * Per-prediction telemetry for the audio EOT (end-of-turn) detector. Emitted
+ * by transports on each cloud or local prediction so we can track detection
+ * latency and inference time per call.
+ */
+export type EOTInferenceMetrics = {
+  type: 'eot_inference_metrics';
+  timestamp: number;
+  /** Latest RTT time taken to perform inference, in milliseconds. */
+  totalDuration: number;
+  /** Latest time taken by the model side, in milliseconds. */
+  predictionDuration: number;
+  /** Latest total time from audio-frame creation to prediction receive, in milliseconds. */
+  detectionDelay: number;
+  /** Number of prediction requests served (incremental). */
+  numRequests: number;
   metadata?: MetricsMetadata;
 };
 

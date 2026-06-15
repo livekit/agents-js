@@ -65,6 +65,13 @@ export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
 export const ATTR_EOU_UNLIKELY_THRESHOLD = 'lk.eou.unlikely_threshold';
 export const ATTR_EOU_DELAY = 'lk.eou.endpointing_delay';
 export const ATTR_EOU_LANGUAGE = 'lk.eou.language';
+/** Which signal triggered the EOU detection: 'vad' | 'stt' | 'manual'. */
+export const ATTR_EOU_SOURCE = 'lk.eou.source';
+/** True when the audio EOT detector resolved this prediction from its
+ * inference-window cache instead of running a fresh predict. */
+export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
+/** Latest input-audio creation time → prediction receive time (ms). */
+export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
 export const ATTR_USER_TRANSCRIPT = 'lk.user_transcript';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';

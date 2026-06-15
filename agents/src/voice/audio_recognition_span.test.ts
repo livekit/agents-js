@@ -110,6 +110,7 @@ describe('AudioRecognition user_turn span parity', () => {
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
       retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };
@@ -191,6 +192,7 @@ describe('AudioRecognition user_turn span parity', () => {
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
       retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };

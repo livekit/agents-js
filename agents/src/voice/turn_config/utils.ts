@@ -73,7 +73,13 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
       ...sessionOptions.turnHandling?.userTurnLimit,
     },
 
-    turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
+    // Preserve an explicit `null` (opt-out) distinctly from `undefined` (not
+    // given). `??` would collapse both, so only fall back to the deprecated
+    // top-level `turnDetection` when `turnHandling.turnDetection` is absent.
+    turnDetection:
+      sessionOptions?.turnHandling?.turnDetection !== undefined
+        ? sessionOptions.turnHandling.turnDetection
+        : turnDetection,
   } as const;
 
   if (
@@ -134,7 +140,12 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
 
 export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
-    turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
+    // Keep an explicit `null` (opt-out) — only an absent value falls back to
+    // the default, so the constructor can tell opt-out from not-given.
+    turnDetection:
+      config.turnDetection === undefined
+        ? defaultTurnHandlingOptions.turnDetection
+        : config.turnDetection,
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
     preemptiveGeneration: {
