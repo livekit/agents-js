@@ -573,6 +573,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private async connect(): Promise<void> {
     this.socket = await this.client.conversations.connect({
+      headers: { 'x-phonic-client': 'livekit-agents-js' },
       reconnectAttempts: this.options.connOptions.maxRetry,
     });
 
