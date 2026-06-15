@@ -167,11 +167,13 @@ export class AvatarSession extends voice.AvatarSession {
     this.#logger.debug('starting avatar session');
     await this.startAgent(livekitUrl, livekitToken);
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+      }),
+    );
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {

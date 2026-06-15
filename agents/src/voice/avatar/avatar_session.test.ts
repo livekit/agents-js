@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
-import * as logModule from '../../log.js';
 import { AvatarSession } from './avatar_session.js';
 
 describe('AvatarSession base', () => {
@@ -45,31 +44,5 @@ describe('AvatarSession base', () => {
 
     await shutdownCallback?.();
     expect(acloseSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('warns when avatar is started after AgentSession.start()', async () => {
-    const warn = vi.fn();
-    vi.spyOn(logModule, 'log').mockReturnValue({
-      warn,
-      debug: vi.fn(),
-    } as unknown as ReturnType<typeof logModule.log>);
-    vi.spyOn(jobModule, 'getJobContext').mockReturnValue(undefined);
-
-    const session = new AvatarSession();
-
-    await session.start(
-      {
-        ...mockAgentSession({
-          _started: true,
-          output: { audio: { constructor: { name: 'MockAudioOutput' } } },
-        }),
-      } as any,
-      mockRoom() as any,
-    );
-
-    expect(warn).toHaveBeenCalledWith(
-      { audioOutput: 'MockAudioOutput' },
-      expect.stringContaining('AvatarSession.start() was called after AgentSession.start()'),
-    );
   });
 });

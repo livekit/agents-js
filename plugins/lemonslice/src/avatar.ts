@@ -252,13 +252,15 @@ export class AvatarSession extends voice.AvatarSession {
     this.#logger.debug('starting avatar session');
     const sessionId = await this.startAgent(livekitUrl, livekitToken);
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      sampleRate: SAMPLE_RATE,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-      waitPlaybackStart: true,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        sampleRate: SAMPLE_RATE,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+        waitPlaybackStart: true,
+      }),
+    );
 
     return sessionId;
   }

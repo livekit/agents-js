@@ -28,8 +28,6 @@ export type AvatarSessionCallbacks = {
  * first in their own `start()` method. The base:
  * - Registers {@link AvatarSession.aclose} as a job shutdown callback, so avatar resources
  *   are released when the job shuts down.
- * - Warns when the avatar session is started after {@link AgentSession.start} — in that
- *   case the existing audio output will be replaced by the avatar's.
  */
 export class AvatarSession extends (EventEmitter as new () => TypedEmitter<AvatarSessionCallbacks>) {
   #logger = log();
@@ -61,16 +59,6 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       this.#logger.debug(
         'AvatarSession started outside a job context; call aclose() manually to ' +
           'release resources when the job shuts down',
-      );
-    }
-
-    const audioOutput = agentSession.output.audio;
-    if (agentSession._started && audioOutput !== null) {
-      this.#logger.warn(
-        { audioOutput: audioOutput.constructor.name },
-        'AvatarSession.start() was called after AgentSession.start(); ' +
-          'the existing audio output may be replaced by the avatar. ' +
-          'Please start the avatar session before AgentSession.start() to avoid this.',
       );
     }
 

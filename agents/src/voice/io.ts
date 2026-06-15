@@ -117,24 +117,43 @@ export abstract class AudioOutput extends EventEmitter {
   };
   protected logger = log();
   protected readonly capabilities: AudioOutputCapabilities;
+  protected _nextInChain?: AudioOutput;
 
   constructor(
     public sampleRate?: number,
-    protected readonly nextInChain?: AudioOutput,
+    nextInChain?: AudioOutput,
     capabilities: AudioOutputCapabilities = { pause: false },
   ) {
     super();
     this.capabilities = capabilities;
 
+    if (
+      nextInChain !== undefined &&
+      nextInChain.nextInChain === undefined &&
+      !(nextInChain instanceof AudioSinkProxy)
+    ) {
+      nextInChain = new AudioSinkProxy(nextInChain);
+    }
+
+    this._nextInChain = nextInChain;
+
     if (this.nextInChain) {
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, (ev: PlaybackStartedEvent) =>
-        this.onPlaybackStarted(ev.createdAt),
-      );
-      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (ev: PlaybackFinishedEvent) =>
-        this.onPlaybackFinished(ev),
-      );
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_STARTED, this.forwardNextPlaybackStarted);
+      this.nextInChain.on(AudioOutput.EVENT_PLAYBACK_FINISHED, this.forwardNextPlaybackFinished);
     }
   }
+
+  get nextInChain(): AudioOutput | undefined {
+    return this._nextInChain;
+  }
+
+  protected forwardNextPlaybackStarted = (ev: PlaybackStartedEvent) => {
+    this.onPlaybackStarted(ev.createdAt);
+  };
+
+  protected forwardNextPlaybackFinished = (ev: PlaybackFinishedEvent) => {
+    this.onPlaybackFinished(ev);
+  };
 
   /**
    * Whether this output and all outputs in the chain support pause/resume.
@@ -239,6 +258,87 @@ export abstract class AudioOutput extends EventEmitter {
     if (this.nextInChain) {
       this.nextInChain.resume();
     }
+  }
+}
+
+class AudioSinkProxy extends AudioOutput {
+  private attached: boolean = false;
+  private capturing: boolean = false;
+  private pushedDuration: number = 0;
+
+  constructor(nextInChain: AudioOutput) {
+    super(undefined, undefined, { pause: true });
+    this.setNextInChain(nextInChain);
+  }
+
+  override get nextInChain(): AudioOutput {
+    if (this._nextInChain === undefined) {
+      throw new Error('AudioSinkProxy has no downstream sink');
+    }
+    return this._nextInChain;
+  }
+
+  override get canPause(): boolean {
+    return this.nextInChain.canPause;
+  }
+
+  override onAttached(): void {
+    this.attached = true;
+    super.onAttached();
+  }
+
+  override onDetached(): void {
+    this.attached = false;
+    super.onDetached();
+  }
+
+  setNextInChain(sink: AudioOutput): void {
+    if (sink === this._nextInChain) return;
+
+    const oldSink = this._nextInChain;
+    if (oldSink !== undefined) {
+      oldSink.off(AudioOutput.EVENT_PLAYBACK_STARTED, this.forwardNextPlaybackStarted);
+      oldSink.off(AudioOutput.EVENT_PLAYBACK_FINISHED, this.forwardNextPlaybackFinished);
+      if (this.pendingPlayoutSegments > 0) {
+        oldSink.clearBuffer();
+      }
+      if (this.attached) {
+        oldSink.onDetached();
+      }
+    }
+
+    this._nextInChain = sink;
+    this.sampleRate = sink.sampleRate;
+    sink.on(AudioOutput.EVENT_PLAYBACK_STARTED, this.forwardNextPlaybackStarted);
+    sink.on(AudioOutput.EVENT_PLAYBACK_FINISHED, this.forwardNextPlaybackFinished);
+    if (this.attached) {
+      sink.onAttached();
+    }
+
+    if (oldSink !== undefined && this.pendingPlayoutSegments > 0 && !this.capturing) {
+      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+    }
+  }
+
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    if (!this.capturing) {
+      this.capturing = true;
+      this.pushedDuration = 0;
+    }
+
+    await super.captureFrame(frame);
+    await this.nextInChain.captureFrame(frame);
+    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
+  }
+
+  override flush(): void {
+    super.flush();
+    this.nextInChain.flush();
+    this.capturing = false;
+  }
+
+  override clearBuffer(): void {
+    this.nextInChain.clearBuffer();
   }
 }
 
@@ -395,6 +495,18 @@ export class AgentOutput {
     if (this._audioSink) {
       this._audioSink.onAttached();
     }
+  }
+
+  replaceAudioTail(sink: AudioOutput): void {
+    let current = this._audioSink;
+    while (current !== null && current !== undefined) {
+      if (current instanceof AudioSinkProxy) {
+        current.setNextInChain(sink);
+        return;
+      }
+      current = current.nextInChain ?? null;
+    }
+    this.audio = sink;
   }
 
   get transcription(): TextOutput | null {

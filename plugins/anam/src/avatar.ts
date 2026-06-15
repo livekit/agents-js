@@ -122,10 +122,12 @@ export class AvatarSession extends voice.AvatarSession {
     const started = await anam.startEngineSession({ sessionToken });
     this.sessionId = started.sessionId;
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+      }),
+    );
   }
 }
