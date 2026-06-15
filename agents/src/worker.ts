@@ -284,9 +284,11 @@ export class AgentServer {
   #pending: { [id: string]: PendingAssignment } = {};
   #close = new Future();
 
+  #simulation = false;
+
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
-  #httpServer: HTTPServer;
+  #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
 
@@ -371,7 +373,9 @@ export class AgentServer {
       project_type: PROJECT_TYPE,
     });
 
-    this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+    if (!this.#simulation) {
+      this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+    }
   }
 
   /** @throws {@link WorkerError} if worker failed to connect or already running */
@@ -438,7 +442,7 @@ export class AgentServer {
       }
     };
 
-    await ThrowsPromise.all([workerWS(), this.#httpServer.run()]);
+    await ThrowsPromise.all(this.#httpServer ? [workerWS(), this.#httpServer.run()] : [workerWS()]);
     this.#close.resolve();
   }
 
@@ -871,7 +875,7 @@ export class AgentServer {
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();
-    await this.#httpServer.close();
+    if (this.#httpServer) await this.#httpServer.close();
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
