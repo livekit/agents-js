@@ -136,14 +136,29 @@ export const runApp = (opts: ServerOptions) => {
     .command('start')
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
+    // note: adding .hideHelp() at the end of the line hides the help message
+    .addOption(
+      new Option(
+        '--simulation',
+        'Run under an agent ' +
+          'simulation: the worker load limit is disabled so runs' +
+          'can saturate the agent. Set by `lk simulate`.',
+      ).hideHelp(),
+    )
     .action((...[, command]) => {
+      // cli args (e.g. --url, --api-key)
       const globalOptions = program.optsWithGlobals();
+      // cli args added to the subcommand (start)
+      // --log-level and --simulation
       const commandOptions = command.opts();
+      // opts is a ServerOptions from
+      // cli.runApp(new ServerOptions({ agent: ... }))
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      opts.simulation = globalOptions.simulation || opts.simulation;
       runServer({
         opts,
         production: true,

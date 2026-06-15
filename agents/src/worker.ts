@@ -145,6 +145,7 @@ export class ServerOptions {
   production: boolean;
   jobMemoryWarnMB: number;
   jobMemoryLimitMB: number;
+  simulation?: boolean;
 
   /** @param options - Worker options */
   constructor({
@@ -170,6 +171,7 @@ export class ServerOptions {
     production = false,
     jobMemoryWarnMB = 500,
     jobMemoryLimitMB = 0,
+    simulation = false,
   }: {
     /**
      * Path to a file that has {@link Agent} as a default export, dynamically imported later for
@@ -211,6 +213,7 @@ export class ServerOptions {
     production?: boolean;
     jobMemoryWarnMB?: number;
     jobMemoryLimitMB?: number;
+    simulation?: boolean;
   }) {
     this.agent = agent;
     if (!this.agent) {
@@ -247,6 +250,7 @@ export class ServerOptions {
     this.production = production;
     this.jobMemoryWarnMB = jobMemoryWarnMB;
     this.jobMemoryLimitMB = jobMemoryLimitMB;
+    this.simulation = simulation;
   }
 }
 
@@ -291,6 +295,10 @@ export class AgentServer {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
+
+    if (opts.simulation) {
+      this.#simulation = true;
+    }
 
     if (opts.wsURL === '')
       throw new MissingCredentialsError(
