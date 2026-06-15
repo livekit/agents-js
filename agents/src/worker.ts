@@ -228,7 +228,12 @@ export class ServerOptions {
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
     // cli.ts spreads an existing ServerOptions instance), so prefer it when defined.
-    if (agentName) {
+    if (process.env.LIVEKIT_AGENT_NAME_OVERRIDE) {
+      // Highest priority: `lk simulate` sets this to force the worker to register
+      // under the agent name it dispatches to, overriding any configured agentName.
+      this.agentName = process.env.LIVEKIT_AGENT_NAME_OVERRIDE;
+      this.agentNameIsEnv = agentNameIsEnv ?? true;
+    } else if (agentName) {
       this.agentName = agentName;
       this.agentNameIsEnv = agentNameIsEnv ?? false;
     } else if (process.env.LIVEKIT_AGENT_NAME) {
