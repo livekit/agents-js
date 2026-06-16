@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
   AudioByteStream,
   Event,
   calculateAudioDurationSeconds,
@@ -214,6 +215,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #opts: STTv2Options & { apiKey: string };
   #logger = log();
   #ws: WebSocket | null = null;
+  #closingWs = new WeakSet<WebSocket>();
 
   #audioDurationCollector: PeriodicCollector<number>;
   #requestId = '';
@@ -281,8 +283,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
         });
 
         // 2. Run Concurrent Tasks (Send & Receive)
-        const sendPromise = this.#sendTask();
-        const recvPromise = this.#recvTask();
+        const ws = this.#ws;
+        if (!ws) throw new Error('WebSocket not initialized');
+
+        const wsClosedEvent = new Event();
+        const sendPromise = this.#sendTask(ws, wsClosedEvent);
+        const recvPromise = this.#recvTask(ws, wsClosedEvent);
         const reconnectWait = this.#reconnectEvent.wait();
 
         // 3. Race: Normal Completion vs Reconnect Signal
@@ -294,6 +300,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (result === 'RECONNECT') {
           this.#logger.debug('Reconnecting stream due to option update...');
           // Close current socket; loop will restart and open a new one
+          this.#expectWsClose(this.#ws);
           this.#ws.close();
         } else {
           // Normal finish (Stream ended or Error thrown)
@@ -304,6 +311,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
+          this.#expectWsClose(this.#ws);
           this.#ws.close();
         }
       }
@@ -311,9 +319,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.close();
   }
 
-  async #sendTask() {
-    if (!this.#ws) return;
-
+  async #sendTask(ws: WebSocket, wsClosedEvent: Event) {
     // Buffer audio into 50ms chunks (Parity)
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
@@ -325,8 +331,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
     while (true) {
       const nextPromise = iterator.next();
-      // If reconnect signal fires, abort the wait
-      const abortPromise = this.#reconnectEvent.wait().then(() => ({ abort: true }) as const);
+      // If reconnect or WebSocket close fires, abort the wait
+      const abortPromise = Promise.race([this.#reconnectEvent.wait(), wsClosedEvent.wait()]).then(
+        () => ({ abort: true }) as const,
+      );
 
       const result = await Promise.race([nextPromise, abortPromise]);
 
@@ -358,8 +366,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
         for (const frame of frames) {
           this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
 
-          if (this.#ws!.readyState === WebSocket.OPEN) {
-            this.#ws!.send(frame.data);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(frame.data);
           }
 
           if (hasEnded) {
@@ -373,19 +381,17 @@ class SpeechStreamv2 extends stt.SpeechStream {
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)
-    if (!this.#reconnectEvent.isSet && this.#ws!.readyState === WebSocket.OPEN) {
+    if (!this.#reconnectEvent.isSet && !wsClosedEvent.isSet && ws.readyState === WebSocket.OPEN) {
       this.#logger.debug('Sending CloseStream message to Deepgram');
-      this.#ws!.send(_CLOSE_MSG);
+      ws.send(_CLOSE_MSG);
     }
   }
 
-  async #recvTask() {
-    if (!this.#ws) return;
+  async #recvTask(ws: WebSocket, wsClosedEvent: Event) {
+    return new Promise<void>((resolve, reject) => {
+      let wsError: Error | undefined;
 
-    return new Promise<void>((resolve) => {
-      if (!this.#ws) return resolve();
-
-      this.#ws.on('message', (data: Buffer, isBinary: boolean) => {
+      ws.on('message', (data: Buffer, isBinary: boolean) => {
         if (isBinary) {
           this.#logger.warn('Received unexpected binary message from Deepgram');
           return;
@@ -398,13 +404,29 @@ class SpeechStreamv2 extends stt.SpeechStream {
         }
       });
 
-      this.#ws.on('close', (code, reason) => {
+      ws.on('close', (code, reason) => {
+        wsClosedEvent.set();
         this.#logger.debug(`Deepgram WebSocket closed: ${code} ${reason}`);
-        resolve();
+
+        if (this.#closingWs.has(ws) || this.closed || this.input.closed) {
+          resolve();
+          return;
+        }
+
+        const reasonText = reason.toString();
+        const message = reasonText
+          ? `Deepgram WebSocket closed unexpectedly: ${code} ${reasonText}`
+          : `Deepgram WebSocket closed unexpectedly: ${code}`;
+        reject(
+          new APIConnectionError({
+            message: wsError ? `${message}: ${wsError.message}` : message,
+          }),
+        );
       });
 
-      // Errors are caught by run() listener, resolve here to clean up task
-      this.#ws.on('error', () => resolve());
+      ws.on('error', (error) => {
+        wsError = error;
+      });
     });
   }
 
@@ -502,7 +524,14 @@ class SpeechStreamv2 extends stt.SpeechStream {
     return `${baseUrl}?${qs}`;
   }
 
+  #expectWsClose(ws: WebSocket | null) {
+    if (ws) {
+      this.#closingWs.add(ws);
+    }
+  }
+
   override close() {
+    this.#expectWsClose(this.#ws);
     super.close();
     this.#ws?.close();
   }
