@@ -622,6 +622,13 @@ export class SpeechStream extends stt.SpeechStream {
         this.#sendAudioFrame(ws, frame);
       }
     }
+
+    for (const frame of audioStream.flush()) {
+      this.#sendAudioFrame(ws, frame);
+    }
+    if (this.#options.turnDetection === null) {
+      ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    }
     vadStream?.endInput();
   }
 
