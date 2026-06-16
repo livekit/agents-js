@@ -41,6 +41,10 @@ import { LocalTransport } from './transports.js';
 const SERVER_THRESHOLDS: Record<string, number> = { en: 0.56, ja: 0.37, fr: 0.575 };
 const SERVER_DEFAULT_THRESHOLD = 0.5;
 
+// Backchannel defaults a gateway returns alongside the EOT defaults.
+const SERVER_BACKCHANNEL_THRESHOLDS: Record<string, number> = { en: 0.62, ja: 0.7 };
+const SERVER_BACKCHANNEL_DEFAULT = 0.6;
+
 async function waitFor(predicate: () => boolean, ticks = 50): Promise<void> {
   for (let i = 0; i < ticks; i++) {
     if (predicate()) return;
@@ -429,6 +433,107 @@ describe('ResolveThresholds', () => {
   });
 });
 
+describe('BackchannelThresholds', () => {
+  // Server-provided backchannel defaults, disabled on the mini model and after
+  // fallback (see ResolveBackchannelThresholds for override layering).
+  function cloud(): ThresholdOptions {
+    const opts = new ThresholdOptions('turn-detector-v1');
+    opts._updateDefaults(
+      { ...SERVER_THRESHOLDS },
+      SERVER_DEFAULT_THRESHOLD,
+      { ...SERVER_BACKCHANNEL_THRESHOLDS },
+      SERVER_BACKCHANNEL_DEFAULT,
+    );
+    return opts;
+  }
+
+  it('lookup per-language and default', () => {
+    const opts = cloud();
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(SERVER_BACKCHANNEL_THRESHOLDS.en!);
+    // absent language → catch-all backchannel default
+    expect(opts.lookupBackchannel('de')).toBeCloseTo(SERVER_BACKCHANNEL_DEFAULT);
+    // undefined language defaults to "en"
+    expect(opts.lookupBackchannel(undefined)).toBeCloseTo(SERVER_BACKCHANNEL_THRESHOLDS.en!);
+  });
+
+  it('disabled when server omits backchannel', () => {
+    const opts = new ThresholdOptions('turn-detector-v1');
+    opts._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    expect(opts.lookupBackchannel('en')).toBeUndefined();
+  });
+
+  it('disabled for the local mini model', () => {
+    const opts = new ThresholdOptions('turn-detector-v1-mini');
+    expect(opts.lookupBackchannel('en')).toBeUndefined();
+  });
+
+  it('non-positive threshold treated as disabled', () => {
+    const opts = new ThresholdOptions('turn-detector-v1');
+    opts._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD, { en: 0.0 }, 0.6);
+    // en explicitly 0 → disabled for en, but the positive default still applies elsewhere
+    expect(opts.lookupBackchannel('en')).toBeUndefined();
+    expect(opts.lookupBackchannel('de')).toBeCloseTo(0.6);
+  });
+
+  it('cleared on local fallback', () => {
+    const opts = cloud();
+    opts._toLocalFallback();
+    expect(opts.lookupBackchannel('en')).toBeUndefined();
+  });
+});
+
+describe('ResolveBackchannelThresholds', () => {
+  // User backchannel-threshold overrides layered against the server defaults,
+  // mirroring the EOT override resolution in ResolveThresholds.
+  function cloud(overrides?: number | Record<string, number>): ThresholdOptions {
+    const opts = new ThresholdOptions('turn-detector-v1', undefined, overrides);
+    opts._updateDefaults(
+      { ...SERVER_THRESHOLDS },
+      SERVER_DEFAULT_THRESHOLD,
+      { ...SERVER_BACKCHANNEL_THRESHOLDS },
+      SERVER_BACKCHANNEL_DEFAULT,
+    );
+    return opts;
+  }
+
+  it('no override adopts server backchannel', () => {
+    const opts = cloud();
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(SERVER_BACKCHANNEL_THRESHOLDS.en!);
+  });
+
+  it('scalar override applies to every language', () => {
+    const opts = cloud(0.8);
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(0.8);
+    expect(opts.lookupBackchannel('ja')).toBeCloseTo(0.8);
+  });
+
+  it('dict override layers on server map', () => {
+    const opts = cloud({ en: 0.5 });
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(0.5);
+    // unmapped languages keep the server values + server default
+    expect(opts.lookupBackchannel('ja')).toBeCloseTo(SERVER_BACKCHANNEL_THRESHOLDS.ja!);
+    expect(opts.lookupBackchannel('de')).toBeCloseTo(SERVER_BACKCHANNEL_DEFAULT);
+  });
+
+  it('dict keys normalized', () => {
+    const opts = cloud({ English: 0.5 });
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(0.5);
+  });
+
+  it('scalar override enables before server defaults', () => {
+    // an explicit scalar override resolves up front, even though the server
+    // backchannel defaults haven't arrived yet
+    const opts = new ThresholdOptions('turn-detector-v1', undefined, 0.8);
+    expect(opts.lookupBackchannel('en')).toBeCloseTo(0.8);
+  });
+
+  it('updateBackchannelOverrides re-resolves', () => {
+    const opts = cloud();
+    opts.updateBackchannelOverrides(0.45);
+    expect(opts.lookupBackchannel('ja')).toBeCloseTo(0.45);
+  });
+});
+
 describe('ServerDefaults', () => {
   it('cloud thresholds pending before session created', async () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
@@ -485,6 +590,21 @@ describe('OverrideWarning', () => {
       });
       const warned = warnSpy.mock.calls.some((c) =>
         JSON.stringify(c).includes('non-default turn detection threshold'),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns on construction with backchannel override', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    try {
+      withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
+        new TurnDetector({ backchannelThreshold: 0.7 });
+      });
+      const warned = warnSpy.mock.calls.some((c) =>
+        JSON.stringify(c).includes('non-default backchannel threshold'),
       );
       expect(warned).toBe(true);
     } finally {

@@ -98,6 +98,7 @@ import type {
   AgentStateChangedEvent,
   EotPredictionEvent,
   UserTurnExceededEvent,
+  _AgentBackchannelOpportunityEvent,
 } from './events.js';
 import {
   AgentSessionEventTypes,
@@ -1488,6 +1489,11 @@ export class AgentActivity implements RecognitionHooks {
    * remote-session forwarders) can observe them. */
   onEotPrediction(ev: EotPredictionEvent): void {
     this.agentSession.emit(AgentSessionEventTypes.EotPrediction, ev);
+  }
+
+  onAgentBackchannelOpportunity(_ev: _AgentBackchannelOpportunityEvent): void {
+    // TODO: consume the backchannel opportunity internally (e.g. trigger a
+    // backchannel phrase). Kept internal for now — not surfaced as a public event.
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {

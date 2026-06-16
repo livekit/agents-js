@@ -33,6 +33,12 @@ export interface TurnDetectorOptions {
    */
   version?: TurnDetectorVersion;
   unlikelyThreshold?: number | Record<string, number>;
+  /**
+   * Backchannel threshold(s): above this, a pause is a backchannel opportunity.
+   * Server-driven and cloud-only by default; this is an override seam. A scalar
+   * applies to every language; a map is layered over the server defaults.
+   */
+  backchannelThreshold?: number | Record<string, number>;
   baseUrl?: string;
   apiKey?: string;
   apiSecret?: string;
@@ -103,7 +109,11 @@ export class TurnDetector extends BaseStreamingTurnDetector {
 
     const detectorOpts: BaseStreamingTurnDetectorOptions = {
       sampleRate: opts.sampleRate ?? DEFAULT_SAMPLE_RATE,
-      thresholds: new ThresholdOptions(resolvedModel, opts.unlikelyThreshold),
+      thresholds: new ThresholdOptions(
+        resolvedModel,
+        opts.unlikelyThreshold,
+        opts.backchannelThreshold,
+      ),
     };
     super(detectorOpts);
     this._model = resolvedModel;
@@ -146,13 +156,31 @@ export class TurnDetector extends BaseStreamingTurnDetector {
           'defaults and overriding them may be suboptimal',
       );
     }
+    const bcOverrides = this._opts.thresholds.backchannelOverrides;
+    if (bcOverrides !== undefined) {
+      log().warn(
+        { backchannelThreshold: bcOverrides },
+        'a non-default backchannel threshold was provided; the server provides calibrated ' +
+          'defaults and overriding them may be suboptimal',
+      );
+    }
   }
 
   /** Replace the user threshold override at runtime. The shared
    * `ThresholdOptions` re-resolves against the current (server or shipped)
    * defaults, so an active stream picks it up immediately. */
-  updateOptions(opts: { unlikelyThreshold?: number | Record<string, number> } = {}): void {
-    this._opts.thresholds.updateOverrides(opts.unlikelyThreshold);
+  updateOptions(
+    opts: {
+      unlikelyThreshold?: number | Record<string, number>;
+      backchannelThreshold?: number | Record<string, number>;
+    } = {},
+  ): void {
+    if (opts.unlikelyThreshold !== undefined) {
+      this._opts.thresholds.updateOverrides(opts.unlikelyThreshold);
+    }
+    if (opts.backchannelThreshold !== undefined) {
+      this._opts.thresholds.updateBackchannelOverrides(opts.backchannelThreshold);
+    }
     this._warnThresholdOverride();
   }
 

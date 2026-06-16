@@ -33,6 +33,7 @@ function makeHooks(): RecognitionHooks {
     onInterimTranscript: vi.fn(),
     onFinalTranscript: vi.fn(),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
     onEndOfTurn: vi.fn(async () => true),

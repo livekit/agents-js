@@ -83,6 +83,7 @@ function makeHooks(): RecognitionHooks {
     onInterimTranscript: vi.fn(),
     onFinalTranscript: vi.fn(),
     onEotPrediction: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onPreemptiveGeneration: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
@@ -122,6 +123,9 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   const stream = Object.create(BaseStreamingTurnDetectorStream.prototype);
   stream.supportsLanguage = vi.fn(async () => true);
   stream.unlikelyThreshold = vi.fn(async () => 0.5);
+  // backchannel disabled by default (server sent no thresholds); the
+  // backchannel-emit tests override this with a positive threshold.
+  stream.backchannelThreshold = vi.fn(async () => undefined);
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
   stream.flush = vi.fn();
@@ -137,7 +141,11 @@ function makeAudioDetector(stream: BaseStreamingTurnDetectorStream): BaseStreami
 /** A resolved prediction future, as if the transport already answered. */
 function resolvedPrediction(
   probability: number,
-  opts: { inferenceDuration?: number; detectionDelay?: number } = {},
+  opts: {
+    inferenceDuration?: number;
+    detectionDelay?: number;
+    backchannelProbability?: number;
+  } = {},
 ): { fut: Future<TurnDetectionEvent>; event: TurnDetectionEvent } {
   const event: TurnDetectionEvent = {
     type: 'eot_prediction',
@@ -145,6 +153,7 @@ function resolvedPrediction(
     lastSpeakingTimeMs: 0,
     inferenceDuration: opts.inferenceDuration,
     detectionDelay: opts.detectionDelay,
+    backchannelProbability: opts.backchannelProbability,
   };
   const fut = new Future<TurnDetectionEvent>();
   fut.resolve(event);
@@ -383,6 +392,113 @@ describe('TestEotPredictionDedup', () => {
     internals.clearUserTurn();
 
     expect(internals.lastEmittedEotPrediction).toBeUndefined();
+  });
+});
+
+describe('TestBackchannelOpportunityEmit', () => {
+  // `onAgentBackchannelOpportunity` fires whenever the backchannel probability
+  // clears its threshold, regardless of end-of-turn; the event carries the
+  // end-of-turn probability and threshold so AgentActivity can gauge how close
+  // the pause is to a reply.
+  async function drive(internals: RecognitionInternals): Promise<void> {
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await flush();
+    await flush();
+    await internals.bounceEOUTask?.cancelAndWait().catch(() => {});
+  }
+
+  it('emits with eot context when the turn continues', async () => {
+    const { internals, hooks } = makeRecognition();
+    const stream = makeAudioStream();
+    stream.backchannelThreshold = vi.fn(async () => 0.5);
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    // eot 0.2 < unlikely 0.5 → turn continues; backchannel 0.8 >= 0.5 → emit
+    internals.turnDetectorPredictionFut = resolvedPrediction(0.2, {
+      backchannelProbability: 0.8,
+    }).fut;
+
+    await drive(internals);
+
+    expect(hooks.onAgentBackchannelOpportunity).toHaveBeenCalledTimes(1);
+    const ev = (hooks.onAgentBackchannelOpportunity as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(ev.probability).toBeCloseTo(0.8);
+    expect(ev.threshold).toBeCloseTo(0.5);
+    expect(ev.endOfTurnProbability).toBeCloseTo(0.2);
+    expect(ev.endOfTurnThreshold).toBeCloseTo(0.5);
+  });
+
+  it('emits with eot context when the turn ends', async () => {
+    // The turn-continuing gate was dropped: a backchannel above threshold still
+    // fires at end-of-turn, carrying the EOT context (probability past the
+    // threshold) so AgentActivity can let it lead the reply.
+    const { internals, hooks } = makeRecognition();
+    const stream = makeAudioStream();
+    stream.backchannelThreshold = vi.fn(async () => 0.5);
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    // eot 0.9 >= unlikely 0.5 → turn ends; backchannel 0.8 >= 0.5 → still emits
+    internals.turnDetectorPredictionFut = resolvedPrediction(0.9, {
+      backchannelProbability: 0.8,
+    }).fut;
+
+    await drive(internals);
+
+    expect(hooks.onAgentBackchannelOpportunity).toHaveBeenCalledTimes(1);
+    const ev = (hooks.onAgentBackchannelOpportunity as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(ev.endOfTurnProbability).toBeCloseTo(0.9);
+    expect(ev.endOfTurnThreshold).toBeCloseTo(0.5);
+  });
+
+  it('does not emit below threshold', async () => {
+    const { internals, hooks } = makeRecognition();
+    const stream = makeAudioStream();
+    stream.backchannelThreshold = vi.fn(async () => 0.7);
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    // backchannel 0.4 < 0.7 → no emit (turn continues at eot 0.2)
+    internals.turnDetectorPredictionFut = resolvedPrediction(0.2, {
+      backchannelProbability: 0.4,
+    }).fut;
+
+    await drive(internals);
+
+    expect(hooks.onAgentBackchannelOpportunity).not.toHaveBeenCalled();
+  });
+
+  it('does not emit when backchannel is disabled', async () => {
+    const { internals, hooks } = makeRecognition();
+    const stream = makeAudioStream();
+    // default fake threshold is undefined (server sent no backchannel defaults)
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    internals.turnDetectorPredictionFut = resolvedPrediction(0.2, {
+      backchannelProbability: 0.9,
+    }).fut;
+
+    await drive(internals);
+
+    expect(hooks.onAgentBackchannelOpportunity).not.toHaveBeenCalled();
+  });
+
+  it('does not emit for a text-based detector', async () => {
+    // A text detector produces no streaming prediction event, so there is no
+    // backchannel probability to act on.
+    const { internals, hooks } = makeRecognition();
+    const textDetector: _TurnDetector = {
+      model: 'fake',
+      provider: 'fake',
+      supportsLanguage: vi.fn(async () => true),
+      unlikelyThreshold: vi.fn(async () => 0.5),
+      predictEndOfTurn: vi.fn(async () => 0.2),
+    };
+    internals.turnDetector = textDetector;
+    internals.turnDetectorStream = undefined;
+    internals.audioTranscript = 'hello there';
+
+    await drive(internals);
+
+    expect(hooks.onAgentBackchannelOpportunity).not.toHaveBeenCalled();
   });
 });
 

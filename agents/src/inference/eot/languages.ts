@@ -107,18 +107,31 @@ function normalizeOverrides(overrides: ThresholdOverride): ThresholdOverride {
 export class ThresholdOptions {
   private _model: TurnDetectorModel;
   private _overrides: ThresholdOverride;
+  private _bcOverrides: ThresholdOverride;
 
   // server/shipped defaults
   private _serverThresholds: Record<string, number> | undefined;
   private _serverDefault: number | undefined;
 
-  // materialized values
+  // backchannel server defaults: cloud-only (the local mini model produces no
+  // backchannel probability), arrive via `SessionCreated`.
+  private _serverBcThresholds: Record<string, number> | undefined;
+  private _serverBcDefault: number | undefined;
+
+  // materialized values (server defaults layered with user overrides)
   private _thresholds: Record<string, number> = {};
   private _default: number | undefined = undefined;
+  private _bcThresholds: Record<string, number> = {};
+  private _bcDefault: number | undefined = undefined;
 
-  constructor(model: TurnDetectorModel, overrides: ThresholdOverride = undefined) {
+  constructor(
+    model: TurnDetectorModel,
+    overrides: ThresholdOverride = undefined,
+    backchannelOverrides: ThresholdOverride = undefined,
+  ) {
     this._model = model;
     this._overrides = normalizeOverrides(overrides);
+    this._bcOverrides = normalizeOverrides(backchannelOverrides);
     if (model === 'turn-detector-v1-mini') {
       this._serverThresholds = { ...LOCAL_LANGUAGES };
       this._serverDefault = LOCAL_LANGUAGES.en;
@@ -132,6 +145,10 @@ export class ThresholdOptions {
 
   get overrides(): ThresholdOverride {
     return this._overrides;
+  }
+
+  get backchannelOverrides(): ThresholdOverride {
+    return this._bcOverrides;
   }
 
   get thresholds(): Readonly<Record<string, number>> {
@@ -149,6 +166,20 @@ export class ThresholdOptions {
     return key in this._thresholds ? this._thresholds[key] : this._default;
   }
 
+  /**
+   * Backchannel threshold for a language, or `undefined` when backchannel is
+   * disabled — no server defaults / overrides resolved, or the resolved value is
+   * non-positive (an explicit "off"). Backchannel is server-driven and cloud-only.
+   */
+  lookupBackchannel(language: LanguageCode | string | undefined): number | undefined {
+    if (Object.keys(this._bcThresholds).length === 0 && this._bcDefault === undefined) {
+      return undefined;
+    }
+    const key = language ? normalizeLanguage(language) : 'en';
+    const threshold = key in this._bcThresholds ? this._bcThresholds[key] : this._bcDefault;
+    return threshold !== undefined && threshold > 0 ? threshold : undefined;
+  }
+
   supports(language: LanguageCode | string | undefined): boolean {
     // A cloud detector reports every language as supported until its server
     // defaults arrive, so the first turn (before `SessionCreated`) isn't
@@ -162,12 +193,22 @@ export class ThresholdOptions {
     this._resolve();
   }
 
+  updateBackchannelOverrides(overrides: ThresholdOverride): void {
+    this._bcOverrides = normalizeOverrides(overrides);
+    this._resolve();
+  }
+
   /**
    * @internal Adopt the calibrated defaults a `turn-detector` gateway sends in
    * `SessionCreated`. Raises (non-retryable) when the server produced no usable
    * thresholds — the caller degrades the session to the local model.
    */
-  _updateDefaults(serverThresholds: Record<string, number>, serverDefault: number): void {
+  _updateDefaults(
+    serverThresholds: Record<string, number>,
+    serverDefault: number,
+    backchannelThresholds?: Record<string, number>,
+    backchannelDefault = 0,
+  ): void {
     if (!serverThresholds || Object.keys(serverThresholds).length === 0 || serverDefault <= 0) {
       throw new APIError('turn detector session created without usable default thresholds', {
         retryable: false,
@@ -179,6 +220,19 @@ export class ThresholdOptions {
     }
     this._serverThresholds = norm;
     this._serverDefault = round4(serverDefault);
+
+    // backchannel defaults are optional; an absent/empty map keeps backchannel disabled
+    if (backchannelThresholds && Object.keys(backchannelThresholds).length > 0) {
+      const bcNorm: Record<string, number> = {};
+      for (const [lang, value] of Object.entries(backchannelThresholds)) {
+        bcNorm[normalizeLanguage(lang)] = round4(value);
+      }
+      this._serverBcThresholds = bcNorm;
+    } else {
+      this._serverBcThresholds = undefined;
+    }
+    this._serverBcDefault = backchannelDefault > 0 ? round4(backchannelDefault) : undefined;
+
     this._resolve();
   }
 
@@ -208,6 +262,9 @@ export class ThresholdOptions {
     this._model = 'turn-detector-v1-mini';
     this._serverThresholds = { ...LOCAL_LANGUAGES };
     this._serverDefault = LOCAL_LANGUAGES.en;
+    // the mini model produces no backchannel probability
+    this._serverBcThresholds = undefined;
+    this._serverBcDefault = undefined;
     this._resolve();
 
     if (rescaled !== undefined) {
@@ -217,30 +274,43 @@ export class ThresholdOptions {
   }
 
   private _resolve(): void {
-    const scalarOverride = typeof this._overrides === 'number';
-    if (this._serverThresholds === undefined || this._serverDefault === undefined) {
+    [this._thresholds, this._default] = ThresholdOptions._resolveLayer(
+      this._serverThresholds,
+      this._serverDefault,
+      this._overrides,
+    );
+    [this._bcThresholds, this._bcDefault] = ThresholdOptions._resolveLayer(
+      this._serverBcThresholds,
+      this._serverBcDefault,
+      this._bcOverrides,
+    );
+  }
+
+  /**
+   * Layer a user override onto the server defaults. A scalar override replaces
+   * the whole map (every language resolves through it); a dict override is
+   * merged over the server map. Before server defaults arrive, only a scalar
+   * override resolves up front.
+   */
+  private static _resolveLayer(
+    serverThresholds: Record<string, number> | undefined,
+    serverDefault: number | undefined,
+    overrides: ThresholdOverride,
+  ): [Record<string, number>, number | undefined] {
+    const scalarOverride = typeof overrides === 'number';
+    if (serverThresholds === undefined || serverDefault === undefined) {
       // cloud defaults not received yet; only a scalar override resolves up front
-      this._thresholds = {};
-      this._default = scalarOverride ? (this._overrides as number) : undefined;
-      return;
+      return [{}, scalarOverride ? (overrides as number) : undefined];
     }
 
-    if (this._overrides === undefined) {
-      this._thresholds = { ...this._serverThresholds };
-      this._default = this._serverDefault;
-      return;
+    if (overrides === undefined) {
+      return [{ ...serverThresholds }, serverDefault];
     }
 
     if (scalarOverride) {
-      this._thresholds = {};
-      this._default = this._overrides as number;
-      return;
+      return [{}, overrides as number];
     }
 
-    this._thresholds = {
-      ...this._serverThresholds,
-      ...(this._overrides as Record<string, number>),
-    };
-    this._default = this._serverDefault;
+    return [{ ...serverThresholds, ...(overrides as Record<string, number>) }, serverDefault];
   }
 }
