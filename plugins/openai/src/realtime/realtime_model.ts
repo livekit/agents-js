@@ -896,11 +896,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
 
     if (hasAudioModality && hasServerSideAudio) {
+      // Guard against a non-finite audioEndMs (e.g. NaN from an unreported avatar
+      // playback position): JSON.stringify would serialize it as `null`, which the
+      // Realtime API rejects with an `invalid_type` error. Clamp to a valid
+      // non-negative integer (ms).
+      const audioEndMs = Number.isFinite(_options.audioEndMs)
+        ? Math.max(0, Math.floor(_options.audioEndMs))
+        : 0;
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
         item_id: _options.messageId,
-        audio_end_ms: _options.audioEndMs,
+        audio_end_ms: audioEndMs,
       } as api_proto.ConversationItemTruncateEvent);
     } else if (_options.audioTranscript !== undefined) {
       // sync it to the remote chat context
