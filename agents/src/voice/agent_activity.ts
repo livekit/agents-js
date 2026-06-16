@@ -232,6 +232,7 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
   private _toolsetsSetup = false;
+  private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -1726,10 +1727,10 @@ export class AgentActivity implements RecognitionHooks {
   async waitForIdle(
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
-    const controller = new AbortController();
-
-    while (true) {
-      await this.waitForInactive(options, controller.signal);
+    const signal = this.closeAbort.signal;
+    while (!signal.aborted) {
+      await this.waitForInactive(options, signal);
+      if (signal.aborted) break;
       if (!(await this.agentSession._waitForIdleHoldReleased())) {
         break;
       }
@@ -3021,12 +3022,12 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent output should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
+    const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
+    if (maxStepsReached) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
+        "maximum number of function calls steps reached, generating final response with toolChoice = 'none'",
       );
-      return;
     }
 
     const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
@@ -3054,9 +3055,11 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle._numSteps += 1;
 
       // Avoid setting tool_choice to "required" or a specific function when
-      // passing tool response back to the LLM
+      // passing tool response back to the LLM.
       const respondToolChoice =
-        schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+        maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
+          ? 'none'
+          : 'auto';
 
       // Reuse same speechHandle for tool response (parity with Python agent_activity.py L2122-2140)
       const toolResponseTask = this.createSpeechTask({
@@ -3563,7 +3566,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
+    if (speechHandle.numSteps >= maxToolSteps + 1) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
         'maximum number of function calls steps reached',
@@ -3970,6 +3973,8 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async close(): Promise<void> {
+    this.closeAbort.abort();
+
     const unlock = await this.lock.lock();
     try {
       this.cancelPreemptiveGeneration();

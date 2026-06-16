@@ -768,3 +768,32 @@ describe('AgentActivity - preemptive generation tool snapshot (#3407098507)', ()
     expect(snapshot!.tools.equals(liveTools)).toBe(true);
   });
 });
+
+describe('AgentActivity - waitForIdle close abort', () => {
+  it('returns promptly when the activity closes while waiting', async () => {
+    const closeAbort = new AbortController();
+    const fakeActivity = {
+      closeAbort,
+      // Simulates a wait that only completes when its signal aborts (the spin condition).
+      waitForInactive: (_options: unknown, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }),
+      agentSession: { _waitForIdleHoldReleased: async () => false },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const waitForIdle = (
+      AgentActivity.prototype as unknown as { waitForIdle: (this: unknown) => Promise<void> }
+    ).waitForIdle.bind(fakeActivity);
+
+    const pending = waitForIdle();
+    // Not idle yet — the wait is still pending.
+    expect(await raceTimeout(pending, 50)).toBe('timeout');
+
+    // close() aborts the shared signal; the wait must unblock.
+    closeAbort.abort();
+    expect(await raceTimeout(pending, 1000)).toBe('resolved');
+  });
+});

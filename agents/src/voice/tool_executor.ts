@@ -306,7 +306,18 @@ export class ToolExecutor {
         `Tool call ${callId} is not cancellable because interruptions are disallowed`,
       );
     }
+    this.forceCancelTask(task);
+    return true;
+  }
 
+  /**
+   * Abort + detach a running task unconditionally. `cancel()` gates on cancellability and
+   * interruptibility (LLM/user-initiated path); teardown via `drain()` must skip those guards —
+   * the activity is going away, and `cancel()`'s `allowInterruptions` throw would otherwise abort
+   * the drain loop and strand the remaining tasks.
+   */
+  private forceCancelTask(task: RunningTask): void {
+    const { callId } = task.ctx.functionCall;
     task.controller.abort();
     if (!task.firstUpdateFuture.done) {
       task.firstUpdateFuture.resolve(undefined);
@@ -319,7 +330,6 @@ export class ToolExecutor {
     // We've abandoned the wait, but the user's execute() may ignore the abort
     // signal and keep running. Error if it hasn't stopped by the deadline.
     this.errorIfCancelledToolKeepsRunning(task.ctx.functionCall, task.toolPromiseRef.promise);
-    return true;
   }
 
   /**
@@ -352,10 +362,12 @@ export class ToolExecutor {
   async drain(): Promise<void> {
     const tasks = [...this.runningTasks.values()];
 
-    // Cancellable tools: signal abort + abandon. Non-cancellable: let them run.
+    // Cancellable tools: signal abort + abandon (force, bypassing the allowInterruptions guard
+    // that `cancel()` enforces for the LLM path — at teardown it would throw and strand the rest).
+    // Non-cancellable: let them run (awaited below).
     for (const task of tasks) {
       if (task.allowCancellation) {
-        await this.cancel(task.ctx.functionCall.callId);
+        this.forceCancelTask(task);
       }
     }
 

@@ -12,7 +12,11 @@ import { SpeechHandle } from './speech_handle.js';
 import { ToolExecutor, getRunningTasks } from './tool_executor.js';
 
 describe('ToolExecutor', () => {
-  function buildRunContext(name: string = 'slow_lookup', callId: string = `call_${name}`) {
+  function buildRunContext(
+    name: string = 'slow_lookup',
+    callId: string = `call_${name}`,
+    speechOptions: { allowInterruptions?: boolean } = {},
+  ) {
     const functionCall = FunctionCall.create({
       callId,
       name,
@@ -35,7 +39,7 @@ describe('ToolExecutor', () => {
       },
       generateReply: () => ({ id: 'speech_reply', addDoneCallback: () => {} }),
     } as unknown as AgentSession;
-    const speechHandle = SpeechHandle.create();
+    const speechHandle = SpeechHandle.create(speechOptions);
     return {
       runCtx: new RunContext(session, speechHandle, functionCall),
       history,
@@ -245,6 +249,35 @@ describe('ToolExecutor', () => {
       new Promise((_, reject) => setTimeout(() => reject(new Error('tool never stopped')), 1000)),
     ]);
     expect(stopped.done).toBe(true);
+  });
+
+  // longcw review #1: drain() must force-cancel cancellable tools at teardown even when the
+  // speech disallows interruptions. cancel() throws in that case (LLM-path guard); if drain used
+  // cancel() the throw would abort the loop and strand the remaining tools.
+  it('drain force-cancels a cancellable tool whose speech disallows interruptions (no throw)', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('noninterrupt_drain', 'call_noninterrupt_drain', {
+      allowInterruptions: false,
+    });
+    const started = new Future<void>();
+    const stopped = new Future<void>();
+
+    await executor.execute({
+      tool: abortableTool('noninterrupt_drain', started, stopped),
+      runCtx,
+      rawArguments: {},
+    });
+    await started.await;
+    expect(runCtx.speechHandle.allowInterruptions).toBe(false);
+
+    // Must resolve (not throw) and actually abort the tool.
+    await expect(executor.drain()).resolves.toBeUndefined();
+    await Promise.race([
+      stopped.await,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('tool never stopped')), 1000)),
+    ]);
+    expect(stopped.done).toBe(true);
+    expect(getRunningTasks(runCtx.session)).toHaveLength(0);
   });
 
   it('keeps running task visibility scoped to one session', async () => {
