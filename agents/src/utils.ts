@@ -333,11 +333,11 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
-  async next(): Promise<IteratorResult<T>> {
+  async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
     if (this.#closed && this.#queue.items.length === 0) {
       return { value: undefined, done: true };
     }
-    const item = await this.#queue.get();
+    const item = await this.#queue.get(options);
     if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
       return { value: undefined, done: true };
     }
