@@ -378,10 +378,10 @@ export class ChatMessage {
           id: c.id,
           type: c.type,
           image: c.image,
-          inference_detail: c.inferenceDetail,
-          inference_width: c.inferenceWidth,
-          inference_height: c.inferenceHeight,
-          mime_type: c.mimeType,
+          inferenceDetail: c.inferenceDetail,
+          inferenceWidth: c.inferenceWidth,
+          inferenceHeight: c.inferenceHeight,
+          mimeType: c.mimeType,
         } as JSONObject;
       } else {
         return {
@@ -403,11 +403,11 @@ export class ChatMessage {
     };
 
     if (!excludeTimestamp) {
-      result.created_at = this.createdAt;
+      result.createdAt = this.createdAt;
     }
 
     if (this.transcriptConfidence !== undefined) {
-      result.transcript_confidence = this.transcriptConfidence;
+      result.transcriptConfidence = this.transcriptConfidence;
     }
     if (Object.keys(this.metrics).length > 0) {
       result.metrics = { ...this.metrics };
@@ -500,9 +500,9 @@ export class FunctionCall {
     const result: JSONValue = {
       id: this.id,
       type: this.type,
-      call_id: this.callId,
+      callId: this.callId,
       name: this.name,
-      arguments: this.args,
+      args: this.args,
     };
 
     if (Object.keys(this.extra).length > 0) {
@@ -510,15 +510,15 @@ export class FunctionCall {
     }
 
     if (this.groupId) {
-      result.group_id = this.groupId;
+      result.groupId = this.groupId;
     }
 
     if (this.thoughtSignature) {
-      result.thought_signature = this.thoughtSignature;
+      result.thoughtSignature = this.thoughtSignature;
     }
 
     if (!excludeTimestamp) {
-      result.created_at = this.createdAt;
+      result.createdAt = this.createdAt;
     }
 
     return result;
@@ -580,13 +580,13 @@ export class FunctionCallOutput {
       id: this.id,
       type: this.type,
       name: this.name,
-      call_id: this.callId,
+      callId: this.callId,
       output: this.output,
-      is_error: this.isError,
+      isError: this.isError,
     };
 
     if (!excludeTimestamp) {
-      result.created_at = this.createdAt;
+      result.createdAt = this.createdAt;
     }
 
     return result;
@@ -630,15 +630,15 @@ export class AgentHandoffItem {
     const result: JSONValue = {
       id: this.id,
       type: this.type,
-      new_agent_id: this.newAgentId,
+      newAgentId: this.newAgentId,
     };
 
     if (this.oldAgentId !== undefined) {
-      result.old_agent_id = this.oldAgentId;
+      result.oldAgentId = this.oldAgentId;
     }
 
     if (!excludeTimestamp) {
-      result.created_at = this.createdAt;
+      result.createdAt = this.createdAt;
     }
 
     return result;
@@ -703,13 +703,13 @@ export class AgentConfigUpdate {
         : this.instructions;
     }
     if (this.toolsAdded !== undefined) {
-      result.tools_added = this.toolsAdded;
+      result.toolsAdded = this.toolsAdded;
     }
     if (this.toolsRemoved !== undefined) {
-      result.tools_removed = this.toolsRemoved;
+      result.toolsRemoved = this.toolsRemoved;
     }
     if (!excludeTimestamp) {
-      result.created_at = this.createdAt;
+      result.createdAt = this.createdAt;
     }
 
     return result;

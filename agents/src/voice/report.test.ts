@@ -254,7 +254,16 @@ describe('sessionReportToJSON', () => {
       },
       {
         type: 'conversation_item_added',
-        item: msg.toJSON(),
+        // chat items expose camelCase via toJSON(); the report layer converts to the
+        // snake_case wire shape (e.g. created_at).
+        item: {
+          id: msg.id,
+          type: 'message',
+          role: 'user',
+          content: ['hi'],
+          interrupted: false,
+          created_at: 5,
+        },
         created_at: 11,
       },
     ]);
