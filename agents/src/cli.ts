@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
+import { runConsole } from './console.js';
 import { type PluginDownloadFailure, formatDownloadFailureMessage } from './download.js';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
@@ -191,6 +192,27 @@ export const runApp = (opts: ServerOptions) => {
         watch: false,
         room: commandOptions.room,
         participantIdentity: commandOptions.participantIdentity,
+      });
+    });
+
+  program
+    .command('console')
+    .description('Run the agent in-process attached to a local broker over TCP')
+    .requiredOption('--connect-addr <addr>', 'host:port of the broker TCP socket')
+    .option('--record', 'save the session report locally', false)
+    .addOption(logLevelOption('debug'))
+    .action((...[, command]) => {
+      const commandOptions = command.opts();
+      opts.logLevel = commandOptions.logLevel;
+      initializeLogger({ pretty: true, level: opts.logLevel });
+      process.env.LIVEKIT_DEV_MODE = '1';
+      runConsole({
+        agentPath: opts.agent,
+        connectAddr: commandOptions.connectAddr,
+        record: commandOptions.record === true,
+      }).catch((error) => {
+        log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
+        process.exit(1);
       });
     });
 

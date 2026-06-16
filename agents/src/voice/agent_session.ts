@@ -57,6 +57,7 @@ import {
 } from './agent_activity.js';
 import type { AMD, AMDPredictionEvent } from './amd.js';
 import type { _TurnDetector } from './audio_recognition.js';
+import { AgentsConsole } from './console_io.js';
 import {
   type AgentEvent,
   type AgentFalseInterruptionEvent,
@@ -597,7 +598,25 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
-    if (room && !this._roomIO) {
+    const consoleInst = AgentsConsole.getInstance();
+    if (consoleInst.enabled && !consoleInst.ioAcquired) {
+      if (this.input.audio || this.output.audio) {
+        this.logger.warn(
+          'agent started with the console subcommand, but input.audio/output.audio is already set, overriding...',
+        );
+      }
+
+      consoleInst.acquireIo(this);
+
+      if (consoleInst.transport) {
+        this.sessionHost = new SessionHost(
+          consoleInst.transport,
+          consoleInst.audioInput,
+          consoleInst.audioOutput,
+        );
+        this.sessionHost.registerSession(this);
+      }
+    } else if (room && !this._roomIO) {
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -644,15 +663,25 @@ export class AgentSession<
         tasks.push(ctx.connect());
       }
 
-      if (this.input.audio && this.output.audio && this._recordingOptions.audio) {
+      // `lk console --record` forces audio recording even if the session was
+      // started with `record: false`.
+      const consoleForcesRecord = consoleInst.enabled && consoleInst.record;
+      if (
+        this.input.audio &&
+        this.output.audio &&
+        (this._recordingOptions.audio || consoleForcesRecord)
+      ) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
         this.output.audio = this._recorderIO.recordOutput(this.output.audio);
 
-        // Start recording to session directory
-        const sessionDir = ctx.sessionDirectory;
-        if (sessionDir) {
-          tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+        // Start recording to the session directory. In console mode the disk
+        // write is gated on --record.
+        if (consoleForcesRecord || !consoleInst.enabled) {
+          const sessionDir = ctx.sessionDirectory;
+          if (sessionDir) {
+            tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+          }
         }
       }
     }

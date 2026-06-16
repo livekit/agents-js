@@ -272,7 +272,7 @@ describe('TTS constructor fallback and connOptions', () => {
   });
 });
 
-describe('TTS provider modelOptions parity', () => {
+describe('TTS provider modelOptions', () => {
   it('preserves ElevenLabs inference model options', () => {
     const modelOptions = {
       speed: 1.2,
