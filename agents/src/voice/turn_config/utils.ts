@@ -162,6 +162,7 @@ export function resolveEndpointing(
 }
 
 export function mergeWithDefaults(config: TurnHandlingOptions) {
+  const endpointingOverrides = stripUndefined(config.endpointing);
   return {
     // Keep an explicit `null` (opt-out) — only an absent value falls back to
     // the default, so the constructor can tell opt-out from not-given.
@@ -169,10 +170,18 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
       config.turnDetection === undefined
         ? defaultTurnHandlingOptions.turnDetection
         : config.turnDetection,
-    endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
-    // kept sparse: defaults are resolved later (per session / per activity)
-    // once the detector type is known.
-    endpointingOverrides: stripUndefined(config.endpointing),
+    // Resolve endpointing defaults against the effective detector: an omitted
+    // `turnDetection` auto-provisions the streaming TurnDetector (→ tighter
+    // streaming defaults), while `null` opt-out or a non-streaming mode keeps
+    // the legacy defaults. Activities re-resolve per-detector from `endpointingOverrides`.
+    endpointing: {
+      ...(config.turnDetection === undefined ||
+      config.turnDetection instanceof BaseStreamingTurnDetector
+        ? streamingEndpointingOptions
+        : defaultEndpointingOptions),
+      ...endpointingOverrides,
+    },
+    endpointingOverrides,
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
     preemptiveGeneration: {
       ...defaultPreemptiveGenerationOptions,
