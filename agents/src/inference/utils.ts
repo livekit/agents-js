@@ -96,12 +96,16 @@ export async function connectWs(
   return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
+    let opened = false;
+
     const timeout = setTimeout(() => {
+      socket.terminate();
       reject(new APITimeoutError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {
       clearTimeout(timeout);
+      opened = true;
       resolve(socket);
     };
 
@@ -119,9 +123,9 @@ export async function connectWs(
       }
     };
 
-    const onClose = (code: number) => {
+    const onClose = () => {
       clearTimeout(timeout);
-      if (code !== 1000) {
+      if (!opened) {
         reject(
           new APIConnectionError({
             message: 'Connection closed unexpectedly',
