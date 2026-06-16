@@ -3015,6 +3015,9 @@ export class AgentActivity implements RecognitionHooks {
     ] as ChatItem[];
     if (shouldGenerateToolReply) {
       chatCtx.insert(toolMessages);
+      // Refresh conversation items added during tool execution, such as an inline
+      // AgentTask sub-conversation merged into the agent chat context at handoff return.
+      chatCtx.merge(this.agent._chatCtx, { excludeInstructions: true });
 
       // Increment step count on SAME handle (parity with Python agent_activity.py L2081)
       speechHandle._numSteps += 1;
