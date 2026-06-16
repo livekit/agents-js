@@ -4316,7 +4316,6 @@ export class AgentActivity implements RecognitionHooks {
   private async closeToolsets(): Promise<void> {
     if (!this._toolsetsSetup) return;
     this._toolsetsSetup = false;
-    // down, so a non-cancellable async tool finishes instead of being cancelled.
     await this.closeToolsetList(this.agent.toolCtx.toolsets);
   }
 
