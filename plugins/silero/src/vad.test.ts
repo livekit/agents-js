@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, type VADEvent, VADEventType, mergeFrames } from '@livekit/agents';
+import {
+  AudioByteStream,
+  type VADEvent,
+  VADEventType,
+  type VADStream,
+  mergeFrames,
+} from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { VAD, type VADStream } from './vad.js';
+import { VAD } from './vad.js';
 
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_DURATION_MS = 10;

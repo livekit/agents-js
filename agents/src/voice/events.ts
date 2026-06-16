@@ -34,6 +34,8 @@ export enum AgentSessionEventTypes {
   SpeechCreated = 'speech_created',
   AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
+  /** Audio EOT detector emitted a per-turn prediction. */
+  EotPrediction = 'eot_prediction',
   Error = 'error',
   Close = 'close',
 }
@@ -243,6 +245,94 @@ export const createSpeechCreatedEvent = ({
   userInitiated,
   source,
   speechHandle,
+  createdAt,
+});
+
+/**
+ * Audio EOT prediction landed on the wire. Emitted once per turn boundary
+ * decision when a `TurnDetector` is wired into the session.
+ */
+export type EotPredictionEvent = {
+  type: 'eot_prediction';
+  /** End-of-turn probability in [0, 1] returned by the detector. */
+  probability: number;
+  /** Threshold below which the detector treats the prediction as unlikely. */
+  threshold: number;
+  /** Model-side inference time, in milliseconds. */
+  inferenceDurationMs: number;
+  /** End-of-speech → prediction receive time, in milliseconds. */
+  delayMs: number;
+  createdAt: number;
+};
+
+export const createEotPredictionEvent = ({
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
+  createdAt = Date.now(),
+}: {
+  probability: number;
+  threshold: number;
+  inferenceDurationMs: number;
+  delayMs: number;
+  createdAt?: number;
+}): EotPredictionEvent => ({
+  type: 'eot_prediction',
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
+  createdAt,
+});
+
+/**
+ * Internal: a window in which the agent could backchannel (a short acknowledgment
+ * such as "mm-hmm"), as predicted by the turn detector. Passed to `AgentActivity`
+ * only — not surfaced as a public `AgentSession` event (absent from `AgentEvent`,
+ * `AgentSessionEventTypes`, and the package exports).
+ *
+ * `AgentActivity` owns the decision of what to do with it. The end-of-turn margin
+ * (`endOfTurnThreshold - endOfTurnProbability`) gives a progressive risk axis: a
+ * large positive margin means the user is clearly still going, so riskier
+ * backchannels (yeah/okay/right) are safe; a small margin (or a negative one,
+ * where `endOfTurnProbability >= endOfTurnThreshold` and a reply is imminent)
+ * calls for safe, less ambiguous ones (hmm/uh-huh) that won't collide with the reply.
+ *
+ * @internal
+ */
+export type _AgentBackchannelOpportunityEvent = {
+  type: 'agent_backchannel_opportunity';
+  probability: number;
+  threshold: number;
+  endOfTurnProbability: number;
+  endOfTurnThreshold: number;
+  language?: string;
+  createdAt: number;
+};
+
+/** @internal */
+export const _createAgentBackchannelOpportunityEvent = ({
+  probability,
+  threshold,
+  endOfTurnProbability,
+  endOfTurnThreshold,
+  language,
+  createdAt = Date.now(),
+}: {
+  probability: number;
+  threshold: number;
+  endOfTurnProbability: number;
+  endOfTurnThreshold: number;
+  language?: string;
+  createdAt?: number;
+}): _AgentBackchannelOpportunityEvent => ({
+  type: 'agent_backchannel_opportunity',
+  probability,
+  threshold,
+  endOfTurnProbability,
+  endOfTurnThreshold,
+  language,
   createdAt,
 });
 

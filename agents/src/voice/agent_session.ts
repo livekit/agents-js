@@ -12,10 +12,13 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
+  TurnDetector as InferenceTurnDetector,
+  VAD as InferenceVAD,
   type LLMModels,
   type STTModelString,
   type TTSModelString,
@@ -63,6 +66,7 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -199,7 +203,13 @@ export type VoiceOptions = {
   maxEndpointingDelay?: number;
 };
 
-export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
+export type TurnDetectionMode =
+  | 'stt'
+  | 'vad'
+  | 'realtime_llm'
+  | 'manual'
+  | _TurnDetector
+  | BaseStreamingTurnDetector;
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
@@ -215,11 +225,18 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.EotPrediction]: (ev: EotPredictionEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   stt?: STT | STTModelString;
-  vad?: VAD;
+  /**
+   * Voice Activity Detection. When omitted, `AgentSession` auto-provisions a
+   * bundled `inference.VAD({ model: 'silero' })` and marks it as the default
+   * (so sites that check whether the user supplied a VAD treat the bundled
+   * one as absent). Pass `null` to opt out entirely.
+   */
+  vad?: VAD | null;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
@@ -362,6 +379,15 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
+  /**
+   * True iff this session auto-provisioned the bundled silero VAD because the
+   * caller passed no `vad=`. Set once in the constructor; immutable from then
+   * on. Read it via `AgentActivity.usingDefaultVad` from voice-pipeline code.
+   *
+   * @internal
+   */
+  _usingDefaultVad: boolean = false;
+
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
@@ -438,7 +464,19 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
-    this.vad = vad;
+    // VAD: undefined → auto-provision bundled inference.VAD (silero). The
+    // `_usingDefaultVad` marker is the single source of truth for "this VAD
+    // was framework-provisioned" — code paths that should ignore a default
+    // VAD read it via `AgentActivity.usingDefaultVad`. null → leave VAD off
+    // entirely. Otherwise use what the caller supplied.
+    this._usingDefaultVad = vad === undefined;
+    if (vad === undefined) {
+      this.vad = new InferenceVAD({ model: 'silero' });
+    } else if (vad === null) {
+      this.vad = undefined;
+    } else {
+      this.vad = vad;
+    }
 
     if (typeof stt === 'string') {
       this.stt = InferenceSTT.fromModelString(stt);
@@ -458,7 +496,16 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    // Default turn_detection: when the caller didn't pin a mode or supply a
+    // detector instance (`undefined`/not-given), fall back to a fresh
+    // inference.TurnDetector so every session ships with audio EOT
+    // out of the box. An explicit `null` opts out entirely — no detector is
+    // built.
+    const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    this.turnDetection =
+      configuredTurnDetection === null
+        ? undefined
+        : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
 
@@ -889,9 +936,16 @@ export class AgentSession<
     const normalizedTurnDetection = turnDetection ?? undefined;
 
     if (endpointing !== undefined) {
+      const stripped = stripUndefined(endpointing);
       this.sessionOptions.turnHandling.endpointing = {
         ...this.sessionOptions.turnHandling.endpointing,
-        ...stripUndefined(endpointing),
+        ...stripped,
+      };
+      // record the explicit keys so a fresh activity (built on agent handoff)
+      // re-resolves with them instead of falling back to defaults.
+      this.sessionOptions.turnHandling.endpointingOverrides = {
+        ...this.sessionOptions.turnHandling.endpointingOverrides,
+        ...stripped,
       };
     }
 
