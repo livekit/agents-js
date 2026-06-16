@@ -428,6 +428,32 @@ describe('TestBackchannelOpportunityEmit', () => {
     expect(ev.endOfTurnThreshold).toBeCloseTo(0.5);
   });
 
+  it('emits once across vad then stt triggers (shares the eot dedupe)', async () => {
+    const { internals, hooks } = makeRecognition();
+    const stream = makeAudioStream();
+    stream.backchannelThreshold = vi.fn(async () => 0.5);
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    // both triggers read the same cached prediction by reference
+    internals.turnDetectorPredictionFut = resolvedPrediction(0.2, {
+      backchannelProbability: 0.8,
+    }).fut;
+
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await flush();
+    await flush();
+    expect(hooks.onAgentBackchannelOpportunity).toHaveBeenCalledTimes(1);
+
+    // stt trigger runs a fresh bounce against the same resolved future; the
+    // dedupe that suppresses the second eot emit must suppress this too.
+    internals.runEOUDetection(ChatContext.empty(), 'stt');
+    await flush();
+    await flush();
+
+    expect(hooks.onAgentBackchannelOpportunity).toHaveBeenCalledTimes(1);
+    await internals.bounceEOUTask?.cancelAndWait().catch(() => {});
+  });
+
   it('emits with eot context when the turn ends', async () => {
     // The turn-continuing gate was dropped: a backchannel above threshold still
     // fires at end-of-turn, carrying the EOT context (probability past the

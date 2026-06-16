@@ -1593,28 +1593,27 @@ export class AudioRecognition {
                       delayMs,
                     }),
                   );
-                }
 
-                // Surface the backchannel opportunity whenever it clears its
-                // threshold, regardless of end-of-turn; AgentActivity decides
-                // whether to acknowledge mid-turn or let it lead the reply.
-                const backchannelProbability = prediction?.backchannelProbability;
-                if (
-                  backchannelProbability !== undefined &&
-                  backchannelThreshold !== undefined &&
-                  endOfTurnProbability !== undefined &&
-                  unlikelyThreshold !== undefined &&
-                  backchannelProbability >= backchannelThreshold
-                ) {
-                  this.hooks.onAgentBackchannelOpportunity(
-                    _createAgentBackchannelOpportunityEvent({
-                      probability: backchannelProbability,
-                      threshold: backchannelThreshold,
-                      endOfTurnProbability,
-                      endOfTurnThreshold: unlikelyThreshold,
-                      language: this.lastLanguage,
-                    }),
-                  );
+                  // Surface the backchannel opportunity whenever it clears its
+                  // threshold, regardless of end-of-turn; AgentActivity decides
+                  // whether to acknowledge mid-turn or let it lead the reply.
+                  // Shares the eot-emit dedupe so it fires once per request.
+                  const backchannelProbability = prediction?.backchannelProbability;
+                  if (
+                    backchannelProbability !== undefined &&
+                    backchannelThreshold !== undefined &&
+                    backchannelProbability >= backchannelThreshold
+                  ) {
+                    this.hooks.onAgentBackchannelOpportunity(
+                      _createAgentBackchannelOpportunityEvent({
+                        probability: backchannelProbability,
+                        threshold: backchannelThreshold,
+                        endOfTurnProbability,
+                        endOfTurnThreshold: unlikelyThreshold,
+                        language: this.lastLanguage,
+                      }),
+                    );
+                  }
                 }
 
                 if (prediction?.detectionDelay !== undefined) {
