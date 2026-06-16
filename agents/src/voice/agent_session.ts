@@ -21,7 +21,7 @@ import {
   type TTSModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
-import { getJobContext } from '../job.js';
+import { SimulationMode, getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   AgentHandoffItem,
@@ -533,6 +533,12 @@ export class AgentSession<
     return this.sessionOptions.useTtsAlignedTranscript;
   }
 
+  /** @internal */
+  get _textOnly(): boolean {
+    const ctx = getJobContext(false);
+    return ctx?.simulationContext()?.simulationMode === SimulationMode.SIMULATION_MODE_TEXT;
+  }
+
   set userData(value: UserData) {
     this._userData = value;
   }
@@ -556,6 +562,12 @@ export class AgentSession<
     this._updateAgentState('initializing');
 
     const tasks: Promise<void>[] = [];
+
+    if (this._textOnly) {
+      this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+      inputOptions = { ...inputOptions, audioEnabled: false };
+      outputOptions = { ...outputOptions, audioEnabled: false };
+    }
 
     if (room && !this._roomIO) {
       // Check for existing input/output configuration and warn if needed
@@ -684,6 +696,9 @@ export class AgentSession<
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this._recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session
