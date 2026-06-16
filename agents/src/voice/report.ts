@@ -73,16 +73,30 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
   };
 }
 
-/** Convert a camelCase key to snake_case (e.g. `oldState` becomes `old_state`, `e2eLatency` becomes `e2e_latency`). */
-function camelToSnakeKey(key: string): string {
+/**
+ * Field renames that are not pure case conversions. The chat-item `toJSON()` methods emit the
+ * framework's native (camelCase) field names; a few of those differ from the Python wire field
+ * name beyond casing (e.g. `FunctionCall.args` is serialized as `arguments`).
+ */
+/**
+ * Convert a camelCase key to its wire name (snake_case, e.g. `oldState` becomes `old_state`,
+ * `e2eLatency` becomes `e2e_latency`). `args` is special-cased to `arguments` — the chat-item
+ * `toJSON()` methods emit the framework's native `args`, but the Python wire field is `arguments`.
+ */
+function jsToPythonFieldName(key: string): string {
+  if (key === 'args') {
+    return 'arguments';
+  }
   return key.replace(/([A-Z]+)/g, (m) => `_${m.toLowerCase()}`);
 }
 
 /**
  * Recursively convert object keys to snake_case so the emitted wire format matches the
  * Python framework (whose pydantic models serialize with snake_case field names, no alias).
- * Objects exposing `toJSON()` (chat items, content) are delegated to — they already emit
- * snake_case. Arrays are mapped; primitives pass through.
+ * Objects exposing `toJSON()` (chat items, content) emit the framework's native camelCase shape,
+ * so their output is recursed into here rather than trusted. Arrays are mapped; primitives pass
+ * through; `extra` dicts are emitted verbatim (Python keeps `extra` as a free-form dict, so its
+ * provider-supplied keys must not be converted).
  */
 function toSnakeCaseDeep(value: unknown): unknown {
   if (value === null || typeof value !== 'object') {
@@ -92,14 +106,14 @@ function toSnakeCaseDeep(value: unknown): unknown {
     return value.map(toSnakeCaseDeep);
   }
   if (typeof (value as { toJSON?: unknown }).toJSON === 'function') {
-    return (value as { toJSON: () => unknown }).toJSON();
+    return toSnakeCaseDeep((value as { toJSON: () => unknown }).toJSON());
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     if (v === undefined) {
       continue;
     }
-    out[camelToSnakeKey(k)] = toSnakeCaseDeep(v);
+    out[jsToPythonFieldName(k)] = k === 'extra' ? v : toSnakeCaseDeep(v);
   }
   return out;
 }
@@ -176,7 +190,7 @@ function modelUsageToJSON(usage: ModelUsage): Record<string, unknown> {
     } else if (k === 'audioDurationMs') {
       out.audio_duration = (v as number) / 1000;
     } else {
-      out[camelToSnakeKey(k)] = v;
+      out[jsToPythonFieldName(k)] = v;
     }
   }
   return out;
@@ -246,7 +260,7 @@ export function sessionReportToJSON(report: SessionReport): Record<string, unkno
       user_away_timeout: options.userAwayTimeout ?? null,
       preemptive_generation: options.turnHandling?.preemptiveGeneration ?? {},
     },
-    chat_history: report.chatHistory.toJSON({ excludeTimestamp: false }),
+    chat_history: toSnakeCaseDeep(report.chatHistory.toJSON({ excludeTimestamp: false })),
     enable_user_data_training: report.enableRecording,
     timestamp: report.timestamp,
     usage: report.modelUsage ? report.modelUsage.map(modelUsageToJSON) : null,
