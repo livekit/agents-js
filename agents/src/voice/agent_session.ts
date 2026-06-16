@@ -81,12 +81,7 @@ import {
 import { AgentInput, AgentOutput } from './io.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
-import {
-  DEFAULT_TEXT_INPUT_CALLBACK,
-  RoomIO,
-  type RoomInputOptions,
-  type RoomOutputOptions,
-} from './room_io/index.js';
+import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
@@ -537,11 +532,6 @@ export class AgentSession<
       const transport = new RoomSessionTransport(room, this._roomIO);
       this.sessionHost = new SessionHost(transport);
       this.sessionHost.registerSession(this);
-      if (inputOptions?.textEnabled !== false) {
-        this.sessionHost.registerTextInput(
-          inputOptions?.textInputCallback ?? DEFAULT_TEXT_INPUT_CALLBACK,
-        );
-      }
     }
 
     const ctx = getJobContext(false);

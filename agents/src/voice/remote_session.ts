@@ -626,7 +626,6 @@ export class SessionHost {
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
-  private textInputCb: TextInputCallback | undefined;
 
   constructor(
     transport: SessionTransport,
@@ -652,10 +651,6 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.Error, this.onHostError);
       session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
-  }
-
-  registerTextInput(textInputCb: TextInputCallback): void {
-    this.textInputCb = textInputCb;
   }
 
   async start(): Promise<void> {
@@ -991,26 +986,31 @@ export class SessionHost {
     let items: pb.ChatContext_ChatItem[] = [];
     let error: string | undefined;
 
-    if (text) {
-      if (this.textInputCb) {
-        const cbResult = this.textInputCb(this.session!, { text });
-        if (cbResult instanceof Promise) {
-          await cbResult;
-        }
-      } else {
-        try {
-          await this.session!.interrupt({ force: true }).await;
-        } catch {
-          // ignore
-        }
+    if (!text) {
+      error = 'empty run_input text';
+    } else {
+      // Drive the reply through session.run() directly and capture its events,
+      // ignoring any registered text-input callback. The room's default text
+      // input callback is fire-and-forget (interrupt + generateReply) and never
+      // surfaces the resulting chat items, so routing run_input through it would
+      // always return empty responses to the remote driver. This mirrors the
+      // Python SessionHost behavior.
+      try {
+        await this.session!.interrupt({ force: true }).await;
+      } catch {
+        // ignore
+      }
 
-        const result = this.session!.run({ userInput: text });
-        try {
-          await result.wait();
-        } catch (e) {
-          error = e instanceof Error ? e.message : String(e);
-        }
-        items = chatItemsToProto(result.events.map((ev) => ev.item));
+      const result = this.session!.run({ userInput: text });
+      try {
+        await result.wait();
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      items = chatItemsToProto(result.events.map((ev) => ev.item));
+
+      if (items.length === 0 && !error) {
+        error = 'agent produced no response items';
       }
     }
 
