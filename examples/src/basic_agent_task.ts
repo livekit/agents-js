@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -110,12 +108,8 @@ class SurveyAgent extends voice.Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
       llm: new openai.responses.LLM({ useWebSocket: true }),
       tts: new inference.TTS({

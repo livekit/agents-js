@@ -27,6 +27,7 @@ import {
   sttServerEventSchema,
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
+import { VAD as InferenceVAD } from './vad.js';
 
 export type DeepgramModels =
   | 'deepgram/nova-3'
@@ -281,41 +282,20 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
-type VADSource = VAD | (() => Promise<VAD>);
-
 function isSpeechmaticsModel(model: string | undefined): boolean {
   return model?.startsWith('speechmatics/') ?? false;
 }
 
-function loadSileroVAD(model: string): () => Promise<VAD> {
-  return async () => {
-    try {
-      const dynamicImport = (specifier: string) =>
-        import(specifier) as Promise<{ VAD: { load(): Promise<VAD> } }>;
-      const { VAD: SileroVAD } = await dynamicImport('@livekit/agents-plugin-silero');
-      return SileroVAD.load();
-    } catch (e) {
-      throw new Error(
-        `@livekit/agents-plugin-silero is required: model ${JSON.stringify(
-          model,
-        )} does not handle endpointing server-side.`,
-        { cause: e },
-      );
-    }
-  };
-}
-
-function resolveVADForModel(
-  model: string | undefined,
-  vad: VAD | undefined,
-): VADSource | undefined {
+function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
   const speechmatics = isSpeechmaticsModel(model);
   if (vad && !speechmatics) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
     return undefined;
   }
   if (speechmatics && vad === undefined) {
-    return loadSileroVAD(model!);
+    // Speechmatics doesn't endpoint server-side, so fall back to the in-tree
+    // local inference VAD rather than the deprecated silero plugin.
+    return new InferenceVAD();
   }
   return vad;
 }
@@ -345,17 +325,16 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
-  private vad?: VADSource;
+  private vad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
 
   /**
    * Resolves to the VAD instance for the current model, or `undefined` if the model
-   * handles endpointing server-side. Lazily computed on first read so callers that
-   * never need VAD don't pay the cost of loading Silero.
+   * handles endpointing server-side. Lazily computed on first read.
    */
   get vadPromise(): Promise<VAD | undefined> {
     if (this._vadPromise === undefined) {
-      this._vadPromise = typeof this.vad === 'function' ? this.vad() : Promise.resolve(this.vad);
+      this._vadPromise = Promise.resolve(this.vad);
     }
     return this._vadPromise;
   }
@@ -488,10 +467,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     };
 
     if (nextOpts.model !== undefined) {
-      this.vad = resolveVADForModel(
-        nextOpts.model,
-        this.vad && typeof this.vad !== 'function' ? this.vad : undefined,
-      );
+      this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
     }
 

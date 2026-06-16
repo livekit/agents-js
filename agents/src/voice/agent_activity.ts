@@ -10,6 +10,10 @@ import { Heap } from 'heap-js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import type { Logger } from 'pino';
+import {
+  BaseStreamingTurnDetector,
+  type BaseStreamingTurnDetectorStream,
+} from '../inference/eot/base.js';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
@@ -44,6 +48,7 @@ import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
+  EOTInferenceMetrics,
   EOUMetrics,
   InterruptionMetrics,
   LLMMetrics,
@@ -88,7 +93,13 @@ import {
   type RecognitionHooks,
   type STTPipeline,
 } from './audio_recognition.js';
-import type { AgentState, AgentStateChangedEvent, UserTurnExceededEvent } from './events.js';
+import type {
+  AgentState,
+  AgentStateChangedEvent,
+  EotPredictionEvent,
+  UserTurnExceededEvent,
+  _AgentBackchannelOpportunityEvent,
+} from './events.js';
 import {
   AgentSessionEventTypes,
   createAgentFalseInterruptionEvent,
@@ -115,6 +126,7 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
+import { resolveEndpointing } from './turn_config/utils.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -129,6 +141,7 @@ export interface ReusableResources {
   sttPipeline?: STTPipeline;
   sttInputStartedAt?: number;
   rtSession?: RealtimeSession;
+  turnDetectorStream?: BaseStreamingTurnDetectorStream;
 }
 
 export class SchedulingPausedError extends Error {
@@ -154,6 +167,10 @@ export async function cleanupReusableResources(
   if (resources.rtSession) {
     tasks.push(resources.rtSession.close());
     resources.rtSession = undefined;
+  }
+  if (resources.turnDetectorStream) {
+    tasks.push(resources.turnDetectorStream.aclose());
+    resources.turnDetectorStream = undefined;
   }
 
   if (tasks.length > 0) {
@@ -226,6 +243,14 @@ export class AgentActivity implements RecognitionHooks {
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
+  /**
+   * Validated turn detection for this activity. Equals `this.turnDetection`
+   * except when an `BaseStreamingTurnDetector` instance fails the runtime preconditions
+   * (no VAD, or RealtimeModel with server-side turn detection enabled), in
+   * which case it is downgraded to `undefined` and a warning is logged.
+   */
+  private _resolvedTurnDetection: TurnDetectionMode | undefined;
+
   // for false interruption handling
   private pausedSpeech?: PausedSpeechInfo;
   private falseInterruptionTimer?: NodeJS.Timeout;
@@ -292,8 +317,9 @@ export class AgentActivity implements RecognitionHooks {
     });
     this.q_updated = new Future();
 
+    this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
     this.turnDetectionMode =
-      typeof this.turnDetection === 'string' ? this.turnDetection : undefined;
+      typeof this._resolvedTurnDetection === 'string' ? this._resolvedTurnDetection : undefined;
 
     if (this.turnDetectionMode === 'vad' && this.vad === undefined) {
       this.logger.warn(
@@ -342,10 +368,13 @@ export class AgentActivity implements RecognitionHooks {
         this.turnDetectionMode = undefined;
       }
 
-      // fallback to VAD if server side turn detection is disabled and VAD is available
+      // fallback to VAD if server side turn detection is disabled and the
+      // user explicitly supplied a VAD. The bundled-default VAD is treated
+      // as absent here so behavior matches "no vad passed" sessions.
       if (
         !this.llm.capabilities.turnDetection &&
         this.vad &&
+        !this.usingDefaultVad &&
         this.turnDetectionMode === undefined
       ) {
         this.turnDetectionMode = 'vad';
@@ -516,20 +545,32 @@ export class AgentActivity implements RecognitionHooks {
       this.vad.on('metrics_collected', this.onMetricsCollected);
     }
 
+    if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
+      this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
+    }
+
+    // Bundled-default VAD is treated as absent when the RealtimeModel does
+    // its own server-side turn detection — the realtime session is already
+    // canonical and an extra audio pipeline would just pay the native model
+    // load for no behavioral gain. User-supplied VADs still flow through
+    // (e.g. when the user wants adaptive interruption).
+    const realtimeUsesServerVad =
+      this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection === true;
+    const recognitionVad = this.usingDefaultVad && realtimeUsesServerVad ? undefined : this.vad;
+
     this.audioRecognition = new AudioRecognition({
       recognitionHooks: this,
       // Disable stt node if stt is not provided
       stt: this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
-      vad: this.vad,
-      turnDetector: typeof this.turnDetection === 'string' ? undefined : this.turnDetection,
+      vad: recognitionVad,
+      usingDefaultVad: this.usingDefaultVad,
+      turnDetector:
+        typeof this._resolvedTurnDetection === 'string' ? undefined : this._resolvedTurnDetection,
       turnDetectionMode: this.turnDetectionMode,
       interruptionDetection: this.interruptionDetector,
       backchannelBoundary:
         this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
-      endpointing: createEndpointing({
-        ...this.agentSession.sessionOptions.turnHandling.endpointing,
-        ...(this.agent.turnHandling?.endpointing ?? {}),
-      }),
+      endpointing: createEndpointing(this.endpointingOpts),
       userTurnLimit: this.agentSession.sessionOptions.turnHandling.userTurnLimit,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
@@ -538,20 +579,29 @@ export class AgentActivity implements RecognitionHooks {
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
     });
 
-    if (reuseResources?.sttPipeline) {
+    const sttPipeline = reuseResources?.sttPipeline;
+    // carry the input epoch along with the reused pipeline: its stream clock
+    // is cumulative, so re-stamping inputStartedAt here would push STT-derived
+    // timestamps into the future and stall end-of-turn after every handoff
+    // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
+    const sttInputStartedAt = reuseResources?.sttInputStartedAt;
+    const turnDetectorStream = reuseResources?.turnDetectorStream;
+    if (sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
-      // carry the input epoch along with the reused pipeline: its stream clock
-      // is cumulative, so re-stamping inputStartedAt here would push STT-derived
-      // timestamps into the future and stall end-of-turn after every handoff
-      // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
-      await this.audioRecognition.start({
-        sttPipeline: reuseResources.sttPipeline,
-        inputStartedAt: reuseResources.sttInputStartedAt,
-      });
-      reuseResources.sttPipeline = undefined; // ownership transferred
+    }
+    if (turnDetectorStream) {
+      this.logger.debug('reusing turn detector stream from previous activity');
+    }
+    await this.audioRecognition.start({
+      sttPipeline,
+      inputStartedAt: sttInputStartedAt,
+      turnDetectorStream,
+    });
+    if (reuseResources) {
+      // ownership transferred to the new AudioRecognition
+      reuseResources.sttPipeline = undefined;
       reuseResources.sttInputStartedAt = undefined;
-    } else {
-      await this.audioRecognition.start();
+      reuseResources.turnDetectorStream = undefined;
     }
 
     this.started = true;
@@ -590,6 +640,15 @@ export class AgentActivity implements RecognitionHooks {
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
         resources.sttInputStartedAt = this.audioRecognition.inputStartedAt;
+      }
+
+      // reuse the turn detector stream during a handoff whenever we can
+      if (
+        this.audioRecognition &&
+        this._resolvedTurnDetection instanceof BaseStreamingTurnDetector &&
+        this._resolvedTurnDetection === newActivity._resolvedTurnDetection
+      ) {
+        resources.turnDetectorStream = this.audioRecognition.detachTurnDetector();
       }
 
       // rt session
@@ -653,6 +712,18 @@ export class AgentActivity implements RecognitionHooks {
 
   get vad(): VAD | undefined {
     return this.agent.vad || this.agentSession.vad;
+  }
+
+  /**
+   * True iff the effective VAD for this activity is the framework-auto-provisioned
+   * default. False when the user passed `vad=` to either the agent or the
+   * session, even if the value happens to be the same silero model.
+   */
+  get usingDefaultVad(): boolean {
+    if (this.agent.vad !== undefined) {
+      return false;
+    }
+    return this.agentSession._usingDefaultVad;
   }
 
   get stt(): STT | undefined {
@@ -729,6 +800,23 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
+  /**
+   * Endpointing options resolved for this activity. Sparse session overrides
+   * and the agent's own endpointing keys are merged, then defaults are filled
+   * in based on this activity's resolved turn detector — so a streaming
+   * ("audio model") detector uses the tighter streaming defaults while a
+   * non-streaming agent in the same session keeps the legacy defaults.
+   */
+  get endpointingOpts(): EndpointingOptions {
+    return resolveEndpointing(
+      {
+        ...this.agentSession.sessionOptions.turnHandling.endpointingOverrides,
+        ...(this.agent.turnHandling?.endpointing ?? {}),
+      },
+      this._resolvedTurnDetection,
+    );
+  }
+
   // get minEndpointingDelay(): number {
   //   return (
   //     this.agent.turnHandling?.endpointing?.minDelay ??
@@ -737,10 +825,8 @@ export class AgentActivity implements RecognitionHooks {
   // }
 
   get maxEndpointingDelay(): number {
-    return (
-      this.agent.turnHandling?.endpointing?.maxDelay ??
-      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-    );
+    // resolves to the fixed value for this activity's detector, not the dynamic one
+    return this.endpointingOpts.maxDelay;
   }
 
   get toolCtx(): ToolContext {
@@ -835,10 +921,9 @@ export class AgentActivity implements RecognitionHooks {
     if (this.audioRecognition) {
       const recognitionOptions: Parameters<AudioRecognition['updateOptions']>[0] = {};
       if (endpointing !== undefined) {
-        recognitionOptions.endpointing = createEndpointing({
-          ...endpointing,
-          ...(this.agent.turnHandling?.endpointing ?? {}),
-        });
+        // re-resolve from the session overrides (the source of truth) rather
+        // than the passed value, so this activity's detector picks the defaults.
+        recognitionOptions.endpointing = createEndpointing(this.endpointingOpts);
       }
       if (hasTurnDetection) {
         recognitionOptions.turnDetection = turnDetection;
@@ -980,7 +1065,13 @@ export class AgentActivity implements RecognitionHooks {
   // -- Metrics and errors --
 
   private onMetricsCollected = (
-    ev: STTMetrics | TTSMetrics | VADMetrics | LLMMetrics | RealtimeModelMetrics,
+    ev:
+      | STTMetrics
+      | TTSMetrics
+      | VADMetrics
+      | LLMMetrics
+      | RealtimeModelMetrics
+      | EOTInferenceMetrics,
   ) => {
     const speechHandle = speechHandleStorage.getStore();
     if (speechHandle && (ev.type === 'llm_metrics' || ev.type === 'tts_metrics')) {
@@ -1032,7 +1123,11 @@ export class AgentActivity implements RecognitionHooks {
   onInputSpeechStarted(_ev: InputSpeechStartedEvent): void {
     this.logger.info('onInputSpeechStarted');
 
-    if (!this.vad) {
+    // Bundled-default VAD is treated as absent here so the realtime
+    // session's own server-side turn detection drives the user-state /
+    // overlap-detection update, identical to a session that didn't
+    // configure any VAD.
+    if (!this.vad || this.usingDefaultVad) {
       this.agentSession._updateUserState('speaking');
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onStartOfOverlapSpeech(
@@ -1058,7 +1153,7 @@ export class AgentActivity implements RecognitionHooks {
   onInputSpeechStopped(ev: InputSpeechStoppedEvent): void {
     this.logger.info(ev, 'onInputSpeechStopped');
 
-    if (!this.vad) {
+    if (!this.vad || this.usingDefaultVad) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
         this.audioRecognition.onEndOfOverlapSpeech(Date.now(), this.agentSession._userSpeakingSpan);
       }
@@ -1400,6 +1495,17 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.cancelSpeechPauseTask = this.cancelSpeechPause();
+  }
+
+  /** Forward audio EOT predictions up to the session so listeners (e.g.
+   * remote-session forwarders) can observe them. */
+  onEotPrediction(ev: EotPredictionEvent): void {
+    this.agentSession.emit(AgentSessionEventTypes.EotPrediction, ev);
+  }
+
+  onAgentBackchannelOpportunity(_ev: _AgentBackchannelOpportunityEvent): void {
+    // TODO: consume the backchannel opportunity internally (e.g. trigger a
+    // backchannel phrase). Kept internal for now — not surfaced as a public event.
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
@@ -3916,6 +4022,29 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  private _resolveTurnDetection(
+    turnDetection: TurnDetectionMode | undefined,
+  ): TurnDetectionMode | undefined {
+    if (turnDetection !== undefined && typeof turnDetection !== 'string') {
+      if (turnDetection instanceof BaseStreamingTurnDetector) {
+        if (this.vad === undefined) {
+          this.logger.warn(
+            'TurnDetector requires a VAD model. Pass vad=inference.VAD() to AgentSession/Agent or turnDetection=null to disable the default TurnDetector',
+          );
+          return undefined;
+        }
+        if (this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection) {
+          this.logger.warn(
+            'turnDetection is a TurnDetector, but the LLM is a RealtimeModel with server-side turn detection enabled, ignoring the turnDetection setting',
+          );
+          return undefined;
+        }
+      }
+      return turnDetection;
+    }
+    return turnDetection;
+  }
+
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
@@ -3924,7 +4053,7 @@ export class AgentActivity implements RecognitionHooks {
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
         this.stt.capabilities.streaming &&
-        this.vad &&
+        this.vad !== undefined &&
         this.turnDetection !== 'manual' &&
         this.turnDetection !== 'realtime_llm' &&
         !(this.llm instanceof RealtimeModel)
@@ -4180,6 +4309,10 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.vad instanceof VAD) {
       this.vad.off('metrics_collected', this.onMetricsCollected);
+    }
+
+    if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
+      this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
 
     this.detachAudioInput();

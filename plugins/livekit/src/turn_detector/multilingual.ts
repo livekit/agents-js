@@ -68,10 +68,10 @@ export class MultilingualModel extends EOUModel {
     return threshold;
   }
 
-  async predictEndOfTurn(chatCtx: llm.ChatContext, timeout: number = 3): Promise<number> {
+  async predictEndOfTurn(chatCtx: llm.ChatContext, timeoutMs?: number): Promise<number> {
     const url = remoteInferenceUrl();
     if (!url) {
-      return await super.predictEndOfTurn(chatCtx, timeout);
+      return await super.predictEndOfTurn(chatCtx, timeoutMs);
     }
 
     // Copy and process chat context similar to Python implementation
