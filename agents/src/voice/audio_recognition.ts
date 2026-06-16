@@ -45,6 +45,8 @@ import type { TurnDetectionMode } from './agent_session.js';
 import {
   type EotPredictionEvent,
   type UserTurnExceededEvent,
+  type _AgentBackchannelOpportunityEvent,
+  _createAgentBackchannelOpportunityEvent,
   createEotPredictionEvent,
   createUserTurnExceededEvent,
 } from './events.js';
@@ -99,6 +101,7 @@ export interface RecognitionHooks {
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onEotPrediction: (ev: EotPredictionEvent) => void;
+  onAgentBackchannelOpportunity: (ev: _AgentBackchannelOpportunityEvent) => void;
   onPreemptiveGeneration: (info: PreemptiveGenerationInfo) => void;
   onUserTurnExceeded: (ev: UserTurnExceededEvent) => void;
 
@@ -1462,6 +1465,7 @@ export class AudioRecognition {
                 // below.
                 let endOfTurnProbability: number | undefined;
                 let unlikelyThreshold: number | undefined;
+                let backchannelThreshold: number | undefined;
                 // True when the held future was already resolved when this
                 // bounce started — i.e. the prediction was served from the
                 // request the silence tick warmed, not awaited fresh.
@@ -1500,6 +1504,9 @@ export class AudioRecognition {
                       predictionEvent = winner.ev;
                       endOfTurnProbability = predictionEvent.endOfTurnProbability;
                       unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
+                      backchannelThreshold = await turnDetector.backchannelThreshold(
+                        this.lastLanguage,
+                      );
                     } else {
                       this.logger.warn(
                         { timeoutMs: endpointingDelay },
@@ -1586,6 +1593,27 @@ export class AudioRecognition {
                       delayMs,
                     }),
                   );
+
+                  // Surface the backchannel opportunity whenever it clears its
+                  // threshold, regardless of end-of-turn; AgentActivity decides
+                  // whether to acknowledge mid-turn or let it lead the reply.
+                  // Shares the eot-emit dedupe so it fires once per request.
+                  const backchannelProbability = prediction?.backchannelProbability;
+                  if (
+                    backchannelProbability !== undefined &&
+                    backchannelThreshold !== undefined &&
+                    backchannelProbability >= backchannelThreshold
+                  ) {
+                    this.hooks.onAgentBackchannelOpportunity(
+                      _createAgentBackchannelOpportunityEvent({
+                        probability: backchannelProbability,
+                        threshold: backchannelThreshold,
+                        endOfTurnProbability,
+                        endOfTurnThreshold: unlikelyThreshold,
+                        language: this.lastLanguage,
+                      }),
+                    );
+                  }
                 }
 
                 if (prediction?.detectionDelay !== undefined) {

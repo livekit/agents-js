@@ -45,6 +45,9 @@ export interface TurnDetectionEvent {
   detectionDelay?: number;
   /** Server-side model inference time (ms). */
   inferenceDuration?: number;
+  /** How appropriate it is for the agent to backchannel at this pause.
+   * `undefined` when the detector does not produce one (e.g. the local mini model). */
+  backchannelProbability?: number;
 }
 
 /**
@@ -123,6 +126,12 @@ export abstract class BaseStreamingTurnDetector extends (EventEmitter as new () 
    * to be end-of-turn". Returns `undefined` when the language isn't covered. */
   async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
     return this._opts.thresholds.lookup(language);
+  }
+
+  /** Threshold above which a pause is a backchannel opportunity, or `undefined`
+   * when backchannel is disabled (server sent none, or the local mini model). */
+  async backchannelThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
+    return this._opts.thresholds.lookupBackchannel(language);
   }
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
@@ -217,6 +226,10 @@ export class BaseStreamingTurnDetectorStream {
 
   async unlikelyThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
     return this._opts.thresholds.lookup(language);
+  }
+
+  async backchannelThreshold(language: LanguageCode | undefined): Promise<number | undefined> {
+    return this._opts.thresholds.lookupBackchannel(language);
   }
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
@@ -367,7 +380,11 @@ export class BaseStreamingTurnDetectorStream {
   _resolvePrediction(
     requestId: string,
     probability: number,
-    opts: { inferenceDuration?: number; detectionDelay?: number } = {},
+    opts: {
+      inferenceDuration?: number;
+      detectionDelay?: number;
+      backchannelProbability?: number;
+    } = {},
   ): void {
     // Drop predictions that land after teardown — an in-flight transport
     // predict can resolve after `aclose` closed the channels.
@@ -387,6 +404,7 @@ export class BaseStreamingTurnDetectorStream {
         lastSpeakingTimeMs: Date.now(),
         detectionDelay: opts.detectionDelay,
         inferenceDuration: opts.inferenceDuration,
+        backchannelProbability: opts.backchannelProbability,
       });
     }
   }

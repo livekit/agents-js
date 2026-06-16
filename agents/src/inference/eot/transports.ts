@@ -397,6 +397,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
       stream._resolvePrediction(msg.requestId ?? '', prediction.probability, {
         detectionDelay: detectionDelayMs,
         inferenceDuration: inferenceDurationMs,
+        backchannelProbability: prediction.backchannelProbability,
       });
       const detector = this._detectorRef.deref();
       if (detector !== undefined) {
@@ -423,7 +424,12 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
       // response (no usable thresholds) throws a non-retryable `APIError` that
       // propagates out of the recv task → `run()` → the stream's cloud→local
       // fallback.
-      stream.thresholdsOptions._updateDefaults(created.defaultThresholds, created.defaultThreshold);
+      stream.thresholdsOptions._updateDefaults(
+        created.defaultThresholds,
+        created.defaultThreshold,
+        created.defaultBackchannelThresholds,
+        created.defaultBackchannelThreshold,
+      );
       this._logger.debug(
         {
           model: stream.thresholdsOptions.model,
