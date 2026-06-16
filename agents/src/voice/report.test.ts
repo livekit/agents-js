@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { ModelUsage } from '../metrics/model_usage.js';
 import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
-import { AgentSessionEventTypes, createSessionUsageUpdatedEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  createConversationItemAddedEvent,
+  createSessionUsageUpdatedEvent,
+  createUserInputTranscribedEvent,
+  createUserStateChangedEvent,
+} from './events.js';
 import type { AgentSessionUsage } from './index.js';
 import { createSessionReport, sessionReportToJSON } from './report.js';
 
@@ -170,8 +176,8 @@ describe('sessionReportToJSON', () => {
         type: 'tts_usage',
         provider: 'elevenlabs',
         model: 'eleven_flash_v2_5',
-        charactersCount: 42,
-        audioDurationMs: 1200,
+        characters_count: 42,
+        audio_duration: 1.2,
       },
     ]);
   });
@@ -204,6 +210,72 @@ describe('sessionReportToJSON', () => {
 
     const payload = sessionReportToJSON(report);
     expect(payload.events).toEqual([]);
+  });
+
+  it('serializes events with snake_case keys to match the Python wire format', () => {
+    const chatHistory = ChatContext.empty();
+    const msg = chatHistory.addMessage({ role: 'user', content: 'hi', createdAt: 5 });
+
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [
+        createUserStateChangedEvent('listening', 'speaking', 7),
+        createUserInputTranscribedEvent({
+          transcript: 'hello',
+          isFinal: true,
+          speakerId: 'spk_1',
+          createdAt: 9,
+        }),
+        createConversationItemAddedEvent(msg, 11),
+      ],
+      chatHistory,
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(payload.events).toEqual([
+      { type: 'user_state_changed', old_state: 'listening', new_state: 'speaking', created_at: 7 },
+      {
+        type: 'user_input_transcribed',
+        transcript: 'hello',
+        is_final: true,
+        speaker_id: 'spk_1',
+        language: null,
+        created_at: 9,
+      },
+      {
+        type: 'conversation_item_added',
+        item: msg.toJSON(),
+        created_at: 11,
+      },
+    ]);
+  });
+
+  it('includes audio recording and sdk metadata in the report', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      enableRecording: true,
+      timestamp: 0,
+      startedAt: 0,
+      audioRecordingPath: '/tmp/audio.ogg',
+      audioRecordingStartedAt: 1234,
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(payload.audio_recording_path).toBe('/tmp/audio.ogg');
+    expect(payload.audio_recording_started_at).toBe(1234);
+    expect(typeof payload.sdk_version).toBe('string');
+    expect((payload.options as Record<string, unknown>).user_away_timeout).toBe(15);
   });
 
   it('exports AgentSessionUsage from the voice barrel', () => {
