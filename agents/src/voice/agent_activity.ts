@@ -52,12 +52,15 @@ import type {
   TTSMetrics,
   VADMetrics,
 } from '../metrics/base.js';
+import { IdentityTransform } from '../stream/identity_transform.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import { TTS, type TTSError } from '../tts/tts.js';
+import { isFlushSentinel } from '../types.js';
 import {
+  AsyncIterableQueue,
   Future,
   IdleTimeoutError,
   Task,
@@ -69,8 +72,9 @@ import {
   waitUntilTimeout,
 } from '../utils.js';
 import { VAD, type VADEvent } from '../vad.js';
-import type { Agent, ModelSettings } from './agent.js';
 import {
+  Agent,
+  type ModelSettings,
   StopResponse,
   _getActivityTaskInfo,
   _setActivityTaskInfo,
@@ -123,6 +127,7 @@ interface OnEnterData {
 
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
+  sttInputStartedAt?: number;
   rtSession?: RealtimeSession;
 }
 
@@ -535,8 +540,16 @@ export class AgentActivity implements RecognitionHooks {
 
     if (reuseResources?.sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
-      await this.audioRecognition.start({ sttPipeline: reuseResources.sttPipeline });
+      // carry the input epoch along with the reused pipeline: its stream clock
+      // is cumulative, so re-stamping inputStartedAt here would push STT-derived
+      // timestamps into the future and stall end-of-turn after every handoff
+      // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
+      await this.audioRecognition.start({
+        sttPipeline: reuseResources.sttPipeline,
+        inputStartedAt: reuseResources.sttInputStartedAt,
+      });
       reuseResources.sttPipeline = undefined; // ownership transferred
+      reuseResources.sttInputStartedAt = undefined;
     } else {
       await this.audioRecognition.start();
     }
@@ -565,16 +578,18 @@ export class AgentActivity implements RecognitionHooks {
   async _detachReusableResources(newActivity: AgentActivity): Promise<ReusableResources> {
     const resources: ReusableResources = {};
     try {
-      // stt pipeline
+      // stt pipeline; only reuse with the default sttNode, a custom override may
+      // access the old session/activity inside the yield loop after detach
       if (
         this.audioRecognition &&
         this.stt &&
         newActivity.stt &&
         this.stt === newActivity.stt &&
-        Object.getPrototypeOf(this.agent).sttNode ===
-          Object.getPrototypeOf(newActivity.agent).sttNode
+        Object.getPrototypeOf(this.agent).sttNode === Agent.prototype.sttNode &&
+        Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
+        resources.sttInputStartedAt = this.audioRecognition.inputStartedAt;
       }
 
       // rt session
@@ -996,16 +1011,16 @@ export class AgentActivity implements RecognitionHooks {
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
     if (ev.type === 'realtime_model_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'stt_error') {
-      const errorEvent = createErrorEvent(ev.error, this.stt);
+      const errorEvent = createErrorEvent(ev, this.stt);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'tts_error') {
-      const errorEvent = createErrorEvent(ev.error, this.tts);
+      const errorEvent = createErrorEvent(ev, this.tts);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     } else if (ev.type === 'llm_error') {
-      const errorEvent = createErrorEvent(ev.error, this.llm);
+      const errorEvent = createErrorEvent(ev, this.llm);
       this.agentSession.emit(AgentSessionEventTypes.Error, errorEvent);
     }
 
@@ -2461,43 +2476,111 @@ export class AgentActivity implements RecognitionHooks {
     );
     tasks.push(llmTask);
 
-    let ttsTask: Task<void> | null = null;
-    let ttsGenData: _TTSGenerationData | null = null;
-    let llmOutput: ReadableStream<string>;
-
-    // Helper to start TTS inference, used both for preemptive and deferred TTS start.
-    // We always tee the LLM output stream upfront when audio is needed, so the ttsTextInput
-    // is available regardless of when TTS actually starts.
-    let ttsTextInput: ReadableStream<string> | null = null;
-
-    if (audioOutput) {
-      // Always tee the stream when audio output is needed
-      const [_ttsTextInput, textOutput] = llmGenData.textStream.tee();
-      ttsTextInput = _ttsTextInput;
-      llmOutput = textOutput;
-    } else {
-      // No TTS needed, use the stream directly
-      llmOutput = llmGenData.textStream;
+    interface SpeechSegment {
+      textStream: ReadableStream<string>;
+      textWriter: WritableStreamDefaultWriter<string>;
+      ttsTextWriter?: WritableStreamDefaultWriter<string>;
+      ttsTask?: Task<void>;
+      ttsGenData?: _TTSGenerationData;
     }
 
-    const startTtsInference = (): [Task<void>, _TTSGenerationData] => {
-      return performTTSInference(
-        (...args) => this.agent.ttsNode(...args),
-        ttsTextInput!,
-        modelSettings,
-        replyAbortController,
-        this.tts?.model,
-        this.tts?.provider,
-        this.agentSession.sessionOptions.ttsReadIdleTimeout,
-        this.agentSession.sessionOptions.ttsTextTransforms,
-      );
+    interface SegmentOutput {
+      textOut: _TextOut | null;
+      audioOut: _AudioOut | null;
+      played: 'full' | 'partial' | 'skipped';
+      playbackPositionInS: number;
+      synchronizedTranscript?: string;
+    }
+
+    const forwardedTextFor = (output: SegmentOutput): string => {
+      if (output.played === 'skipped') return '';
+      if (output.played === 'partial' && output.audioOut) {
+        return output.synchronizedTranscript ?? '';
+      }
+      return output.textOut?.text ?? '';
     };
 
-    // Start preemptive TTS inference if enabled
+    const segmentQueue = new AsyncIterableQueue<SpeechSegment>();
+    let synthesizeTask: Task<void> | null = null;
+
+    const produceSegments = async (controller: AbortController): Promise<void> => {
+      const reader = llmGenData.textStream.getReader();
+      let current: SpeechSegment | null = null;
+      let prevTtsTask: Task<void> | null = null;
+
+      const startSegment = async (): Promise<SpeechSegment> => {
+        if (prevTtsTask) {
+          await prevTtsTask.result;
+        }
+
+        const textStream = new IdentityTransform<string>();
+        const segment: SpeechSegment = {
+          textStream: textStream.readable,
+          textWriter: textStream.writable.getWriter(),
+        };
+
+        if (audioOutput) {
+          const ttsInput = new IdentityTransform<string>();
+          const [ttsTask, ttsGenData] = performTTSInference(
+            (...args) => this.agent.ttsNode(...args),
+            ttsInput.readable,
+            modelSettings,
+            replyAbortController,
+            this.tts?.model,
+            this.tts?.provider,
+            this.agentSession.sessionOptions.ttsReadIdleTimeout,
+            this.agentSession.sessionOptions.ttsTextTransforms,
+          );
+          tasks.push(ttsTask);
+          prevTtsTask = ttsTask;
+          segment.ttsTextWriter = ttsInput.writable.getWriter();
+          segment.ttsTask = ttsTask;
+          segment.ttsGenData = ttsGenData;
+        }
+
+        segmentQueue.put(segment);
+        return segment;
+      };
+
+      const endSegment = async () => {
+        if (!current) return;
+        await current.textWriter.close();
+        await current.ttsTextWriter?.close();
+        current = null;
+      };
+
+      try {
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          if (isFlushSentinel(value)) {
+            await endSegment();
+            continue;
+          }
+
+          if (current === null) {
+            current = await startSegment();
+          }
+          await current.textWriter.write(value);
+          await current.ttsTextWriter?.write(value);
+        }
+      } finally {
+        await endSegment();
+        segmentQueue.close();
+        reader.releaseLock();
+      }
+    };
+
+    // Start preemptive synthesis if enabled. Otherwise it starts after scheduling below.
     const preemptiveOpts = this.agentSession.sessionOptions.turnHandling.preemptiveGeneration;
     if (audioOutput && preemptiveOpts.enabled && preemptiveOpts.preemptiveTts) {
-      [ttsTask, ttsGenData] = startTtsInference();
-      tasks.push(ttsTask);
+      synthesizeTask = Task.from(
+        (controller) => produceSegments(controller),
+        replyAbortController,
+        'AgentActivity.pipelineReply.produceSegments',
+      );
+      tasks.push(synthesizeTask);
     }
 
     await speechHandle.waitIfNotInterrupted([speechHandle._waitForScheduled()]);
@@ -2516,10 +2599,13 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    // Start TTS inference if not already started and audio output is enabled
-    if (audioOutput && ttsTask === null) {
-      [ttsTask, ttsGenData] = startTtsInference();
-      tasks.push(ttsTask);
+    if (synthesizeTask === null) {
+      synthesizeTask = Task.from(
+        (controller) => produceSegments(controller),
+        replyAbortController,
+        'AgentActivity.pipelineReply.produceSegments',
+      );
+      tasks.push(synthesizeTask);
     }
 
     this.agentSession._updateAgentState('thinking');
@@ -2529,42 +2615,14 @@ export class AgentActivity implements RecognitionHooks {
 
     const replyStartedAt = Date.now();
 
-    // Determine the transcription input source
-    let transcriptionInput: ReadableStream<string | TimedString> = llmOutput;
-
-    // Check if we should use TTS aligned transcripts
-    if (this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript && ttsGenData) {
-      // Race timedTextsFut with ttsTask to avoid hanging if TTS fails before resolving the future
-      const timedTextsStream = await ThrowsPromise.race([
-        ttsGenData.timedTextsFut.await,
-        ttsTask?.result.catch(() =>
-          this.logger.warn('TTS task failed before resolving timedTextsFut'),
-        ) ?? ThrowsPromise.resolve(),
-      ]);
-      if (timedTextsStream) {
-        this.logger.debug('Using TTS aligned transcripts for transcription node input');
-        transcriptionInput = timedTextsStream;
-      }
-    }
-
-    const trNodeResult = await this.agent.transcriptionNode(transcriptionInput, modelSettings);
-    let textOut: _TextOut | null = null;
-    if (trNodeResult) {
-      const [textForwardTask, _textOut] = performTextForwarding(
-        trNodeResult,
-        replyAbortController,
-        transcriptionOutput,
-      );
-      tasks.push(textForwardTask);
-      textOut = _textOut;
-    }
-
     let agentStartedSpeakingAt: number | undefined;
     let agentStartedForwardingAt: number | undefined;
+    let firstTtsGenData: _TTSGenerationData | null = null;
     const onFirstFrame = (
       audioOutRef: _AudioOut | null,
       startedSpeakingAt: number = Date.now(),
     ) => {
+      if (agentStartedSpeakingAt !== undefined) return;
       agentStartedSpeakingAt = startedSpeakingAt;
       agentStartedForwardingAt = audioOutRef?.startedForwardingAt ?? agentStartedSpeakingAt;
       this.agentSession._updateAgentState('speaking', {
@@ -2579,28 +2637,105 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    let audioOut: _AudioOut | null = null;
-    if (audioOutput) {
-      if (ttsGenData) {
-        const [forwardTask, _audioOut] = performAudioForwarding(
-          ttsGenData.audioStream,
-          audioOutput,
-          replyAbortController,
-          this.agentSession.sessionOptions.forwardAudioIdleTimeout,
-        );
-        audioOut = _audioOut;
-        tasks.push(forwardTask);
-        audioOut.firstFrameFut.await
-          .then((ts) => onFirstFrame(audioOut, ts))
-          .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
-      } else {
-        throw Error('ttsGenData is null when audioOutput is enabled');
+    const useAlignedTranscript = Boolean(
+      audioOutput && this.useTtsAlignedTranscript && this.tts?.capabilities.alignedTranscript,
+    );
+
+    const forwardSegment = async (segment: SpeechSegment): Promise<SegmentOutput> => {
+      const output: SegmentOutput = {
+        textOut: null,
+        audioOut: null,
+        played: 'skipped',
+        playbackPositionInS: 0,
+      };
+      const segmentAbortController = new AbortController();
+      const abortSegment = () => segmentAbortController.abort();
+      replyAbortController.signal.addEventListener('abort', abortSegment, { once: true });
+      const forwardTasks: Task<void>[] = [];
+
+      try {
+        let transcriptionInput: ReadableStream<string | TimedString> = segment.textStream;
+        if (useAlignedTranscript && segment.ttsGenData && segment.ttsTask) {
+          const timedTextsStream = await ThrowsPromise.race([
+            segment.ttsGenData.timedTextsFut.await,
+            segment.ttsTask.result.catch(() =>
+              this.logger.warn('TTS task failed before resolving timedTextsFut'),
+            ),
+          ]);
+          if (timedTextsStream) {
+            this.logger.debug('Using TTS aligned transcripts for transcription node input');
+            transcriptionInput = timedTextsStream;
+          }
+        }
+
+        const trNodeResult = await this.agent.transcriptionNode(transcriptionInput, modelSettings);
+        if (trNodeResult) {
+          const [textForwardTask, textOut] = performTextForwarding(
+            trNodeResult,
+            segmentAbortController,
+            transcriptionOutput,
+          );
+          forwardTasks.push(textForwardTask);
+          output.textOut = textOut;
+        }
+
+        if (audioOutput && segment.ttsGenData) {
+          const [forwardTask, audioOut] = performAudioForwarding(
+            segment.ttsGenData.audioStream,
+            audioOutput,
+            segmentAbortController,
+            this.agentSession.sessionOptions.forwardAudioIdleTimeout,
+          );
+          forwardTasks.push(forwardTask);
+          output.audioOut = audioOut;
+          audioOut.firstFrameFut.await
+            .then((ts) => onFirstFrame(audioOut, ts))
+            .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
+        } else if (output.textOut) {
+          output.textOut.firstTextFut.await
+            .then(() => onFirstFrame(null))
+            .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+        }
+
+        await speechHandle.waitIfNotInterrupted(forwardTasks.map((task) => task.result));
+        let playbackEv: PlaybackFinishedEvent | undefined;
+        if (!speechHandle.interrupted && audioOutput) {
+          const playoutPromise = audioOutput.waitForPlayout();
+          await speechHandle.waitIfNotInterrupted([playoutPromise]);
+          if (!speechHandle.interrupted) {
+            playbackEv = await playoutPromise;
+          }
+        }
+
+        if (speechHandle.interrupted) {
+          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          if (audioOutput) {
+            audioOutput.clearBuffer();
+            const interruptedPlaybackEv = await audioOutput.waitForPlayout();
+            if (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) {
+              output.played = 'partial';
+              output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
+              output.synchronizedTranscript = interruptedPlaybackEv.synchronizedTranscript;
+            }
+          } else if (output.textOut?.text) {
+            output.played = 'partial';
+          }
+          return output;
+        }
+
+        if (audioOutput && playbackEv) {
+          output.played = 'full';
+          output.playbackPositionInS = playbackEv.playbackPosition;
+          output.synchronizedTranscript = playbackEv.synchronizedTranscript;
+        } else if (output.textOut?.text) {
+          output.played = 'full';
+        }
+        return output;
+      } finally {
+        replyAbortController.signal.removeEventListener('abort', abortSegment);
+        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       }
-    } else {
-      textOut?.firstTextFut.await
-        .then(() => onFirstFrame(null))
-        .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
-    }
+    };
 
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
@@ -2628,10 +2763,23 @@ export class AgentActivity implements RecognitionHooks {
       onToolExecutionCompleted,
     });
 
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+    const segmentOutputs: SegmentOutput[] = [];
 
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
+    while (!speechHandle.interrupted) {
+      const nextSegment = segmentQueue.next();
+      await speechHandle.waitIfNotInterrupted([nextSegment]);
+      if (speechHandle.interrupted) break;
+
+      const { done, value: segment } = await nextSegment;
+      if (done) break;
+
+      if (firstTtsGenData === null && segment.ttsGenData) {
+        firstTtsGenData = segment.ttsGenData;
+      }
+
+      const output = await forwardSegment(segment);
+      segmentOutputs.push(output);
+      if (output.played === 'partial') break;
     }
 
     const agentStoppedSpeakingAt = Date.now();
@@ -2640,8 +2788,8 @@ export class AgentActivity implements RecognitionHooks {
     if (llmGenData.ttft !== undefined) {
       assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
     }
-    if (ttsGenData?.ttfb !== undefined) {
-      assistantMetrics.ttsNodeTtfb = ttsGenData.ttfb; // already in seconds
+    if (firstTtsGenData?.ttfb !== undefined) {
+      assistantMetrics.ttsNodeTtfb = firstTtsGenData.ttfb; // already in seconds
     }
     if (agentStartedSpeakingAt !== undefined) {
       assistantMetrics.startedSpeakingAt = agentStartedSpeakingAt / 1000; // ms -> seconds
@@ -2686,34 +2834,10 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all pipeline reply tasks due to interruption',
       );
 
-      // Stop playout ASAP (don't wait for cancellations), otherwise the segment may finish and we
-      // will correctly (but undesirably) commit a long transcript even though the user said "stop".
-      if (audioOutput) {
-        audioOutput.clearBuffer();
-      }
-
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
-      let forwardedText = textOut?.text || '';
-
-      if (audioOutput) {
-        const playbackEv = await audioOutput.waitForPlayout();
-        if (audioOut?.firstFrameFut.done && !audioOut.firstFrameFut.rejected) {
-          // playback EV is valid only if the first frame was already played
-          this.logger.info(
-            { speech_id: speechHandle.id, playbackPositionInS: playbackEv.playbackPosition },
-            'playout interrupted',
-          );
-          if (playbackEv.synchronizedTranscript) {
-            forwardedText = playbackEv.synchronizedTranscript;
-          } else {
-            forwardedText = '';
-          }
-        } else {
-          forwardedText = '';
-        }
-      }
+      const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
 
       if (forwardedText) {
         hasSpeechMessage = true;
@@ -2756,14 +2880,15 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    if (textOut && textOut.text) {
+    const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+    if (forwardedText) {
       hasSpeechMessage = true;
       const message = ChatMessage.create({
         role: 'assistant',
         id: llmGenData.id,
         interrupted: false,
         createdAt: replyStartedAt,
-        content: textOut.text,
+        content: forwardedText,
         metrics: assistantMetrics,
         ...(Object.keys(llmGenData.generatedExtra).length > 0
           ? { extra: llmGenData.generatedExtra }
@@ -2773,9 +2898,9 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._chatCtx.insert(message);
       speechHandle._itemAdded([message]);
       this.agentSession._conversationItemAdded(message);
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, textOut.text);
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       this.logger.info(
-        { speech_id: speechHandle.id, message: textOut.text },
+        { speech_id: speechHandle.id, message: forwardedText },
         'playout completed without interruption',
       );
     }
@@ -3633,6 +3758,31 @@ export class AgentActivity implements RecognitionHooks {
     this.wakeupMainTask();
 
     if (this._mainTask) {
+      // Drain deadlock guard. A resume-triggered drain can run from inside one of
+      // this activity's own speech tasks; awaiting _mainTask.result there is a
+      // self-await because mainTask cannot exit until that same speech task
+      // de-registers from speechTasks. A barge-in cascade can also leave mainTask
+      // held only by already-done or interrupted "zombie" speech tasks. In both
+      // cases, skip the await; close()/cancelAndWait still reaps mainTask.
+      const currentTask = Task.current();
+      const reentrant = !!currentTask && this.speechTasks.has(currentTask as Task<void>);
+      const pending = this.getDrainPendingSpeechTasks();
+      const allZombie =
+        pending.length > 0 &&
+        pending.every((task) => {
+          if (task.done) return true;
+          const info = _getActivityTaskInfo(task);
+          return !!info?.speechHandle?.interrupted;
+        });
+
+      if (reentrant || allZombie) {
+        this.logger.debug(
+          { reentrant, allZombie, pending: pending.map((task) => task.name) },
+          'skipping mainTask self-await during drain to avoid a deadlock',
+        );
+        return;
+      }
+
       // When pausing/draining, we ensure that all speech_tasks complete fully.
       // This means that even if the SpeechHandle themselves have finished,
       // we still wait for the entire execution (e.g function_tools)
@@ -3926,9 +4076,13 @@ export class AgentActivity implements RecognitionHooks {
     ) {
       this.pausedSpeech.handle.interrupt();
       // ensure the generation is done — but only if a generation
-      // was actually started
+      // was actually started. Must be raced against interrupt: an interrupted
+      // paused speech may never mark its generation done, and an un-raced
+      // await here wedges every subsequent user turn (silence loop, #1124)
       if (this.pausedSpeech.handle._hasGenerations) {
-        await this.pausedSpeech.handle._waitForGeneration();
+        await this.pausedSpeech.handle.waitIfNotInterrupted([
+          this.pausedSpeech.handle._waitForGeneration(),
+        ]);
       }
     }
     this.pausedSpeech = undefined;

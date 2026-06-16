@@ -169,7 +169,7 @@ export class ServerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 500,
+    jobMemoryWarnMB = 1000,
     jobMemoryLimitMB = 0,
   }: {
     /**
@@ -307,6 +307,12 @@ export class AgentServer {
       );
 
     if (opts.workerToken) {
+      // Re-export into the environment so forked subprocesses inherit it (fork()
+      // copies process.env by default). The inference-header code in the child reads
+      // process.env.LIVEKIT_WORKER_TOKEN — see inference/utils.ts buildMetadataHeaders().
+      // Mirrors Python worker.py, which sets os.environ before spawning job procs.
+      process.env.LIVEKIT_WORKER_TOKEN = opts.workerToken;
+
       if (opts.loadFunc !== defaultCpuLoad) {
         this.#logger.warn(
           'custom loadFunc is not supported when deploying to Cloud, using defaults',

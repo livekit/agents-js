@@ -77,6 +77,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-bey](https://www.npmjs.com/package/@livekit/agents-plugin-bey)               | Avatar        |
 | [@livekit/agents-plugin-lemonslice](https://www.npmjs.com/package/@livekit/agents-plugin-lemonslice) | Avatar        |
 | [@livekit/agents-plugin-liveavatar](https://www.npmjs.com/package/@livekit/agents-plugin-liveavatar) | Avatar        |
+| [@livekit/agents-plugin-did](https://www.npmjs.com/package/@livekit/agents-plugin-did)               | Avatar        |
 | [@livekit/agents-plugin-mistralai](https://www.npmjs.com/package/@livekit/agents-plugin-mistralai)   | LLM, STT, TTS |
 | [@livekit/agents-plugin-xai](https://www.npmjs.com/package/@livekit/agents-plugin-xai)               | LLM, TTS      |
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |

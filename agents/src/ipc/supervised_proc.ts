@@ -9,6 +9,10 @@ import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
 import type { IPCMessage } from './message.js';
 
+const MEMORY_MONITOR_INTERVAL = 5000;
+const MEMORY_WARN_COOLDOWN = 120000;
+const MEMORY_WARN_RESET_DELTA_MB = 50;
+
 export interface ProcOpts {
   /** Timeout for process initialization in milliseconds. */
   initializeTimeout: number;
@@ -30,11 +34,15 @@ export abstract class SupervisedProc {
   #opts: ProcOpts;
   #started = false;
   #closing = false;
+  #startedAt?: number;
   #runningJob?: RunningJobInfo = undefined;
   proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #memoryMonitorInterval?: ReturnType<typeof setInterval>;
   #pongTimeout?: ReturnType<typeof setTimeout>;
+  private memoryBaselineMB?: number;
+  #lastMemoryWarnAt = 0;
+  #lastMemoryWarnMB = 0;
   protected init = new Future();
   #join = new Future();
   #logger = log().child({ runningJob: this.#runningJob });
@@ -61,6 +69,7 @@ export abstract class SupervisedProc {
 
   abstract createProcess(): ChildProcess;
   abstract mainTask(child: ChildProcess): Promise<void>;
+  protected abstract get processKind(): string;
 
   get started(): boolean {
     return this.#started;
@@ -84,6 +93,7 @@ export abstract class SupervisedProc {
     this.proc = this.createProcess();
 
     this.#started = true;
+    this.#startedAt = performance.now();
     this.run().catch((err) => {
       this.#logger.child({ err }).warn('supervised process run failed');
       // Note: we intentionally do NOT kill the child process here. Killing it
@@ -113,21 +123,30 @@ export abstract class SupervisedProc {
 
     this.#memoryMonitorInterval = setInterval(async () => {
       const memoryMB = await this.getChildMemoryUsageMB();
+      if (memoryMB === 0) {
+        return;
+      }
+
+      this.memoryBaselineMB ??= memoryMB;
+
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
-          .child({ memoryUsageMB: memoryMB, memoryLimitMB: this.#opts.memoryLimitMB })
-          .error('process exceeded memory limit, killing process');
+          .child(this.memoryLoggingFields(memoryMB))
+          .error(`${this.processKind} process exceeded memory limit, killing it`);
         this.close();
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
-        this.#logger
-          .child({
-            memoryUsageMB: memoryMB,
-            memoryWarnMB: this.#opts.memoryWarnMB,
-            memoryLimitMB: this.#opts.memoryLimitMB,
-          })
-          .warn('process memory usage is high');
+        if (this.shouldEmitMemoryWarning(memoryMB)) {
+          const advisory = this.#opts.memoryLimitMB <= 0;
+          this.#logger
+            .child(this.memoryLoggingFields(memoryMB))
+            .warn(
+              `${this.processKind} process memory usage is above the warning threshold${
+                advisory ? ' (advisory only, the process will not be terminated)' : ''
+              }`,
+            );
+        }
       }
-    }, 5000);
+    }, MEMORY_MONITOR_INTERVAL);
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {
@@ -282,6 +301,42 @@ export abstract class SupervisedProc {
       }
       throw err;
     }
+  }
+
+  private get uptime(): number {
+    if (this.#startedAt === undefined) {
+      return 0;
+    }
+    return performance.now() - this.#startedAt;
+  }
+
+  private shouldEmitMemoryWarning(memoryMB: number, now: number = performance.now()): boolean {
+    const cooledDown = now - this.#lastMemoryWarnAt >= MEMORY_WARN_COOLDOWN;
+    const grew = memoryMB - this.#lastMemoryWarnMB >= MEMORY_WARN_RESET_DELTA_MB;
+    if (cooledDown || grew) {
+      this.#lastMemoryWarnAt = now;
+      this.#lastMemoryWarnMB = memoryMB;
+      return true;
+    }
+    return false;
+  }
+
+  private memoryLoggingFields(memoryMB: number): Record<string, unknown> {
+    const fields: Record<string, unknown> = {
+      pid: this.proc?.pid,
+      memoryUsageMB: Math.round(memoryMB * 10) / 10,
+      memoryWarnMB: this.#opts.memoryWarnMB,
+      memoryLimitMB: this.#opts.memoryLimitMB,
+      uptime: this.uptime,
+      hasRunningJob: this.runningJob !== undefined,
+    };
+
+    if (this.memoryBaselineMB !== undefined) {
+      fields.baselineMemoryMB = Math.round(this.memoryBaselineMB * 10) / 10;
+      fields.growthMemoryMB = Math.round((memoryMB - this.memoryBaselineMB) * 10) / 10;
+    }
+
+    return fields;
   }
 
   private clearTimers() {

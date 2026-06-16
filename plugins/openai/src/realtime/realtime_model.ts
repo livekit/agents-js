@@ -48,6 +48,7 @@ interface RealtimeOptions {
   maxResponseOutputTokens?: number | 'inf';
   speed?: number;
   tracing?: api_proto.TracingConfig | null;
+  reasoning?: api_proto.Reasoning;
   apiKey?: string;
   baseURL: string;
   isAzure: boolean;
@@ -160,6 +161,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   constructor(
     options: {
       model?: string;
+      reasoning?: api_proto.Reasoning;
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
       temperature?: number;
@@ -516,6 +518,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // GA format (OpenAI or Azure GA)
     const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
     const modality: Modality = opts.modalities.includes('audio') ? 'audio' : 'text';
+    const includeReasoning = opts.reasoning && opts.model.startsWith('gpt-realtime-2');
     return {
       type: 'session.update',
       session: {
@@ -539,6 +542,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         tool_choice: toOaiToolChoice(opts.toolChoice),
         tracing: opts.tracing,
         instructions: this.instructions,
+        ...(includeReasoning ? { reasoning: opts.reasoning } : {}),
       },
     };
   }
@@ -674,7 +678,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       | api_proto.ConversationItemDeleteEvent
     )[] = [];
 
-    const diffOps = llm.computeChatCtxDiff(this.chatCtx, newChatCtx);
+    const remoteCtx = this.chatCtx;
+    const remoteIds = new Set(remoteCtx.items.map((item) => item.id));
+    newChatCtx.items = newChatCtx.items.filter(
+      (item) => item.type !== 'message' || item.content.length > 0 || remoteIds.has(item.id),
+    );
+
+    const diffOps = llm.computeChatCtxDiff(remoteCtx, newChatCtx);
     for (const op of diffOps.toRemove) {
       events.push({
         type: 'conversation.item.delete',
@@ -1835,7 +1845,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const statusDetails = event.response.status_details;
     if (event.response.status === 'failed') {
-      const errorBody = statusDetails?.type === 'failed' ? statusDetails.error : undefined;
+      const errorBody =
+        typeof statusDetails !== 'string' && statusDetails?.type === 'failed'
+          ? statusDetails.error
+          : undefined;
       const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
       const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
 
@@ -1847,9 +1860,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         recoverable: true,
       });
     } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
-      const statusType = statusDetails?.type;
-      const statusReason =
-        statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      let statusType: string | undefined;
+      let statusReason: string | undefined;
+      if (typeof statusDetails === 'string') {
+        statusType = statusDetails;
+      } else {
+        statusType = statusDetails?.type;
+        statusReason =
+          statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      }
 
       this.#logger.debug(
         {

@@ -41,7 +41,7 @@ export type DeepgramFluxModels =
   | 'deepgram/flux-general-en'
   | 'deepgram/flux-general-multi';
 
-export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2' | 'cartesia/ink-2-latest';
+export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
 export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'

@@ -133,6 +133,10 @@ export class TcpAudioOutput extends AudioOutput {
     if (this.pushedDurationMs > 0) {
       if (this.flushTask && !this.flushTask.done) {
         log().error('flush called while previous flush is in progress');
+        // TODO(follow-up PR): cancel() is currently a no-op here. runPlayoutHandshake
+        // awaits Futures that are never rejected and ignores the AbortController, so
+        // the previous handshake leaks instead of being cancelled (unlike Python's
+        // asyncio.Task.cancel). Make the handshake abort-aware before relying on this.
         this.flushTask.cancel();
       }
       this.playoutDone = new Future();
@@ -167,7 +171,10 @@ export class TcpAudioOutput extends AudioOutput {
     try {
       await Promise.race([this.playoutDone.await, this.interrupted.await]);
     } catch {
-      return; // cancelled by a subsequent flush
+      // TODO(follow-up PR): unreachable today — the raced Futures are only ever
+      // resolved, never rejected. Becomes the cancellation path once the handshake
+      // is made abort-aware (see flush()).
+      return;
     }
     const interrupted = this.interrupted.done && !this.playoutDone.done;
 

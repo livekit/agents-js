@@ -309,7 +309,7 @@ export class SpeechStream extends stt.SpeechStream {
             frames = stream.flush();
             this.#audioDurationCollector.flush();
           } else if (
-            data.sampleRate === this.#opts.sampleRate ||
+            data.sampleRate === this.#opts.sampleRate &&
             data.channels === this.#opts.numChannels
           ) {
             frames = stream.write(data.data.buffer as ArrayBuffer);
