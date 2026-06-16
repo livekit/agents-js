@@ -18,6 +18,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
+import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { _getLocalInferenceModule } from './inference/_warmup.js';
@@ -635,7 +636,12 @@ export class AgentServer {
         case 'register': {
           this.#id = msg.message.value.workerId;
           this.#logger
-            .child({ id: this.id, server_info: msg.message.value.serverInfo })
+            .child({
+              id: this.id,
+              agentName: this.#opts.agentName,
+              agentNameIsEnv: this.#opts.agentNameIsEnv,
+              server_info: msg.message.value.serverInfo,
+            })
             .info('registered worker');
           this.event.emit(
             'worker_registered',
@@ -807,7 +813,13 @@ export class AgentServer {
               participantIdentity: args.identity,
               participantName: args.name,
               participantMetadata: args.metadata,
-              participantAttributes: args.attributes,
+              // Stamp the agent name on the participant (matches the Python SDK).
+              // Consumers like `lk agent simulate` find the agent participant by
+              // this attribute; without it they never detect the agent joining.
+              participantAttributes: {
+                ...args.attributes,
+                [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
+              },
             },
           },
         }),
