@@ -451,7 +451,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         );
       }
       const result = callback(this, p);
-      result.finally(() => delete this.#participantTasks[p.identity!]);
+      result.finally(() => {
+        if (this.#participantTasks[p.identity!]?.result === result) {
+          delete this.#participantTasks[p.identity!];
+        }
+      });
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }
