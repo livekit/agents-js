@@ -219,8 +219,8 @@ export class ServerOptions {
     }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
-    this.loadThreshold = loadThreshold || Default.loadThreshold(production);
-    this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
+    this.loadThreshold = loadThreshold ?? Default.loadThreshold(production);
+    this.numIdleProcesses = numIdleProcesses ?? Default.numIdleProcesses(production);
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
@@ -243,7 +243,7 @@ export class ServerOptions {
     this.apiSecret = apiSecret;
     this.workerToken = workerToken;
     this.host = host;
-    this.port = port || Default.port(production);
+    this.port = port ?? Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
     this.jobMemoryWarnMB = jobMemoryWarnMB;
