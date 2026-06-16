@@ -8,8 +8,6 @@
  * Provides the same streaming VAD shape as `plugins/silero` but routes
  * inference through the bundled native model so a default instance can be
  * auto-provisioned by `AgentSession` without an explicit plugin import.
- *
- * Port of Python `livekit.agents.inference.vad`.
  */
 import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import { log } from '../log.js';
@@ -54,7 +52,7 @@ export class VAD extends BaseVAD {
   label = 'inference.VAD';
   // Live streams, tracked weakly so they don't outlive their consumers. JS
   // `WeakSet` isn't iterable, so we hold `WeakRef`s in a `Set` and prune dead
-  // entries on iteration — the iterable equivalent of Python's `weakref.WeakSet`.
+  // entries on iteration.
   #streams = new Set<WeakRef<InferenceVADStream>>();
 
   constructor(opts: Partial<VADOptions> & { model?: VADModels } = {}) {
@@ -331,8 +329,8 @@ class InferenceVADStream extends BaseVADStream {
 
         const inferenceDuration = performance.now() - startTime;
         extraInferenceTime = Math.max(0, extraInferenceTime + inferenceDuration - windowDurationMs);
-        // Guard on the per-window inference duration (not the accumulated slack)
-        // to match Python; the accumulated value is still surfaced as the delay.
+        // Guard on the per-window inference duration (not the accumulated
+        // slack); the accumulated value is still surfaced as the delay.
         if (inferenceDuration > SLOW_INFERENCE_THRESHOLD_MS) {
           this._logger.warn(
             { extraInferenceTimeMs: extraInferenceTime },

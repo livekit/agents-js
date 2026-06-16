@@ -7,8 +7,6 @@
  * the transport interface that concrete cloud/local backends implement.
  *
  * Concrete implementations live in `agents/src/inference/eot/`.
- *
- * Port of Python `livekit.agents.voice.turn.audio`.
  */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
@@ -238,7 +236,7 @@ export class BaseStreamingTurnDetectorStream {
       return fut;
     }
 
-    this.cancelInference(); // supersede any previous request
+    this.cancelInference();
     const fut = new Future<TurnDetectionEvent>();
     this._requestId = shortuuid('turn_request_');
     this._requestFut = fut;

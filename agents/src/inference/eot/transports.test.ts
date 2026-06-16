@@ -13,8 +13,6 @@
  *   across the session lifetime don't accumulate toward `maxRetry`).
  * - All outbound messages are FIFO-ordered on the wire, even when `runInference`
  *   hooks fire synchronously between two awaited audio frames.
- *
- * Port of Python `tests/test_turn_detection_cloud_stream.py`.
  */
 import { AgentInference } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
@@ -209,7 +207,7 @@ describe('CloudStreamSendOrdering', () => {
 
   it('consecutive inferenceStarts are serialized in call order', async () => {
     // Two `runInference` hooks back-to-back (a predict superseding another)
-    // used to race at `ws.send`; the unified send channel serializes them in
+    // can race at `ws.send`; the unified send channel serializes them in
     // call order.
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {

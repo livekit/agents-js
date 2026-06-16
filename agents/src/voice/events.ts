@@ -251,8 +251,6 @@ export const createSpeechCreatedEvent = ({
 /**
  * Audio EOT prediction landed on the wire. Emitted once per turn boundary
  * decision when a `TurnDetector` is wired into the session.
- *
- * Port of Python `EotPredictionEvent`.
  */
 export type EotPredictionEvent = {
   type: 'eot_prediction';

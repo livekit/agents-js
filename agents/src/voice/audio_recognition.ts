@@ -295,8 +295,7 @@ export class AudioRecognition {
   /**
    * Edge-triggered "user is speaking" event used by the audio-EOT bounce
    * race. Set on VAD `START_OF_SPEECH` (and on any `INFERENCE_DONE` with
-   * accumulated speech), cleared on `END_OF_SPEECH`. Mirrors Python
-   * `_user_speaking_event`.
+   * accumulated speech), cleared on `END_OF_SPEECH`.
    *
    * `Event.set()` is idempotent (re-setting an already-set event resolves
    * any new waiters immediately); cleared on EOS so subsequent waiters
@@ -634,9 +633,9 @@ export class AudioRecognition {
   }
 
   /**
-   * Speaking-guard wrapper for the bounce-EOU task, mirroring Python's
-   * `_bounce_eou_task_with_speaking_guard`. When an `BaseStreamingTurnDetector`
-   * is active, the bounce task races against the `userSpeakingEvent`:
+   * Speaking-guard wrapper for the bounce-EOU task. When an
+   * `BaseStreamingTurnDetector` is active, the bounce task races against the
+   * `userSpeakingEvent`:
    *
    * - if the user is already speaking, skip the EOU outright;
    * - if the user starts speaking during the endpointing delay (e.g.
@@ -1897,8 +1896,8 @@ export class AudioRecognition {
             }
 
             // Audio EOT: start an inference request once we've seen enough
-            // trailing silence (matches Python's `MIN_SILENCE_DURATION_MS`),
-            // but only when no request is already in flight. The silence tick
+            // trailing silence (`MIN_SILENCE_DURATION_MS`), but only when no
+            // request is already in flight. The silence tick
             // is the sole request trigger — and it warms even while the agent
             // is speaking so an overlapping/interrupting turn still gets a
             // window.
@@ -1932,9 +1931,9 @@ export class AudioRecognition {
             this.userSpeakingEvent.clear();
             this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
 
-            // Audio EOT: END_OF_SPEECH no longer starts a request — the
-            // silence tick owns that. It consumes the already-armed future
-            // (if any) and runs the eou bounce.
+            // Audio EOT: the silence tick owns request-starting, not
+            // END_OF_SPEECH. EOS consumes the already-armed future (if any)
+            // and runs the eou bounce.
 
             if (
               this.vadBaseTurnDetection ||

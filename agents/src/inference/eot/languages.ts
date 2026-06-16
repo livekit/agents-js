@@ -38,9 +38,9 @@ export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
 /**
  * BCP-47 language tag (or human-readable name) → ISO 639-1 two-letter code.
  *
- * Minimal port of Python's `LanguageCode` — covers the languages present in
- * the threshold tables. Unknown inputs are returned lowercased and unchanged
- * (callers should pass `en`, `en-US`, `English`, etc.).
+ * Covers the languages present in the threshold tables. Unknown inputs are
+ * returned lowercased and unchanged (callers should pass `en`, `en-US`,
+ * `English`, etc.).
  */
 function normalizeLanguage(input: string): string {
   const lower = input.toLowerCase().trim();
@@ -72,7 +72,7 @@ const round4 = (value: number): number => Math.round(value * 1e4) / 1e4;
 
 /**
  * User-supplied threshold override: a single value applied to every language,
- * a per-language map, or `undefined` (Python `NOT_GIVEN` — use the defaults).
+ * a per-language map, or `undefined` (use the defaults).
  */
 export type ThresholdOverride = number | Record<string, number> | undefined;
 

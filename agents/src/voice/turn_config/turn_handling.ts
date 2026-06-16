@@ -41,8 +41,6 @@ export interface TurnHandlingOptions {
    *   priority order `realtime_llm → vad → stt → manual`, falling back if the
    *   necessary model is missing.
    * - `null` – explicitly opt out of turn detection (no default detector built).
-   *
-   * The `null`-vs-`undefined` distinction mirrors Python's `None` vs `NOT_GIVEN`.
    */
   turnDetection: TurnDetectionMode | null | undefined;
   /**

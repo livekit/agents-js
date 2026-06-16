@@ -4,8 +4,6 @@
 
 /**
  * Audio EOT transports: cloud (WebSocket) + local (@livekit/local-inference).
- *
- * Port of Python `livekit.agents.inference.eot.transports`.
  */
 import { type Duration, Timestamp } from '@bufbuild/protobuf';
 import { AgentInference } from '@livekit/protocol';
@@ -97,7 +95,7 @@ class PcmRingBuffer {
   }
 
   pushFrame(frame: AudioFrame): void {
-    const src = frame.data; // Int16Array
+    const src = frame.data;
     for (let i = 0; i < src.length; i++) {
       this.buf[this.writeIdx] = src[i]!;
       this.writeIdx = (this.writeIdx + 1) % this.capacity;
@@ -230,8 +228,8 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     // `doInference` calls aren't cancellable, so they run to completion in the
     // inference process. Their results are harmless: `_predict` re-derefs the
     // (now-gone) stream via `_streamRef.deref()` and the stream's request-id /
-    // closing guards discard any late prediction. (Python cancels the tasks;
-    // our IPC executor has no AbortSignal to thread through, so we can't.)
+    // closing guards discard any late prediction. The IPC executor has no
+    // AbortSignal to thread through, so we can't cancel them.
     this._tasks.clear();
   }
 
@@ -248,7 +246,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
  * Maintains one inference session against the LiveKit Agent Gateway:
  * connect → `SessionCreate` → three concurrent tasks (drain audio, send,
  * receive) → protobuf encode/decode → `stream._resolvePrediction(...)` +
- * `EOTInferenceMetrics` on the detector. Mirrors Python `_CloudTransport`.
+ * `EOTInferenceMetrics` on the detector.
  *
  * All outbound messages flow through a single FIFO send channel so control
  * hooks fired synchronously between two awaited audio frames (e.g.
@@ -303,7 +301,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   }
 
   /** @internal Test-visible: true once the WS handshake is open. Not part of
-   * the transport interface — the stream FSM no longer gates on this. */
+   * the transport interface — the stream FSM does not gate on this. */
   transportReady(): boolean {
     return this._ws !== undefined && this._ws.readyState === WS_OPEN;
   }

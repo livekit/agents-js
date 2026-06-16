@@ -4,8 +4,6 @@
 
 /**
  * Tests for the `resolveEnvVar` helper contract.
- *
- * Port of Python `tests/test_utils_env.py`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveEnvVar } from './utils.js';

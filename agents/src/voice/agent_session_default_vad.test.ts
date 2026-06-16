@@ -74,8 +74,7 @@ describe('AgentSession default turn detection', () => {
   });
 
   it('explicit `turnDetection: null` opts out (no default detector built)', async () => {
-    // `null` is the explicit opt-out, distinct from `undefined` (not given);
-    // mirrors Python `turn_detection=None`.
+    // `null` is the explicit opt-out, distinct from `undefined` (not given).
     const session = new AgentSession({ turnHandling: { turnDetection: null } });
     try {
       expect(session.turnDetection).toBeUndefined();

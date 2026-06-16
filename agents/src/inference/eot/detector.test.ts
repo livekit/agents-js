@@ -19,8 +19,6 @@
  *   override warning, runtime `updateOptions`, and the degenerate
  *   (no usable thresholds) → fallback path.
  * - Threshold rescaling against the server defaults on actual fallback.
- *
- * Port of Python `tests/test_audio_turn_detector_fallback.py`.
  */
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

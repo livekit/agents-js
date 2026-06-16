@@ -1422,9 +1422,8 @@ export function asError(maybeError: unknown): Error {
  * Resolve a value that may come from an explicit argument, one of several
  * environment variables (checked in order), or a final default.
  *
- * Mirrors Python `livekit.agents.utils.resolve_env_var`. Used by inference
- * transports to plumb credentials and URLs (e.g. `LIVEKIT_REMOTE_EOT_URL`,
- * `LIVEKIT_INFERENCE_API_KEY`).
+ * Used by inference transports to plumb credentials and URLs (e.g.
+ * `LIVEKIT_REMOTE_EOT_URL`, `LIVEKIT_INFERENCE_API_KEY`).
  */
 export function resolveEnvVar(
   value: string | undefined,

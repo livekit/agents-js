@@ -233,8 +233,8 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /**
    * Voice Activity Detection. When omitted, `AgentSession` auto-provisions a
    * bundled `inference.VAD({ model: 'silero' })` and marks it as the default
-   * (so sites that previously distinguished "user supplied a VAD" continue
-   * to treat the bundled one as absent). Pass `null` to opt out entirely.
+   * (so sites that check whether the user supplied a VAD treat the bundled
+   * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -500,7 +500,7 @@ export class AgentSession<
     // detector instance (`undefined`/not-given), fall back to a fresh
     // inference.TurnDetector so every session ships with audio EOT
     // out of the box. An explicit `null` opts out entirely — no detector is
-    // built (mirrors Python `None` vs `NOT_GIVEN`).
+    // built.
     const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;
     this.turnDetection =
       configuredTurnDetection === null

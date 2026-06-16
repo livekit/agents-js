@@ -5,8 +5,6 @@
 /**
  * Audio end-of-turn detector with `turn-detector-v1` → `turn-detector-v1-mini`
  * (cloud → local) fallback.
- *
- * Port of Python `livekit.agents.inference.eot.detector`.
  */
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { getJobContext } from '../../job.js';

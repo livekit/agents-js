@@ -22,8 +22,6 @@
  * 4. The `minSilenceDuration` validation guarding an audio-EOT + VAD pairing.
  *
  * The stream-side request lifecycle lives in `inference/eot/base.test.ts`.
- *
- * Port of Python `tests/test_audio_recognition_turn_detection.py`.
  */
 import { ParticipantKind } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';

@@ -884,8 +884,7 @@ export class SessionHost {
 
   /**
    * @internal — forwards an audio-EOT prediction to the connected
-   * {@link RemoteSession} peer. Mirrors python
-   * `SessionHost._on_eot_prediction`.
+   * {@link RemoteSession} peer.
    */
   _onEotPrediction(event: EotPredictionEvent): void {
     this.emitEvent({

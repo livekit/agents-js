@@ -13,8 +13,6 @@
  * waiters never hang. All policy (when to start a request, await timeout, turn
  * commits) lives in `AudioRecognition` and is covered by
  * `voice/audio_recognition_turn_detection.test.ts`.
- *
- * Port of Python `tests/test_turn_detection_fsm.py`.
  */
 import type { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
@@ -57,8 +55,8 @@ class FakeTransport implements StreamingTurnDetectionTransport {
 }
 
 class FakeDetector extends BaseStreamingTurnDetector {
-  // Mirror Python's `_make_stream` default (the local mini model) so the
-  // timed-out-cancel test sees a non-cloud model and skips the fallback.
+  // Default to the local mini model so the timed-out-cancel test sees a
+  // non-cloud model and skips the fallback.
   get model(): TurnDetectorModel {
     return 'turn-detector-v1-mini';
   }
