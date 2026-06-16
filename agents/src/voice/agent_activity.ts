@@ -125,6 +125,7 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
+import { resolveEndpointing } from './turn_config/utils.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -568,10 +569,7 @@ export class AgentActivity implements RecognitionHooks {
       interruptionDetection: this.interruptionDetector,
       backchannelBoundary:
         this.agentSession.sessionOptions.turnHandling.interruption.backchannelBoundary,
-      endpointing: createEndpointing({
-        ...this.agentSession.sessionOptions.turnHandling.endpointing,
-        ...(this.agent.turnHandling?.endpointing ?? {}),
-      }),
+      endpointing: createEndpointing(this.endpointingOpts),
       userTurnLimit: this.agentSession.sessionOptions.turnHandling.userTurnLimit,
       rootSpanContext: this.agentSession.rootSpanContext,
       sttModel: this.stt?.label,
@@ -801,6 +799,23 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
   }
 
+  /**
+   * Endpointing options resolved for this activity. Sparse session overrides
+   * and the agent's own endpointing keys are merged, then defaults are filled
+   * in based on this activity's resolved turn detector — so a streaming
+   * ("audio model") detector uses the tighter streaming defaults while a
+   * non-streaming agent in the same session keeps the legacy defaults.
+   */
+  get endpointingOpts(): EndpointingOptions {
+    return resolveEndpointing(
+      {
+        ...this.agentSession.sessionOptions.turnHandling.endpointingOverrides,
+        ...(this.agent.turnHandling?.endpointing ?? {}),
+      },
+      this._resolvedTurnDetection,
+    );
+  }
+
   // get minEndpointingDelay(): number {
   //   return (
   //     this.agent.turnHandling?.endpointing?.minDelay ??
@@ -809,10 +824,8 @@ export class AgentActivity implements RecognitionHooks {
   // }
 
   get maxEndpointingDelay(): number {
-    return (
-      this.agent.turnHandling?.endpointing?.maxDelay ??
-      this.agentSession.sessionOptions.turnHandling.endpointing.maxDelay
-    );
+    // resolves to the fixed value for this activity's detector, not the dynamic one
+    return this.endpointingOpts.maxDelay;
   }
 
   get toolCtx(): ToolContext {
@@ -907,10 +920,9 @@ export class AgentActivity implements RecognitionHooks {
     if (this.audioRecognition) {
       const recognitionOptions: Parameters<AudioRecognition['updateOptions']>[0] = {};
       if (endpointing !== undefined) {
-        recognitionOptions.endpointing = createEndpointing({
-          ...endpointing,
-          ...(this.agent.turnHandling?.endpointing ?? {}),
-        });
+        // re-resolve from the session overrides (the source of truth) rather
+        // than the passed value, so this activity's detector picks the defaults.
+        recognitionOptions.endpointing = createEndpointing(this.endpointingOpts);
       }
       if (hasTurnDetection) {
         recognitionOptions.turnDetection = turnDetection;

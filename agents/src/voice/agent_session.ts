@@ -100,7 +100,7 @@ import type {
   InternalTurnHandlingOptions,
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
-import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
+import { migrateLegacyOptions, resolveEndpointing, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 export interface AgentSessionUsage {
@@ -508,6 +508,15 @@ export class AgentSession<
         : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
+
+    // Resolve endpointing defaults against the effective turn detector: a
+    // streaming ("audio model") detector gets the tighter streaming defaults,
+    // everything else keeps the legacy defaults. Sparse user overrides are
+    // preserved on `endpointingOverrides` so each activity can re-resolve.
+    resolvedSessionOptions.turnHandling.endpointing = resolveEndpointing(
+      resolvedSessionOptions.turnHandling.endpointingOverrides,
+      this.turnDetection,
+    );
 
     // configurable IO
     this._input = new AgentInput(this.onAudioInputChanged);
@@ -936,9 +945,16 @@ export class AgentSession<
     const normalizedTurnDetection = turnDetection ?? undefined;
 
     if (endpointing !== undefined) {
+      const stripped = stripUndefined(endpointing);
       this.sessionOptions.turnHandling.endpointing = {
         ...this.sessionOptions.turnHandling.endpointing,
-        ...stripUndefined(endpointing),
+        ...stripped,
+      };
+      // record the explicit keys so a fresh activity (built on agent handoff)
+      // re-resolves with them instead of falling back to defaults.
+      this.sessionOptions.turnHandling.endpointingOverrides = {
+        ...this.sessionOptions.turnHandling.endpointingOverrides,
+        ...stripped,
       };
     }
 

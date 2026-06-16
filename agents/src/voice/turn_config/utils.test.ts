@@ -22,6 +22,7 @@ describe('migrateLegacyOptions', () => {
     expect(result.turnHandling).toEqual({
       turnDetection: defaultTurnHandlingOptions.turnDetection,
       endpointing: defaultEndpointingOptions,
+      endpointingOverrides: {},
       interruption: defaultInterruptionOptions,
       preemptiveGeneration: defaultPreemptiveGenerationOptions,
       userTurnLimit: defaultUserTurnLimitOptions,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { BaseStreamingTurnDetector } from '../../inference/eot/base.js';
 import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
@@ -8,7 +9,11 @@ import {
   type TurnDetectionMode,
   type VoiceOptions,
 } from '../agent_session.js';
-import { defaultEndpointingOptions } from './endpointing.js';
+import {
+  type EndpointingOptions,
+  defaultEndpointingOptions,
+  streamingEndpointingOptions,
+} from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
@@ -138,6 +143,24 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
+/**
+ * Fill in default endpointing values for keys the caller did not provide.
+ *
+ * When `turnDetection` is a streaming ("audio model") turn detector, unset keys
+ * fall back to the tighter {@link streamingEndpointingOptions}; otherwise they
+ * use the legacy {@link defaultEndpointingOptions}.
+ */
+export function resolveEndpointing(
+  overrides: Partial<EndpointingOptions>,
+  turnDetection: TurnDetectionMode | null | undefined,
+): EndpointingOptions {
+  const base =
+    turnDetection instanceof BaseStreamingTurnDetector
+      ? streamingEndpointingOptions
+      : defaultEndpointingOptions;
+  return { ...base, ...stripUndefined(overrides) };
+}
+
 export function mergeWithDefaults(config: TurnHandlingOptions) {
   return {
     // Keep an explicit `null` (opt-out) — only an absent value falls back to
@@ -147,6 +170,9 @@ export function mergeWithDefaults(config: TurnHandlingOptions) {
         ? defaultTurnHandlingOptions.turnDetection
         : config.turnDetection,
     endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
+    // kept sparse: defaults are resolved later (per session / per activity)
+    // once the detector type is known.
+    endpointingOverrides: stripUndefined(config.endpointing),
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
     preemptiveGeneration: {
       ...defaultPreemptiveGenerationOptions,

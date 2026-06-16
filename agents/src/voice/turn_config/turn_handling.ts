@@ -63,6 +63,8 @@ export interface TurnHandlingOptions {
 
 export interface InternalTurnHandlingOptions extends TurnHandlingOptions {
   endpointing: EndpointingOptions;
+  /** Sparse endpointing keys the user provided explicitly. */
+  endpointingOverrides: Partial<EndpointingOptions>;
   interruption: InterruptionOptions;
   preemptiveGeneration: PreemptiveGenerationOptions;
   userTurnLimit: UserTurnLimitOptions;
@@ -72,6 +74,7 @@ export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
   turnDetection: undefined,
   interruption: defaultInterruptionOptions,
   endpointing: defaultEndpointingOptions,
+  endpointingOverrides: {},
   preemptiveGeneration: defaultPreemptiveGenerationOptions,
   userTurnLimit: defaultUserTurnLimitOptions,
 };
