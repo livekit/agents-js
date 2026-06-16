@@ -990,12 +990,20 @@ export function performToolExecutions({
 
       const tool = toolCtx.getFunctionTool(toolCall.name);
       if (!tool) {
+        const availableTools = sortedToolNames(toolCtx).join(', ');
+        const message = `Unknown function: ${toolCall.name} - available tools: ${availableTools}`;
         logger.warn(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
           `unknown AI function ${toolCall.name}`,
+        );
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+          }),
         );
         continue;
       }

@@ -14,7 +14,12 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import {
+  type ToolContext,
+  type ToolInputSchema,
+  type ToolOptions,
+  sortedToolNames,
+} from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
@@ -263,7 +268,17 @@ export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
-  const tool = toolCtx.getFunctionTool(toolCall.name)!;
+  const tool = toolCtx.getFunctionTool(toolCall.name);
+  if (!tool) {
+    const availableTools = sortedToolNames(toolCtx).join(', ');
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      name: toolCall.name,
+      output: `Unknown function: ${toolCall.name} - available tools: ${availableTools}`,
+      isError: true,
+    });
+  }
+
   let args: object | undefined;
   let params: object | undefined;
 
