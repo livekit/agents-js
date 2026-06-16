@@ -126,17 +126,19 @@ describe('IPC send on dead process', () => {
 });
 
 describe('init timeout rejection handling', () => {
-  it('does not produce unhandled rejection when init times out', async () => {
-    // Regression test: before the fix, run() was called without await in start().
-    // When init timed out, the rejection in run()'s `await this.init.await` escaped
-    // as an unhandled rejection — crashing the Node.js process.
+  it('rejects initialize() and produces no unhandled rejections when init times out', async () => {
+    // Regression test: before the fix, initialize() would either silently
+    // resolve (after a late first-message arrived) or — for a child that
+    // never sent a message — hang forever, wedging the pool. It must now
+    // reject so the caller can release its mutex slots. The Future's
+    // self-attached `.catch` and the race losers' attached `.catch` ensure
+    // no rejection escapes as unhandled.
     const unhandled: unknown[] = [];
     const handler = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', handler);
 
-    // Child that responds AFTER the timeout — simulates slow init under CPU pressure.
-    // Timeout fires at 50ms (init.reject), child responds at 200ms (once() resolves).
-    // Before the fix, init.reject caused an unhandled rejection in run().
+    // Child that responds AFTER the timeout — simulates slow init under
+    // CPU pressure. Timeout fires at 50 ms, child would respond at 200 ms.
     const slowScript = join(tmpdir(), 'test_slow_init_child.mjs');
     writeFileSync(
       slowScript,
@@ -168,9 +170,7 @@ describe('init timeout rejection handling', () => {
     );
 
     await proc.start();
-    // initialize() returns normally: child responds at 200ms, once() resolves,
-    // but init was already rejected at 50ms — run() gets the rejection.
-    await proc.initialize();
+    await expect(proc.initialize()).rejects.toThrow(/timed out|exited before/);
 
     // Give the event loop a tick for any unhandled rejection to surface
     await new Promise((r) => setTimeout(r, 100));
@@ -185,8 +185,9 @@ describe('init timeout rejection handling', () => {
   });
 
   it('join() resolves after init timeout instead of hanging forever', async () => {
-    // When run() fails early (before registering proc event handlers),
-    // #join must still resolve so that join() and close() don't hang.
+    // When init fails (rejected), run() throws at `await this.init.await`,
+    // start()'s catch resolves #join, and join() must return promptly so
+    // that the pool can release its mutex slots and replenish.
     const slowScript = join(tmpdir(), 'test_slow_init_child_join.mjs');
     writeFileSync(
       slowScript,
@@ -210,7 +211,7 @@ describe('init timeout rejection handling', () => {
     const proc = new TestProc(50, 1000, 0, 0, 5000, 60000, 2500);
 
     await proc.start();
-    await proc.initialize();
+    await expect(proc.initialize()).rejects.toThrow();
 
     // join() must resolve within a reasonable time, not hang forever
     const result = await Promise.race([
@@ -224,6 +225,51 @@ describe('init timeout rejection handling', () => {
     } catch {}
 
     expect(result).toBe('resolved');
+  });
+
+  it('rejects initialize() when child hangs without ever sending a message (#1748 wedge)', async () => {
+    // Reproduces the production wedge in #1748: a child that never sends
+    // its first IPC message (e.g. crashed mid-prewarm) used to leave
+    // `initialize()` pending forever via `await once(proc, 'message')`,
+    // holding initMutex and the procMutex slot and black-holing every
+    // subsequent job. With the fix initialize() races the message against
+    // exit + timeout, so it always settles.
+    const hangScript = join(tmpdir(), 'test_hang_init_child.mjs');
+    writeFileSync(
+      hangScript,
+      // never registers a message handler, never sends anything
+      `setInterval(() => {}, 1000);`,
+    );
+
+    const { SupervisedProc } = await import('./supervised_proc.js');
+    class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
+      createProcess() {
+        return fork(hangScript, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+      }
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(150, 1000, 0, 0, 5000, 60000, 2500);
+
+    await proc.start();
+    const outcome = await Promise.race([
+      proc.initialize().then(
+        () => 'resolved' as const,
+        (err: Error) => `rejected: ${err.message}` as const,
+      ),
+      new Promise<'pending'>((r) => setTimeout(() => r('pending'), 2000)),
+    ]);
+
+    proc.proc?.kill();
+    try {
+      unlinkSync(hangScript);
+    } catch {}
+
+    expect(outcome).toMatch(/^rejected:/);
+    expect(outcome).not.toBe('pending');
   });
 });
 
