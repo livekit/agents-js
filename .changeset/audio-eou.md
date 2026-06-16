@@ -1,7 +1,7 @@
 ---
 "@livekit/agents": patch
 "@livekit/agents-plugin-silero": patch
-"@livekit/agents-plugins-livekit": patch
+"@livekit/agents-plugin-livekit": patch
 ---
 
 feat(core): audio end-of-turn detection with cloud → local fallback (AGT-2520)
