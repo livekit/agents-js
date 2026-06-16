@@ -120,6 +120,8 @@ import {
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
+import type { PreemptiveGenerationOptions } from './turn_config/preemptive_generation.js';
+import { stripUndefined } from './turn_config/utils.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -741,6 +743,13 @@ export class AgentActivity implements RecognitionHooks {
 
   get turnHandling() {
     return this.agent.turnHandling ?? this.agentSession.sessionOptions.turnHandling;
+  }
+
+  get preemptiveGenerationOptions(): PreemptiveGenerationOptions {
+    return {
+      ...this.agentSession.sessionOptions.turnHandling.preemptiveGeneration,
+      ...stripUndefined(this.agent.turnHandling?.preemptiveGeneration ?? {}),
+    };
   }
 
   // get minEndpointingDelay(): number {
@@ -1447,7 +1456,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onPreemptiveGeneration(info: PreemptiveGenerationInfo): void {
-    const preemptiveOpts = this.agentSession.sessionOptions.turnHandling.preemptiveGeneration;
+    const preemptiveOpts = this.preemptiveGenerationOptions;
     if (
       !preemptiveOpts.enabled ||
       this.schedulingPaused ||
@@ -2622,7 +2631,7 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     // Start preemptive synthesis if enabled. Otherwise it starts after scheduling below.
-    const preemptiveOpts = this.agentSession.sessionOptions.turnHandling.preemptiveGeneration;
+    const preemptiveOpts = this.preemptiveGenerationOptions;
     if (audioOutput && preemptiveOpts.enabled && preemptiveOpts.preemptiveTts) {
       synthesizeTask = Task.from(
         (controller) => produceSegments(controller),

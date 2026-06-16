@@ -434,7 +434,10 @@ type PreemptiveOpts = {
   maxRetries: number;
 };
 
-function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
+function buildPreemptiveRunner(
+  opts: Partial<PreemptiveOpts> = {},
+  agentOpts?: Partial<PreemptiveOpts>,
+) {
   const preemptiveOpts: PreemptiveOpts = {
     enabled: true,
     preemptiveTts: false,
@@ -459,7 +462,11 @@ function buildPreemptiveRunner(opts: Partial<PreemptiveOpts> = {}) {
     llm: new FakePreemptiveLLM(),
     tools: emptyToolCtx,
     toolChoice: null,
-    agent: { chatCtx: fakeChatCtx, _toolCtx: emptyToolCtx },
+    agent: {
+      chatCtx: fakeChatCtx,
+      _toolCtx: emptyToolCtx,
+      turnHandling: agentOpts === undefined ? undefined : { preemptiveGeneration: agentOpts },
+    },
     agentSession: {
       sessionOptions: {
         turnHandling: { preemptiveGeneration: preemptiveOpts },
@@ -555,6 +562,30 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+
+  it('honors agent-level preemptiveGeneration overrides over session options', () => {
+    const disabledByAgent = buildPreemptiveRunner({ preemptiveTts: true }, { enabled: false });
+
+    disabledByAgent.call();
+
+    expect(disabledByAgent.fakeActivity._preemptiveGenerationCount).toBe(0);
+    expect(disabledByAgent.generateReply).not.toHaveBeenCalled();
+    expect(disabledByAgent.cancelPreemptiveGeneration).not.toHaveBeenCalled();
+
+    const enabledByAgent = buildPreemptiveRunner(
+      { enabled: false },
+      { enabled: true, preemptiveTts: true },
+    );
+
+    enabledByAgent.call();
+
+    expect(
+      (enabledByAgent.fakeActivity as unknown as AgentActivity).preemptiveGenerationOptions
+        .preemptiveTts,
+    ).toBe(true);
+    expect(enabledByAgent.fakeActivity._preemptiveGenerationCount).toBe(1);
+    expect(enabledByAgent.generateReply).toHaveBeenCalledTimes(1);
   });
 });
 
