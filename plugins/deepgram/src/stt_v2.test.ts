@@ -97,7 +97,9 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
     wss.on('connection', (ws) => {
       connections.push(ws);
 
-      ws.on('message', (data) => {
+      ws.on('message', (data, isBinary) => {
+        if (isBinary) return;
+
         messages.push(JSON.parse(data.toString()) as Record<string, unknown>);
         ws.close(1000, 'stream complete');
       });
@@ -107,6 +109,44 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
       await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
 
       stream.endInput();
+
+      await waitFor(
+        () => messages.some((message) => message.type === 'CloseStream'),
+        'expected client to send CloseStream',
+      );
+      await sleep(50);
+
+      expect(connections).toHaveLength(1);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not reconnect after flush sends CloseStream', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const messages: Array<Record<string, unknown>> = [];
+    const stream = createStream(endpointUrl);
+
+    wss.on('connection', (ws) => {
+      connections.push(ws);
+
+      ws.on('message', (data, isBinary) => {
+        if (isBinary) return;
+
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        messages.push(message);
+        if (message.type === 'CloseStream') {
+          ws.close(1000, 'stream complete');
+        }
+      });
+    });
+
+    try {
+      await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
+
+      stream.flush();
 
       await waitFor(
         () => messages.some((message) => message.type === 'CloseStream'),

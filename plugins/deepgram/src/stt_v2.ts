@@ -369,20 +369,19 @@ class SpeechStreamv2 extends stt.SpeechStream {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(frame.data);
           }
-
-          if (hasEnded) {
-            this.#audioDurationCollector.flush();
-            hasEnded = false;
-          }
         }
       }
 
-      if (hasEnded) break;
+      if (hasEnded) {
+        this.#audioDurationCollector.flush();
+        break;
+      }
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)
     if (!this.#reconnectEvent.isSet && !wsClosedEvent.isSet && ws.readyState === WebSocket.OPEN) {
       this.#logger.debug('Sending CloseStream message to Deepgram');
+      this.#expectWsClose(ws);
       ws.send(_CLOSE_MSG);
     }
   }
