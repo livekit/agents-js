@@ -965,6 +965,19 @@ export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 /** @internal */
 export const mockToolsStorage = new AsyncLocalStorage<MockToolsMap>();
 
+/** @internal */
+export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
+  const store = mockToolsStorage.getStore();
+  if (!store) return undefined;
+
+  for (const [agentConstructor, mocks] of store) {
+    if (agent.constructor === agentConstructor) {
+      return mocks[toolName];
+    }
+  }
+  return undefined;
+}
+
 /**
  * Temporarily assign a set of mock tool callables to a specific Agent type. Returns
  * a runner that takes an async callback. While the callback is running, tool calls

@@ -59,7 +59,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { type AgentConstructor, mockToolsStorage } from './testing/run_result.js';
+import { getMockTool } from './testing/run_result.js';
 import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
@@ -1161,9 +1161,7 @@ export function performToolExecutions({
             { functionCall: toolCall, speechHandle },
             async () => {
               const runCtx = new RunContext(session, speechHandle, toolCall);
-              const mock = mockToolsStorage
-                .getStore()
-                ?.get(session.currentAgent.constructor as AgentConstructor)?.[toolCall.name];
+              const mock = getMockTool(session.currentAgent, toolCall.name);
               const toolToExecute = mock
                 ? {
                     ...tool,
