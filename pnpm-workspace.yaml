@@ -6,8 +6,8 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - '@livekit/*'
-  # Renovate security update: vite@7.3.2
-  - vite@7.3.2
+  # Renovate security update: vite@7.3.2 || 7.3.5
+  - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
   - ws@8.20.1
   # Renovate security update: vitest@4.1.0
