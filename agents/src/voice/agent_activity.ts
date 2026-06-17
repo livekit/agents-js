@@ -3439,9 +3439,16 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (interrupted && realtimeModel.capabilities.messageTruncation) {
+          // Defense-in-depth: playbackPositionInS can be non-finite when the avatar
+          // transport reports no (or an unparseable) playback position. Clamp it so we
+          // never serialize NaN -> JSON null into conversation.item.truncate, which the
+          // OpenAI Realtime API rejects as `invalid_type`, stalling the interrupted turn.
+          const playbackPositionInS = Number.isFinite(output.playbackPositionInS)
+            ? output.playbackPositionInS
+            : 0;
           void realtimeSession.truncate({
             messageId: output.message.messageId,
-            audioEndMs: Math.floor(output.playbackPositionInS * 1000),
+            audioEndMs: Math.max(0, Math.floor(playbackPositionInS * 1000)),
             modalities: output.modalities,
             audioTranscript: forwardedText,
           });
