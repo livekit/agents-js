@@ -223,15 +223,15 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   // Monotonic timestamp base across reconnects. Deepgram's audio_window restarts
   // at 0 on every new socket, so each connection's window times are offset by the
-  // audio already streamed to prior connections (#sentAudioSec snapshotted at
-  // connect into #connectionTimeBaseSec). Without this, transcripts after a
+  // audio already streamed to prior connections (#sentAudioInS snapshotted at
+  // connect into #connectionTimeBaseInS). Without this, transcripts after a
   // reconnect would be timestamped near the start of the session.
   //
   // The SDK sets startTimeOffset once at stream creation (voice/agent.ts sttNode)
   // and relies on the plugin to keep audio_window continuous across its own
   // reconnects ("linear timestamps across reconnections") — this preserves that.
-  #sentAudioSec = 0;
-  #connectionTimeBaseSec = 0;
+  #sentAudioInS = 0;
+  #connectionTimeBaseInS = 0;
 
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
@@ -296,7 +296,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
         // Snapshot the timeline base for this connection: the fresh socket's
         // audio_window starts at 0, so offset it by the audio already streamed.
-        this.#connectionTimeBaseSec = this.#sentAudioSec;
+        this.#connectionTimeBaseInS = this.#sentAudioInS;
         // Provider turn state is scoped to one WebSocket. A reconnect during an
         // active turn must not make the next connection suppress StartOfTurn.
         this.#speaking = false;
@@ -347,10 +347,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const iterator = this.input[Symbol.asyncIterator]();
     const sendFrames = (frames: AudioFrame[]) => {
       for (const frame of frames) {
-        const durationSec = calculateAudioDurationSeconds(frame);
-        this.#audioDurationCollector.push(durationSec);
+        const durationInS = calculateAudioDurationSeconds(frame);
+        this.#audioDurationCollector.push(durationInS);
         // Track total audio consumed so reconnects can preserve the timeline.
-        this.#sentAudioSec += durationSec;
+        this.#sentAudioInS += durationInS;
 
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(frame.data);
@@ -497,7 +497,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const alts = parseTranscription(
       this.#opts.language || 'en',
       data,
-      this.startTimeOffset + this.#connectionTimeBaseSec,
+      this.startTimeOffset + this.#connectionTimeBaseInS,
     );
 
     if (alts.length > 0) {
