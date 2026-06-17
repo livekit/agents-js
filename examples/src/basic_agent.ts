@@ -23,26 +23,32 @@ import { z } from 'zod';
 // lazy-loads on first stream.
 export default defineAgent({
   entry: async (ctx: JobContext) => {
+    let session: AgentSession;
+
     const agent = Agent.create({
       instructions:
         "You are a helpful assistant, you can hear the user's message and respond to it.",
-      tools: [
-        tool({
-          name: 'getWeather',
+      tools: {
+        getWeather: tool({
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
           }),
           execute: async ({ location }) => {
+            session._emitDebugMessage({
+              surface: 'object-tool-shorthand',
+              tool: 'getWeather',
+              location,
+            });
             return `The weather in ${location} is sunny.`;
           },
         }),
-      ],
+      },
     });
 
     const logger = log();
 
-    const session = new AgentSession({
+    session = new AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -132,4 +138,6 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(
+  new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'basic-agent-js' }),
+);

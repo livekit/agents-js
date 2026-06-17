@@ -175,12 +175,18 @@ export abstract class ProviderTool implements Tool {
   }
 }
 
-export interface AnonFunctionTool<
+export interface FunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> {
+> extends Tool {
   type: 'function';
+
+  /**
+   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
+   * as the function name to call. Also surfaced as the inherited `Tool.id`.
+   */
+  name: string;
 
   /**
    * The description of the tool. Will be used by the language model to decide whether to use the tool.
@@ -204,27 +210,14 @@ export interface AnonFunctionTool<
 
   onDuplicate: DuplicateMode;
 
-  [TOOL_SYMBOL]: true;
-
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
-export interface FunctionTool<
+export type AnonFunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> extends AnonFunctionTool<Parameters, UserData, Result> {
-  /**
-   * Stable identifier used to key the tool inside a `ToolContext`. Mirrors `name`.
-   */
-  id: string;
-
-  /**
-   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
-   * as the function name to call. Also surfaced as the inherited `Tool.id`.
-   */
-  name: string;
-}
+> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'>;
 
 export interface ToolCalledEvent<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
@@ -383,18 +376,24 @@ class ToolsetFactory extends Toolset {
 }
 
 /**
- * Convenience input shape accepted by APIs that want to take a list of tools directly without
- * forcing callers to wrap them in `new ToolContext(...)`.
+ * Tool context or data that can be normalized into one. Used by APIs that accept an already-built
+ * context as well as direct tool lists or tool maps.
  */
-export type ToolCtxInput<UserData = UnknownUserData> =
+export type ToolContextLike<UserData = UnknownUserData> =
   | ToolContext<UserData>
-  | ToolContextInput<UserData>;
+  | ToolContextInit<UserData>;
 
-export type ToolContextInput<UserData = UnknownUserData> =
+/**
+ * Initial tool data accepted by `ToolContext` constructors and update methods.
+ */
+export type ToolContextInit<UserData = UnknownUserData> =
   | readonly ToolContextEntry<UserData>[]
-  | ToolContextMap<UserData>;
+  | ToolDefinitionMap<UserData>;
 
-export type ToolContextMap<UserData = UnknownUserData> = {
+/**
+ * Object shorthand for declaring anonymous function tools keyed by their model-visible names.
+ */
+export type ToolDefinitionMap<UserData = UnknownUserData> = {
   readonly [toolName: string]: AnonFunctionToolEntry<UserData>;
 };
 
@@ -406,20 +405,22 @@ type AnonFunctionToolEntry<UserData = UnknownUserData> =
   };
 
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData>,
+  input: ToolContextLike<UserData>,
 ): ToolContext<UserData>;
+
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData> | undefined,
+  input: ToolContextLike<UserData> | undefined,
 ): ToolContext<UserData> | undefined;
+
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData> | undefined,
+  input: ToolContextLike<UserData> | undefined,
 ): ToolContext<UserData> | undefined {
   if (input === undefined) return undefined;
   return input instanceof ToolContext ? input : new ToolContext(input);
 }
 
-export function normalizeToolContextInput<UserData = UnknownUserData>(
-  input: ToolContextInput<UserData>,
+export function normalizeToolContextInit<UserData = UnknownUserData>(
+  input: ToolContextInit<UserData>,
 ): ToolContextEntry<UserData>[] {
   if (Array.isArray(input)) {
     return [...input];
@@ -458,7 +459,7 @@ export class ToolContext<UserData = UnknownUserData> {
   private _providerTools: ProviderTool[] = [];
   private _toolsets: Toolset[] = [];
 
-  constructor(tools: ToolContextInput<UserData> = []) {
+  constructor(tools: ToolContextInit<UserData> = []) {
     this.updateTools(tools);
   }
 
@@ -506,8 +507,8 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools.some((tool) => tool.id === id);
   }
 
-  updateTools(tools: ToolContextInput<UserData>): void {
-    const normalizedTools = normalizeToolContextInput(tools);
+  updateTools(tools: ToolContextInit<UserData>): void {
+    const normalizedTools = normalizeToolContextInit(tools);
     this._tools = normalizedTools;
     this._functionToolsMap = new Map();
     this._providerTools = [];

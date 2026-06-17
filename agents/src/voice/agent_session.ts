@@ -39,9 +39,9 @@ import type {
   RealtimeModelError,
   ToolChoice,
   ToolContextEntry,
-  ToolContextInput,
+  ToolContextInit,
 } from '../llm/index.js';
-import { normalizeToolContextInput } from '../llm/index.js';
+import { normalizeToolContextInit } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -258,7 +258,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
-  tools?: ToolContextInput<UserData>;
+  tools?: ToolContextInit<UserData>;
   toolHandling?: ToolHandlingOptions;
 
   /** @deprecated use turnHandling.turnDetection instead */
@@ -546,7 +546,7 @@ export class AgentSession<
         : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
-    this._tools = normalizeToolContextInput(tools ?? []);
+    this._tools = normalizeToolContextInit(tools ?? []);
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO

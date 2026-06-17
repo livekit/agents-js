@@ -21,8 +21,8 @@ import {
   RealtimeModel,
   type ToolChoice,
   ToolContext,
-  type ToolContextInput,
-  normalizeToolContextInput,
+  type ToolContextInit,
+  normalizeToolContextInit,
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
@@ -136,7 +136,7 @@ export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
   chatCtx?: ChatContext;
-  tools?: ToolContextInput<UserData>;
+  tools?: ToolContextInit<UserData>;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
@@ -384,8 +384,8 @@ export class Agent<UserData = any> {
   }
 
   // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
-  async updateTools(tools: ToolContextInput<UserData>): Promise<void> {
-    const normalizedTools = normalizeToolContextInput(tools);
+  async updateTools(tools: ToolContextInit<UserData>): Promise<void> {
+    const normalizedTools = normalizeToolContextInit(tools);
     if (!this._agentActivity) {
       this._toolCtx = new ToolContext<UserData>(normalizedTools);
       this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });

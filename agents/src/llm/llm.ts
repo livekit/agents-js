@@ -14,7 +14,7 @@ import { type ChatContext, type ChatRole, type FunctionCall } from './chat_conte
 import {
   type ToolChoice,
   type ToolContext,
-  type ToolCtxInput,
+  type ToolContextLike,
   toToolContext,
 } from './tool_context.js';
 
@@ -101,7 +101,7 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
      * `(FunctionTool | ProviderTool)[]` array — the array form is normalized into a
      * `ToolContext` internally so callers don't have to construct one themselves.
      */
-    toolCtx?: ToolCtxInput;
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -144,7 +144,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       connOptions,
     }: {
       chatCtx: ChatContext;
-      toolCtx?: ToolCtxInput;
+      toolCtx?: ToolContextLike;
       connOptions: APIConnectOptions;
     },
   ) {

@@ -3,7 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
-import { type FunctionTool, ProviderTool, type ToolOptions, tool } from './index.js';
+import {
+  type FunctionTool,
+  ProviderTool,
+  type Tool,
+  ToolContext,
+  type ToolContextInit,
+  type ToolContextLike,
+  type ToolDefinitionMap,
+  type ToolOptions,
+  tool,
+} from './index.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -96,6 +106,26 @@ describe('tool type inference', () => {
     });
 
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<Record<string, never>, unknown, 'done'>>();
+  });
+
+  it('names tool context input shapes by role', () => {
+    const objectTools = {
+      lookupOrder: tool({
+        description: 'Look up an order',
+        execute: async () => 'done' as const,
+      }),
+    };
+    const namedTool = tool({
+      name: 'simpleAction',
+      description: 'Simple action',
+      execute: async () => 'done' as const,
+    });
+
+    expectTypeOf(objectTools).toMatchTypeOf<ToolDefinitionMap>();
+    expectTypeOf(objectTools).toMatchTypeOf<ToolContextInit>();
+    expectTypeOf([namedTool]).toMatchTypeOf<ToolContextInit>();
+    expectTypeOf(new ToolContext(objectTools)).toMatchTypeOf<ToolContextLike>();
+    expectTypeOf(namedTool).toMatchTypeOf<Tool>();
   });
 
   it('should infer correct types with context but no parameters', () => {
