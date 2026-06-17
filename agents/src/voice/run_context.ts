@@ -45,20 +45,20 @@ export interface RunContextFillerOptions {
   signal?: AbortSignal;
 }
 
-export interface AttachedToolExecutor {
+export interface AttachedToolExecutor<UserData = UnknownUserData> {
   toolOptions: {
     updateTemplate: PromptTemplate<UpdatePromptArgs>;
   };
-  enqueueReply(ctx: RunContext, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
+  enqueueReply(ctx: RunContext<UserData>, items: [FunctionCall, FunctionCallOutput]): Promise<void>;
   replyTask?: Promise<void>;
 }
 
 export class RunContext<UserData = UnknownUserData> {
   private readonly initialStepIdx: number;
-  private _executor?: AttachedToolExecutor;
+  private _executor?: AttachedToolExecutor<UserData>;
   private _firstUpdateFuture?: Future<unknown>;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
-  private _fillerSchedulers: FillerScheduler[] = [];
+  private _fillerSchedulers: FillerScheduler<UserData>[] = [];
   constructor(
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
@@ -203,7 +203,10 @@ export class RunContext<UserData = UnknownUserData> {
     }
   }
 
-  _attachExecutor(executor: AttachedToolExecutor, firstUpdateFuture: Future<unknown>): void {
+  _attachExecutor(
+    executor: AttachedToolExecutor<UserData>,
+    firstUpdateFuture: Future<unknown>,
+  ): void {
     if (this._firstUpdateFuture !== undefined) {
       throw new Error('Executor already attached');
     }
@@ -271,7 +274,7 @@ function stringifyToolOutput(value: unknown): string {
   }
 }
 
-class FillerScheduler {
+class FillerScheduler<UserData = UnknownUserData> {
   private readonly abortController = new AbortController();
   private readonly delay: number;
   private readonly interval?: number;
@@ -281,7 +284,7 @@ class FillerScheduler {
   private createdSpeeches: SpeechHandle[] = [];
 
   constructor(
-    private readonly session: AgentSession,
+    private readonly session: AgentSession<UserData>,
     private readonly speechHandle: SpeechHandle,
     private readonly source: FillerSource,
     options: RunContextFillerOptions,
@@ -308,6 +311,7 @@ class FillerScheduler {
     }
 
     this.task = this.run();
+    void this.task.catch(() => undefined);
   }
 
   resetDwell(): void {
@@ -316,7 +320,7 @@ class FillerScheduler {
 
   async close(): Promise<void> {
     this.abortController.abort();
-    await this.task;
+    await this.task.catch(() => undefined);
   }
 
   private async run(): Promise<void> {
@@ -361,6 +365,10 @@ class FillerScheduler {
       this.dwellAbortController = undefined;
       if (!dwellCompleted) {
         continue;
+      }
+
+      if (this.maxSteps !== undefined && this.createdSpeeches.length >= this.maxSteps) {
+        return;
       }
 
       const handle = this.createSpeech();
