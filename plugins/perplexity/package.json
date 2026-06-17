@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-perplexity",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "Perplexity plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
