@@ -3,18 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
-import type { APIConnectOptions } from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { delay } from '../utils.js';
-import { type ChatContext, FunctionCall } from './chat_context.js';
+import { ChatContext, FunctionCall } from './chat_context.js';
 import { type ChatChunk, LLM, LLMStream } from './llm.js';
-import type { ToolChoice, ToolContext } from './tool_context.js';
+import type { ToolChoice, ToolCtxInput } from './tool_context.js';
 
 class MockLLMStream extends LLMStream {
   constructor(
     llm: LLM,
     opts: {
       chatCtx: ChatContext;
-      toolCtx?: ToolContext;
+      toolCtx?: ToolCtxInput;
       connOptions: APIConnectOptions;
     },
     private chunks: ChatChunk[],
@@ -41,7 +41,7 @@ class MockLLM extends LLM {
 
   chat(opts: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    toolCtx?: ToolCtxInput;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -52,7 +52,7 @@ class MockLLM extends LLM {
       {
         chatCtx: opts.chatCtx,
         toolCtx: opts.toolCtx,
-        connOptions: opts.connOptions ?? ({ maxRetry: 0 } as APIConnectOptions),
+        connOptions: opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       },
       this.chunks,
     );
@@ -72,7 +72,7 @@ describe('LLMStream.collect', () => {
       { id: '1', delta: { role: 'assistant', content: 'world!  ' } },
     ]);
 
-    const response = await llm.chat({ chatCtx: {} as ChatContext }).collect();
+    const response = await llm.chat({ chatCtx: new ChatContext() }).collect();
 
     expect(response.text).toBe('Hello, world!');
     expect(response.toolCalls).toHaveLength(0);
@@ -96,7 +96,7 @@ describe('LLMStream.collect', () => {
       { id: '1', delta: { role: 'assistant', toolCalls: [callB] } },
     ]);
 
-    const response = await llm.chat({ chatCtx: {} as ChatContext }).collect();
+    const response = await llm.chat({ chatCtx: new ChatContext() }).collect();
 
     expect(response.text).toBe('');
     expect(response.toolCalls).toHaveLength(2);
@@ -128,7 +128,7 @@ describe('LLMStream.collect', () => {
       },
     ]);
 
-    const response = await llm.chat({ chatCtx: {} as ChatContext }).collect();
+    const response = await llm.chat({ chatCtx: new ChatContext() }).collect();
 
     expect(response.text).toBe('hi there');
     expect(response.usage?.completionTokens).toBe(3);
@@ -139,7 +139,7 @@ describe('LLMStream.collect', () => {
   it('returns empty response for an empty stream', async () => {
     const llm = new MockLLM([]);
 
-    const response = await llm.chat({ chatCtx: {} as ChatContext }).collect();
+    const response = await llm.chat({ chatCtx: new ChatContext() }).collect();
 
     expect(response.text).toBe('');
     expect(response.toolCalls).toHaveLength(0);
