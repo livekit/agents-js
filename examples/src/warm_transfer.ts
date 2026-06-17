@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   beta,
   cli,
@@ -13,8 +12,6 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
@@ -96,20 +93,19 @@ Examples on when the tool should be called:
   }
 }
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the inference VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad as silero.VAD,
+      vad: new inference.VAD(),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
     });
 
     await session.start({

@@ -1,27 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  log,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, log, voice } from '@livekit/agents';
 import * as cartesia from '@livekit/agents-plugin-cartesia';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log();
 

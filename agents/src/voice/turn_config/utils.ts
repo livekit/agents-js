@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { BaseStreamingTurnDetector } from '../../inference/eot/base.js';
 import { log } from '../../log.js';
 import {
   type AgentSessionOptions,
@@ -8,7 +9,11 @@ import {
   type TurnDetectionMode,
   type VoiceOptions,
 } from '../agent_session.js';
-import { defaultEndpointingOptions } from './endpointing.js';
+import {
+  type EndpointingOptions,
+  defaultEndpointingOptions,
+  streamingEndpointingOptions,
+} from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { type TurnHandlingOptions, defaultTurnHandlingOptions } from './turn_handling.js';
@@ -73,7 +78,13 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
       ...sessionOptions.turnHandling?.userTurnLimit,
     },
 
-    turnDetection: sessionOptions?.turnHandling?.turnDetection ?? turnDetection,
+    // Preserve an explicit `null` (opt-out) distinctly from `undefined` (not
+    // given). `??` would collapse both, so only fall back to the deprecated
+    // top-level `turnDetection` when `turnHandling.turnDetection` is absent.
+    turnDetection:
+      sessionOptions?.turnHandling?.turnDetection !== undefined
+        ? sessionOptions.turnHandling.turnDetection
+        : turnDetection,
   } as const;
 
   if (
@@ -132,10 +143,45 @@ export function stripUndefined<T extends object>(obj: T): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
+/**
+ * Fill in default endpointing values for keys the caller did not provide.
+ *
+ * When `turnDetection` is a streaming ("audio model") turn detector, unset keys
+ * fall back to the tighter {@link streamingEndpointingOptions}; otherwise they
+ * use the legacy {@link defaultEndpointingOptions}.
+ */
+export function resolveEndpointing(
+  overrides: Partial<EndpointingOptions>,
+  turnDetection: TurnDetectionMode | null | undefined,
+): EndpointingOptions {
+  const base =
+    turnDetection instanceof BaseStreamingTurnDetector
+      ? streamingEndpointingOptions
+      : defaultEndpointingOptions;
+  return { ...base, ...stripUndefined(overrides) };
+}
+
 export function mergeWithDefaults(config: TurnHandlingOptions) {
+  const endpointingOverrides = stripUndefined(config.endpointing);
   return {
-    turnDetection: config.turnDetection ?? defaultTurnHandlingOptions.turnDetection,
-    endpointing: { ...defaultEndpointingOptions, ...stripUndefined(config.endpointing) },
+    // Keep an explicit `null` (opt-out) — only an absent value falls back to
+    // the default, so the constructor can tell opt-out from not-given.
+    turnDetection:
+      config.turnDetection === undefined
+        ? defaultTurnHandlingOptions.turnDetection
+        : config.turnDetection,
+    // Resolve endpointing defaults against the effective detector: an omitted
+    // `turnDetection` auto-provisions the streaming TurnDetector (→ tighter
+    // streaming defaults), while `null` opt-out or a non-streaming mode keeps
+    // the legacy defaults. Activities re-resolve per-detector from `endpointingOverrides`.
+    endpointing: {
+      ...(config.turnDetection === undefined ||
+      config.turnDetection instanceof BaseStreamingTurnDetector
+        ? streamingEndpointingOptions
+        : defaultEndpointingOptions),
+      ...endpointingOverrides,
+    },
+    endpointingOverrides,
     interruption: { ...defaultInterruptionOptions, ...stripUndefined(config.interruption) },
     preemptiveGeneration: {
       ...defaultPreemptiveGenerationOptions,

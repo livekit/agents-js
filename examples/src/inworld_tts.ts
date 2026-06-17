@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,15 +11,10 @@ import {
   voice,
 } from '@livekit/agents';
 import * as inworld from '@livekit/agents-plugin-inworld';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions:
@@ -69,10 +63,6 @@ export default defineAgent({
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
       tts,
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       voiceOptions: {
