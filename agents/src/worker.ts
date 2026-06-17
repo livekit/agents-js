@@ -791,8 +791,8 @@ export class AgentServer {
               // Consumers like `lk agent simulate` find the agent participant by
               // this attribute; without it they never detect the agent joining.
               participantAttributes: {
-                [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
                 ...args.attributes,
+                [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
               },
             },
           },
