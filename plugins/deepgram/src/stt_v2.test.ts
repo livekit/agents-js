@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { stt } from '@livekit/agents';
+import { stt } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { STTv2, type STTv2Options } from './stt_v2.js';
@@ -189,6 +190,86 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
       );
     } finally {
       stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps transcript timestamps monotonic across an unexpected reconnect', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    let firstConnAudioBytes = 0;
+    const stream = createStream(endpointUrl);
+
+    wss.on('connection', (ws) => {
+      const index = connections.push(ws);
+      if (index === 1) {
+        ws.on('message', (data, isBinary) => {
+          if (isBinary) firstConnAudioBytes += (data as Buffer).length;
+        });
+      }
+    });
+
+    const startOfTurn = JSON.stringify({ type: 'TurnInfo', event: 'StartOfTurn', transcript: '' });
+    const endOfTurn = (audioWindowEnd: number) =>
+      JSON.stringify({
+        type: 'TurnInfo',
+        event: 'EndOfTurn',
+        transcript: 'hello',
+        audio_window_start: Math.max(0, audioWindowEnd - 0.5),
+        audio_window_end: audioWindowEnd,
+        words: [
+          {
+            word: 'hello',
+            start: Math.max(0, audioWindowEnd - 0.5),
+            end: audioWindowEnd,
+            confidence: 0.9,
+          },
+        ],
+      });
+
+    const finalEndTimes: number[] = [];
+    const consume = (async () => {
+      for await (const event of stream) {
+        if (event.type === stt.SpeechEventType.FINAL_TRANSCRIPT && event.alternatives?.[0]) {
+          finalEndTimes.push(event.alternatives[0].endTime);
+        }
+      }
+    })();
+
+    try {
+      await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
+
+      // Stream ~2s of 16 kHz mono audio so the first connection advances the timeline.
+      const oneSecond = () => new AudioFrame(new Int16Array(16_000), 16_000, 1, 16_000);
+      stream.pushFrame(oneSecond());
+      stream.pushFrame(oneSecond());
+      // 16 kHz * 2 bytes/sample * 1.5s = 48_000 bytes => at least 1.5s reached the socket.
+      await waitFor(
+        () => firstConnAudioBytes >= 48_000,
+        `expected ~2s of audio at the first connection, saw ${firstConnAudioBytes} bytes`,
+      );
+
+      // First turn ends 1.0s into the first connection's audio window.
+      connections[0]!.send(startOfTurn);
+      connections[0]!.send(endOfTurn(1.0));
+      await waitFor(() => finalEndTimes.length === 1, 'expected first final transcript');
+
+      // Unexpected close -> base-class retry reconnects.
+      connections[0]!.close(1011, 'unexpected close');
+      await waitFor(() => connections.length === 2, 'expected reconnect after unexpected close');
+
+      // The fresh Deepgram socket restarts audio_window near 0; this turn ends at
+      // 0.5 within the NEW connection's window.
+      connections[1]!.send(startOfTurn);
+      connections[1]!.send(endOfTurn(0.5));
+      await waitFor(() => finalEndTimes.length === 2, 'expected second final transcript');
+
+      // Without timebase preservation the second final lands at ~0.5s — earlier than
+      // the first — and downstream "before answer audio" logic would drop it.
+      expect(finalEndTimes[1]!).toBeGreaterThan(finalEndTimes[0]!);
+    } finally {
+      stream.close();
+      await consume.catch(() => {});
       await closeWebSocketServer(wss);
     }
   });

@@ -221,6 +221,14 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #requestId = '';
   #speaking = false;
 
+  // Monotonic timestamp base across reconnects. Deepgram's audio_window restarts
+  // at 0 on every new socket, so each connection's window times are offset by the
+  // audio already streamed to prior connections (#sentAudioSec snapshotted at
+  // connect into #connectionTimeBaseSec). Without this, transcripts after a
+  // reconnect would be timestamped near the start of the session.
+  #sentAudioSec = 0;
+  #connectionTimeBaseSec = 0;
+
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
 
@@ -282,6 +290,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
           this.#ws.once('error', onError);
         });
 
+        // Snapshot the timeline base for this connection: the fresh socket's
+        // audio_window starts at 0, so offset it by the audio already streamed.
+        this.#connectionTimeBaseSec = this.#sentAudioSec;
+
         // 2. Run Concurrent Tasks (Send & Receive)
         const ws = this.#ws;
         if (!ws) throw new Error('WebSocket not initialized');
@@ -328,7 +340,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const iterator = this.input[Symbol.asyncIterator]();
     const sendFrames = (frames: AudioFrame[]) => {
       for (const frame of frames) {
-        this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
+        const durationSec = calculateAudioDurationSeconds(frame);
+        this.#audioDurationCollector.push(durationSec);
+        // Track total audio consumed so reconnects can preserve the timeline.
+        this.#sentAudioSec += durationSec;
 
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(frame.data);
@@ -457,7 +472,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #sendTranscriptEvent(eventType: stt.SpeechEventType, data: Record<string, unknown>) {
-    const alts = parseTranscription(this.#opts.language || 'en', data, this.startTimeOffset);
+    const alts = parseTranscription(
+      this.#opts.language || 'en',
+      data,
+      this.startTimeOffset + this.#connectionTimeBaseSec,
+    );
 
     if (alts.length > 0) {
       this.queue.put({
