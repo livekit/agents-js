@@ -324,10 +324,17 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
-    let hasEnded = false;
-
     // Manual Iterator to allow racing against Reconnect Signal
     const iterator = this.input[Symbol.asyncIterator]();
+    const sendFrames = (frames: AudioFrame[]) => {
+      for (const frame of frames) {
+        this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(frame.data);
+        }
+      }
+    };
 
     while (true) {
       const nextPromise = iterator.next();
@@ -340,42 +347,18 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
       // Check if we need to abort (Reconnect) or if stream is done
       if ('abort' in result || result.done) {
-        if (!('abort' in result) && result.done) {
-          // Normal stream end
-          hasEnded = true;
-        } else {
-          // Reconnect triggered - break loop immediately
-          break;
-        }
-      }
-
-      // If we broke above, we don't process data. If not, 'result' is IteratorResult
-      if (hasEnded && result.value === undefined) {
-        // Process flush below
-      } else if ('value' in result) {
-        const data = result.value;
-        const frames: AudioFrame[] = [];
-
-        if (data === SpeechStreamv2.FLUSH_SENTINEL) {
-          frames.push(...audioBstream.flush());
-          hasEnded = true;
-        } else {
-          frames.push(...audioBstream.write((data as AudioFrame).data.buffer as ArrayBuffer));
-        }
-
-        for (const frame of frames) {
-          this.#audioDurationCollector.push(calculateAudioDurationSeconds(frame));
-
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(frame.data);
-          }
-        }
-      }
-
-      if (hasEnded) {
-        this.#audioDurationCollector.flush();
         break;
       }
+
+      const data = result.value;
+
+      if (data === SpeechStreamv2.FLUSH_SENTINEL) {
+        sendFrames(audioBstream.flush());
+        this.#audioDurationCollector.flush();
+        continue;
+      }
+
+      sendFrames(audioBstream.write((data as AudioFrame).data.buffer as ArrayBuffer));
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)

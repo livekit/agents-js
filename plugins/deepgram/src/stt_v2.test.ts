@@ -123,7 +123,7 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
     }
   });
 
-  it('does not reconnect after flush sends CloseStream', async () => {
+  it('does not reconnect or close after flush before normal input end', async () => {
     const { wss, endpointUrl } = await startWebSocketServer();
     const connections: WebSocket[] = [];
     const messages: Array<Record<string, unknown>> = [];
@@ -147,6 +147,12 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
       await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
 
       stream.flush();
+
+      await sleep(50);
+      expect(messages.some((message) => message.type === 'CloseStream')).toBe(false);
+      expect(connections).toHaveLength(1);
+
+      stream.endInput();
 
       await waitFor(
         () => messages.some((message) => message.type === 'CloseStream'),
