@@ -175,18 +175,12 @@ export abstract class ProviderTool implements Tool {
   }
 }
 
-export interface FunctionTool<
-  Parameters extends JSONObject,
+export interface AnonFunctionTool<
+  Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> extends Tool {
+> {
   type: 'function';
-
-  /**
-   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
-   * as the function name to call. Also surfaced as the inherited `Tool.id`.
-   */
-  name: string;
 
   /**
    * The description of the tool. Will be used by the language model to decide whether to use the tool.
@@ -210,7 +204,26 @@ export interface FunctionTool<
 
   onDuplicate: DuplicateMode;
 
+  [TOOL_SYMBOL]: true;
+
   [FUNCTION_TOOL_SYMBOL]: true;
+}
+
+export interface FunctionTool<
+  Parameters extends JSONObject = JSONObject,
+  UserData = UnknownUserData,
+  Result = unknown,
+> extends AnonFunctionTool<Parameters, UserData, Result> {
+  /**
+   * Stable identifier used to key the tool inside a `ToolContext`. Mirrors `name`.
+   */
+  id: string;
+
+  /**
+   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
+   * as the function name to call. Also surfaced as the inherited `Tool.id`.
+   */
+  name: string;
 }
 
 export interface ToolCalledEvent<UserData = UnknownUserData> {
@@ -375,7 +388,22 @@ class ToolsetFactory extends Toolset {
  */
 export type ToolCtxInput<UserData = UnknownUserData> =
   | ToolContext<UserData>
-  | readonly ToolContextEntry<UserData>[];
+  | ToolContextInput<UserData>;
+
+export type ToolContextInput<UserData = UnknownUserData> =
+  | readonly ToolContextEntry<UserData>[]
+  | ToolContextMap<UserData>;
+
+export type ToolContextMap<UserData = UnknownUserData> = {
+  readonly [toolName: string]: AnonFunctionToolEntry<UserData>;
+};
+
+type AnonFunctionToolEntry<UserData = UnknownUserData> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  AnonFunctionTool<any, UserData, any> & {
+    readonly id?: never;
+    readonly name?: never;
+  };
 
 export function toToolContext<UserData = UnknownUserData>(
   input: ToolCtxInput<UserData>,
@@ -390,6 +418,34 @@ export function toToolContext<UserData = UnknownUserData>(
   return input instanceof ToolContext ? input : new ToolContext(input);
 }
 
+export function normalizeToolContextInput<UserData = UnknownUserData>(
+  input: ToolContextInput<UserData>,
+): ToolContextEntry<UserData>[] {
+  if (Array.isArray(input)) {
+    return [...input];
+  }
+
+  return Object.entries(input).map(([name, toolValue]) => {
+    if (name.length === 0) {
+      throw new Error('tools object keys must be non-empty');
+    }
+
+    if (!isAnonFunctionTool(toolValue)) {
+      throw new Error(`tools object entry "${name}" must be an anonymous function tool`);
+    }
+
+    if ('name' in toolValue || 'id' in toolValue) {
+      throw new Error(`tools object entry "${name}" must be anonymous`);
+    }
+
+    return {
+      ...toolValue,
+      id: name,
+      name,
+    };
+  });
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
 export type ToolContextEntry<UserData = any> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -402,7 +458,7 @@ export class ToolContext<UserData = UnknownUserData> {
   private _providerTools: ProviderTool[] = [];
   private _toolsets: Toolset[] = [];
 
-  constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
+  constructor(tools: ToolContextInput<UserData> = []) {
     this.updateTools(tools);
   }
 
@@ -450,8 +506,9 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools.some((tool) => tool.id === id);
   }
 
-  updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
-    this._tools = [...tools];
+  updateTools(tools: ToolContextInput<UserData>): void {
+    const normalizedTools = normalizeToolContextInput(tools);
+    this._tools = normalizedTools;
     this._functionToolsMap = new Map();
     this._providerTools = [];
     this._toolsets = [];
@@ -486,7 +543,7 @@ export class ToolContext<UserData = UnknownUserData> {
       throw new Error(`unknown tool type: ${typeof tool}`);
     };
 
-    for (const tool of tools) {
+    for (const tool of normalizedTools) {
       addTool(tool);
     }
   }
@@ -592,6 +649,47 @@ export function tool<
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
 /**
+ * Create an anonymous function tool with inferred parameters from the schema.
+ */
+export function tool<
+  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
+  UserData = UnknownUserData,
+  Result = unknown,
+>({
+  description,
+  parameters,
+  execute,
+  flags,
+  onDuplicate,
+}: {
+  /** Omitted in object syntax; the containing object key becomes the tool name. */
+  name?: never;
+  /** Natural-language description that tells the model when to use this tool. */
+  description: string;
+  /**
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema.
+   */
+  parameters: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments and a
+   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
+   */
+  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
+  flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
+}): AnonFunctionTool<InferToolInput<Schema>, UserData, Result>;
+
+/**
  * Create a function tool without parameters.
  */
 export function tool<UserData = UnknownUserData, Result = unknown>({
@@ -625,9 +723,42 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
   onDuplicate?: DuplicateMode;
 }): FunctionTool<Record<string, never>, UserData, Result>;
 
+/**
+ * Create an anonymous function tool without parameters.
+ */
+export function tool<UserData = UnknownUserData, Result = unknown>({
+  description,
+  execute,
+  flags,
+  onDuplicate,
+}: {
+  /** Omitted in object syntax; the containing object key becomes the tool name. */
+  name?: never;
+  /** Natural-language description that tells the model when to use this tool. */
+  description: string;
+  /** Omitted in this overload — the tool takes no arguments. */
+  parameters?: never;
+  /**
+   * Called when the model invokes the tool. Receives a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
+   */
+  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
+  flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
+}): AnonFunctionTool<Record<string, never>, UserData, Result>;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {
-  if (typeof tool.name !== 'string' || tool.name.length === 0) {
+  if (tool.name !== undefined && (typeof tool.name !== 'string' || tool.name.length === 0)) {
     throw new Error('tool({ name, ... }) requires a non-empty name');
   }
 
@@ -653,10 +784,8 @@ export function tool(tool: any): any {
   const execute =
     onDuplicate === 'confirm' ? wrapConfirmDuplicateExecute(tool.execute) : tool.execute;
 
-  return {
+  const functionTool = {
     type: 'function',
-    id: tool.name,
-    name: tool.name,
     description: tool.description,
     parameters,
     execute,
@@ -664,6 +793,16 @@ export function tool(tool: any): any {
     onDuplicate,
     [TOOL_SYMBOL]: true,
     [FUNCTION_TOOL_SYMBOL]: true,
+  };
+
+  if (tool.name === undefined) {
+    return functionTool;
+  }
+
+  return {
+    ...functionTool,
+    id: tool.name,
+    name: tool.name,
   };
 }
 
@@ -723,9 +862,18 @@ export function isTool(tool: any): tool is Tool {
   return !!tool && tool[TOOL_SYMBOL] === true;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
-  return isTool(tool) && (tool as FunctionTool<any, any, any>)[FUNCTION_TOOL_SYMBOL] === true;
+export function isFunctionTool(tool: unknown): tool is FunctionTool {
+  const maybeTool = tool as Partial<FunctionTool>;
+  return (
+    isAnonFunctionTool(tool) &&
+    typeof maybeTool.id === 'string' &&
+    typeof maybeTool.name === 'string'
+  );
+}
+
+function isAnonFunctionTool(tool: unknown): tool is AnonFunctionTool {
+  const maybeTool = tool as Partial<AnonFunctionTool>;
+  return isTool(tool) && maybeTool[FUNCTION_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
