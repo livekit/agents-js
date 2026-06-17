@@ -226,6 +226,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
   // audio already streamed to prior connections (#sentAudioSec snapshotted at
   // connect into #connectionTimeBaseSec). Without this, transcripts after a
   // reconnect would be timestamped near the start of the session.
+  //
+  // The SDK sets startTimeOffset once at stream creation (voice/agent.ts sttNode)
+  // and relies on the plugin to keep audio_window continuous across its own
+  // reconnects ("linear timestamps across reconnections") — this preserves that.
   #sentAudioSec = 0;
   #connectionTimeBaseSec = 0;
 
