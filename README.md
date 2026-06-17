@@ -77,6 +77,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-bey](https://www.npmjs.com/package/@livekit/agents-plugin-bey)               | Avatar        |
 | [@livekit/agents-plugin-lemonslice](https://www.npmjs.com/package/@livekit/agents-plugin-lemonslice) | Avatar        |
 | [@livekit/agents-plugin-liveavatar](https://www.npmjs.com/package/@livekit/agents-plugin-liveavatar) | Avatar        |
+| [@livekit/agents-plugin-did](https://www.npmjs.com/package/@livekit/agents-plugin-did)               | Avatar        |
 | [@livekit/agents-plugin-mistralai](https://www.npmjs.com/package/@livekit/agents-plugin-mistralai)   | LLM, STT, TTS |
 | [@livekit/agents-plugin-xai](https://www.npmjs.com/package/@livekit/agents-plugin-xai)               | LLM, TTS      |
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
@@ -367,6 +368,8 @@ To connect and talk to your agent:
 
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+
+The LiveKit turn detection models are licensed under the [LiveKit Model License](MODEL_LICENSE).
 
 <!--BEGIN_REPO_NAV-->
 <br/><table>

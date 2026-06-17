@@ -1461,6 +1461,32 @@ export function asError(maybeError: unknown): Error {
 }
 
 /**
+ * Resolve a value that may come from an explicit argument, one of several
+ * environment variables (checked in order), or a final default.
+ *
+ * Used by inference transports to plumb credentials and URLs (e.g.
+ * `LIVEKIT_REMOTE_EOT_URL`, `LIVEKIT_INFERENCE_API_KEY`).
+ */
+export function resolveEnvVar(
+  value: string | undefined,
+  envVars: readonly string[],
+  defaultValue = '',
+): string {
+  // An explicit empty string is a provided value, returned as-is; only
+  // `undefined` falls through to env resolution.
+  if (value !== undefined) {
+    return value;
+  }
+  for (const name of envVars) {
+    const v = process.env[name];
+    if (v !== undefined && v !== '') {
+      return v;
+    }
+  }
+  return defaultValue;
+}
+
+/**
  * Tagged template literal that strips common leading indentation from every line,
  * trims the first empty line and any trailing whitespace.
  *

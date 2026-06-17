@@ -41,6 +41,18 @@ export const defaultEndpointingOptions = {
   alpha: 0.9,
 } as const satisfies EndpointingOptions;
 
+/**
+ * Tighter endpointing defaults used when the turn detector is a streaming
+ * ("audio model") detector. Keys the caller does not provide fall back to
+ * these instead of the legacy {@link defaultEndpointingOptions}.
+ */
+export const streamingEndpointingOptions = {
+  mode: 'fixed',
+  minDelay: 300,
+  maxDelay: 2500,
+  alpha: 0.9,
+} as const satisfies EndpointingOptions;
+
 const AGENT_SPEECH_LEADING_SILENCE_GRACE_PERIOD = 250;
 
 export class BaseEndpointing {

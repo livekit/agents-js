@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -21,7 +20,6 @@ import * as livekit from '@livekit/agents-plugin-livekit';
 import * as neuphonic from '@livekit/agents-plugin-neuphonic';
 import * as openai from '@livekit/agents-plugin-openai';
 import * as resemble from '@livekit/agents-plugin-resemble';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -241,14 +239,9 @@ class TestAgent extends voice.Agent<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const logger = log();
-    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
-      vad,
       userData: {
         testedSttChoices: new Set(),
         testedTtsChoices: new Set(),

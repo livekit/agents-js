@@ -1,9 +1,27 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as eot from './eot/index.js';
 import * as llm from './llm.js';
 import * as stt from './stt.js';
 import * as tts from './tts.js';
+
+export { eot };
+export {
+  TurnDetector,
+  TurnDetectorStreamImpl,
+  LOCAL_LANGUAGES,
+  CloudTransport,
+  LocalTransport,
+  ThresholdOptions,
+  type TurnDetectorOptions,
+  type CloudTransportOptions,
+  type ThresholdOverride,
+  type TurnDetectorModel,
+  type TurnDetectorVersion,
+} from './eot/index.js';
+
+export { VAD, type VADOptions, type VADModels } from './vad.js';
 
 export {
   LLM,
