@@ -273,6 +273,111 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
       await closeWebSocketServer(wss);
     }
   });
+
+  it('emits start of speech after reconnecting during an active turn', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const stream = createStream(endpointUrl);
+    const eventTypes: stt.SpeechEventType[] = [];
+
+    wss.on('connection', (ws) => {
+      connections.push(ws);
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        eventTypes.push(event.type);
+      }
+    })();
+
+    const startOfTurn = JSON.stringify({ type: 'TurnInfo', event: 'StartOfTurn', transcript: '' });
+
+    try {
+      await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
+
+      connections[0]!.send(startOfTurn);
+      await waitFor(
+        () =>
+          eventTypes.filter((eventType) => eventType === stt.SpeechEventType.START_OF_SPEECH)
+            .length === 1,
+        'expected first start of speech',
+      );
+
+      connections[0]!.close(1011, 'unexpected close during speech');
+      await waitFor(() => connections.length === 2, 'expected reconnect after unexpected close');
+
+      connections[1]!.send(startOfTurn);
+      await waitFor(
+        () =>
+          eventTypes.filter((eventType) => eventType === stt.SpeechEventType.START_OF_SPEECH)
+            .length === 2,
+        'expected second start of speech after reconnect',
+      );
+    } finally {
+      stream.close();
+      await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('starts speech from a non-empty update after reconnecting when StartOfTurn is absent', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const stream = createStream(endpointUrl);
+    const events: Array<{ type: stt.SpeechEventType; text?: string }> = [];
+
+    wss.on('connection', (ws) => {
+      connections.push(ws);
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        events.push({
+          type: event.type,
+          text: event.alternatives?.[0]?.text,
+        });
+      }
+    })();
+
+    const startOfTurn = JSON.stringify({ type: 'TurnInfo', event: 'StartOfTurn', transcript: '' });
+    const update = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'Update',
+      transcript: 'after reconnect',
+      audio_window_start: 0,
+      audio_window_end: 0.5,
+      words: [
+        { word: 'after', start: 0, end: 0.25, confidence: 0.9 },
+        { word: 'reconnect', start: 0.25, end: 0.5, confidence: 0.9 },
+      ],
+    });
+
+    try {
+      await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
+
+      connections[0]!.send(startOfTurn);
+      await waitFor(
+        () =>
+          events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length === 1,
+        'expected first start of speech',
+      );
+
+      connections[0]!.close(1011, 'unexpected close during speech');
+      await waitFor(() => connections.length === 2, 'expected reconnect after unexpected close');
+
+      connections[1]!.send(update);
+      await waitFor(
+        () =>
+          events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length ===
+            2 && events.some((event) => event.text === 'after reconnect'),
+        'expected synthesized start of speech and update transcript after reconnect',
+      );
+    } finally {
+      stream.close();
+      await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
 });
 
 const hasDeepgramApiKey = Boolean(process.env.DEEPGRAM_API_KEY);

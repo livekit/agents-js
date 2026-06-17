@@ -297,6 +297,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
         // Snapshot the timeline base for this connection: the fresh socket's
         // audio_window starts at 0, so offset it by the audio already streamed.
         this.#connectionTimeBaseSec = this.#sentAudioSec;
+        // Provider turn state is scoped to one WebSocket. A reconnect during an
+        // active turn must not make the next connection suppress StartOfTurn.
+        this.#speaking = false;
 
         // 2. Run Concurrent Tasks (Send & Receive)
         const ws = this.#ws;
@@ -442,23 +445,20 @@ class SpeechStreamv2 extends stt.SpeechStream {
       if (eventType === 'StartOfTurn') {
         if (this.#speaking) return;
 
-        this.#speaking = true;
-        this.queue.put({
-          type: stt.SpeechEventType.START_OF_SPEECH,
-          requestId: this.#requestId,
-        });
+        this.#startSpeech();
 
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, data);
       } else if (eventType === 'Update') {
-        if (!this.#speaking) return;
+        if (!this.#speaking && !this.#startSpeechFromTranscript(data)) return;
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, data);
       } else if (eventType === 'EagerEndOfTurn') {
-        if (!this.#speaking) return;
+        if (!this.#speaking && !this.#startSpeechFromTranscript(data)) return;
         this.#sendTranscriptEvent(stt.SpeechEventType.PREFLIGHT_TRANSCRIPT, data);
       } else if (eventType === 'TurnResumed') {
+        if (!this.#speaking) this.#startSpeechFromTranscript(data);
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, data);
       } else if (eventType === 'EndOfTurn') {
-        if (!this.#speaking) return;
+        if (!this.#speaking && !this.#startSpeechFromTranscript(data)) return;
 
         this.#speaking = false;
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, data);
@@ -473,6 +473,24 @@ class SpeechStreamv2 extends stt.SpeechStream {
       const desc = (data.description as string) || 'unknown error from deepgram';
       throw new Error(`Deepgram API Error: ${desc}`);
     }
+  }
+
+  #startSpeech() {
+    this.#speaking = true;
+    this.queue.put({
+      type: stt.SpeechEventType.START_OF_SPEECH,
+      requestId: this.#requestId,
+    });
+  }
+
+  #startSpeechFromTranscript(data: Record<string, unknown>) {
+    const transcript = data.transcript;
+    if (typeof transcript !== 'string' || transcript.trim().length === 0) {
+      return false;
+    }
+
+    this.#startSpeech();
+    return true;
   }
 
   #sendTranscriptEvent(eventType: stt.SpeechEventType, data: Record<string, unknown>) {
