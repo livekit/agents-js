@@ -763,7 +763,7 @@ export class HotelDB {
       this.bookRoom({
         roomType: 'queen_2beds',
         smoking: false,
-        guests: 4,
+        guests: 2,
         checkIn: '2026-06-17',
         checkOut: '2026-06-20',
         firstName: 'Marcus',
