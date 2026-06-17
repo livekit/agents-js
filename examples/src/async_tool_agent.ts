@@ -7,19 +7,18 @@ import {
   AgentTask,
   type ChatContext,
   type JobContext,
-  type JobProcess,
+  LLMStream,
   type RunContext,
   ServerOptions,
   ToolFlag,
   cli,
   defineAgent,
+  delay,
   inference,
-  llm,
   log,
-  voice,
+  tool,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
+import type * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -47,30 +46,9 @@ function today(): string {
   }).format(new Date());
 }
 
-// Abortable sleep: rejects as soon as `signal` fires so a cancelled/handed-off
-// tool stops waiting instead of running the timer to completion.
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error('aborted'));
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout>;
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new Error('aborted'));
-    };
-    timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-async function collectText(stream: llm.LLMStream, signal?: AbortSignal): Promise<string> {
+async function collectText(stream: LLMStream, signal?: AbortSignal): Promise<string> {
   let text = '';
-  // `LLM.chat()` has no abort param, so close the stream to interrupt inference.
+
   const onAbort = () => stream.close();
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
@@ -103,14 +81,12 @@ function compactHistory(chatCtx: ChatContext): string {
 }
 
 function createGetEmailTask(extraInstructions: string): AgentTask<{ emailAddress: string }> {
-  let task: AgentTask<{ emailAddress: string }>;
-
-  task = AgentTask.create<{ emailAddress: string }>({
+  const task = AgentTask.create<{ emailAddress: string }>({
     instructions:
       'You collect the user email address for a flight booking. ' +
       `${extraInstructions} As soon as you have the email, call save_email.`,
     tools: [
-      llm.tool({
+      tool({
         name: 'save_email',
         description: 'Save the user email address.',
         parameters: z.object({
@@ -158,7 +134,7 @@ function createTravelAgent() {
         'This will take a couple of minutes.',
     );
 
-    await sleep(30_000, signal);
+    await delay(30_000, { signal });
 
     const airlines = sample(['United', 'Delta', 'American', 'JetBlue', 'Southwest', 'Alaska'], 3);
     const prices = Object.fromEntries(airlines.map((airline) => [airline, randomInt(180, 650)]));
@@ -188,7 +164,7 @@ function createTravelAgent() {
       logger.info({ email: userEmail }, 'Captured user email address');
     }
 
-    await sleep(40_000, signal);
+    await delay(40_000, { signal });
 
     const confirmation = `FL-${randomInt(100000, 999999)}`;
     return (
@@ -348,7 +324,7 @@ function createTravelAgent() {
       `Today is ${today()}. When the user is not asking, do not repeat messages already said. ` +
       'Do not make up flight details or ask for flight preferences. Always use the tools.',
     tools: [
-      llm.tool({
+      tool({
         name: 'book_flight',
         description: 'Called when the user wants to book a flight.',
         flags: ToolFlag.CANCELLABLE,
@@ -360,7 +336,7 @@ function createTravelAgent() {
         }),
         execute: (args, options) => bookFlight(args, options.ctx, options.abortSignal),
       }),
-      llm.tool({
+      tool({
         name: 'tour_guide',
         description:
           'Called when the user asks about places to visit, restaurants, local food, nightlife, or things to do somewhere.',
@@ -382,9 +358,6 @@ function createTravelAgent() {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new AgentSession({
       vad: ctx.proc.userData.vad as silero.VAD,
@@ -398,7 +371,6 @@ export default defineAgent({
         interruption: {
           mode: 'adaptive',
         },
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
       },
     });
 

@@ -65,6 +65,37 @@ export class RunContext<UserData = UnknownUserData> {
     this.speechHandle.allowInterruptions = false;
   }
 
+  /**
+   * Report progress from a long-running tool — and, on the first call, turn the tool
+   * **non-blocking** so the conversation continues while `execute()` keeps running.
+   *
+   * Behavior depends on whether this is the first `update()` for the call:
+   *
+   * - **First call:** resolves the pending tool result with `message` and marks the
+   *   function call non-blocking (`functionCall.extra.__livekit_agents_tool_non_blocking = true`).
+   *   The framework treats `message` as the tool's immediate output to the LLM and returns
+   *   control to the session, so the agent can speak/listen while the tool continues in the
+   *   background. Whatever `execute()` ultimately returns is delivered later as a deferred reply.
+   * - **Subsequent calls:** each `message` is enqueued via the owning executor and delivered as a
+   *   fresh assistant turn, gated on the session being idle (so updates never talk over the user).
+   *   The arrival cadence is therefore conversational, not immediate.
+   *
+   * Message rendering:
+   * - A **string** is rendered through a template — {@link RunContextUpdateOptions.template} if
+   *   provided, otherwise the executor's configured `updateTemplate` — with `{functionName}`,
+   *   `{callId}`, and `{message}` substituted. The default template tells the model the task is
+   *   still running and not to fabricate results.
+   * - A **non-string** value is used as-is (no templating), letting a tool emit structured output.
+   *
+   * Every update is also recorded in {@link RunContext.updates} (with a `_update_N` call-id suffix
+   * for the 2nd and later updates) so the full progress trail is preserved in chat history.
+   *
+   * No-op for delivery when the tool isn't attached to an async-capable executor (e.g. a plain
+   * blocking tool): the update is still recorded but nothing is sent.
+   *
+   * @param message - Progress text (templated) or a structured value (sent verbatim).
+   * @param options - Per-call overrides; see {@link RunContextUpdateOptions}.
+   */
   async update(message: unknown, options: RunContextUpdateOptions = {}): Promise<void> {
     const updateStep = this._updates.length;
     const renderedMessage =
