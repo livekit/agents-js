@@ -505,7 +505,9 @@ export function performLLMInference(
     let firstTokenReceived = false;
 
     try {
+      const structuredTools = toolCtx.tools;
       llmStream = await node(chatCtx, toolCtx, modelSettings);
+      toolCtx._syncFlattened(toolCtx.flatten(), structuredTools);
       if (llmStream === null) {
         await textWriter.close();
         return;
@@ -542,6 +544,7 @@ export function performLLMInference(
           }
 
           if (chunk.delta.toolCalls) {
+            toolCtx._syncFlattened(toolCtx.flatten(), structuredTools);
             for (const tool of chunk.delta.toolCalls) {
               if (tool.type !== 'function_call') continue;
 

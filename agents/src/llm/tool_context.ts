@@ -451,13 +451,23 @@ export class ToolContext<UserData = UnknownUserData> {
   }
 
   updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
+    this._updateTools(tools);
+  }
+
+  private _updateTools(
+    tools: readonly ToolContextEntry<UserData>[],
+    exclude: readonly Tool[] = [],
+  ): void {
     this._tools = [...tools];
     this._functionToolsMap = new Map();
     this._providerTools = [];
     this._toolsets = [];
+    const excludedTools = new Set(exclude);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
     const addTool = (tool: any): void => {
+      if (excludedTools.has(tool)) return;
+
       if (isToolset(tool)) {
         for (const inner of tool.tools) {
           addTool(inner);
@@ -489,6 +499,28 @@ export class ToolContext<UserData = UnknownUserData> {
     for (const tool of tools) {
       addTool(tool);
     }
+  }
+
+  /**
+   * Apply in-place edits of a flattened tool list while preserving Toolset grouping.
+   *
+   * Added tools become top-level entries; removed Toolset members stay owned by their toolset
+   * for lifecycle purposes, but are excluded from this context's callable/provider lookups.
+   *
+   * @internal
+   */
+  _syncFlattened(
+    tools: readonly Tool[],
+    structuredTools: readonly ToolContextEntry<UserData>[] = this._tools,
+  ): void {
+    const current = new ToolContext<UserData>(structuredTools).flatten();
+    const currentTools = new Set(current);
+    const nextTools = new Set(tools);
+    const added = tools.filter((tool) => !currentTools.has(tool));
+    const removed = current.filter((tool) => !nextTools.has(tool));
+
+    const structured = structuredTools.filter((tool) => !removed.some((r) => tool === r));
+    this._updateTools([...structured, ...(added as ToolContextEntry<UserData>[])], removed);
   }
 
   copy(): ToolContext<UserData> {
