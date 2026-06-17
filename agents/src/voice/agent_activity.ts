@@ -27,7 +27,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
-import type { Toolset } from '../llm/index.js';
+import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -41,7 +41,6 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
-  type Tool,
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
@@ -130,6 +129,12 @@ import {
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import {
+  ToolExecutor,
+  cancelTaskTool,
+  getRunningTasksTool,
+  hasCancellableTool,
+} from './tool_executor.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { resolveEndpointing } from './turn_config/utils.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
@@ -244,6 +249,7 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
   private _toolsetsSetup = false;
+  private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
   private isInterruptionByAudioActivityEnabled: boolean;
@@ -308,6 +314,7 @@ export class AgentActivity implements RecognitionHooks {
   _onEnterTask?: Task<void>;
   _onExitTask?: Task<void>;
   _userTurnCompletedTask?: Task<void>;
+  _toolExecutor: ToolExecutor;
 
   constructor(agent: Agent, agentSession: AgentSession) {
     this.agent = agent;
@@ -322,6 +329,10 @@ export class AgentActivity implements RecognitionHooks {
       return p1 === p2 ? t1 - t2 : p2 - p1;
     });
     this.q_updated = new Future();
+    this._toolExecutor = new ToolExecutor({
+      owningActivity: this,
+      asyncToolOptions: this.agent._asyncToolOptions ?? this.agentSession._asyncToolOptions,
+    });
 
     this._resolvedTurnDetection = this._resolveTurnDetection(this.turnDetection);
     this.turnDetectionMode =
@@ -525,9 +536,10 @@ export class AgentActivity implements RecognitionHooks {
 
     // Surface every tool the agent advertises at start — function tools by name and provider
     // tools by id.
+    const initialToolCtx = this.tools;
     const initialTools = [
-      ...Object.keys(this.agent._toolCtx.functionTools),
-      ...this.agent._toolCtx.providerTools.map((t) => t.id),
+      ...Object.keys(initialToolCtx.functionTools),
+      ...initialToolCtx.providerTools.map((t) => t.id),
     ];
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
@@ -693,9 +705,7 @@ export class AgentActivity implements RecognitionHooks {
 
         // tools update is supported or tools are the same
         reusable =
-          reusable &&
-          (capabilities.midSessionToolsUpdate ||
-            this.agent._toolCtx.equals(newActivity.agent._toolCtx));
+          reusable && (capabilities.midSessionToolsUpdate || this.tools.equals(newActivity.tools));
 
         if (reusable) {
           // detach: remove event listeners but don't close the session
@@ -764,7 +774,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tools(): ToolContext {
-    return this.agent.toolCtx;
+    const tools: ToolContextEntry[] = [...this.agentSession.tools, ...this.agent.toolCtx.tools];
+    if (hasCancellableTool(tools)) {
+      tools.push(cancelTaskTool, getRunningTasksTool);
+    }
+    return new ToolContext(tools);
   }
 
   get schedulingPaused(): boolean {
@@ -844,7 +858,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get toolCtx(): ToolContext {
-    return this.agent.toolCtx;
+    return this.tools;
   }
 
   /** @internal */
@@ -925,7 +939,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateTools(newToolCtx);
+      await this.realtimeSession.updateTools(this.tools);
     }
 
     if (this.llm instanceof LLM) {
@@ -1605,7 +1619,7 @@ export class AgentActivity implements RecognitionHooks {
       userMessage,
       info,
       chatCtx: chatCtx.copy(),
-      tools: this.agent._toolCtx.copy(),
+      tools: this.tools,
       toolChoice: this.toolChoice,
       createdAt: Date.now(),
     };
@@ -1816,6 +1830,36 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.chatCtx;
   }
 
+  async waitForIdle(
+    options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
+  ): Promise<void> {
+    const signal = this.closeAbort.signal;
+    while (!signal.aborted) {
+      await this.waitForInactive(options, signal);
+      if (signal.aborted) break;
+      if (!(await this.agentSession._waitForIdleHoldReleased())) {
+        break;
+      }
+    }
+  }
+
+  private async waitForEndOfTurn(signal: AbortSignal): Promise<void> {
+    if (this.audioRecognition) {
+      await this.waitForOrAbort(
+        this.audioRecognition.waitForEndOfTurnTask(),
+        signal,
+        'error waiting for end-of-turn task',
+      );
+    }
+    if (this._userTurnCompletedTask && !this._userTurnCompletedTask.done) {
+      await this.waitForOrAbort(
+        this._userTurnCompletedTask.result,
+        signal,
+        'error waiting for user-turn-completed task',
+      );
+    }
+  }
+
   private async waitForInactive(
     options: { waitForAgent?: boolean; waitForUser?: boolean },
     signal: AbortSignal,
@@ -1831,13 +1875,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       if (waitForAgent) {
-        if (this.audioRecognition) {
-          await this.waitForOrAbort(
-            this.audioRecognition.waitForEndOfTurnTask(),
-            signal,
-            'error waiting for end-of-turn task',
-          );
-        }
+        await this.waitForEndOfTurn(signal);
 
         if (!this._currentSpeech && this.speechQueue.size() === 0) {
           agentActive = false;
@@ -1861,6 +1899,7 @@ export class AgentActivity implements RecognitionHooks {
         if (userActive) {
           await delay(0, { signal });
         }
+        await this.waitForEndOfTurn(signal);
       }
     }
   }
@@ -2069,16 +2108,12 @@ export class AgentActivity implements RecognitionHooks {
 
       const tools: ToolContext = shouldFilterTools
         ? new ToolContext(
-            this.agent.toolCtx.tools.flatMap((t): ToolContextEntry[] => {
-              const keepFn = (fn: Tool): boolean =>
-                !isFunctionTool(fn) || !(fn.flags & ToolFlag.IGNORE_ON_ENTER);
-              if (isToolset(t)) {
-                return t.tools.filter(keepFn) as ToolContextEntry[];
-              }
-              return keepFn(t) ? [t] : [];
+            this.tools.tools.filter((t): boolean => {
+              if (isToolset(t) || !isFunctionTool(t)) return true;
+              return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
             }),
           )
-        : this.agent.toolCtx;
+        : this.tools;
 
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
@@ -2323,7 +2358,7 @@ export class AgentActivity implements RecognitionHooks {
       if (
         preemptive.info.newTranscript === userMessage?.textContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
-        preemptive.tools.equals(this.agent._toolCtx) &&
+        preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
@@ -3093,12 +3128,12 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent output should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
+    const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
+    if (maxStepsReached) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
-        'maximum number of function calls steps reached',
+        "maximum number of function calls steps reached, generating final response with toolChoice = 'none'",
       );
-      return;
     }
 
     const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
@@ -3126,9 +3161,11 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle._numSteps += 1;
 
       // Avoid setting tool_choice to "required" or a specific function when
-      // passing tool response back to the LLM
+      // passing tool response back to the LLM.
       const respondToolChoice =
-        schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
+        maxStepsReached || schedulingPaused || modelSettings.toolChoice === 'none'
+          ? 'none'
+          : 'auto';
 
       // Reuse the same speechHandle for the tool response.
       const toolResponseTask = this.createSpeechTask({
@@ -3635,7 +3672,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // important: no agent ouput should be used after this point
     const { maxToolSteps } = this.agentSession.sessionOptions;
-    if (speechHandle.numSteps >= maxToolSteps) {
+    if (speechHandle.numSteps >= maxToolSteps + 1) {
       this.logger.warn(
         { speech_id: speechHandle.id, max_tool_steps: maxToolSteps },
         'maximum number of function calls steps reached',
@@ -3938,9 +3975,10 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      // When pausing/draining, we ensure that all speech_tasks complete fully.
-      // This means that even if the SpeechHandle themselves have finished,
-      // we still wait for the entire execution (e.g function_tools)
+      // Wait for all speech tasks to complete fully (including function tools).
+      // Tool-level wedges are bounded inside `ToolExecutor.drain()` (it races the
+      // abort signal and warns on non-abortable tools), so this wait stays
+      // responsive without a blanket timer here.
       await this._mainTask.result;
     }
   }
@@ -4041,11 +4079,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async close(): Promise<void> {
+    this.closeAbort.abort();
+
     const unlock = await this.lock.lock();
     try {
       this.cancelPreemptiveGeneration();
 
       await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await this._toolExecutor.drain();
 
       if (this._currentSpeech && !this._currentSpeech.done()) {
         this._currentSpeech._markDone();
@@ -4055,6 +4096,7 @@ export class AgentActivity implements RecognitionHooks {
       this.cancelSpeechPauseTask = undefined;
 
       await this._closeSessionResources();
+      await this._toolExecutor.aclose();
 
       if (this._mainTask) {
         await this._mainTask.cancelAndWait();
@@ -4378,7 +4420,33 @@ export class AgentActivity implements RecognitionHooks {
     // already initialized.
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
-    await this.setupToolsetList(this.agent.toolCtx.toolsets);
+
+    const sessionToolsets = new ToolContext(this.agentSession.tools).toolsets;
+    const agentToolsets = this.agent.toolCtx.toolsets;
+
+    for (const toolset of sessionToolsets) {
+      if (toolset instanceof AsyncToolset) {
+        toolset._attachActivity({ activity: null, session: this.agentSession });
+      }
+    }
+
+    for (const toolset of agentToolsets) {
+      if (toolset instanceof AsyncToolset) {
+        toolset._attachActivity({ activity: this, session: this.agentSession });
+      }
+    }
+
+    // Agent toolsets are set up (and torn down) per activity. Session toolsets are set up ONCE for
+    // the session's lifetime — re-running setup() on every handoff would acquire resources (DB
+    // pools, MCP clients, listeners) without a matching aclose(), which only runs once at session
+    // close. closeToolsets() likewise only closes the agent's toolsets.
+    const toSetup = [...agentToolsets];
+    if (!this.agentSession._sessionToolsetsSetup) {
+      this.agentSession._sessionToolsetsSetup = true;
+      toSetup.push(...sessionToolsets);
+    }
+
+    await this.setupToolsetList(toSetup);
     // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
     this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
@@ -4407,11 +4475,17 @@ export class AgentActivity implements RecognitionHooks {
       toolsets.map((ts) =>
         ts.setup({
           // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+          // Route through the session's current activity: a session toolset is set up once (on the
+          // first activity) but its pushes must re-advertise against whatever agent is active now,
+          // not the original (possibly closed) activity.
           updateTools: (tools) => {
             ts._setTools(tools);
-            void this.onToolsetToolsChanged().catch((error) =>
-              this.logger.error({ error }, 'error re-advertising toolset tools'),
-            );
+            const activity = this.agentSession._activity ?? this;
+            void activity
+              .onToolsetToolsChanged()
+              .catch((error) =>
+                activity.logger.error({ error }, 'error re-advertising toolset tools'),
+              );
           },
         }),
       ),

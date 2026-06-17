@@ -18,7 +18,7 @@ import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentConfigUpdate, ChatContext } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
-import { type Tool, ToolContext, Toolset, tool } from '../llm/tool_context.js';
+import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { Future, Task } from '../utils.js';
 import { _getActivityTaskInfo } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
@@ -648,5 +648,152 @@ describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
     expect(fakeActivity.updateChatCtx).toHaveBeenCalledTimes(1);
 
     changedSpy.mockRestore();
+  });
+});
+
+/**
+ * Regression test for PR #1736 review (#3378550188): session-level toolsets must have `setup()`
+ * run ONCE for the session's lifetime (their `aclose()` runs once at session close), while
+ * agent-level toolsets are set up per activity. Re-running a session toolset's `setup()` on every
+ * handoff would acquire resources without a matching `aclose()` (resource/listener leak).
+ */
+describe('AgentActivity - session toolset setup lifecycle (#3378550188)', () => {
+  function buildSetupActivity(
+    agentSession: { tools: Toolset[]; _sessionToolsetsSetup: boolean },
+    agentToolset: Toolset,
+  ) {
+    const fakeActivity = {
+      _toolsetsSetup: false,
+      agentSession,
+      agent: {
+        toolCtx: new ToolContext([agentToolset]),
+        _toolCtx: { tools: [] as Tool[], updateTools: vi.fn() },
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+    return fakeActivity;
+  }
+
+  it('sets up session toolsets once across a handoff; agent toolsets per activity', async () => {
+    const sessionSetup = vi.fn(async () => {});
+    const sessionToolset = Toolset.create({ id: 'session', tools: [], setup: sessionSetup });
+
+    const agentSetupA = vi.fn(async () => {});
+    const agentToolsetA = Toolset.create({ id: 'agent_a', tools: [], setup: agentSetupA });
+    const agentSetupB = vi.fn(async () => {});
+    const agentToolsetB = Toolset.create({ id: 'agent_b', tools: [], setup: agentSetupB });
+
+    const agentSession = { tools: [sessionToolset], _sessionToolsetsSetup: false };
+
+    const setupToolsets = (AgentActivity.prototype as Record<string, unknown>).setupToolsets as (
+      this: unknown,
+    ) => Promise<void>;
+
+    // Activity #1 (agent A) sets up its own toolset + the session toolset.
+    await setupToolsets.call(buildSetupActivity(agentSession, agentToolsetA));
+    // Activity #2 (handoff to agent B): a fresh activity with its own _toolsetsSetup=false.
+    await setupToolsets.call(buildSetupActivity(agentSession, agentToolsetB));
+
+    expect(sessionSetup).toHaveBeenCalledTimes(1);
+    expect(agentSetupA).toHaveBeenCalledTimes(1);
+    expect(agentSetupB).toHaveBeenCalledTimes(1);
+    expect(agentSession._sessionToolsetsSetup).toBe(true);
+  });
+});
+
+describe('AgentActivity - preemptive generation tool snapshot (#3407098507)', () => {
+  it('snapshots the merged tool set so reuse is not invalidated when a cancellable tool is present', () => {
+    const cancellable = tool({
+      name: 'bookFlight',
+      description: 'book a flight',
+      execute: async () => 'ok',
+      flags: ToolFlag.CANCELLABLE,
+    });
+    const agentToolCtx = new ToolContext([cancellable]);
+
+    const generateReply = vi.fn(
+      () => ({ id: 'speech_fake', _cancel: () => {} }) as unknown as SpeechHandle,
+    );
+
+    const fakeActivity = {
+      _preemptiveGenerationCount: 0,
+      _preemptiveGeneration: undefined as unknown,
+      _currentSpeech: undefined as SpeechHandle | undefined,
+      schedulingPaused: false,
+      newTurnsBlocked: false,
+      llm: new FakePreemptiveLLM(),
+      toolChoice: null,
+      // `get tools()` (real prototype getter) reads agentSession.tools + agent.toolCtx and
+      // injects the management tools when a cancellable tool exists. We intentionally do NOT set
+      // an own `tools` property so the real getter runs.
+      agent: { chatCtx: new ChatContext(), toolCtx: agentToolCtx, _toolCtx: agentToolCtx },
+      agentSession: {
+        tools: [] as never[],
+        sessionOptions: {
+          turnHandling: {
+            preemptiveGeneration: {
+              enabled: true,
+              preemptiveTts: false,
+              maxSpeechDuration: 10_000,
+              maxRetries: 3,
+            },
+          },
+        },
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+      generateReply,
+      cancelPreemptiveGeneration: vi.fn(),
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const onPreemptiveGeneration = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .onPreemptiveGeneration as (this: unknown, info: PreemptiveGenerationInfo) => void;
+
+    onPreemptiveGeneration.call(fakeActivity, {
+      newTranscript: 'hello world',
+      transcriptConfidence: 0.95,
+      startedSpeakingAt: undefined,
+    });
+
+    const snapshot = fakeActivity._preemptiveGeneration as { tools: ToolContext } | undefined;
+    expect(snapshot).toBeDefined();
+
+    const liveTools = (fakeActivity as unknown as { tools: ToolContext }).tools;
+    // Sanity: the live merged set is larger than agent-only (it injected the management tools),
+    // which is exactly the condition under which the old agent-only snapshot diverged.
+    expect(liveTools.tools.length).toBeGreaterThan(agentToolCtx.tools.length);
+
+    // The reuse check (onUserTurnCompleted) does `preemptive.tools.equals(this.tools)`.
+    expect(snapshot!.tools.equals(liveTools)).toBe(true);
+  });
+});
+
+describe('AgentActivity - waitForIdle close abort', () => {
+  it('returns promptly when the activity closes while waiting', async () => {
+    const closeAbort = new AbortController();
+    const fakeActivity = {
+      closeAbort,
+      // Simulates a wait that only completes when its signal aborts (the spin condition).
+      waitForInactive: (_options: unknown, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }),
+      agentSession: { _waitForIdleHoldReleased: async () => false },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const waitForIdle = (
+      AgentActivity.prototype as unknown as { waitForIdle: (this: unknown) => Promise<void> }
+    ).waitForIdle.bind(fakeActivity);
+
+    const pending = waitForIdle();
+    // Not idle yet — the wait is still pending.
+    expect(await raceTimeout(pending, 50)).toBe('timeout');
+
+    // close() aborts the shared signal; the wait must unblock.
+    closeAbort.abort();
+    expect(await raceTimeout(pending, 1000)).toBe('resolved');
   });
 });

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  CONFIRM_DUPLICATE_PARAM,
   handoff,
   isFunctionTool,
   isProviderTool,
@@ -17,6 +18,7 @@ export {
   Toolset,
   toToolContext,
   type AgentHandoff,
+  type DuplicateMode,
   type FunctionTool,
   type Tool,
   type ToolCalledEvent,
@@ -29,6 +31,14 @@ export {
   type ToolsetCreateOptions,
   type ToolType,
 } from './tool_context.js';
+
+export { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
+export type {
+  AsyncToolOptions,
+  DuplicatePromptArgs,
+  ReplyPromptArgs,
+  ToolHandlingOptions,
+} from '../voice/tool_executor.js';
 
 export {
   AgentHandoffItem,

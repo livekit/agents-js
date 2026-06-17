@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  type JSONObject,
   type ToolChoice,
   type ToolContext,
   ToolError,
@@ -58,6 +59,7 @@ import {
 } from './io.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -959,7 +961,6 @@ export function performToolExecutions({
     output: [],
     firstToolStartedFuture: new Future(),
   };
-
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
@@ -968,6 +969,19 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+
+    // Production always has an activity (and thus a shared executor). Fall back to a standalone
+    // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
+    // which would leave callers awaiting `firstToolStartedFuture` hanging forever.
+    const activity = session._activity;
+    const defaultExecutor = activity?._toolExecutor ?? new ToolExecutor({ owningActivity: null });
+
+    // Route AsyncToolset members to their own executor so session-scoped async
+    // tools survive handoff; everything else falls back to the activity executor.
+    const executorByName = buildExecutorMap({
+      toolsets: toolCtx.toolsets,
+      defaultExecutor,
+    });
 
     const tasks: Task<void>[] = [];
     while (!signal.aborted) {
@@ -1055,10 +1069,6 @@ export function performToolExecutions({
         continue;
       }
 
-      if (!toolOutput.firstToolStartedFuture.done) {
-        toolOutput.firstToolStartedFuture.resolve();
-      }
-
       onToolExecutionStarted(toolCall);
 
       logger.info(
@@ -1141,10 +1151,18 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
-                ctx: new RunContext(session, speechHandle, toolCall),
-                toolCallId: toolCall.callId,
+              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const executor = executorByName.get(toolCall.name) ?? defaultExecutor;
+              return await executor.execute({
+                tool,
+                runCtx,
+                rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
+                onUserToolStarted: () => {
+                  if (!toolOutput.firstToolStartedFuture.done) {
+                    toolOutput.firstToolStartedFuture.resolve();
+                  }
+                },
               });
             },
           );
