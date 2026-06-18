@@ -74,6 +74,8 @@ export interface STTOptions {
   enableLanguageIdentification: boolean;
   /** Maximum delay in milliseconds between speech cessation and endpoint detection. */
   maxEndpointDelayMs: number;
+  /** How readily the model emits speech endpoints. Range: -1.0 to 1.0. */
+  endpointSensitivity?: number;
   clientReferenceId?: string;
   translation?: TranslationConfig;
 }
@@ -81,13 +83,13 @@ export interface STTOptions {
 const defaultSTTOptions: STTOptions = {
   apiKey: process.env.SONIOX_API_KEY,
   baseUrl: BASE_URL,
-  model: 'stt-rt-v4',
+  model: 'stt-rt-v5',
   languageHintsStrict: false,
   numChannels: 1,
   sampleRate: 16000,
   enableSpeakerDiarization: false,
   enableLanguageIdentification: true,
-  maxEndpointDelayMs: 500,
+  maxEndpointDelayMs: 2000,
 };
 
 /** @public */
@@ -102,6 +104,11 @@ export class STT extends stt.STT {
     }
     if (merged.maxEndpointDelayMs < 500 || merged.maxEndpointDelayMs > 3000) {
       throw new Error('maxEndpointDelayMs must be between 500 and 3000');
+    }
+    if (merged.endpointSensitivity !== undefined) {
+      if (merged.endpointSensitivity < -1.0 || merged.endpointSensitivity > 1.0) {
+        throw new Error('endpointSensitivity must be between -1.0 and 1.0');
+      }
     }
 
     super({
@@ -207,6 +214,7 @@ export class SpeechStream extends stt.SpeechStream {
       enable_language_identification: this.#opts.enableLanguageIdentification,
       client_reference_id: this.#opts.clientReferenceId,
       max_endpoint_delay_ms: this.#opts.maxEndpointDelayMs,
+      endpoint_sensitivity: this.#opts.endpointSensitivity,
     };
 
     if (this.#opts.translation) {
