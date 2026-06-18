@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall } from '../../llm/chat_context.js';
@@ -8,7 +9,7 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { mockToolsStorage, withMockTools } from './run_result.js';
+import { activeMockTools, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -23,53 +24,53 @@ class AgentB extends Agent {
 }
 
 describe('withMockTools', () => {
-  it('sets the mock registry for the given agent inside the callback', async () => {
+  it('sets the mock registry for the given agent inside the block', () => {
     const mock = () => 'mocked';
 
-    await withMockTools(AgentA, { tool1: mock })(async () => {
-      const store = mockToolsStorage.getStore();
-      expect(store).toBeDefined();
-      expect(store?.get(AgentA)?.tool1).toBe(mock);
-    });
+    {
+      using _mock = withMockTools(AgentA, { tool1: mock });
+      expect(activeMockTools).toBeDefined();
+      expect(activeMockTools?.get(AgentA)?.tool1).toBe(mock);
+    }
 
-    expect(mockToolsStorage.getStore()).toBeUndefined();
+    expect(activeMockTools).toBeUndefined();
   });
 
-  it('merges mocks across nested calls and isolates per agent', async () => {
+  it('merges mocks across nested blocks and isolates per agent', () => {
     const mockA = () => 'a';
     const mockB = () => 'b';
 
-    await withMockTools(AgentA, { toolA: mockA })(async () => {
-      await withMockTools(AgentB, { toolB: mockB })(async () => {
-        const store = mockToolsStorage.getStore();
-        expect(store?.get(AgentA)?.toolA).toBe(mockA);
-        expect(store?.get(AgentB)?.toolB).toBe(mockB);
-      });
+    {
+      using _mockA = withMockTools(AgentA, { toolA: mockA });
+      {
+        using _mockB = withMockTools(AgentB, { toolB: mockB });
+        expect(activeMockTools?.get(AgentA)?.toolA).toBe(mockA);
+        expect(activeMockTools?.get(AgentB)?.toolB).toBe(mockB);
+      }
 
-      const store = mockToolsStorage.getStore();
-      expect(store?.get(AgentA)?.toolA).toBe(mockA);
-      expect(store?.get(AgentB)).toBeUndefined();
-    });
+      expect(activeMockTools?.get(AgentA)?.toolA).toBe(mockA);
+      expect(activeMockTools?.get(AgentB)).toBeUndefined();
+    }
   });
 
-  it('inner call for same agent overrides outer mocks', async () => {
+  it('inner block for same agent overrides outer mocks', () => {
     const outer = () => 'outer';
     const inner = () => 'inner';
 
-    await withMockTools(AgentA, { tool1: outer })(async () => {
-      await withMockTools(AgentA, { tool1: inner })(async () => {
-        expect(mockToolsStorage.getStore()?.get(AgentA)?.tool1).toBe(inner);
-      });
-      expect(mockToolsStorage.getStore()?.get(AgentA)?.tool1).toBe(outer);
-    });
+    {
+      using _outer = withMockTools(AgentA, { tool1: outer });
+      {
+        using _inner = withMockTools(AgentA, { tool1: inner });
+        expect(activeMockTools?.get(AgentA)?.tool1).toBe(inner);
+      }
+      expect(activeMockTools?.get(AgentA)?.tool1).toBe(outer);
+    }
   });
 
-  it('returns the callback value (including async results)', async () => {
-    const result = await withMockTools(AgentA, { tool1: async () => 42 })(async () => {
-      const mock = mockToolsStorage.getStore()?.get(AgentA)?.tool1;
-      return await mock?.();
-    });
-    expect(result).toBe(42);
+  it('exposes the mock for invocation within the block', async () => {
+    using _mock = withMockTools(AgentA, { tool1: async () => 42 });
+    const mock = activeMockTools?.get(AgentA)?.tool1;
+    expect(await mock?.()).toBe(42);
   });
 
   it('routes performToolExecutions to the mock when set, original otherwise', async () => {
@@ -100,7 +101,8 @@ describe('withMockTools', () => {
       });
 
     // 1) With a mock registered: the mock runs, the real tool does not.
-    await withMockTools(AgentA, { greet: () => 'mocked' })(async () => {
+    {
+      using _mock = withMockTools(AgentA, { greet: () => 'mocked' });
       const controller = new AbortController();
       const call = FunctionCall.create({
         callId: 'call_1',
@@ -117,7 +119,7 @@ describe('withMockTools', () => {
       await task.result;
       expect(realCalled).toBe(false);
       expect(output.output[0]?.rawOutput).toBe('mocked');
-    });
+    }
 
     // 2) Without a mock: the real tool runs.
     const controller = new AbortController();
@@ -149,33 +151,32 @@ describe('withMockTools', () => {
     const speechHandle = SpeechHandle.create({ allowInterruptions: false });
     const session = { currentAgent: new AgentA() } as never;
 
-    await withMockTools(AgentA, {
+    using _mock = withMockTools(AgentA, {
       failing: () => {
         throw new Error('test failure');
       },
-    })(async () => {
-      const controller = new AbortController();
-      const call = FunctionCall.create({
-        callId: 'call_err',
-        name: 'failing',
-        args: '{}',
-      });
-      const stream = new ReadableStream<FunctionCall>({
-        start(c) {
-          c.enqueue(call);
-          c.close();
-        },
-      });
-      const [task, output] = performToolExecutions({
-        session,
-        speechHandle,
-        toolCtx,
-        toolCallStream: stream,
-        controller,
-      });
-      await task.result;
-      expect(output.output[0]?.rawException?.message).toBe('test failure');
-      expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
     });
+    const controller = new AbortController();
+    const call = FunctionCall.create({
+      callId: 'call_err',
+      name: 'failing',
+      args: '{}',
+    });
+    const stream = new ReadableStream<FunctionCall>({
+      start(c) {
+        c.enqueue(call);
+        c.close();
+      },
+    });
+    const [task, output] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: stream,
+      controller,
+    });
+    await task.result;
+    expect(output.output[0]?.rawException?.message).toBe('test failure');
+    expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
   });
 });
