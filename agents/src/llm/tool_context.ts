@@ -649,11 +649,7 @@ export function tool<
 /**
  * Create an anonymous function tool with inferred parameters from the schema.
  */
-export function tool<
-  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
-  UserData = UnknownUserData,
-  Result = unknown,
->({
+export function tool<Schema extends ToolInputSchema, UserData = UnknownUserData, Result = unknown>({
   description,
   parameters,
   execute,
@@ -724,7 +720,7 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
 /**
  * Create an anonymous function tool without parameters.
  */
-export function tool<UserData = UnknownUserData, Result = unknown>({
+export function tool<UserData = UnknownUserData, Result>({
   description,
   execute,
   flags,
