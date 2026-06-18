@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
@@ -963,14 +962,13 @@ export type MockToolFn = (...args: any[]) => any;
 export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
 /** @internal */
-export const mockToolsStorage = new AsyncLocalStorage<MockToolsMap>();
+export let activeMockTools: MockToolsMap | undefined;
 
 /** @internal */
 export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
-  const store = mockToolsStorage.getStore();
-  if (!store) return undefined;
+  if (!activeMockTools) return undefined;
 
-  for (const [agentConstructor, mocks] of store) {
+  for (const [agentConstructor, mocks] of activeMockTools) {
     if (agent.constructor === agentConstructor) {
       return mocks[toolName];
     }
@@ -980,39 +978,43 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
 
 /**
  * Temporarily assign a set of mock tool callables to a specific Agent type. Returns
- * a runner that takes an async callback. While the callback is running, tool calls
- * for the matching agent type and tool name are routed to the supplied mock instead
- * of the real `execute` implementation.
+ * a {@link Disposable} for use with a `using` declaration. While the binding is in
+ * scope, tool calls for the matching agent type and tool name are routed to the
+ * supplied mock instead of the real `execute` implementation, and are restored when
+ * the enclosing block exits.
  *
- * Mirrors the Python `mock_tools` context manager, adapted to JS via a curried
- * callback form (Python uses `with`, JS uses an async callback).
+ * Mirrors the Python `mock_tools` context manager, adapted to JS via the explicit
+ * resource management `using` syntax (Python uses `with`).
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
  *
  * @example
  * ```typescript
- * await withMockTools(
- *   DriveThruAgent,
- *   {
+ * {
+ *   using _mock = withMockTools(DriveThruAgent, {
  *     orderRegularItem: () => new Error('test failure'),
  *     getWeather: () => 'sunny',
- *   },
- * )(async () => {
+ *   });
+ *
  *   const result = await session.run({ userInput: 'Order a burger' });
  *   result.expect.containsFunctionCall({ name: 'orderRegularItem' });
- * });
+ * }
  * ```
  */
 export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
-): <T>(callback: () => Promise<T>) => Promise<T> {
-  return <T>(callback: () => Promise<T>): Promise<T> => {
-    const current = mockToolsStorage.getStore();
-    const updated: MockToolsMap = new Map(current ?? []);
-    updated.set(agent, mocks);
-    return mockToolsStorage.run(updated, callback);
+): Disposable {
+  const previous = activeMockTools;
+  const updated: MockToolsMap = new Map(previous ?? []);
+  updated.set(agent, mocks);
+  activeMockTools = updated;
+
+  return {
+    [Symbol.dispose]() {
+      activeMockTools = previous;
+    },
   };
 }
 
