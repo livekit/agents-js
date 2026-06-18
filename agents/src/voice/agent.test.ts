@@ -10,6 +10,7 @@ import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
+import { createUserTurnExceededEvent } from './events.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
@@ -144,6 +145,52 @@ describe('Agent', () => {
       await agent.onUserTurnCompleted(chatCtx, newMessage);
 
       expect(calls).toEqual(['enter', 'exit', 'turn']);
+    });
+
+    it('routes onUserTurnExceeded to the provided hook', async () => {
+      const received: Array<{ transcript: string; accumulatedWordCount: number }> = [];
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        onUserTurnExceeded: (ctx, ev) => {
+          expect(ctx.agent).toBe(agent);
+          received.push({
+            transcript: ev.transcript,
+            accumulatedWordCount: ev.accumulatedWordCount,
+          });
+        },
+      });
+
+      const ev = createUserTurnExceededEvent({
+        transcript: 'one two three four five',
+        accumulatedTranscript: 'one two three four five',
+        accumulatedWordCount: 5,
+        duration: 1000,
+      });
+
+      await agent.onUserTurnExceeded(ev);
+
+      expect(received).toEqual([
+        { transcript: 'one two three four five', accumulatedWordCount: 5 },
+      ]);
+    });
+
+    it('falls back to the base onUserTurnExceeded when no hook is provided', async () => {
+      const agent = Agent.create({ instructions: 'factory instructions' });
+      const fallback = vi.spyOn(Agent.prototype, 'onUserTurnExceeded').mockResolvedValue(undefined);
+
+      const ev = createUserTurnExceededEvent({
+        transcript: 'hello world',
+        accumulatedTranscript: 'hello world',
+        accumulatedWordCount: 2,
+        duration: 500,
+      });
+
+      try {
+        await agent.onUserTurnExceeded(ev);
+        expect(fallback).toHaveBeenCalledWith(ev);
+      } finally {
+        fallback.mockRestore();
+      }
     });
 
     it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {
@@ -446,6 +493,28 @@ describe('Agent', () => {
       });
 
       await expect(wrapper.result).resolves.toBe('ok');
+    });
+
+    it('routes onUserTurnExceeded to the provided hook', async () => {
+      const received: string[] = [];
+      const task = AgentTask.create<string>({
+        instructions: 'factory task',
+        onUserTurnExceeded: (ctx, ev) => {
+          expect(ctx.agent).toBe(task);
+          received.push(ev.transcript);
+        },
+      });
+
+      const ev = createUserTurnExceededEvent({
+        transcript: 'too many words here',
+        accumulatedTranscript: 'too many words here',
+        accumulatedWordCount: 4,
+        duration: 800,
+      });
+
+      await task.onUserTurnExceeded(ev);
+
+      expect(received).toEqual(['too many words here']);
     });
 
     it('adapts stream node hooks between ReadableStream and AsyncIterable', async () => {

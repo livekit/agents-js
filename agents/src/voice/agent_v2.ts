@@ -19,6 +19,7 @@ import { readStream, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent, AgentOptions, AgentTask, AgentTaskOptions, ModelSettings } from './agent.js';
 import type { AgentSession } from './agent_session.js';
+import type { UserTurnExceededEvent } from './events.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 
 /** Context passed to hooks created with `Agent.create()`. */
@@ -68,6 +69,8 @@ export interface AgentHooks<
     chatCtx: ChatContext,
     newMessage: ChatMessage,
   ) => Promise<void> | void;
+  /** Called when the user turn has exceeded the configured user turn limit. */
+  onUserTurnExceeded?: (ctx: ContextT, ev: UserTurnExceededEvent) => Promise<void> | void;
   /** Transforms incoming audio into speech events or transcript text for the agent. */
   sttNode?: (
     ctx: ContextT,
@@ -130,6 +133,7 @@ export function createAgentV2<UserData>(
       onEnter,
       onExit,
       onUserTurnCompleted,
+      onUserTurnExceeded,
       sttNode,
       llmNode,
       ttsNode,
@@ -146,6 +150,7 @@ export function createAgentV2<UserData>(
           onEnter,
           onExit,
           onUserTurnCompleted,
+          onUserTurnExceeded,
           sttNode,
           llmNode,
           ttsNode,
@@ -170,6 +175,10 @@ export function createAgentV2<UserData>(
       return this.hookAdapter.onUserTurnCompleted(chatCtx, newMessage, () =>
         super.onUserTurnCompleted(chatCtx, newMessage),
       );
+    }
+
+    override async onUserTurnExceeded(ev: UserTurnExceededEvent): Promise<void> {
+      return this.hookAdapter.onUserTurnExceeded(ev, () => super.onUserTurnExceeded(ev));
     }
 
     override async sttNode(
@@ -224,6 +233,7 @@ export function createAgentTaskV2<ResultT, UserData>(
       onEnter,
       onExit,
       onUserTurnCompleted,
+      onUserTurnExceeded,
       sttNode,
       llmNode,
       ttsNode,
@@ -240,6 +250,7 @@ export function createAgentTaskV2<ResultT, UserData>(
           onEnter,
           onExit,
           onUserTurnCompleted,
+          onUserTurnExceeded,
           sttNode,
           llmNode,
           ttsNode,
@@ -264,6 +275,10 @@ export function createAgentTaskV2<ResultT, UserData>(
       return this.hookAdapter.onUserTurnCompleted(chatCtx, newMessage, () =>
         super.onUserTurnCompleted(chatCtx, newMessage),
       );
+    }
+
+    override async onUserTurnExceeded(ev: UserTurnExceededEvent): Promise<void> {
+      return this.hookAdapter.onUserTurnExceeded(ev, () => super.onUserTurnExceeded(ev));
     }
 
     override async sttNode(
@@ -339,6 +354,17 @@ class AgentHookAdapter<UserData, ContextT extends AgentContext<UserData>> {
     }
 
     return this.hooks.onUserTurnCompleted(this.context, chatCtx, newMessage);
+  }
+
+  async onUserTurnExceeded(
+    ev: UserTurnExceededEvent,
+    fallback: () => Promise<void>,
+  ): Promise<void> {
+    if (!this.hooks.onUserTurnExceeded) {
+      return fallback();
+    }
+
+    return this.hooks.onUserTurnExceeded(this.context, ev);
   }
 
   async sttNode(

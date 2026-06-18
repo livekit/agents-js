@@ -362,9 +362,19 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     expect(activity.createSpeechTask).toHaveBeenCalledTimes(1);
   });
 
-  // The bot's port wrongly gated the user-turn-exceeded callback on newTurnsBlocked;
-  // Python never does. onUserTurnExceeded must stay independent of the handoff flag.
-  it('onUserTurnExceeded is independent of newTurnsBlocked', () => {
+  const exceededEvent: UserTurnExceededEvent = {
+    type: 'user_turn_exceeded',
+    transcript: 'hi',
+    accumulatedTranscript: 'hi',
+    accumulatedWordCount: 10,
+    duration: 5000,
+    createdAt: Date.now(),
+  };
+
+  // Mirrors Python's test_skipped_when_new_turns_blocked: while new turns are blocked
+  // (handoff transition window), onUserTurnExceeded must not schedule a callback on the
+  // outgoing activity — otherwise the old agent responds and delays the handoff.
+  it('onUserTurnExceeded skips scheduling while new turns are blocked', () => {
     const activity = createBareActivity();
     activity._schedulingPaused = false;
     activity.newTurnsBlocked = false;
@@ -373,17 +383,74 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
 
     (activity as AgentActivity).blockNewTurns();
 
-    const ev: UserTurnExceededEvent = {
-      type: 'user_turn_exceeded',
-      transcript: 'hi',
-      accumulatedTranscript: 'hi',
-      accumulatedWordCount: 10,
-      duration: 5000,
-      createdAt: Date.now(),
-    };
-    (activity as AgentActivity).onUserTurnExceeded(ev);
+    (activity as AgentActivity).onUserTurnExceeded(exceededEvent);
 
-    expect(activity.createSpeechTask).toHaveBeenCalledTimes(1);
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+    expect(activity.userTurnExceededTask).toBeUndefined();
+    expect(activity.logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  // The start guard also covers schedulingPaused (drain already started).
+  it('onUserTurnExceeded skips scheduling while scheduling is paused', () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = true;
+    activity.newTurnsBlocked = false;
+    activity.userTurnExceededLocked = false;
+    activity.userTurnExceededTask = undefined;
+
+    (activity as AgentActivity).onUserTurnExceeded(exceededEvent);
+
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+    expect(activity.userTurnExceededTask).toBeUndefined();
+  });
+
+  // Mirrors Python's test_inflight_task_aborts_when_handoff_starts: if the task is in its
+  // wait phase when a handoff flips newTurnsBlocked, it must self-abort at the post-wait
+  // re-check before invoking the user callback.
+  it('runUserTurnExceededTask aborts before the callback when a handoff starts mid-wait', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity.userTurnExceededLocked = false;
+    const onUserTurnExceeded = vi.fn(async () => {});
+    activity.agent = { onUserTurnExceeded };
+    activity.agentSession = {
+      agentState: 'listening',
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    // wait phase resolves immediately; flip the handoff flag so the post-wait re-check trips.
+    activity.waitForInactive = vi.fn(async () => {
+      activity.newTurnsBlocked = true;
+    });
+
+    const controller = new AbortController();
+    await (activity as any).runUserTurnExceededTask(exceededEvent, controller.signal);
+
+    expect(onUserTurnExceeded).not.toHaveBeenCalled();
+  });
+
+  // Positive control: when nothing is blocked, the user callback is invoked.
+  it('runUserTurnExceededTask invokes the callback when not blocked', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity.userTurnExceededLocked = false;
+    activity.userTurnExceededTask = undefined;
+    const onUserTurnExceeded = vi.fn(async () => {});
+    activity.agent = { onUserTurnExceeded };
+    activity.agentSession = {
+      agentState: 'listening',
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    activity.waitForInactive = vi.fn(async () => {});
+
+    const controller = new AbortController();
+    await (activity as any).runUserTurnExceededTask(exceededEvent, controller.signal);
+
+    expect(onUserTurnExceeded).toHaveBeenCalledTimes(1);
+    expect(onUserTurnExceeded).toHaveBeenCalledWith(exceededEvent);
   });
 
   // When new turns are blocked before the turn completes, the reply must be skipped
