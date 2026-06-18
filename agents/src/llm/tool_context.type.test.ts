@@ -4,6 +4,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 import {
+  type AnonFunctionTool,
   type FunctionTool,
   ProviderTool,
   type Tool,
@@ -36,6 +37,78 @@ describe('tool type inference', () => {
         return `${args.number}` as const;
       },
     });
+  });
+
+  it('should infer empty args for an anonymous tool when parameters are omitted', () => {
+    const toolType = tool({
+      description: 'test',
+      execute: async (args) => {
+        expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
+        return 'done' as const;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      AnonFunctionTool<Record<string, never>, unknown, 'done'>
+    >();
+    expectTypeOf(toolType).toMatchTypeOf<{ readonly id?: never; readonly name?: never }>();
+  });
+
+  it('should infer empty args for an anonymous tool when parameters are explicitly undefined', () => {
+    const toolType = tool({
+      description: 'test',
+      parameters: undefined,
+      execute: async (args) => {
+        expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
+        return 'done' as const;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      AnonFunctionTool<Record<string, never>, unknown, 'done'>
+    >();
+  });
+
+  it('should infer args from an explicit empty object schema on anonymous tools', () => {
+    const parameters = z.object({});
+    const toolType = tool({
+      description: 'test',
+      parameters,
+      execute: async (args) => {
+        expectTypeOf(args).toMatchTypeOf<Record<string, never>>();
+        expectTypeOf(args).toEqualTypeOf<z.infer<typeof parameters>>();
+        return 'done' as const;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      AnonFunctionTool<z.infer<typeof parameters>, unknown, 'done'>
+    >();
+  });
+
+  it('should infer args from populated object schemas on anonymous tools', () => {
+    const parameters = z.object({
+      location: z.string(),
+      units: z.enum(['celsius', 'fahrenheit']).optional(),
+    });
+    const toolType = tool({
+      description: 'test',
+      parameters,
+      execute: async (args) => {
+        expectTypeOf(args).toEqualTypeOf<z.infer<typeof parameters>>();
+        expectTypeOf(args.location).toEqualTypeOf<string>();
+        expectTypeOf(args.units).toEqualTypeOf<'celsius' | 'fahrenheit' | undefined>();
+        return { location: args.location, ok: true } as const;
+      },
+    });
+
+    expectTypeOf(toolType).toEqualTypeOf<
+      AnonFunctionTool<
+        z.infer<typeof parameters>,
+        unknown,
+        { readonly location: string; readonly ok: true }
+      >
+    >();
   });
 
   it('rejects direct instantiation of the abstract ProviderTool base', () => {
