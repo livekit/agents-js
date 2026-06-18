@@ -18,13 +18,14 @@ import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
 import type { LatencyMode, TTSModels } from './models.js';
 
-const DEFAULT_MODEL: TTSModels = 's2-pro';
+const DEFAULT_MODEL: TTSModels = 's2.1-pro';
 const DEFAULT_VOICE_ID = '933563129e564b19a115bedd57b7406a';
 const DEFAULT_BASE_URL = 'https://api.fish.audio';
 const NUM_CHANNELS = 1;
 // Fish Audio's default sample rate for raw PCM output.
 const DEFAULT_SAMPLE_RATE = 24000;
 
+/** @public */
 export interface TTSOptions {
   apiKey?: string;
   model?: TTSModels | string;
@@ -39,6 +40,16 @@ export interface TTSOptions {
    * each sentence is flushed. Defaults to 100.
    */
   chunkLength?: number;
+  /**
+   * Speaking rate multiplier for Fish `prosody.speed`. `1.0` is normal; below
+   * 1.0 is slower, above is faster. Unset uses the voice's natural pace.
+   */
+  speed?: number;
+  /**
+   * Loudness adjustment in decibels for Fish `prosody.volume`. `0` is the
+   * voice's natural level. Unset leaves it unchanged.
+   */
+  volume?: number;
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
@@ -50,6 +61,8 @@ interface ResolvedTTSOptions {
   baseURL: string;
   latencyMode: LatencyMode;
   chunkLength: number;
+  speed?: number;
+  volume?: number;
   tokenizer: tokenize.SentenceTokenizer;
 }
 
@@ -72,24 +85,35 @@ const validateChunkLength = (chunkLength: number) => {
 // doesn't fall back to its own larger defaults — in particular the docs default
 // of `chunk_length=300` produces large bursts that leave audible gaps between
 // chunk boundaries.
-const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<string, unknown> => ({
-  text,
-  chunk_length: opts.chunkLength,
-  format: 'pcm',
-  sample_rate: opts.sampleRate,
-  mp3_bitrate: 64,
-  opus_bitrate: 64000,
-  references: [],
-  // Fish Audio's wire field is `reference_id`; we expose it as `voiceId` on
-  // the plugin for consistency with other TTS plugins.
-  reference_id: opts.voiceId ?? null,
-  normalize: true,
-  latency: opts.latencyMode,
-  prosody: null,
-  top_p: 0.7,
-  temperature: 0.7,
-});
+const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<string, unknown> => {
+  const prosody =
+    opts.speed !== undefined || opts.volume !== undefined
+      ? {
+          ...(opts.speed !== undefined ? { speed: opts.speed } : {}),
+          ...(opts.volume !== undefined ? { volume: opts.volume } : {}),
+        }
+      : null;
 
+  return {
+    text,
+    chunk_length: opts.chunkLength,
+    format: 'pcm',
+    sample_rate: opts.sampleRate,
+    mp3_bitrate: 64,
+    opus_bitrate: 64000,
+    references: [],
+    // Fish Audio's wire field is `reference_id`; we expose it as `voiceId` on
+    // the plugin for consistency with other TTS plugins.
+    reference_id: opts.voiceId ?? null,
+    normalize: true,
+    latency: opts.latencyMode,
+    prosody,
+    top_p: 0.7,
+    temperature: 0.7,
+  };
+};
+
+/** @public */
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   label = 'fishaudio.TTS';
@@ -123,6 +147,8 @@ export class TTS extends tts.TTS {
       baseURL: opts.baseURL ?? DEFAULT_OPTS.baseURL,
       latencyMode: opts.latencyMode ?? DEFAULT_OPTS.latencyMode,
       chunkLength,
+      speed: opts.speed,
+      volume: opts.volume,
       tokenizer,
     };
   }
@@ -140,6 +166,8 @@ export class TTS extends tts.TTS {
     voiceId?: string;
     latencyMode?: LatencyMode;
     chunkLength?: number;
+    speed?: number;
+    volume?: number;
   }): void {
     if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.voiceId !== undefined) this.#opts.voiceId = opts.voiceId;
@@ -148,6 +176,8 @@ export class TTS extends tts.TTS {
       validateChunkLength(opts.chunkLength);
       this.#opts.chunkLength = opts.chunkLength;
     }
+    if (opts.speed !== undefined) this.#opts.speed = opts.speed;
+    if (opts.volume !== undefined) this.#opts.volume = opts.volume;
   }
 
   synthesize(
@@ -163,6 +193,7 @@ export class TTS extends tts.TTS {
   }
 }
 
+/** @public */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'fishaudio.ChunkedStream';
   #logger = log();
@@ -296,6 +327,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 }
 
+/** @public */
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'fishaudio.SynthesizeStream';
   #logger = log();
