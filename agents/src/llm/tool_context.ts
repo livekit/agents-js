@@ -217,7 +217,10 @@ export type AnonFunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'>;
+> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'> & {
+  id?: never;
+  name?: never;
+};
 
 export interface ToolCalledEvent<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
@@ -394,15 +397,9 @@ export type ToolContextInit<UserData = UnknownUserData> =
  * Object shorthand for declaring anonymous function tools keyed by their model-visible names.
  */
 export type ToolDefinitionMap<UserData = UnknownUserData> = {
-  readonly [toolName: string]: AnonFunctionToolEntry<UserData>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries accept any parameter/result types
+  readonly [toolName: string]: AnonFunctionTool<any, UserData, any>;
 };
-
-type AnonFunctionToolEntry<UserData = UnknownUserData> =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  AnonFunctionTool<any, UserData, any> & {
-    readonly id?: never;
-    readonly name?: never;
-  };
 
 export function toToolContext<UserData = UnknownUserData>(
   input: ToolContextLike<UserData>,
