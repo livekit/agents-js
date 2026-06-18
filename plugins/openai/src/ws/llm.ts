@@ -14,7 +14,8 @@ import {
 } from '@livekit/agents';
 import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
 import { toResponsesTools } from '../tool_utils.js';
 import type {
   WsOutputItemDoneEvent,
@@ -170,6 +171,8 @@ export interface WSLLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
@@ -204,6 +207,13 @@ export class WSLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (!this.#opts.apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -304,6 +314,10 @@ export class WSLLM extends llm.LLM {
 
     if (this.#opts.maxOutputTokens !== undefined) {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
+    }
+
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
     }
 
     let inputChatCtx = chatCtx;

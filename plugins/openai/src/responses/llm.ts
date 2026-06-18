@@ -12,7 +12,8 @@ import {
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
 import { toResponsesTools } from '../tool_utils.js';
 import { WSLLM } from '../ws/llm.js';
 
@@ -31,6 +32,8 @@ export interface LLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 
   /**
    * Whether to use the WebSocket API.
@@ -56,6 +59,13 @@ class ResponsesHttpLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (this.#opts.apiKey === undefined && this.#opts.client === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -130,6 +140,10 @@ class ResponsesHttpLLM extends llm.LLM {
 
     if (this.#opts.maxOutputTokens !== undefined) {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
+    }
+
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
     }
 
     return new ResponsesHttpLLMStream(this, {
