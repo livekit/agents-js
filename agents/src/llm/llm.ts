@@ -40,6 +40,17 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
+export interface CollectedResponse {
+  text: string;
+  toolCalls: FunctionCall[];
+  usage?: CompletionUsage;
+  /**
+   * Provider-specific extra data accumulated across chunks
+   * (e.g., xAI encrypted reasoning, Google thought signatures).
+   */
+  extra: Record<string, unknown>;
+}
+
 export interface LLMError {
   type: 'llm_error';
   timestamp: number;
@@ -339,6 +350,53 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   close() {
     this.abortController.abort();
+  }
+
+  /**
+   * Collect the entire stream into a single response.
+   *
+   * @example
+   * ```ts
+   * const response = await myLlm.chat({ chatCtx, toolCtx }).collect();
+   *
+   * for (const tc of response.toolCalls) {
+   *   // execute the tool call...
+   * }
+   * ```
+   */
+  async collect(): Promise<CollectedResponse> {
+    const textParts: string[] = [];
+    const toolCalls: FunctionCall[] = [];
+    let usage: CompletionUsage | undefined;
+    const extra: Record<string, unknown> = {};
+
+    try {
+      for await (const chunk of this) {
+        if (chunk.delta) {
+          if (chunk.delta.content) {
+            textParts.push(chunk.delta.content);
+          }
+          if (chunk.delta.toolCalls) {
+            toolCalls.push(...chunk.delta.toolCalls);
+          }
+          if (chunk.delta.extra) {
+            Object.assign(extra, chunk.delta.extra);
+          }
+        }
+        if (chunk.usage !== undefined) {
+          usage = chunk.usage;
+        }
+      }
+    } finally {
+      this.close();
+    }
+
+    return {
+      text: textParts.join('').trim(),
+      toolCalls,
+      usage,
+      extra,
+    };
   }
 
   [Symbol.asyncIterator](): LLMStream {
