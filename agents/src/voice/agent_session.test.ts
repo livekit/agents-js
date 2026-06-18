@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
+import { Toolset, tool } from '../llm/tool_context.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -62,6 +63,31 @@ describe('resolveRecordingOptions', () => {
     const opts = resolveRecordingOptions(true);
     opts.audio = false;
     expect(resolveRecordingOptions(true).audio).toBe(true);
+  });
+});
+
+describe('AgentSession close - session toolset teardown', () => {
+  const noopTool = tool({
+    name: 'noop',
+    description: 'noop',
+    execute: async () => 'ok',
+  });
+
+  // Close must mirror setup, which flattens session tools via `new ToolContext(...).toolsets`
+  // (nested toolsets included). A nested toolset's `aclose()` must therefore run on close.
+  it('closes nested session toolsets, not just top-level ones', async () => {
+    const innerAclose = vi.fn(async () => {});
+    const outerAclose = vi.fn(async () => {});
+    const inner = Toolset.create({ id: 'inner', tools: [noopTool], aclose: innerAclose });
+    const outer = Toolset.create({ id: 'outer', tools: [inner], aclose: outerAclose });
+
+    const session = new AgentSession({ tools: [outer] });
+    (session as unknown as { started: boolean }).started = true;
+
+    await session.close();
+
+    expect(outerAclose).toHaveBeenCalledTimes(1);
+    expect(innerAclose).toHaveBeenCalledTimes(1);
   });
 });
 

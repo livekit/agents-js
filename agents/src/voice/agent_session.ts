@@ -41,7 +41,7 @@ import type {
   ToolContextEntry,
   ToolContextInit,
 } from '../llm/index.js';
-import { normalizeToolContextInit } from '../llm/index.js';
+import { ToolContext, normalizeToolContextInit } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -1662,10 +1662,11 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
-    const sessionToolsets = this._tools.filter(
-      (tool): tool is ToolContextEntry<UserData> & { aclose: () => Promise<void> } =>
-        typeof (tool as { aclose?: unknown }).aclose === 'function',
-    );
+    // Mirror setup, which flattens session tools via `new ToolContext(...).toolsets` (see
+    // AgentActivity.setupToolsets) — that includes NESTED toolsets. Closing only the top-level
+    // entries would leak resources/listeners held by nested toolsets. Agent-level toolsets are
+    // torn down separately by AgentActivity.close(), so this path covers session-level tools only.
+    const sessionToolsets = new ToolContext(this._tools).toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
 
     if (this.sessionSpan) {

@@ -4,7 +4,7 @@
 import type { AgentActivity } from '../voice/agent_activity.js';
 import type { AgentSession } from '../voice/agent_session.js';
 import { ToolExecutor, type ToolHandlingOptions } from '../voice/tool_executor.js';
-import { Toolset, type ToolsetCreateOptions } from './tool_context.js';
+import { Toolset, type ToolsetContext, type ToolsetCreateOptions } from './tool_context.js';
 
 export interface AsyncToolsetCreateOptions extends ToolsetCreateOptions {
   toolHandling?: ToolHandlingOptions;
@@ -13,10 +13,14 @@ export interface AsyncToolsetCreateOptions extends ToolsetCreateOptions {
 export class AsyncToolset extends Toolset {
   readonly _executor = new ToolExecutor({ owningActivity: null });
   private readonly asyncToolOptionsOverride?: ToolHandlingOptions['asyncOptions'];
+  private readonly setupFn?: (ctx: ToolsetContext) => Promise<void>;
+  private readonly acloseFn?: () => Promise<void>;
 
-  private constructor({ id, tools, toolHandling }: AsyncToolsetCreateOptions) {
+  private constructor({ id, tools, toolHandling, setup, aclose }: AsyncToolsetCreateOptions) {
     super({ id, tools });
     this.asyncToolOptionsOverride = toolHandling?.asyncOptions;
+    this.setupFn = setup;
+    this.acloseFn = aclose;
   }
 
   static override create(options: AsyncToolsetCreateOptions): AsyncToolset {
@@ -48,8 +52,13 @@ export class AsyncToolset extends Toolset {
     }
   }
 
+  override async setup(ctx: ToolsetContext): Promise<void> {
+    if (this.setupFn) await this.setupFn(ctx);
+  }
+
   override async aclose(): Promise<void> {
     await super.aclose();
+    if (this.acloseFn) await this.acloseFn();
     await this._executor.drain();
     await this._executor.aclose();
   }
