@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { EventEmitter } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FunctionCall, type FunctionCallOutput } from '../llm/chat_context.js';
 import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
@@ -142,6 +142,58 @@ describe('RunContext filler', () => {
     await expect(ctx.filler('Still searching.', async () => 'lookup result')).resolves.toBe(
       'lookup result',
     );
+  });
+
+  it('removes the abort listener when waitForIdle wins the race', async () => {
+    const { ctx, session } = buildContext();
+    const activeAbortListeners = new Map<AbortSignal, Set<EventListenerOrEventListenerObject>>();
+    const originalAddEventListener = AbortSignal.prototype.addEventListener;
+    const originalRemoveEventListener = AbortSignal.prototype.removeEventListener;
+    const addSpy = vi.spyOn(AbortSignal.prototype, 'addEventListener').mockImplementation(function (
+      this: AbortSignal,
+      type: string,
+      callback: EventListenerOrEventListenerObject | null,
+      options?: AddEventListenerOptions | boolean,
+    ) {
+      if (type === 'abort' && callback) {
+        const listeners = activeAbortListeners.get(this) ?? new Set();
+        listeners.add(callback);
+        activeAbortListeners.set(this, listeners);
+      }
+      return originalAddEventListener.call(this, type, callback, options);
+    });
+    const removeSpy = vi
+      .spyOn(AbortSignal.prototype, 'removeEventListener')
+      .mockImplementation(function (
+        this: AbortSignal,
+        type: string,
+        callback: EventListenerOrEventListenerObject | null,
+        options?: EventListenerOptions | boolean,
+      ) {
+        if (type === 'abort' && callback) {
+          const listeners = activeAbortListeners.get(this);
+          listeners?.delete(callback);
+          if (listeners?.size === 0) {
+            activeAbortListeners.delete(this);
+          }
+        }
+        return originalRemoveEventListener.call(this, type, callback, options);
+      });
+
+    try {
+      await ctx.filler('Listener cleanup.', { delay: 30 }, async () => {
+        await sleep(5);
+        expect([...activeAbortListeners.values()].every((listeners) => listeners.size <= 1)).toBe(
+          true,
+        );
+      });
+
+      expect(session.listenerCount(AgentSessionEventTypes.AgentStateChanged)).toBe(0);
+      expect(session.listenerCount(AgentSessionEventTypes.UserStateChanged)).toBe(0);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
   });
 
   it('does not create filler when maxSteps is zero', async () => {

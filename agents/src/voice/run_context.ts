@@ -405,11 +405,19 @@ class FillerScheduler<UserData = UnknownUserData> {
 
 async function waitUnlessAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return false;
+  let onAbort: (() => void) | undefined;
   const abortPromise = new Promise<false>((resolve) => {
-    signal.addEventListener('abort', () => resolve(false), { once: true });
+    onAbort = () => resolve(false);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
-  const result = await Promise.race([promise.then(() => true), abortPromise]);
-  return result;
+
+  try {
+    return await Promise.race([promise.then(() => true), abortPromise]);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
 }
 
 async function sleepUnlessAborted(ms: number, signals: AbortSignal[]): Promise<boolean> {
