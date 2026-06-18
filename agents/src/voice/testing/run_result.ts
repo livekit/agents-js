@@ -28,8 +28,9 @@ import {
 } from './types.js';
 
 // Type for agent constructor (used in assertions)
+/** @internal */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AgentConstructor = new (...args: any[]) => Agent;
+export type AgentConstructor = new (...args: any[]) => Agent;
 // In JS we use a zod schema so runtime validation and TS generic inference stay aligned.
 type OutputSchema<T> = z.ZodType<T>;
 
@@ -948,9 +949,74 @@ export class AssertionError extends Error {
   }
 }
 
-// TODO: mockTools() utility for mocking tool implementations in tests
-// Will be implemented for test suites.
-// See Python run_result.py lines 1010-1031 for reference.
+/**
+ * A mock tool function. Can be sync or async. Receives the parsed tool arguments
+ * and tool options (matching the regular `execute` signature), but the mock is free
+ * to ignore them. Whatever the function returns becomes the tool output. Throwing
+ * produces a tool error event, just like a real tool execute.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type MockToolFn = (...args: any[]) => any;
+
+/** Map from agent constructor to a record of mocked tools by name. */
+export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
+
+/** @internal */
+export let activeMockTools: MockToolsMap | undefined;
+
+/** @internal */
+export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
+  if (!activeMockTools) return undefined;
+
+  for (const [agentConstructor, mocks] of activeMockTools) {
+    if (agent.constructor === agentConstructor) {
+      return mocks[toolName];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Temporarily assign a set of mock tool callables to a specific Agent type. Returns
+ * a {@link Disposable} for use with a `using` declaration. While the binding is in
+ * scope, tool calls for the matching agent type and tool name are routed to the
+ * supplied mock instead of the real `execute` implementation, and are restored when
+ * the enclosing block exits.
+ *
+ * Mirrors the Python `mock_tools` context manager, adapted to JS via the explicit
+ * resource management `using` syntax (Python uses `with`).
+ *
+ * @param agent - The Agent constructor whose tools should be mocked.
+ * @param mocks - A record mapping tool name to a mock implementation.
+ *
+ * @example
+ * ```typescript
+ * {
+ *   using _mock = withMockTools(DriveThruAgent, {
+ *     orderRegularItem: () => new Error('test failure'),
+ *     getWeather: () => 'sunny',
+ *   });
+ *
+ *   const result = await session.run({ userInput: 'Order a burger' });
+ *   result.expect.containsFunctionCall({ name: 'orderRegularItem' });
+ * }
+ * ```
+ */
+export function withMockTools(
+  agent: AgentConstructor,
+  mocks: Record<string, MockToolFn>,
+): Disposable {
+  const previous = activeMockTools;
+  const updated: MockToolsMap = new Map(previous ?? []);
+  updated.set(agent, mocks);
+  activeMockTools = updated;
+
+  return {
+    [Symbol.dispose]() {
+      activeMockTools = previous;
+    },
+  };
+}
 
 /**
  * Format events for debug output, optionally marking a selected index.
