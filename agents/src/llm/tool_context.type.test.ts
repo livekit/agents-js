@@ -13,7 +13,7 @@ import {
   type ToolDefinitionMap,
   type ToolOptions,
   tool,
-} from './tool_context';
+} from './tool_context.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -99,10 +99,10 @@ describe('tool type inference', () => {
 
   it('should not accept non-Zod values as parameters', () => {
     expect(() => {
-      // @ts-expect-error - Testing that non-Zod values are rejected
       tool({
         name: 'test',
         description: 'test',
+        // @ts-expect-error - Testing that non-Zod values are rejected
         parameters: 'invalid schema',
         execute: async () => 'test' as const,
       });

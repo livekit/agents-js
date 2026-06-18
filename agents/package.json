@@ -34,6 +34,7 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "api:check": "api-extractor run --typescript-compiler-folder ../node_modules/typescript",
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose",
     "throws:check": "throws-check src/**/*.ts"
