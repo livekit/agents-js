@@ -265,6 +265,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
+  private pendingUserText?: string;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -323,6 +324,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
 
+    let sentUserMessage = false;
+
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
@@ -344,12 +347,17 @@ export class RealtimeSession extends llm.RealtimeSession {
           });
           sentAddSystemMessage = true;
         }
+        if (item.role === 'user' && item.textContent) {
+          this.#logger.info(`Received user text input: ${item.textContent}`);
+          this.pendingUserText = item.textContent;
+          sentUserMessage = true;
+        }
       }
     }
 
     this._chatCtx = chatCtx.copy();
 
-    if (!sentToolCallOutput && !sentAddSystemMessage) {
+    if (!sentToolCallOutput && !sentAddSystemMessage && !sentUserMessage) {
       this.#logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
@@ -534,7 +542,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.pendingGenerateReplyFut = undefined;
       return;
     }
-    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
+
+    let systemMessage = instructions;
+    if (this.pendingUserText) {
+      const userTextInstruction = `The user sent the following text message: "${this.pendingUserText}". Please respond to their message.`;
+      systemMessage = systemMessage
+        ? `${systemMessage}\n\n${userTextInstruction}`
+        : userTextInstruction;
+      this.pendingUserText = undefined;
+    }
+
+    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
   async commitAudio(): Promise<void> {
