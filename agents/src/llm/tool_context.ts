@@ -647,7 +647,7 @@ export function tool<
 }): FunctionTool<InferToolInput<Schema>, UserData, Result>;
 
 /**
- * Create an anonymous function tool with inferred parameters from the schema.
+ * Create an anonymous (name-less) function tool with inferred parameters from the schema.
  */
 export function tool<Schema extends ToolInputSchema, UserData = UnknownUserData, Result = unknown>({
   description,
@@ -720,7 +720,7 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
 /**
  * Create an anonymous function tool without parameters.
  */
-export function tool<UserData = UnknownUserData, Result>({
+export function tool<UserData = UnknownUserData, Result = unknown>({
   description,
   execute,
   flags,
