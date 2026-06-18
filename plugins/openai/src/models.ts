@@ -234,5 +234,9 @@ export function defaultReasoningEffort(model: ChatModels | string): ReasoningEff
     return 'none';
   }
 
+  if (['gpt-5.1-chat-latest', 'gpt-5.2-chat-latest', 'gpt-5.3-chat-latest'].includes(model)) {
+    return 'medium';
+  }
+
   return 'minimal';
 }
