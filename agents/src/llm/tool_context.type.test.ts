@@ -13,7 +13,7 @@ import {
   type ToolDefinitionMap,
   type ToolOptions,
   tool,
-} from './index.js';
+} from './tool_context';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
