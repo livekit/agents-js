@@ -7,7 +7,7 @@ import {
   AgentTask,
   type ChatContext,
   type JobContext,
-  LLMStream,
+  type LLMStream,
   type RunContext,
   ServerOptions,
   ToolFlag,
@@ -134,7 +134,11 @@ function createTravelAgent() {
         'This will take a couple of minutes.',
     );
 
-    await delay(30_000, { signal });
+    await ctx.filler(
+      'Still searching flight inventory, hang tight.',
+      { delay: 5_000, signal },
+      () => delay(30_000, { signal }),
+    );
 
     const airlines = sample(['United', 'Delta', 'American', 'JetBlue', 'Southwest', 'Alaska'], 3);
     const prices = Object.fromEntries(airlines.map((airline) => [airline, randomInt(180, 650)]));
@@ -164,7 +168,15 @@ function createTravelAgent() {
       logger.info({ email: userEmail }, 'Captured user email address');
     }
 
-    await delay(40_000, { signal });
+    const confirmationFillers = [
+      'Still confirming the booking.',
+      "Almost there, I'm finalizing the reservation.",
+    ];
+    await ctx.filler(
+      (step) => confirmationFillers[step],
+      { delay: 5_000, interval: 10_000, maxSteps: confirmationFillers.length, signal },
+      () => delay(40_000, { signal }),
+    );
 
     const confirmation = `FL-${randomInt(100000, 999999)}`;
     return (
