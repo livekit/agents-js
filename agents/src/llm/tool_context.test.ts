@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
+import { voice } from '../index.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
   ProviderTool,
@@ -17,6 +18,78 @@ import {
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
+
+describe('tools object compatibility', () => {
+  it('normalizes object tools into named function tools', () => {
+    const getWeather = tool({
+      description: 'Get the weather',
+      execute: async () => 'sunny',
+    });
+
+    const toolCtx = new ToolContext({
+      getWeather,
+    });
+
+    const namedTool = toolCtx.getFunctionTool('getWeather');
+    expect(namedTool).toBeDefined();
+    expect(namedTool?.name).toBe('getWeather');
+    expect(namedTool?.id).toBe('getWeather');
+    expect(namedTool?.description).toBe('Get the weather');
+    expect(toolCtx.tools).toEqual([namedTool]);
+  });
+
+  it('accepts object tools in agent and session construction APIs', () => {
+    const tools = {
+      lookupOrder: tool({
+        description: 'Look up an order',
+        execute: async () => ({ ok: true }),
+      }),
+    };
+
+    const agent = new voice.Agent({ instructions: 'help', tools });
+    const createdAgent = voice.Agent.create({ instructions: 'help', tools });
+    const task = new voice.AgentTask({ instructions: 'help', tools });
+    const createdTask = voice.AgentTask.create({ instructions: 'help', tools });
+    const session = new voice.AgentSession({ tools, vad: null });
+
+    expect(agent.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(createdAgent.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(task.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(createdTask.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
+    expect(Reflect.get(session, '_tools')[0]?.name).toBe('lookupOrder');
+  });
+
+  it('keeps rejecting duplicate named function tools in array syntax', () => {
+    const first = tool({
+      name: 'duplicate',
+      description: 'First tool',
+      execute: async () => 'first',
+    });
+    const second = tool({
+      name: 'duplicate',
+      description: 'Second tool',
+      execute: async () => 'second',
+    });
+
+    expect(() => new ToolContext([first, second])).toThrow('duplicate function name');
+  });
+
+  it('rejects named tools and toolsets in object syntax', () => {
+    const namedTool = tool({
+      name: 'alreadyNamed',
+      description: 'Already named',
+      execute: async () => 'ok',
+    });
+    const toolset = new Toolset({ id: 'group', tools: [] });
+
+    expect(() => new ToolContext({ alreadyNamed: namedTool })).toThrow(
+      'tools object entry "alreadyNamed" must be anonymous',
+    );
+    expect(() => new ToolContext({ group: toolset })).toThrow(
+      'tools object entry "group" must be an anonymous function tool',
+    );
+  });
+});
 
 describe('Tool Context', () => {
   describe('oaiParams', () => {
@@ -521,14 +594,15 @@ describe('Tool Context', () => {
 });
 
 describe('tool() name requirement', () => {
-  it('throws when name is missing', () => {
-    expect(() =>
-      // @ts-expect-error - name is required
-      tool({
-        description: 'no name',
-        execute: async () => 'x',
-      }),
-    ).toThrow('requires a non-empty name');
+  it('creates an anonymous function tool when name is missing', () => {
+    const t = tool({
+      description: 'no name',
+      execute: async () => 'x',
+    });
+
+    expect(t.description).toBe('no name');
+    expect('name' in t).toBe(false);
+    expect('id' in t).toBe(false);
   });
 
   it('throws when name is empty', () => {

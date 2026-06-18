@@ -4,7 +4,7 @@
 import type { ChatContext } from '../../llm/chat_context.js';
 import { FunctionCall } from '../../llm/chat_context.js';
 import { LLMStream as BaseLLMStream, LLM, type LLMStream } from '../../llm/llm.js';
-import type { ToolChoice, ToolCtxInput } from '../../llm/tool_context.js';
+import type { ToolChoice, ToolContextLike } from '../../llm/tool_context.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { delay } from '../../utils.js';
 
@@ -42,7 +42,7 @@ export class FakeLLM extends LLM {
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
   }: {
     chatCtx: ChatContext;
-    toolCtx?: ToolCtxInput;
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -65,7 +65,7 @@ class FakeLLMStream extends BaseLLMStream {
 
   constructor(
     fake: FakeLLM,
-    params: { chatCtx: ChatContext; toolCtx?: ToolCtxInput; connOptions: APIConnectOptions },
+    params: { chatCtx: ChatContext; toolCtx?: ToolContextLike; connOptions: APIConnectOptions },
   ) {
     super(fake, params);
     this.fake = fake;

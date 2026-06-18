@@ -115,6 +115,9 @@
     "lint": {
       "outputs": []
     },
+    "typecheck": {
+      "outputs": []
+    },
     "api:check": {
       "cache": false,
       "dependsOn": ["^build"]

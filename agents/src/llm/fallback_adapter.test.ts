@@ -9,7 +9,7 @@ import { delay } from '../utils.js';
 import type { ChatContext } from './chat_context.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { type ChatChunk, LLM, LLMStream } from './llm.js';
-import type { ToolChoice, ToolCtxInput } from './tool_context.js';
+import type { ToolChoice, ToolContextLike } from './tool_context.js';
 
 class MockLLMStream extends LLMStream {
   public myLLM: LLM;
@@ -18,7 +18,7 @@ class MockLLMStream extends LLMStream {
     llm: LLM,
     opts: {
       chatCtx: ChatContext;
-      toolCtx?: ToolCtxInput;
+      toolCtx?: ToolContextLike;
       connOptions: APIConnectOptions;
     },
     private shouldFail: boolean = false,
@@ -64,7 +64,7 @@ class MockLLM extends LLM {
 
   chat(opts: {
     chatCtx: ChatContext;
-    toolCtx?: ToolCtxInput;
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;

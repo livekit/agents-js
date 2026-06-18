@@ -59,6 +59,16 @@ export type InferToolInput<T> = T extends { _output: infer O }
     ? O
     : any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Fallback type for JSON Schema objects without type inference
 
+/**
+ * Tool argument type for a (possibly absent) parameters schema. When `parameters` is omitted the
+ * generic defaults to `undefined`, yielding an empty-args type; otherwise the args are inferred
+ * from the schema via {@link InferToolInput}. Wrapped in tuples to keep the check non-distributive.
+ * @internal
+ */
+export type ToolArgs<Schema> = [Schema] extends [undefined]
+  ? Record<string, never>
+  : InferToolInput<Schema>;
+
 export type ToolType = 'function' | 'provider';
 
 export type ToolChoice =
@@ -176,7 +186,7 @@ export abstract class ProviderTool implements Tool {
 }
 
 export interface FunctionTool<
-  Parameters extends JSONObject,
+  Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
 > extends Tool {
@@ -212,6 +222,15 @@ export interface FunctionTool<
 
   [FUNCTION_TOOL_SYMBOL]: true;
 }
+
+export type AnonFunctionTool<
+  Parameters extends JSONObject = JSONObject,
+  UserData = UnknownUserData,
+  Result = unknown,
+> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'> & {
+  id?: never;
+  name?: never;
+};
 
 export interface ToolCalledEvent<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
@@ -370,24 +389,69 @@ class ToolsetFactory extends Toolset {
 }
 
 /**
- * Convenience input shape accepted by APIs that want to take a list of tools directly without
- * forcing callers to wrap them in `new ToolContext(...)`.
+ * Tool context or data that can be normalized into one. Used by APIs that accept an already-built
+ * context as well as direct tool lists or tool maps.
  */
-export type ToolCtxInput<UserData = UnknownUserData> =
+export type ToolContextLike<UserData = UnknownUserData> =
   | ToolContext<UserData>
-  | readonly ToolContextEntry<UserData>[];
+  | ToolContextInit<UserData>;
+
+/**
+ * Initial tool data accepted by `ToolContext` constructors and update methods.
+ */
+export type ToolContextInit<UserData = UnknownUserData> =
+  | readonly ToolContextEntry<UserData>[]
+  | ToolDefinitionMap<UserData>;
+
+/**
+ * Object shorthand for declaring anonymous function tools keyed by their model-visible names.
+ */
+export type ToolDefinitionMap<UserData = UnknownUserData> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries accept any parameter/result types
+  readonly [toolName: string]: AnonFunctionTool<any, UserData, any>;
+};
 
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData>,
+  input: ToolContextLike<UserData>,
 ): ToolContext<UserData>;
+
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData> | undefined,
+  input: ToolContextLike<UserData> | undefined,
 ): ToolContext<UserData> | undefined;
+
 export function toToolContext<UserData = UnknownUserData>(
-  input: ToolCtxInput<UserData> | undefined,
+  input: ToolContextLike<UserData> | undefined,
 ): ToolContext<UserData> | undefined {
   if (input === undefined) return undefined;
   return input instanceof ToolContext ? input : new ToolContext(input);
+}
+
+export function normalizeToolContextInit<UserData = UnknownUserData>(
+  input: ToolContextInit<UserData>,
+): ToolContextEntry<UserData>[] {
+  if (Array.isArray(input)) {
+    return [...input];
+  }
+
+  return Object.entries(input).map(([name, toolValue]) => {
+    if (name.length === 0) {
+      throw new Error('tools object keys must be non-empty');
+    }
+
+    if (!isAnonFunctionTool(toolValue)) {
+      throw new Error(`tools object entry "${name}" must be an anonymous function tool`);
+    }
+
+    if ('name' in toolValue || 'id' in toolValue) {
+      throw new Error(`tools object entry "${name}" must be anonymous`);
+    }
+
+    return {
+      ...toolValue,
+      id: name,
+      name,
+    };
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
@@ -402,7 +466,7 @@ export class ToolContext<UserData = UnknownUserData> {
   private _providerTools: ProviderTool[] = [];
   private _toolsets: Toolset[] = [];
 
-  constructor(tools: readonly ToolContextEntry<UserData>[] = []) {
+  constructor(tools: ToolContextInit<UserData> = []) {
     this.updateTools(tools);
   }
 
@@ -450,8 +514,9 @@ export class ToolContext<UserData = UnknownUserData> {
     return this._providerTools.some((tool) => tool.id === id);
   }
 
-  updateTools(tools: readonly ToolContextEntry<UserData>[]): void {
-    this._tools = [...tools];
+  updateTools(tools: ToolContextInit<UserData>): void {
+    const normalizedTools = normalizeToolContextInit(tools);
+    this._tools = normalizedTools;
     this._functionToolsMap = new Map();
     this._providerTools = [];
     this._toolsets = [];
@@ -486,7 +551,7 @@ export class ToolContext<UserData = UnknownUserData> {
       throw new Error(`unknown tool type: ${typeof tool}`);
     };
 
-    for (const tool of tools) {
+    for (const tool of normalizedTools) {
       addTool(tool);
     }
   }
@@ -550,11 +615,12 @@ export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice
 }
 
 /**
- * Create a function tool with inferred parameters from the schema.
+ * Create a function tool. Parameters are inferred from the schema; omit `parameters` for a tool
+ * that takes no arguments.
  */
 export function tool<
-  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   Result = unknown,
 >({
   name,
@@ -570,14 +636,16 @@ export function tool<
   description: string;
   /**
    * Input schema for the tool's arguments — either a Zod object schema (args
-   * are type-inferred) or a raw JSON Schema.
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
    */
-  parameters: Schema;
+  parameters?: Schema;
   /**
-   * Called when the model invokes the tool. Receives the parsed arguments and a
-   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
    */
-  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
   /**
    * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
    * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
@@ -589,29 +657,39 @@ export function tool<
    * `'allow'`.
    */
   onDuplicate?: DuplicateMode;
-}): FunctionTool<InferToolInput<Schema>, UserData, Result>;
+}): FunctionTool<ToolArgs<Schema>, UserData, Result>;
 
 /**
- * Create a function tool without parameters.
+ * Create an anonymous (name-less) function tool. Parameters are inferred from the schema; omit
+ * `parameters` for a tool that takes no arguments.
  */
-export function tool<UserData = UnknownUserData, Result = unknown>({
-  name,
+export function tool<
+  UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
+  Result = unknown,
+>({
   description,
+  parameters,
   execute,
   flags,
   onDuplicate,
 }: {
-  /** Unique name the model calls the tool by. Must be non-empty. */
-  name: string;
+  /** Omitted in object syntax; the containing object key becomes the tool name. */
+  name?: never;
   /** Natural-language description that tells the model when to use this tool. */
   description: string;
-  /** Omitted in this overload — the tool takes no arguments. */
-  parameters?: never;
   /**
-   * Called when the model invokes the tool. Receives a {@link RunContext}
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
+   */
+  parameters?: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
    * (`ctx`); the returned value is sent back to the model.
    */
-  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
   /**
    * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
    * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
@@ -623,11 +701,11 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
    * `'allow'`.
    */
   onDuplicate?: DuplicateMode;
-}): FunctionTool<Record<string, never>, UserData, Result>;
+}): AnonFunctionTool<ToolArgs<Schema>, UserData, Result>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {
-  if (typeof tool.name !== 'string' || tool.name.length === 0) {
+  if (tool.name !== undefined && (typeof tool.name !== 'string' || tool.name.length === 0)) {
     throw new Error('tool({ name, ... }) requires a non-empty name');
   }
 
@@ -653,10 +731,8 @@ export function tool(tool: any): any {
   const execute =
     onDuplicate === 'confirm' ? wrapConfirmDuplicateExecute(tool.execute) : tool.execute;
 
-  return {
+  const functionTool = {
     type: 'function',
-    id: tool.name,
-    name: tool.name,
     description: tool.description,
     parameters,
     execute,
@@ -664,6 +740,16 @@ export function tool(tool: any): any {
     onDuplicate,
     [TOOL_SYMBOL]: true,
     [FUNCTION_TOOL_SYMBOL]: true,
+  };
+
+  if (tool.name === undefined) {
+    return functionTool;
+  }
+
+  return {
+    ...functionTool,
+    id: tool.name,
+    name: tool.name,
   };
 }
 
@@ -723,9 +809,18 @@ export function isTool(tool: any): tool is Tool {
   return !!tool && tool[TOOL_SYMBOL] === true;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
-  return isTool(tool) && (tool as FunctionTool<any, any, any>)[FUNCTION_TOOL_SYMBOL] === true;
+export function isFunctionTool(tool: unknown): tool is FunctionTool {
+  const maybeTool = tool as Partial<FunctionTool>;
+  return (
+    isAnonFunctionTool(tool) &&
+    typeof maybeTool.id === 'string' &&
+    typeof maybeTool.name === 'string'
+  );
+}
+
+function isAnonFunctionTool(tool: unknown): tool is AnonFunctionTool {
+  const maybeTool = tool as Partial<AnonFunctionTool>;
+  return isTool(tool) && maybeTool[FUNCTION_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
