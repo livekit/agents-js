@@ -35,6 +35,8 @@ jobs:
         run: pnpm format:check
       - name: Throws transformer
         run: pnpm throws:check
+      - name: Type check
+        run: pnpm typecheck
   build:
     name: Build
     runs-on: ubuntu-latest

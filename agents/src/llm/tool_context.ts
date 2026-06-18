@@ -59,6 +59,16 @@ export type InferToolInput<T> = T extends { _output: infer O }
     ? O
     : any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Fallback type for JSON Schema objects without type inference
 
+/**
+ * Tool argument type for a (possibly absent) parameters schema. When `parameters` is omitted the
+ * generic defaults to `undefined`, yielding an empty-args type; otherwise the args are inferred
+ * from the schema via {@link InferToolInput}. Wrapped in tuples to keep the check non-distributive.
+ * @internal
+ */
+export type ToolArgs<Schema> = [Schema] extends [undefined]
+  ? Record<string, never>
+  : InferToolInput<Schema>;
+
 export type ToolType = 'function' | 'provider';
 
 export type ToolChoice =
@@ -217,7 +227,10 @@ export type AnonFunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
-> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'>;
+> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'> & {
+  id?: never;
+  name?: never;
+};
 
 export interface ToolCalledEvent<UserData = UnknownUserData> {
   ctx: RunContext<UserData>;
@@ -394,15 +407,9 @@ export type ToolContextInit<UserData = UnknownUserData> =
  * Object shorthand for declaring anonymous function tools keyed by their model-visible names.
  */
 export type ToolDefinitionMap<UserData = UnknownUserData> = {
-  readonly [toolName: string]: AnonFunctionToolEntry<UserData>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries accept any parameter/result types
+  readonly [toolName: string]: AnonFunctionTool<any, UserData, any>;
 };
-
-type AnonFunctionToolEntry<UserData = UnknownUserData> =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  AnonFunctionTool<any, UserData, any> & {
-    readonly id?: never;
-    readonly name?: never;
-  };
 
 export function toToolContext<UserData = UnknownUserData>(
   input: ToolContextLike<UserData>,
@@ -608,11 +615,12 @@ export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice
 }
 
 /**
- * Create a function tool with inferred parameters from the schema.
+ * Create a function tool. Parameters are inferred from the schema; omit `parameters` for a tool
+ * that takes no arguments.
  */
 export function tool<
-  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   Result = unknown,
 >({
   name,
@@ -628,14 +636,16 @@ export function tool<
   description: string;
   /**
    * Input schema for the tool's arguments — either a Zod object schema (args
-   * are type-inferred) or a raw JSON Schema.
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
    */
-  parameters: Schema;
+  parameters?: Schema;
   /**
-   * Called when the model invokes the tool. Receives the parsed arguments and a
-   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
    */
-  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
   /**
    * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
    * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
@@ -647,14 +657,15 @@ export function tool<
    * `'allow'`.
    */
   onDuplicate?: DuplicateMode;
-}): FunctionTool<InferToolInput<Schema>, UserData, Result>;
+}): FunctionTool<ToolArgs<Schema>, UserData, Result>;
 
 /**
- * Create an anonymous function tool with inferred parameters from the schema.
+ * Create an anonymous (name-less) function tool. Parameters are inferred from the schema; omit
+ * `parameters` for a tool that takes no arguments.
  */
 export function tool<
-  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   Result = unknown,
 >({
   description,
@@ -669,48 +680,16 @@ export function tool<
   description: string;
   /**
    * Input schema for the tool's arguments — either a Zod object schema (args
-   * are type-inferred) or a raw JSON Schema.
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
    */
-  parameters: Schema;
+  parameters?: Schema;
   /**
-   * Called when the model invokes the tool. Receives the parsed arguments and a
-   * {@link RunContext} (`ctx`); the returned value is sent back to the model.
-   */
-  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
-  /**
-   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
-   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
-   */
-  flags?: number;
-  /**
-   * How a concurrent duplicate call of this tool is handled while one is still
-   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
-   * `'allow'`.
-   */
-  onDuplicate?: DuplicateMode;
-}): AnonFunctionTool<InferToolInput<Schema>, UserData, Result>;
-
-/**
- * Create a function tool without parameters.
- */
-export function tool<UserData = UnknownUserData, Result = unknown>({
-  name,
-  description,
-  execute,
-  flags,
-  onDuplicate,
-}: {
-  /** Unique name the model calls the tool by. Must be non-empty. */
-  name: string;
-  /** Natural-language description that tells the model when to use this tool. */
-  description: string;
-  /** Omitted in this overload — the tool takes no arguments. */
-  parameters?: never;
-  /**
-   * Called when the model invokes the tool. Receives a {@link RunContext}
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
    * (`ctx`); the returned value is sent back to the model.
    */
-  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
   /**
    * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
    * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
@@ -722,40 +701,7 @@ export function tool<UserData = UnknownUserData, Result = unknown>({
    * `'allow'`.
    */
   onDuplicate?: DuplicateMode;
-}): FunctionTool<Record<string, never>, UserData, Result>;
-
-/**
- * Create an anonymous function tool without parameters.
- */
-export function tool<UserData = UnknownUserData, Result = unknown>({
-  description,
-  execute,
-  flags,
-  onDuplicate,
-}: {
-  /** Omitted in object syntax; the containing object key becomes the tool name. */
-  name?: never;
-  /** Natural-language description that tells the model when to use this tool. */
-  description: string;
-  /** Omitted in this overload — the tool takes no arguments. */
-  parameters?: never;
-  /**
-   * Called when the model invokes the tool. Receives a {@link RunContext}
-   * (`ctx`); the returned value is sent back to the model.
-   */
-  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
-  /**
-   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
-   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
-   */
-  flags?: number;
-  /**
-   * How a concurrent duplicate call of this tool is handled while one is still
-   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
-   * `'allow'`.
-   */
-  onDuplicate?: DuplicateMode;
-}): AnonFunctionTool<Record<string, never>, UserData, Result>;
+}): AnonFunctionTool<ToolArgs<Schema>, UserData, Result>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {

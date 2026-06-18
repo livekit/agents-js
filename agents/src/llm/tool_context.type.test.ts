@@ -13,7 +13,7 @@ import {
   type ToolDefinitionMap,
   type ToolOptions,
   tool,
-} from './index.js';
+} from './tool_context.js';
 
 describe('tool type inference', () => {
   it('should infer argument type from zod schema', () => {
@@ -25,6 +25,17 @@ describe('tool type inference', () => {
     });
 
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
+  });
+
+  it('should infer argument type for an anonymous (name-less) tool with a schema', () => {
+    tool({
+      description: 'test',
+      parameters: z.object({ number: z.number() }),
+      execute: async (args) => {
+        expectTypeOf(args).toEqualTypeOf<{ number: number }>();
+        return `${args.number}` as const;
+      },
+    });
   });
 
   it('rejects direct instantiation of the abstract ProviderTool base', () => {
@@ -88,10 +99,10 @@ describe('tool type inference', () => {
 
   it('should not accept non-Zod values as parameters', () => {
     expect(() => {
-      // @ts-expect-error - Testing that non-Zod values are rejected
       tool({
         name: 'test',
         description: 'test',
+        // @ts-expect-error - Testing that non-Zod values are rejected
         parameters: 'invalid schema',
         execute: async () => 'test' as const,
       });
