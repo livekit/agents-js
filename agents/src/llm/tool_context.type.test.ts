@@ -27,6 +27,17 @@ describe('tool type inference', () => {
     expectTypeOf(toolType).toEqualTypeOf<FunctionTool<{ number: number }, unknown, 'test'>>();
   });
 
+  it('should infer argument type for an anonymous (name-less) tool with a schema', () => {
+    tool({
+      description: 'test',
+      parameters: z.object({ number: z.number() }),
+      execute: async (args) => {
+        expectTypeOf(args).toEqualTypeOf<{ number: number }>();
+        return `${args.number}` as const;
+      },
+    });
+  });
+
   it('rejects direct instantiation of the abstract ProviderTool base', () => {
     // @ts-expect-error - ProviderTool is abstract; plugins must subclass it.
     new ProviderTool({ id: 'code-interpreter' });
