@@ -129,7 +129,7 @@ export function speakTime(time: string): string {
 }
 
 export function speakCode(code: string): string {
-  return code.replace('-', ', dash, ').split('').join(', ');
+  return [...code].map((char) => (char === '-' ? 'dash' : char)).join(', ');
 }
 
 export function normalizeCode(code: string): string {
