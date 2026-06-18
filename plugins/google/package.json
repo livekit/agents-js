@@ -38,15 +38,15 @@
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.9",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
-    "google-auth-library": "^10.6.2",
     "@livekit/mutex": "^1.1.1",
     "@types/json-schema": "^7.0.15",
+    "google-auth-library": "^10.6.2",
     "json-schema": "^0.4.0",
     "openai": "^6.8.1"
   },
