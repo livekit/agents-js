@@ -1,5 +1,11 @@
 # @livekit/agents
 
+## 1.4.8
+
+### Patch Changes
+
+- Add `assemblyai/universal-3-5-pro` to the inference STT model type hints. - [#1840](https://github.com/livekit/agents-js/pull/1840) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.7
 
 ### Patch Changes

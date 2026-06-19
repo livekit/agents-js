@@ -1,5 +1,13 @@
 # @livekit/agents-plugin-mistralai
 
+## 1.4.8
+
+### Patch Changes
+
+- Updated dependencies [[`d662ec6b2ff047a60e4f9215c99794748497b675`](https://github.com/livekit/agents-js/commit/d662ec6b2ff047a60e4f9215c99794748497b675)]:
+  - @livekit/agents@1.4.8
+  - @livekit/agents-plugin-silero@1.4.8
+
 ## 1.4.7
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-assemblyai
 
+## 1.4.8
+
+### Patch Changes
+
+- Add `universal-3-5-pro` as the default AssemblyAI STT model and support Voice Focus streaming params. - [#1817](https://github.com/livekit/agents-js/pull/1817) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add AssemblyAI streaming accuracy/latency mode option. - [#1826](https://github.com/livekit/agents-js/pull/1826) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`d662ec6b2ff047a60e4f9215c99794748497b675`](https://github.com/livekit/agents-js/commit/d662ec6b2ff047a60e4f9215c99794748497b675)]:
+  - @livekit/agents@1.4.8
+
 ## 1.4.7
 
 ### Patch Changes
