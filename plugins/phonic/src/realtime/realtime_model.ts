@@ -51,6 +51,7 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  forbidSpeechAfterToolCall?: string[];
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
 }
@@ -152,6 +153,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Tool names after which Phonic should not auto-generate a spoken reply.
+       * Use for tools that always hand off or trigger an agent switch.
+       */
+      forbidSpeechAfterToolCall?: string[];
+      /**
        * Connection options for the API connection
        */
       connOptions?: APIConnectOptions;
@@ -210,6 +216,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
@@ -265,6 +272,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
+  private forbidSpeechAfterToolCall = new Set<string>();
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -322,6 +330,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
+    let forbidSpeech = false;
 
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
@@ -334,6 +343,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
+        if (this.forbidSpeechAfterToolCall.has(item.name)) {
+          forbidSpeech = true;
+        }
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
@@ -354,7 +366,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
     }
-    if (sentToolCallOutput) {
+    if (sentToolCallOutput && !forbidSpeech) {
       this.startNewAssistantTurn({ userInitiated: false });
     }
   }
@@ -368,6 +380,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = tools.copy();
+    this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
     // TODO: support provider tools in the Phonic schema.
     this.toolDefinitions = tools
       .flatten()
@@ -386,6 +399,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
         wait_for_speech_before_tool_call: true,
         allow_tool_chaining: false,
+        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
       }));
 
     this.toolsReady.resolve();
@@ -406,6 +420,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (tools !== undefined) {
       this._tools = tools.copy();
+      this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
       // TODO: support provider tools in the Phonic schema.
       this.toolDefinitions = tools
         .flatten()
@@ -424,6 +439,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
           wait_for_speech_before_tool_call: true,
           allow_tool_chaining: false,
+          forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
         }));
     }
     if (chatCtx !== undefined) {
