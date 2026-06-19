@@ -90,6 +90,11 @@ export interface STTOptions {
   voiceFocus?: VoiceFocus;
   /** Background audio suppression aggressiveness, from 0.0 to 1.0. Connect-time only. */
   voiceFocusThreshold?: number;
+  /**
+   * Accuracy/latency preset for u3-rt-pro: `min_latency`, `balanced`, or `max_accuracy`.
+   * Explicit silence, partials, or VAD options still take precedence over mode defaults.
+   */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
   baseUrl: string;
 }
 
@@ -129,7 +134,7 @@ export class STT extends stt.STT {
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     if (!isU3ProModel(speechModel)) {
-      for (const param of ['prompt', 'voiceFocus', 'voiceFocusThreshold'] as const) {
+      for (const param of ['prompt', 'voiceFocus', 'voiceFocusThreshold', 'mode'] as const) {
         if (opts[param] !== undefined) {
           throw new Error(
             `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
@@ -312,6 +317,7 @@ export class SpeechStream extends stt.SpeechStream {
       domain: this.#opts.domain,
       voice_focus: this.#opts.voiceFocus,
       voice_focus_threshold: this.#opts.voiceFocusThreshold,
+      mode: this.#opts.mode,
     };
 
     const url = new URL(`${this.#opts.baseUrl}/v3/ws`);
