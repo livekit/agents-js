@@ -47,7 +47,8 @@ export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
   | 'assemblyai/universal-streaming-multilingual'
-  | 'assemblyai/u3-rt-pro';
+  | 'assemblyai/u3-rt-pro'
+  | 'assemblyai/universal-3-5-pro';
 
 export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
