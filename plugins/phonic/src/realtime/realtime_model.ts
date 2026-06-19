@@ -368,25 +368,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this._tools = tools.copy();
-    // TODO: support provider tools in the Phonic schema.
-    this.toolDefinitions = tools
-      .flatten()
-      .filter(llm.isFunctionTool)
-      .map((t) => ({
-        type: 'custom_websocket' as const,
-        tool_schema: {
-          type: 'function' as const,
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: llm.toJsonSchema(t.parameters),
-            strict: true,
-          },
-        },
-        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-        wait_for_speech_before_tool_call: true,
-        allow_tool_chaining: false,
-      }));
+    this.toolDefinitions = this.serializeTools(tools);
 
     this.toolsReady.resolve();
   }
@@ -401,30 +383,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
     await this.readyToStart.await;
+    if (this.closed) {
+      return;
+    }
+
+    // Close the outgoing generation before replacing context so partial speech is
+    // not appended to the incoming agent's chat context.
+    this.closeCurrentGeneration({ interrupted: true });
+
     if (instructions !== undefined) {
       this.options.instructions = instructions;
     }
     if (tools !== undefined) {
       this._tools = tools.copy();
-      // TODO: support provider tools in the Phonic schema.
-      this.toolDefinitions = tools
-        .flatten()
-        .filter(llm.isFunctionTool)
-        .map((t) => ({
-          type: 'custom_websocket' as const,
-          tool_schema: {
-            type: 'function' as const,
-            function: {
-              name: t.name,
-              description: t.description,
-              parameters: llm.toJsonSchema(t.parameters),
-              strict: true,
-            },
-          },
-          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-          wait_for_speech_before_tool_call: true,
-          allow_tool_chaining: false,
-        }));
+      this.toolDefinitions = this.serializeTools(tools);
     }
     if (chatCtx !== undefined) {
       this._chatCtx = chatCtx.copy();
@@ -438,18 +410,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    this.closeCurrentGeneration({ interrupted: true });
-
-    const toolsPayload: Phonic.ConfigOptions.Tools.Item[] = [
-      ...(this.options.phonicTools ?? []),
-      ...this.toolDefinitions,
-    ];
-
     if (this.socket) {
       this.#logger.info('Sending mid-session reset to Phonic');
       this.socket.sendReset({
         type: 'reset',
-        config: this.buildConfigOptions({ systemPrompt, toolsPayload }),
+        config: this.buildConfigOptions({
+          systemPrompt,
+          toolsPayload: this.buildToolsPayload(),
+        }),
       });
     }
   }
@@ -615,27 +583,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.configSent = true;
     this.socket.sendConfig({
       type: 'config',
-      model: this.options.model as Phonic.ConfigPayload['model'],
       ...this.buildConfigOptions({
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
-        toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
+        toolsPayload: this.buildToolsPayload(),
       }),
-      ...(this.options.additionalLanguages !== undefined && {
-        additional_languages: this.options.additionalLanguages,
-      }),
-      ...(this.options.multilingualMode !== undefined && {
-        multilingual_mode: this.options.multilingualMode,
-      }),
-      audio_speed: this.options.audioSpeed,
-      tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
-      boosted_keywords: this.options.boostedKeywords,
-      ...(this.options.minWordsToInterrupt !== undefined && {
-        min_words_to_interrupt: this.options.minWordsToInterrupt,
-      }),
-      generate_no_input_poke_text: this.options.generateNoInputPokeText,
-      no_input_poke_sec: this.options.noInputPokeSec,
-      no_input_poke_text: this.options.noInputPokeText,
-      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
@@ -889,6 +840,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return {
       agent: this.options.phonicAgent,
       project: this.options.project,
+      model: this.options.model as Phonic.ConfigOptions['model'],
       welcome_message: this.options.welcomeMessage,
       generate_welcome_message: this.options.generateWelcomeMessage,
       system_prompt: systemPrompt,
@@ -905,16 +857,42 @@ export class RealtimeSession extends llm.RealtimeSession {
         multilingual_mode: this.options.multilingualMode,
       }),
       audio_speed: this.options.audioSpeed,
-      tools: toolsPayload,
+      ...(toolsPayload.length > 0 && { tools: toolsPayload }),
       boosted_keywords: this.options.boostedKeywords,
-      // ...(this.options.minWordsToInterrupt !== undefined && {
-      //   min_words_to_interrupt: this.options.minWordsToInterrupt,
-      // }),
+      ...(this.options.minWordsToInterrupt !== undefined && {
+        min_words_to_interrupt: this.options.minWordsToInterrupt,
+      }),
       generate_no_input_poke_text: this.options.generateNoInputPokeText,
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     };
+  }
+
+  private buildToolsPayload(): Phonic.ConfigOptions.Tools.Item[] {
+    return [...(this.options.phonicTools ?? []), ...this.toolDefinitions];
+  }
+
+  private serializeTools(tools: llm.ToolContext): Record<string, unknown>[] {
+    // TODO: support provider tools in the Phonic schema.
+    return tools
+      .flatten()
+      .filter(llm.isFunctionTool)
+      .map((t) => ({
+        type: 'custom_websocket' as const,
+        tool_schema: {
+          type: 'function' as const,
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: llm.toJsonSchema(t.parameters),
+            strict: true,
+          },
+        },
+        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+        wait_for_speech_before_tool_call: true,
+        allow_tool_chaining: false,
+      }));
   }
 
   private buildTurnHistory(chatCtx: llm.ChatContext): string | undefined {
