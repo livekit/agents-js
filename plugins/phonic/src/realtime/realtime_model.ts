@@ -275,6 +275,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private closedFuture = new Future<void, never>();
   private connectTask: Promise<void>;
   private toolDefinitions: Record<string, unknown>[] = [];
+  private forbidSpeechAfterToolCall = new Set<string>();
   private pendingToolCallIds = new Set<string>();
   private readyToStart = new Future<void>();
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
@@ -337,6 +338,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
+    let forbidSpeech = false;
 
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
@@ -349,6 +351,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
+        if (item.name && this.forbidSpeechAfterToolCall.has(item.name)) {
+          forbidSpeech = true;
+        }
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
@@ -369,7 +374,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
     }
-    if (sentToolCallOutput) {
+    // Skip opening a new assistant turn when the tool forbids speech after its call:
+    // Phonic will not speak, so the generation would otherwise dangle open (never
+    // receiving audio nor a finished-speaking event) until the handoff reset / close.
+    if (sentToolCallOutput && !forbidSpeech) {
       this.startNewAssistantTurn({ userInitiated: false });
     }
   }
@@ -389,7 +397,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private buildToolDefinitions(tools: llm.ToolContext): Record<string, unknown>[] {
-    const forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
+    this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
     return Object.entries(tools)
       .filter(([, tool]) => llm.isFunctionTool(tool))
       .map(([name, tool]) => ({
@@ -411,7 +419,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         // When true, Phonic does not auto-generate a spoken reply after this tool's
         // output. Used for tools that always hand off so the outgoing agent doesn't
         // speak a reply that the handoff's session reset would cancel.
-        forbid_speech_after_tool_call: forbidSpeechAfterToolCall.has(name),
+        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(name),
       }));
   }
 
