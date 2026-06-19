@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  GetDOBTask,
+  type GetDOBResult,
+  type GetDOBTaskOptions,
   TaskGroup,
+  type TimeOfBirth,
   type TaskCompletedEvent,
   type TaskGroupOptions,
   type TaskGroupResult,
