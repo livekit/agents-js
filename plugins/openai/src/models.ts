@@ -214,11 +214,8 @@ export function supportsReasoningEffort(model: ChatModels | string): boolean {
   return [
     'gpt-5.4',
     'gpt-5.4-mini',
-    'gpt-5.3-chat-latest',
     'gpt-5.2',
-    'gpt-5.2-chat-latest',
     'gpt-5.1',
-    'gpt-5.1-chat-latest',
     'gpt-5',
     'gpt-5-mini',
     'gpt-5-nano',
@@ -232,10 +229,6 @@ export function defaultReasoningEffort(model: ChatModels | string): ReasoningEff
 
   if (['gpt-5.1', 'gpt-5.2', 'gpt-5.4', 'gpt-5.4-mini'].includes(model)) {
     return 'none';
-  }
-
-  if (['gpt-5.1-chat-latest', 'gpt-5.2-chat-latest', 'gpt-5.3-chat-latest'].includes(model)) {
-    return 'medium';
   }
 
   return 'minimal';
