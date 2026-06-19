@@ -80,7 +80,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   presence_penalty?: number;
   prompt_cache_key?: string;
   prompt_cache_retention?: 'in_memory' | '24h';
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   safety_identifier?: string;
   seed?: number;
   service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
