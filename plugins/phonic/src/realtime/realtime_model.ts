@@ -371,7 +371,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         // Only treat a user message as text input when it's appended at the tail of the context.
         if (item.role === 'user' && itemId === lastItemId && item.textContent) {
-          this.#logger.info(`Received user text input: ${item.textContent}`);
+          this.#logger.debug(`Received user text input: ${item.textContent}`);
           this.pendingUserText = item.textContent;
           bufferedUserText = true;
         }
