@@ -12,10 +12,12 @@ import type {
   MetaChatModels,
   OctoChatModels,
   PerplexityChatModels,
+  ReasoningEffort,
   TelnyxChatModels,
   TogetherChatModels,
   XAIChatModels,
 } from './models.js';
+import { defaultReasoningEffort } from './models.js';
 
 export interface LLMOptions {
   model: string | ChatModels;
@@ -31,6 +33,7 @@ export interface LLMOptions {
   maxCompletionTokens?: number;
   serviceTier?: string;
   store?: boolean;
+  reasoningEffort?: ReasoningEffort;
   strictToolSchema?: boolean;
 }
 
@@ -66,6 +69,7 @@ export class LLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    this.#opts.reasoningEffort ??= defaultReasoningEffort(this.#opts.model);
     this.#providerFmt = providerFmt;
     if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
@@ -511,6 +515,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.store !== undefined) {
       extras.store = this.#opts.store;
+    }
+
+    if (this.#opts.reasoningEffort !== undefined) {
+      extras.reasoning_effort = this.#opts.reasoningEffort;
     }
 
     parallelToolCalls =
