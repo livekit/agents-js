@@ -62,4 +62,4 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'my-agent-q5' }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
