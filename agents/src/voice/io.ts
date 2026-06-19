@@ -15,7 +15,7 @@ import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
 
 export type STTNode = (
-  audio: ReadableStream<AudioFrame>,
+  audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
 
@@ -26,7 +26,7 @@ export type LLMNode = (
 ) => Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null>;
 
 export type TTSNode = (
-  text: ReadableStream<string>,
+  text: ReadableStream<string> | AsyncIterable<string>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<AudioFrame> | null>;
 
