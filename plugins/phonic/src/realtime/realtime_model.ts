@@ -281,6 +281,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
+  private pendingUserText?: string;
 
   constructor(realtimeModel: RealtimeModel) {
     super(realtimeModel);
@@ -339,6 +340,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
     let forbidSpeech = false;
+    let bufferedUserText = false;
+    const lastItemId =
+      chatCtx.items.length > 0 ? chatCtx.items[chatCtx.items.length - 1]?.id : undefined;
 
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
@@ -364,12 +368,19 @@ export class RealtimeSession extends llm.RealtimeSession {
           });
           sentAddSystemMessage = true;
         }
+
+        // Only treat a user message as text input when it's appended at the tail of the context.
+        if (item.role === 'user' && itemId === lastItemId && item.textContent) {
+          this.#logger.debug(`Received user text input: ${item.textContent}`);
+          this.pendingUserText = item.textContent;
+          bufferedUserText = true;
+        }
       }
     }
 
     this._chatCtx = chatCtx.copy();
 
-    if (!sentToolCallOutput && !sentAddSystemMessage) {
+    if (!sentToolCallOutput && !sentAddSystemMessage && !bufferedUserText) {
       this.#logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
@@ -453,6 +464,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     this.closeCurrentGeneration({ interrupted: true });
+    this.pendingUserText = undefined;
 
     const toolsPayload: Phonic.ConfigOptions.Tools.Item[] = [
       ...(this.options.phonicTools ?? []),
@@ -518,6 +530,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       this.pendingGenerateReplyFut = undefined;
       this.generateReplyRequestId += 1;
+      this.pendingUserText = undefined;
       if (!fut.done) {
         fut.reject(new Error('generateReply aborted'));
       }
@@ -550,7 +563,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.pendingGenerateReplyFut = undefined;
       return;
     }
-    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: instructions });
+
+    let systemMessage = instructions;
+    if (this.pendingUserText) {
+      const userTextInstruction =
+        `The user sent the following text message: "${this.pendingUserText}". ` +
+        'Please respond to their message.';
+      systemMessage = systemMessage
+        ? `${systemMessage}\n\n${userTextInstruction}`
+        : userTextInstruction;
+      this.pendingUserText = undefined;
+    }
+
+    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
   async commitAudio(): Promise<void> {
