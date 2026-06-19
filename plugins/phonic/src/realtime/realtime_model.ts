@@ -323,8 +323,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
-
-    let sentUserMessage = false;
+    let bufferedUserText = false;
+    const lastItemId = chatCtx.items.at(-1)?.id;
 
     for (const [, itemId] of diffOps.toCreate) {
       const item = chatCtx.getById(itemId);
@@ -347,17 +347,18 @@ export class RealtimeSession extends llm.RealtimeSession {
           });
           sentAddSystemMessage = true;
         }
-        if (item.role === 'user' && item.textContent) {
+        // Only treat a user message as text input when it's appended at the tail of the context.
+        if (item.role === 'user' && item.textContent && itemId === lastItemId) {
           this.#logger.info(`Received user text input: ${item.textContent}`);
           this.pendingUserText = item.textContent;
-          sentUserMessage = true;
+          bufferedUserText = true;
         }
       }
     }
 
     this._chatCtx = chatCtx.copy();
 
-    if (!sentToolCallOutput && !sentAddSystemMessage && !sentUserMessage) {
+    if (!sentToolCallOutput && !sentAddSystemMessage && !bufferedUserText) {
       this.#logger.warn(
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
@@ -510,6 +511,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       this.pendingGenerateReplyFut = undefined;
       this.generateReplyRequestId += 1;
+      this.pendingUserText = undefined;
       if (!fut.done) {
         fut.reject(new Error('generateReply aborted'));
       }
