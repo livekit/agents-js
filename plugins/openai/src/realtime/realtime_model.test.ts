@@ -31,6 +31,16 @@ type ResponseDoneSessionInternals = {
   };
 };
 
+type ReconnectSessionInternals = {
+  remoteChatCtx: llm.RemoteChatContext;
+  chatCtxForReconnect: () => llm.ChatContext;
+};
+
+type GenerationCleanupSessionInternals = {
+  currentGeneration?: ResponseDoneSessionInternals['currentGeneration'];
+  closeCurrentGeneration: (reason: string) => void;
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
@@ -615,6 +625,73 @@ describe('livekitItemToOpenAIItem', () => {
       expect(result.call_id).toBe('call-123');
       expect(result.output).toBe('The weather in San Francisco is sunny.');
     });
+  });
+});
+
+describe('RealtimeSession reconnect chat context', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('excludes function call items when rebuilding context after reconnect', () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as ReconnectSessionInternals;
+    session.remoteChatCtx = new llm.RemoteChatContext();
+
+    session.remoteChatCtx.insert(
+      undefined,
+      llm.ChatMessage.create({
+        id: 'msg_user',
+        role: 'user',
+        content: ['what is the weather?'],
+      }),
+    );
+    session.remoteChatCtx.insert(
+      'msg_user',
+      new llm.FunctionCall({
+        id: 'func_call',
+        callId: 'call_weather',
+        name: 'get_weather',
+        args: '{"location":"San Francisco"}',
+      }),
+    );
+    session.remoteChatCtx.insert(
+      'func_call',
+      new llm.FunctionCallOutput({
+        id: 'func_output',
+        callId: 'call_weather',
+        name: 'get_weather',
+        output: '{"temperature":72}',
+        isError: false,
+      }),
+    );
+
+    const chatCtx = session.chatCtxForReconnect();
+
+    expect(chatCtx.items.map((item) => item.type)).toEqual(['message']);
+  });
+
+  it('closes the current generation when cleaning up a reconnected session', () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as GenerationCleanupSessionInternals;
+    const doneFut = new Future<void>();
+
+    session.currentGeneration = {
+      messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
+      functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
+      messages: new Map<string, never>(),
+      _doneFut: doneFut,
+      _createdTimestamp: Date.now(),
+    };
+
+    session.closeCurrentGeneration('session reconnection');
+
+    expect(doneFut.done).toBe(true);
+    expect(session.currentGeneration).toBeUndefined();
   });
 });
 

@@ -16,11 +16,11 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { Future, Task } from '../utils.js';
 import { _getActivityTaskInfo } from './agent.js';
-import { AgentActivity } from './agent_activity.js';
+import { AgentActivity, filterFunctionCallOutputsForRealtimeSession } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -130,6 +130,36 @@ function buildMainTaskRunner() {
     q_updated,
   };
 }
+
+describe('filterFunctionCallOutputsForRealtimeSession', () => {
+  it('keeps only outputs whose function call is still in the realtime session', () => {
+    const liveOutput = FunctionCallOutput.create({
+      callId: 'call_live',
+      name: 'lookup',
+      output: '{"ok":true}',
+      isError: false,
+    });
+    const staleOutput = FunctionCallOutput.create({
+      callId: 'call_stale',
+      name: 'lookup',
+      output: '{"ok":false}',
+      isError: false,
+    });
+    const chatCtx = new ChatContext([
+      FunctionCall.create({
+        callId: 'call_live',
+        name: 'lookup',
+        args: '{}',
+      }),
+    ]);
+
+    const { currentFunctionCallOutputs, staleFunctionCallOutputs } =
+      filterFunctionCallOutputsForRealtimeSession(chatCtx, [liveOutput, staleOutput]);
+
+    expect(currentFunctionCallOutputs).toEqual([liveOutput]);
+    expect(staleFunctionCallOutputs).toEqual([staleOutput]);
+  });
+});
 
 describe('AgentActivity - mainTask', () => {
   it('should recover when speech handle is interrupted after authorization', async () => {
