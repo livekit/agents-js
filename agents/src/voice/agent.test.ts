@@ -55,6 +55,19 @@ describe('Agent', () => {
     expect(settled).toBe(true);
   });
 
+  it('should propagate active activity chat context update failures', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const chatCtx = new ChatContext();
+    const error = new Error('update failed');
+    const updateChatCtx = vi.fn(() => Promise.reject(error));
+    (
+      agent as unknown as { _agentActivity: { updateChatCtx: typeof updateChatCtx } }
+    )._agentActivity = { updateChatCtx };
+
+    await expect(agent.updateChatCtx(chatCtx)).rejects.toBe(error);
+    expect(updateChatCtx).toHaveBeenCalledWith(chatCtx);
+  });
+
   it('should create agent with instructions and tools', () => {
     const instructions = 'You are a helpful assistant with tools';
 
@@ -127,6 +140,23 @@ describe('Agent', () => {
     await update;
 
     expect(settled).toBe(true);
+  });
+
+  it('should propagate realtime session chat context update failures', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity & {
+      agent: Agent;
+      realtimeSession: { updateChatCtx: ReturnType<typeof vi.fn> };
+    };
+    const chatCtx = new ChatContext();
+    const error = new Error('realtime update failed');
+    activity.agent = agent;
+    activity.realtimeSession = {
+      updateChatCtx: vi.fn(() => Promise.reject(error)),
+    };
+
+    await expect(activity.updateChatCtx(chatCtx)).rejects.toBe(error);
+    expect(activity.realtimeSession.updateChatCtx).toHaveBeenCalledOnce();
   });
 
   it('should return a copy of tools, not the original reference', () => {
