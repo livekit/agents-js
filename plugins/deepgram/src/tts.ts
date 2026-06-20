@@ -22,6 +22,12 @@ const AUTHORIZATION_HEADER = 'Authorization';
 const NUM_CHANNELS = 1;
 const MIN_SENTENCE_LENGTH = 8;
 
+function validateSpeed(speed: number | undefined) {
+  if (speed !== undefined && (speed < 0.7 || speed > 1.5)) {
+    throw new Error(`Deepgram TTS speed must be between 0.7 and 1.5, got ${speed}`);
+  }
+}
+
 export interface TTSOptions {
   model: TTSModels | string;
   encoding: TTSEncoding;
@@ -75,9 +81,15 @@ export class TTS extends tts.TTS {
       );
     }
 
-    if (this.opts.speed !== undefined && (this.opts.speed < 0.7 || this.opts.speed > 1.5)) {
-      throw new Error(`Deepgram TTS speed must be between 0.7 and 1.5, got ${this.opts.speed}`);
-    }
+    validateSpeed(this.opts.speed);
+  }
+
+  updateOptions(opts: { speed?: number }): void {
+    validateSpeed(opts.speed);
+    this.opts = {
+      ...this.opts,
+      ...opts,
+    };
   }
 
   synthesize(
