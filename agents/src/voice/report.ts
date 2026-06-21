@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext } from '../llm/chat_context.js';
+import { log } from '../log.js';
 import { type ModelUsage, filterZeroValues } from '../metrics/model_usage.js';
 import type {
   AgentSessionOptions,
   ResolvedRecordingOptions,
+  TurnDetectionMode,
   VoiceOptions,
 } from './agent_session.js';
 import type { AgentEvent } from './events.js';
@@ -58,6 +60,32 @@ export interface SessionReportOptions {
   modelUsage?: ModelUsage[];
 }
 
+/**
+ * Snapshot session options for the report, replacing any live turn-detection
+ * model with a plain object via `toJSON()`.
+ */
+function snapshotReportOptions(options: ReportOptions): ReportOptions {
+  const turnDetection = options.turnHandling?.turnDetection;
+  if (turnDetection === undefined || turnDetection === null || typeof turnDetection === 'string') {
+    return options;
+  }
+  let snapshot: TurnDetectionMode | undefined;
+  try {
+    snapshot = JSON.parse(JSON.stringify(turnDetection)) as TurnDetectionMode;
+  } catch (error) {
+    // Drop a model that can't be serialized.
+    log().warn(
+      { error },
+      'could not serialize turn detection model; omitting it from the session report',
+    );
+    snapshot = undefined;
+  }
+  return {
+    ...options,
+    turnHandling: { ...options.turnHandling, turnDetection: snapshot },
+  };
+}
+
 export function createSessionReport(opts: SessionReportOptions): SessionReport {
   const timestamp = opts.timestamp ?? Date.now();
   const audioRecordingStartedAt = opts.audioRecordingStartedAt;
@@ -66,7 +94,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
     jobId: opts.jobId,
     roomId: opts.roomId,
     room: opts.room,
-    options: opts.options,
+    options: snapshotReportOptions(opts.options),
     events: opts.events,
     chatHistory: opts.chatHistory,
     enableRecording: opts.enableRecording ?? false,

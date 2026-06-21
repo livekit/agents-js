@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
+import { TurnDetector } from '../inference/eot/detector.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { ModelUsage } from '../metrics/model_usage.js';
 import type {
@@ -215,6 +216,67 @@ describe('sessionReportToJSON', () => {
     const eventType: AgentSessionEventTypes = AgentSessionEventTypes.SessionUsageUpdated;
     expect(usage.modelUsage).toEqual([]);
     expect(eventType).toBe('session_usage_updated');
+  });
+});
+
+describe('createSessionReport turn detector snapshot', () => {
+  it('destructures the live audio turn detector into a credential-free snapshot', () => {
+    const original = { ...process.env };
+    process.env.LIVEKIT_INFERENCE_URL = 'ws://gateway';
+    process.env.LIVEKIT_API_KEY = 'APIsecretkey123';
+    process.env.LIVEKIT_API_SECRET = 'topsecretvalue456';
+    delete process.env.LIVEKIT_INFERENCE_API_KEY;
+    delete process.env.LIVEKIT_INFERENCE_API_SECRET;
+
+    let report: ReturnType<typeof createSessionReport>;
+    try {
+      const options = baseOptions();
+      options.turnHandling = {
+        turnDetection: new TurnDetector({ version: 'v1' }),
+      };
+      report = createSessionReport({
+        jobId: 'job',
+        roomId: 'room-id',
+        room: 'room',
+        options,
+        events: [],
+        chatHistory: ChatContext.empty(),
+        enableRecording: false,
+        timestamp: 0,
+        startedAt: 0,
+      });
+    } finally {
+      process.env = original;
+    }
+
+    const turnDetection = report.options.turnHandling?.turnDetection as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(turnDetection).not.toBeInstanceOf(TurnDetector);
+    expect(turnDetection.model).toBe('turn-detector-v1');
+    expect(turnDetection.cloud).toMatchObject({ baseUrl: 'ws://gateway' });
+
+    const serialized = JSON.stringify(report.options);
+    expect(serialized).not.toContain('APIsecretkey123');
+    expect(serialized).not.toContain('topsecretvalue456');
+  });
+
+  it('leaves string turn detection modes untouched', () => {
+    const options = baseOptions();
+    options.turnHandling = { turnDetection: 'vad' };
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options,
+      events: [],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+    expect(report.options.turnHandling?.turnDetection).toBe('vad');
   });
 });
 

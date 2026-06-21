@@ -147,6 +147,20 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     this._model = model;
   }
 
+  /**
+   * Plain config snapshot for serialization and observability.
+   */
+  toJSON(): Record<string, unknown> {
+    return {
+      model: this._model,
+      sampleRate: this._opts.sampleRate,
+      thresholds: this._opts.thresholds,
+      cloud: this._cloudOpts
+        ? { baseUrl: this._cloudOpts.baseUrl, connOptions: this._cloudOpts.connOptions }
+        : undefined,
+    };
+  }
+
   protected _warnThresholdOverride(): void {
     const overrides = this._opts.thresholds.overrides;
     if (overrides !== undefined) {
