@@ -1,5 +1,32 @@
 # @livekit/agents-plugin-silero
 
+## 1.4.8
+
+### Patch Changes
+
+- Updated dependencies [[`d662ec6b2ff047a60e4f9215c99794748497b675`](https://github.com/livekit/agents-js/commit/d662ec6b2ff047a60e4f9215c99794748497b675)]:
+  - @livekit/agents@1.4.8
+
+## 1.4.7
+
+### Patch Changes
+
+- feat(core): audio end-of-turn detection with cloud → local fallback (AGT-2520) - [#1719](https://github.com/livekit/agents-js/pull/1719) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  - New `inference.TurnDetector`: WebSocket cloud EOT transport (`version: 'v1'`, model name `turn-detector-v1`) with automatic fallback to the local native model (`version: 'v1-mini'`, model name `turn-detector-v1-mini`) via `@livekit/local-inference`. Auto-selects `'v1'` when `LIVEKIT_REMOTE_EOT_URL` is set, `'v1-mini'` otherwise. The `version` is the constructor knob; telemetry/billing report the full model name via `detector.model`.
+  - The local EOT model runs in the shared inference process (the same `InferenceProcExecutor` the text turn detector uses), loaded once per worker host (~138 MB) instead of in every job worker. The runner is registered by default when the native binding is available, so the inference process spawns on worker startup; on platforms where the binding can't load, local EOT degrades to a positive-default prediction and the worker still starts. (This is a JS-specific divergence from Python, which keeps EOT in-process and relies on forkserver COW sharing.)
+  - No prewarm helpers: EOT auto-warms in the inference process; the in-process silero VAD lazy-loads on first stream. (The `inference.prewarm*` helpers added during development were removed before release.)
+  - New `inference.VAD` (local-only streaming VAD via `@livekit/local-inference`).
+  - `AgentSession` now auto-provisions a bundled silero VAD when `vad` is omitted (`isDefault=true`). Pass `vad: null` to opt out.
+  - `livekit-plugins-silero` is deprecated; pass `vad: null` to opt out of the bundled default, or use `inference.VAD({ model: 'silero', ... })` to customise.
+  - `livekit-plugins-livekit` turn detector is deprecated in favor of `inference.TurnDetector`.
+  - Endpointing defaults are now detector-aware: when the resolved turn detector is a streaming ("audio model") detector — the bundled default — unset endpointing keys fall back to tighter defaults (`minDelay: 300`, `maxDelay: 2500`) instead of the legacy `500`/`3000`. Non-streaming modes (`vad`/`stt`/`manual`/`realtime_llm`, or `turnDetection: null`) keep the legacy defaults. Explicit user keys are tracked as sparse overrides and re-resolved per agent activity, so different agents in one session can use different detectors and runtime `updateOptions` changes survive handoffs.
+  - New `EOTInferenceMetrics` and `EOTModelUsage`; new telemetry span attributes (`lk.eou.source`, `lk.eou.from_cache`, `lk.eou.detection_delay`); new `eot_prediction` event forwarded over remote sessions.
+  - Requires `@livekit/protocol` >= 1.46.5 (exposes the `AgentInference` message namespace used by the cloud transport, including the server-provided `SessionCreated` default thresholds).
+
+- Updated dependencies [[`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267`](https://github.com/livekit/agents-js/commit/9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`e64698c2e67048ff577d5024488929193d0b60e4`](https://github.com/livekit/agents-js/commit/e64698c2e67048ff577d5024488929193d0b60e4), [`ec4a2a48d7ba1f6c20a86303b264188fa47fae0d`](https://github.com/livekit/agents-js/commit/ec4a2a48d7ba1f6c20a86303b264188fa47fae0d), [`e1acca813568869fd345b5eee16be211e8595d9b`](https://github.com/livekit/agents-js/commit/e1acca813568869fd345b5eee16be211e8595d9b), [`bb8e6251354062714e39ae5a44244e1ef65b385b`](https://github.com/livekit/agents-js/commit/bb8e6251354062714e39ae5a44244e1ef65b385b), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c)]:
+  - @livekit/agents@1.4.7
+
 ## 1.4.6
 
 ### Patch Changes

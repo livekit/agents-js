@@ -159,6 +159,17 @@ export class ThresholdOptions {
     return this._default;
   }
 
+  /** Clean config snapshot: resolved thresholds and user overrides, without internal server state. */
+  toJSON(): Record<string, unknown> {
+    return {
+      model: this._model,
+      thresholds: this._thresholds,
+      defaultThreshold: this._default,
+      overrides: this._overrides,
+      backchannelOverrides: this._bcOverrides,
+    };
+  }
+
   lookup(language: LanguageCode | string | undefined): number | undefined {
     const key = language ? normalizeLanguage(language) : 'en';
     // `key in map`, not `?? default` — a legitimate override of 0 must not

@@ -1,5 +1,52 @@
 # @livekit/agents-plugin-openai
 
+## 1.4.8
+
+### Patch Changes
+
+- Updated dependencies [[`d662ec6b2ff047a60e4f9215c99794748497b675`](https://github.com/livekit/agents-js/commit/d662ec6b2ff047a60e4f9215c99794748497b675)]:
+  - @livekit/agents@1.4.8
+
+## 1.4.7
+
+### Patch Changes
+
+- Fix DataStream avatars (Anam, Bey, D-ID, LemonSlice, Runway, Tavus, Trugen) stalling the - [#1795](https://github.com/livekit/agents-js/pull/1795) ([@smorimoto](https://github.com/smorimoto))
+  conversation on user interruption when paired with the OpenAI Realtime API.
+
+  `DataStreamAudioOutput` parsed the `lk.playback_finished` RPC payload with a compile-time-only
+  `as PlaybackFinishedEvent` cast. The LiveKit avatar protocol serializes that payload with
+  snake_case keys (`playback_position`, `synchronized_transcript`) — confirmed against Anam's
+  live engine, which emits `{"playback_position": 2.0, "interrupted": true, "synchronized_transcript": null}`
+  — so the camelCase `playbackPosition` read back `undefined`. That became
+  `Math.floor(undefined * 1000) === NaN`, which `JSON.stringify` serializes as `null` in
+  `conversation.item.truncate`; the OpenAI Realtime API then rejected the truncate with an
+  `invalid_type` error and the interrupted turn could not recover.
+
+  `DataStreamAudioOutput` now normalizes the wire payload (snake_case primary, camelCase
+  fallback), which also restores the previously-dropped `synchronizedTranscript` on interrupted
+  turns. As defense-in-depth, the realtime truncate path now clamps a non-finite `audioEndMs` to
+  a valid non-negative integer in both `AgentActivity` and the OpenAI plugin so a malformed or
+  absent playback position can never again serialize as `null`.
+
+- Fix `openai` realtime STT (transcription session) failing on every model - [#1767](https://github.com/livekit/agents-js/pull/1767) ([@tsushanth](https://github.com/tsushanth))
+  with `invalid_request_error.invalid_model` when connecting directly to
+  `wss://api.openai.com/.../realtime`.
+
+  OpenAI's native endpoint now treats a `?model=` query param on the
+  WebSocket upgrade URL as selecting a conversation session, so the
+  subsequent transcription-mode `session.update` is rejected — surfacing
+  as `invalid_model` and a `4000` close. Drop the `?model=` parameter
+  when the host is `api.openai.com` (the model is conveyed via
+  `session.update → audio.input.transcription.model` instead).
+
+  OpenAI-compatible proxies (LiteLLM, Cloudflare AI Gateway, etc.) still
+  receive the model on the upgrade URL so they can route by model before
+  the first frame, preserving the original intent of #1467.
+
+- Updated dependencies [[`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267`](https://github.com/livekit/agents-js/commit/9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`e64698c2e67048ff577d5024488929193d0b60e4`](https://github.com/livekit/agents-js/commit/e64698c2e67048ff577d5024488929193d0b60e4), [`ec4a2a48d7ba1f6c20a86303b264188fa47fae0d`](https://github.com/livekit/agents-js/commit/ec4a2a48d7ba1f6c20a86303b264188fa47fae0d), [`e1acca813568869fd345b5eee16be211e8595d9b`](https://github.com/livekit/agents-js/commit/e1acca813568869fd345b5eee16be211e8595d9b), [`bb8e6251354062714e39ae5a44244e1ef65b385b`](https://github.com/livekit/agents-js/commit/bb8e6251354062714e39ae5a44244e1ef65b385b), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c)]:
+  - @livekit/agents@1.4.7
+
 ## 1.4.6
 
 ### Patch Changes

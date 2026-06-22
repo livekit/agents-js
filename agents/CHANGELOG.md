@@ -1,5 +1,69 @@
 # @livekit/agents
 
+## 1.4.8
+
+### Patch Changes
+
+- Add `assemblyai/universal-3-5-pro` to the inference STT model type hints. - [#1840](https://github.com/livekit/agents-js/pull/1840) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.4.7
+
+### Patch Changes
+
+- feat(core): audio end-of-turn detection with cloud → local fallback (AGT-2520) - [#1719](https://github.com/livekit/agents-js/pull/1719) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  - New `inference.TurnDetector`: WebSocket cloud EOT transport (`version: 'v1'`, model name `turn-detector-v1`) with automatic fallback to the local native model (`version: 'v1-mini'`, model name `turn-detector-v1-mini`) via `@livekit/local-inference`. Auto-selects `'v1'` when `LIVEKIT_REMOTE_EOT_URL` is set, `'v1-mini'` otherwise. The `version` is the constructor knob; telemetry/billing report the full model name via `detector.model`.
+  - The local EOT model runs in the shared inference process (the same `InferenceProcExecutor` the text turn detector uses), loaded once per worker host (~138 MB) instead of in every job worker. The runner is registered by default when the native binding is available, so the inference process spawns on worker startup; on platforms where the binding can't load, local EOT degrades to a positive-default prediction and the worker still starts. (This is a JS-specific divergence from Python, which keeps EOT in-process and relies on forkserver COW sharing.)
+  - No prewarm helpers: EOT auto-warms in the inference process; the in-process silero VAD lazy-loads on first stream. (The `inference.prewarm*` helpers added during development were removed before release.)
+  - New `inference.VAD` (local-only streaming VAD via `@livekit/local-inference`).
+  - `AgentSession` now auto-provisions a bundled silero VAD when `vad` is omitted (`isDefault=true`). Pass `vad: null` to opt out.
+  - `livekit-plugins-silero` is deprecated; pass `vad: null` to opt out of the bundled default, or use `inference.VAD({ model: 'silero', ... })` to customise.
+  - `livekit-plugins-livekit` turn detector is deprecated in favor of `inference.TurnDetector`.
+  - Endpointing defaults are now detector-aware: when the resolved turn detector is a streaming ("audio model") detector — the bundled default — unset endpointing keys fall back to tighter defaults (`minDelay: 300`, `maxDelay: 2500`) instead of the legacy `500`/`3000`. Non-streaming modes (`vad`/`stt`/`manual`/`realtime_llm`, or `turnDetection: null`) keep the legacy defaults. Explicit user keys are tracked as sparse overrides and re-resolved per agent activity, so different agents in one session can use different detectors and runtime `updateOptions` changes survive handoffs.
+  - New `EOTInferenceMetrics` and `EOTModelUsage`; new telemetry span attributes (`lk.eou.source`, `lk.eou.from_cache`, `lk.eou.detection_delay`); new `eot_prediction` event forwarded over remote sessions.
+  - Requires `@livekit/protocol` >= 1.46.5 (exposes the `AgentInference` message namespace used by the cloud transport, including the server-provided `SessionCreated` default thresholds).
+
+- Add `TcpAudioInput`/`TcpAudioOutput` for console-mode sessions, porting the Python `tcp_console` audio IO: inbound `audio_input` frames are resampled from the 48 kHz wire rate to the 24 kHz agent rate and fed to the STT pipeline, while the agent's TTS frames are resampled back up and streamed as `audio_output` messages. The output drives the flush/clear playout handshake, blocking the agent turn until the broker reports `audio_playback_finished` (or reporting an interruption when the buffer is cleared). `SessionHost` now accepts optional audio IO and routes inbound `audio_input`/`audio_playback_finished` messages to it. - [#1694](https://github.com/livekit/agents-js/pull/1694) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add a `console` CLI subcommand and in-process console runner, the final piece that lets a local broker (e.g. the LiveKit CLI `lk session` daemon) drive a Node agent over TCP. `runConsole` loads the agent, opens a `TcpSessionTransport` to `--connect-addr`, sets up an `AgentsConsole` singleton, and runs the agent entrypoint in-process (mirroring python's `_run_tcp_console`, which uses `JobExecutorType.THREAD` to share the console singleton with the `AgentSession`). `AgentSession` now wires its `SessionHost` from the `AgentsConsole` singleton when console mode is active, and `JobContext` gained fake-job support (`isFakeJob`, no-op `connect`/`deleteRoom`/recording) so a console job without a backing LiveKit room behaves correctly. Audio IO is attached by default (voice mode); a text-mode driver disables it at runtime via an `update_io` request. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Console mode parity fixes for the `lk agent console` flow: run registered inference runners (e.g. the livekit turn detector) in a supervised child process instead of failing, and write `--record` output (`audio.ogg` + `session_report.json`) to a local `console-recordings/session-<timestamp>/` directory like python, instead of a temp dir with no report. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(eot): emit agent backchannel opportunity events (AGT-2520) - [#1719](https://github.com/livekit/agents-js/pull/1719) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+  The multimodal EOT model now returns a backchannel probability alongside the end-of-turn probability. The turn detector compares it to a server-provided threshold and, when it clears, surfaces an internal backchannel _opportunity_ (a window where the agent could say a short "mm-hmm" while the user still holds the floor) to `AgentActivity`.
+
+  - `inference.TurnDetector` gains a `backchannelThreshold` option (and `updateOptions({ backchannelThreshold })`); `ThresholdOptions.lookupBackchannel()` resolves server-provided defaults layered with user overrides, mirroring the existing EOT threshold resolution.
+  - Backchannel thresholds are server-driven and cloud-only — disabled when the gateway sends none, after a cloud→local fallback (the mini model produces no backchannel probability), and for any non-positive threshold.
+  - Internal only: `AgentActivity.onAgentBackchannelOpportunity` is a no-op with a TODO; the event is not surfaced as a public `AgentSession` event (absent from the `AgentEvent` union, `AgentSessionEventTypes`, and package exports), treated the same way as the internal EOT prediction plumbing.
+  - Requires `@livekit/protocol` >= 1.46.8 (adds `EotPrediction.backchannelProbability` and `SessionCreated.defaultBackchannelThresholds` / `defaultBackchannelThreshold`).
+
+- Fix DataStream avatars (Anam, Bey, D-ID, LemonSlice, Runway, Tavus, Trugen) stalling the - [#1795](https://github.com/livekit/agents-js/pull/1795) ([@smorimoto](https://github.com/smorimoto))
+  conversation on user interruption when paired with the OpenAI Realtime API.
+
+  `DataStreamAudioOutput` parsed the `lk.playback_finished` RPC payload with a compile-time-only
+  `as PlaybackFinishedEvent` cast. The LiveKit avatar protocol serializes that payload with
+  snake_case keys (`playback_position`, `synchronized_transcript`) — confirmed against Anam's
+  live engine, which emits `{"playback_position": 2.0, "interrupted": true, "synchronized_transcript": null}`
+  — so the camelCase `playbackPosition` read back `undefined`. That became
+  `Math.floor(undefined * 1000) === NaN`, which `JSON.stringify` serializes as `null` in
+  `conversation.item.truncate`; the OpenAI Realtime API then rejected the truncate with an
+  `invalid_type` error and the interrupted turn could not recover.
+
+  `DataStreamAudioOutput` now normalizes the wire payload (snake_case primary, camelCase
+  fallback), which also restores the previously-dropped `synchronizedTranscript` on interrupted
+  turns. As defense-in-depth, the realtime truncate path now clamps a non-finite `audioEndMs` to
+  a valid non-negative integer in both `AgentActivity` and the OpenAI plugin so a malformed or
+  absent playback position can never again serialize as `null`.
+
+- Fix orphaned WebSocket leak in `connectWs`: when the connection timeout fires, the socket is now terminated so it cannot connect and linger without an owner. Also fixes a hang where a normal (code 1000) close during the handshake left the promise unsettled — it now rejects on any close before the socket opens. Uses `APITimeoutError` instead of `APIConnectionError` for clearer retry semantics. - [#1788](https://github.com/livekit/agents-js/pull/1788) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Avoid clearing newer participant entrypoint tasks after quick reconnects. - [#1723](https://github.com/livekit/agents-js/pull/1723) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Remove the `cartesia/ink-2-latest` alias from the Cartesia inference STT model type hints. The alias still works at runtime; dated and `-latest` Cartesia snapshot aliases are no longer surfaced in the SDK types. - [#1792](https://github.com/livekit/agents-js/pull/1792) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+- `SupervisedProc.initialize()` now fails fast — racing the first IPC message against child exit and the initialize timeout — instead of hanging forever when the child process dies before responding (e.g. an inference runner whose model files are missing). Callers that previously deadlocked (worker startup, console mode) now get an actionable error. - [#1706](https://github.com/livekit/agents-js/pull/1706) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.4.6
 
 ### Patch Changes
