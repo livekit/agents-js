@@ -242,6 +242,33 @@ describe('AutoSelect', () => {
   });
 });
 
+describe('Redaction', () => {
+  it('omits cloud credentials from JSON serialization', () => {
+    void withEnv(
+      {
+        LIVEKIT_INFERENCE_URL: 'ws://gateway',
+        LIVEKIT_API_KEY: 'APIsecretkey123',
+        LIVEKIT_API_SECRET: 'topsecretvalue456',
+        LIVEKIT_INFERENCE_API_KEY: undefined,
+        LIVEKIT_INFERENCE_API_SECRET: undefined,
+      },
+      () => {
+        const detector = new TurnDetector({ version: 'v1' });
+        const json = JSON.stringify(detector);
+        expect(json).not.toContain('APIsecretkey123');
+        expect(json).not.toContain('topsecretvalue456');
+        const parsed = JSON.parse(json);
+        expect(parsed.model).toBe('turn-detector-v1');
+        expect(parsed.cloud.baseUrl).toBe('ws://gateway');
+        expect(parsed.cloud).not.toHaveProperty('apiKey');
+        expect(parsed.cloud).not.toHaveProperty('apiSecret');
+        expect(parsed.thresholds).not.toHaveProperty('_serverThresholds');
+        expect(parsed.thresholds).toHaveProperty('model');
+      },
+    );
+  });
+});
+
 describe('ExplicitModelErrors', () => {
   it('explicit cloud missing creds throws', () => {
     void withEnv(
