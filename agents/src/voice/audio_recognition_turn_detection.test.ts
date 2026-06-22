@@ -7,8 +7,8 @@
  *
  * Recognition owns all streaming turn-detection policy: it holds the in-flight
  * inference request's future (`turnDetectorPredictionFut`), starts requests on
- * VAD events only, awaits the future with the endpointing `minDelay` in the eou
- * bounce, and flushes the stream on turn commits. Covered here:
+ * VAD events only, awaits the future with the model `predictionTimeout` in the
+ * eou bounce, and flushes the stream on turn commits. Covered here:
  *
  * 1. The speaking-guard race in `runEOUDetection`: setting `userSpeakingEvent`
  *    mid-bounce must abort the commit so a late-arriving SOS doesn't ship the
@@ -126,6 +126,7 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   // backchannel disabled by default (server sent no thresholds); the
   // backchannel-emit tests override this with a positive threshold.
   stream.backchannelThreshold = vi.fn(async () => undefined);
+  Object.defineProperty(stream, 'predictionTimeout', { value: 10 });
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
   stream.flush = vi.fn();
@@ -686,7 +687,7 @@ describe('TestPredictionFutureLifecycle', () => {
     const stream = makeAudioStream();
     internals.turnDetectorStream = stream;
     internals.turnDetector = makeAudioDetector(stream);
-    // A pending future that never resolves → times out at minDelay.
+    // A pending future that never resolves → times out at predictionTimeout.
     internals.turnDetectorPredictionFut = new Future<TurnDetectionEvent>();
 
     internals.runEOUDetection(ChatContext.empty(), 'vad');

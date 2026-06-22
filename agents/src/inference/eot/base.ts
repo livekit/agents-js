@@ -21,6 +21,7 @@ import type { ThresholdOptions, TurnDetectorModel } from './languages.js';
 
 export const DEFAULT_SAMPLE_RATE = 16000;
 export const MIN_SILENCE_DURATION_MS = 200;
+export const DEFAULT_PREDICTION_TIMEOUT_MS = 1000;
 
 /**
  * Options shared by the audio EOT stream and every transport.
@@ -234,6 +235,10 @@ export class BaseStreamingTurnDetectorStream {
 
   async supportsLanguage(language: LanguageCode | undefined): Promise<boolean> {
     return this._opts.thresholds.supports(language);
+  }
+
+  get predictionTimeout(): number {
+    return DEFAULT_PREDICTION_TIMEOUT_MS;
   }
 
   // endregion
