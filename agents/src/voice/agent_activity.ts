@@ -3113,6 +3113,8 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (speechHandle.interrupted) {
+      // Emit before cancelling so already-finished tool outputs aren't dropped on interruption.
+      this.emitInterruptedToolExecutions(toolOutput, speechHandle);
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
@@ -3645,6 +3647,8 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
       speechHandle._markGenerationDone();
+      // Emit before cancelling so already-finished tool outputs aren't dropped on interruption.
+      this.emitInterruptedToolExecutions(toolOutput, speechHandle);
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
       // TODO(brian): close tees
@@ -3859,6 +3863,30 @@ export class AgentActivity implements RecognitionHooks {
       newAgentTask,
       ignoreTaskSwitch,
     };
+  }
+
+  /**
+   * Emit `function_tools_executed` for tools that already finished, even when the speech was
+   * interrupted before reaching the normal (non-interrupted) emit site.
+   *
+   * Both the realtime and pipeline interrupted-branches `return` ahead of their emit, so a tool
+   * whose output landed before a self-interrupt (e.g. Phonic's multi-step cascade interrupting its
+   * own previous generation) would otherwise be dropped from observability even though it ran. This
+   * is observability-only: it does not generate a tool reply, update the chat context, or switch
+   * agents — those side effects stay gated on the non-interrupted path. Call this BEFORE cancelling
+   * the tool execution task so only genuinely-completed outputs are reported (mid-flight tools are
+   * aborted afterwards and never enter `toolOutput.output`).
+   */
+  private emitInterruptedToolExecutions(toolOutput: ToolOutput, speechHandle: SpeechHandle): void {
+    if (toolOutput.output.length === 0) return;
+    const { functionToolsExecutedEvent } = this.summarizeToolExecutionOutput(
+      toolOutput,
+      speechHandle,
+    );
+    this.agentSession.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      functionToolsExecutedEvent,
+    );
   }
 
   private async realtimeReplyTask({

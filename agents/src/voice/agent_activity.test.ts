@@ -16,13 +16,20 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentConfigUpdate, ChatContext } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  ChatContext,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { Future, Task } from '../utils.js';
 import { _getActivityTaskInfo } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
+import { AgentSessionEventTypes } from './events.js';
+import { ToolExecutionOutput, type ToolOutput } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
 const agentMocks = vi.hoisted(() => ({
@@ -795,5 +802,65 @@ describe('AgentActivity - waitForIdle close abort', () => {
     // close() aborts the shared signal; the wait must unblock.
     closeAbort.abort();
     expect(await raceTimeout(pending, 1000)).toBe('resolved');
+  });
+});
+
+/**
+ * Regression test: a realtime (or pipeline) tool whose output landed before a self-interrupt
+ * must still surface `function_tools_executed` for observability. Both interrupted-branches
+ * `return` ahead of their normal emit, so without `emitInterruptedToolExecutions` the completed
+ * tool's event is dropped (the symptom seen with Phonic's self-interrupting multi-step cascade).
+ */
+describe('AgentActivity - emitInterruptedToolExecutions', () => {
+  function build() {
+    const emit = vi.fn();
+    const fakeActivity = {
+      agentSession: { emit },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+    const emitInterrupted = (
+      AgentActivity.prototype as unknown as {
+        emitInterruptedToolExecutions: (this: unknown, toolOutput: ToolOutput, sh: unknown) => void;
+      }
+    ).emitInterruptedToolExecutions.bind(fakeActivity);
+    return { emit, emitInterrupted };
+  }
+
+  const makeOutput = (name: string, output: string): ToolOutput => {
+    const toolCall = FunctionCall.create({ callId: `call_${name}`, name, args: '{}' });
+    const toolCallOutput = FunctionCallOutput.create({
+      callId: `call_${name}`,
+      name,
+      output,
+      isError: false,
+    });
+    return {
+      output: [ToolExecutionOutput.create({ toolCall, toolCallOutput, rawOutput: output })],
+      firstToolStartedFuture: new Future(),
+    };
+  };
+
+  it('emits function_tools_executed for a tool that finished before the interruption', () => {
+    const { emit, emitInterrupted } = build();
+
+    emitInterrupted(makeOutput('get_weather', 'sunny'), { id: 'speech_1' });
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    const [eventType, payload] = emit.mock.calls[0] as [
+      string,
+      { functionCalls: FunctionCall[]; functionCallOutputs: FunctionCallOutput[] },
+    ];
+    expect(eventType).toBe(AgentSessionEventTypes.FunctionToolsExecuted);
+    expect(payload.functionCalls.map((c) => c.name)).toEqual(['get_weather']);
+    expect(payload.functionCallOutputs.map((o) => o.output)).toEqual(['sunny']);
+  });
+
+  it('does not emit when no tool finished before the interruption', () => {
+    const { emit, emitInterrupted } = build();
+
+    emitInterrupted({ output: [], firstToolStartedFuture: new Future() }, { id: 'speech_1' });
+
+    expect(emit).not.toHaveBeenCalled();
   });
 });
