@@ -161,6 +161,8 @@ describe('utils', () => {
 
     it('should handle task that checks abort signal manually', async () => {
       const arr: number[] = [];
+      const readyToCancel = new Event();
+      const continueAfterCancel = new Event();
       const task = Task.from(async (controller) => {
         for (let i = 0; i < 10; i++) {
           if (controller.signal.aborted) {
@@ -168,14 +170,19 @@ describe('utils', () => {
           }
           await delay(10);
           arr.push(i);
+          if (i === 1) {
+            readyToCancel.set();
+            await continueAfterCancel.wait();
+          }
         }
         return 'completed';
       });
 
-      await delay(35);
+      await readyToCancel.wait();
       task.cancel();
+      continueAfterCancel.set();
 
-      expect(arr).toEqual([0, 1, 2]);
+      expect(arr).toEqual([0, 1]);
       try {
         await task.result;
       } catch (error: unknown) {
