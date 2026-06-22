@@ -558,7 +558,7 @@ export class HotelDB {
     reservation.status = 'cancelled';
   }
 
-  recordFollowup(args: {
+  recordFollowup(_args: {
     kind: FollowupKind;
     callerName: string;
     callerPhone: string;
@@ -567,7 +567,7 @@ export class HotelDB {
     return makeCode('FUP');
   }
 
-  recordGroupInquiry(args: {
+  recordGroupInquiry(_args: {
     company: string;
     contactName: string;
     contactPhone: string;
@@ -601,7 +601,7 @@ export class HotelDB {
     return makeCode('EMG');
   }
 
-  takeGuestMessage(args: {
+  takeGuestMessage(_args: {
     recipient: string;
     callerName: string;
     callerPhone: string;
@@ -624,7 +624,7 @@ export class HotelDB {
     return { code: makeCode('TOUR'), total, pickupTime: tour.pickupTime };
   }
 
-  requestFlightReconfirmation(args: {
+  requestFlightReconfirmation(_args: {
     room: string;
     airline: string;
     flightNumber: string;
