@@ -7,9 +7,3 @@ export {
   type TaskGroupOptions,
   type TaskGroupResult,
 } from './task_group.js';
-export {
-  WarmTransferTask,
-  type WarmTransferResult,
-  type WarmTransferTaskOptions,
-} from './warm_transfer.js';
-export type { InstructionParts } from './utils.js';
