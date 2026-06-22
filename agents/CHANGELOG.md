@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.4.9
+
+### Patch Changes
+
+- Add AssemblyAI inference STT parameters for agent context, Voice Focus, Voice Focus threshold, and streaming mode. - [#1852](https://github.com/livekit/agents-js/pull/1852) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(eot): restore inference prediction timeout - [#1853](https://github.com/livekit/agents-js/pull/1853) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Sanitize turn detector for session reports: the OTLP attribute serializer now honors `toJSON()`, and the audio turn detector exposes a credential-free config snapshot. - [#1847](https://github.com/livekit/agents-js/pull/1847) ([@chenghao-mou](https://github.com/chenghao-mou))
+
 ## 1.4.8
 
 ### Patch Changes
