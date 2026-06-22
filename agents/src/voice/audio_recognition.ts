@@ -241,8 +241,7 @@ export interface _TurnDetector {
   unlikelyThreshold: (language?: LanguageCode) => Promise<number | undefined>;
   supportsLanguage: (language?: LanguageCode) => Promise<boolean>;
   /**
-   * @param timeoutMs - Optional inference wait budget in milliseconds. The audio
-   *   EOT detector honors it; text-based detectors currently ignore it.
+   * Text-based detectors own their inference timeout behavior internally.
    */
   predictEndOfTurn(chatCtx: ChatContext, timeoutMs?: number): Promise<number>;
 }
@@ -317,7 +316,7 @@ export class AudioRecognition {
   /**
    * Future for the in-flight audio-EOT inference request. Recognition owns the
    * request lifecycle: it starts a request on the VAD silence tick, holds the
-   * future here, awaits it (with the endpointing delay) in the eou bounce, and
+   * future here, awaits it (with the model prediction timeout) in the eou bounce, and
    * clears it on turn boundaries / superseding speech.
    */
   private turnDetectorPredictionFut?: Future<TurnDetectionEvent>;
@@ -1521,14 +1520,15 @@ export class AudioRecognition {
                     this.onMissingEotPrediction();
                   } else {
                     fromCache = fut.done;
-                    // Await the held future against the endpointing delay.
+                    // Await the held future against the model prediction timeout.
+                    const predictionTimeout = turnDetector.predictionTimeout;
                     let timeoutId: ReturnType<typeof setTimeout> | undefined;
                     const winner = await Promise.race([
                       fut.await.then((ev) => ({ kind: 'value', ev }) as const),
                       new Promise<{ kind: 'timeout' }>((resolve) => {
                         timeoutId = setTimeout(
                           () => resolve({ kind: 'timeout' }),
-                          endpointingDelay,
+                          predictionTimeout,
                         );
                       }),
                     ]);
@@ -1549,7 +1549,7 @@ export class AudioRecognition {
                       );
                     } else {
                       this.logger.warn(
-                        { timeoutMs: endpointingDelay },
+                        { timeoutMs: predictionTimeout },
                         'eot prediction timed out, committing without a prediction',
                       );
                       turnDetector.cancelInference({ timedOut: true });
@@ -1558,10 +1558,7 @@ export class AudioRecognition {
                   }
                 } else {
                   try {
-                    endOfTurnProbability = await turnDetector.predictEndOfTurn(
-                      chatCtx,
-                      endpointingDelay,
-                    );
+                    endOfTurnProbability = await turnDetector.predictEndOfTurn(chatCtx);
                     unlikelyThreshold = await turnDetector.unlikelyThreshold(this.lastLanguage);
                   } catch (error) {
                     this.logger.error(error, 'Error predicting end of turn');

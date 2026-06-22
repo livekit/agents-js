@@ -239,39 +239,36 @@ describe('utils', () => {
     });
 
     it('should handle task that checks abort signal manually', async () => {
-      // fake timers: with real timers the exact tick count is scheduling-
-      // dependent and flakes on loaded CI runners
-      vi.useFakeTimers();
-      try {
-        const arr: number[] = [];
-        const task = Task.from(async (controller) => {
-          for (let i = 0; i < 10; i++) {
-            if (controller.signal.aborted) {
-              throw new Error('Task was aborted');
-            }
-            await delay(10);
-            arr.push(i);
+      const arr: number[] = [];
+      const readyToCancel = new Event();
+      const continueAfterCancel = new Event();
+      const task = Task.from(async (controller) => {
+        for (let i = 0; i < 10; i++) {
+          if (controller.signal.aborted) {
+            throw new Error('Task was aborted');
           }
-          return 'completed';
-        });
-
-        await vi.advanceTimersByTimeAsync(35);
-        task.cancel();
-
-        expect(arr).toEqual([0, 1, 2]);
-        // the pending (signal-less) delay must elapse for the loop to reach
-        // its manual abort checkpoint
-        await vi.advanceTimersByTimeAsync(10);
-        try {
-          await task.result;
-        } catch (error: unknown) {
-          expect((error as Error).message).toBe('Task was aborted');
+          await delay(10);
+          arr.push(i);
+          if (i === 1) {
+            readyToCancel.set();
+            await continueAfterCancel.wait();
+          }
         }
+        return 'completed';
+      });
 
-        expect(task.done).toBe(true);
-      } finally {
-        vi.useRealTimers();
+      await readyToCancel.wait();
+      task.cancel();
+      continueAfterCancel.set();
+
+      expect(arr).toEqual([0, 1]);
+      try {
+        await task.result;
+      } catch (error: unknown) {
+        expect((error as Error).message).toBe('Task was aborted');
       }
+
+      expect(task.done).toBe(true);
     });
 
     it('should handle cleanup in finally block', async () => {
