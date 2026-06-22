@@ -39,3 +39,4 @@ export * from './version.js';
 export * from './voice/index.js';
 export * as voice from './voice/index.js';
 export * from './worker.js';
+export * as workflows from './workflows/index.js';

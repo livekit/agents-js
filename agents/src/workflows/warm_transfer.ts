@@ -5,30 +5,30 @@ import type { SIPOutboundConfig } from '@livekit/protocol';
 import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
-import type { LLMModels, STTModelString, TTSModelString } from '../../inference/index.js';
-import { getJobContext } from '../../job.js';
+import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatContext,
   Instructions,
   LLM,
   RealtimeModel,
   ToolContextEntry,
-} from '../../llm/index.js';
-import { ToolContext, ToolError, ToolFlag, tool } from '../../llm/index.js';
-import { log } from '../../log.js';
-import type { STT } from '../../stt/index.js';
-import type { TTS } from '../../tts/index.js';
-import type { VAD } from '../../vad.js';
-import { Agent, AgentTask } from '../../voice/agent.js';
-import { AgentSession, type TurnDetectionMode } from '../../voice/agent_session.js';
+} from '../llm/index.js';
+import { ToolContext, ToolError, ToolFlag, tool } from '../llm/index.js';
+import { log } from '../log.js';
+import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/index.js';
+import type { VAD } from '../vad.js';
+import { Agent, AgentTask } from '../voice/agent.js';
+import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
 import {
   type AudioConfig,
   type AudioSourceType,
   BackgroundAudioPlayer,
   BuiltinAudioClip,
   type PlayHandle,
-} from '../../voice/background_audio.js';
-import { DEFAULT_PARTICIPANT_KINDS } from '../../voice/room_io/index.js';
+} from '../voice/background_audio.js';
+import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
 import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {

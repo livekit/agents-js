@@ -4,13 +4,13 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   inference,
   llm,
   log,
   voice,
+  workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,7 @@ Examples on when the tool should be called:
                 );
               }
 
-              const result = await new beta.WarmTransferTask({
+              const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
                 sipNumber: SIP_NUMBER,
