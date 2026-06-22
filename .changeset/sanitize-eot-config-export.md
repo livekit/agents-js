@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Sanitize audio turn detector export for session configs with custom JSON serialization.
+Sanitize turn detector for session reports: the OTLP attribute serializer now honors `toJSON()`, and the audio turn detector exposes a credential-free config snapshot.

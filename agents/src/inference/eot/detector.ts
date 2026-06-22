@@ -154,7 +154,7 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     return {
       model: this._model,
       sampleRate: this._opts.sampleRate,
-      thresholds: this._opts.thresholds,
+      thresholds: this._opts.thresholds.toJSON(),
       cloud: this._cloudOpts
         ? { baseUrl: this._cloudOpts.baseUrl, connOptions: this._cloudOpts.connOptions }
         : undefined,

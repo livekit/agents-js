@@ -246,7 +246,6 @@ describe('Redaction', () => {
   it('omits cloud credentials from JSON serialization', () => {
     void withEnv(
       {
-        LIVEKIT_REMOTE_EOT_URL: 'ws://gateway',
         LIVEKIT_INFERENCE_URL: 'ws://gateway',
         LIVEKIT_API_KEY: 'APIsecretkey123',
         LIVEKIT_API_SECRET: 'topsecretvalue456',
@@ -263,6 +262,8 @@ describe('Redaction', () => {
         expect(parsed.cloud.baseUrl).toBe('ws://gateway');
         expect(parsed.cloud).not.toHaveProperty('apiKey');
         expect(parsed.cloud).not.toHaveProperty('apiSecret');
+        expect(parsed.thresholds).not.toHaveProperty('_serverThresholds');
+        expect(parsed.thresholds).toHaveProperty('model');
       },
     );
   });
