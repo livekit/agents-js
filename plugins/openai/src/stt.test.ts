@@ -74,14 +74,26 @@ describe('OpenAI STT options', () => {
 });
 
 describe('buildRealtimeSttUrl', () => {
-  it('points at OpenAI realtime with intent and model when no baseURL is set', () => {
+  it('points at OpenAI realtime with intent but omits model on the native endpoint', () => {
+    // OpenAI's native /realtime endpoint rejects `?model=` with
+    // invalid_request_error.invalid_model when intent=transcription, so the
+    // model is conveyed via the subsequent session.update instead.
     const url = new URL(buildRealtimeSttUrl(undefined, 'gpt-realtime-whisper'));
 
     expect(url.protocol).toBe('wss:');
     expect(url.host).toBe('api.openai.com');
     expect(url.pathname).toBe('/v1/realtime');
     expect(url.searchParams.get('intent')).toBe('transcription');
-    expect(url.searchParams.get('model')).toBe('gpt-realtime-whisper');
+    expect(url.searchParams.get('model')).toBe(null);
+  });
+
+  it('omits the model when an explicit baseURL still points at api.openai.com', () => {
+    const url = new URL(buildRealtimeSttUrl('https://api.openai.com/v1', 'gpt-4o-mini-transcribe'));
+
+    expect(url.host).toBe('api.openai.com');
+    expect(url.pathname).toBe('/v1/realtime');
+    expect(url.searchParams.get('intent')).toBe('transcription');
+    expect(url.searchParams.get('model')).toBe(null);
   });
 
   it('upgrades https baseURL to wss and appends /realtime when path is /v1', () => {

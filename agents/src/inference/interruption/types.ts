@@ -22,7 +22,7 @@ export interface OverlappingSpeechEvent {
  */
 export interface InterruptionOptions {
   sampleRate: number;
-  threshold: number;
+  threshold?: number;
   minFrames: number;
   maxAudioDurationInS: number;
   audioPrefixDurationInS: number;
@@ -32,7 +32,6 @@ export interface InterruptionOptions {
   baseUrl: string;
   apiKey: string;
   apiSecret: string;
-  useProxy: boolean;
 }
 
 /**

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -12,7 +11,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -358,9 +356,6 @@ function createCheckoutAgent(menu: string) {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const menu = 'Pizza: $10, Salad: $5, Ice Cream: $3, Coffee: $2';
     const userData = createUserData({
@@ -370,9 +365,10 @@ export default defineAgent({
       checkout: createCheckoutAgent(menu),
     });
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
-      vad,
+      // VAD is auto-provisioned by AgentSession (bundled silero via
+      // @livekit/local-inference). Pass `vad: null` to opt out, or pass
+      // your own `new inference.VAD({ ... })` to customise.
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       tts: new inference.TTS({ model: 'cartesia/sonic-3' }),

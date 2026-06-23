@@ -26,7 +26,6 @@ export class BoundedCache<K, V extends object> {
 
   /**
    * Update existing value fields if present and defined.
-   * Mirrors python BoundedDict.update_value behavior.
    */
   updateValue(key: K, fields: Partial<V>): V | undefined {
     const value = this.cache.get(key);
@@ -34,7 +33,6 @@ export class BoundedCache<K, V extends object> {
 
     for (const [fieldName, fieldValue] of Object.entries(fields) as [keyof V, V[keyof V]][]) {
       if (fieldValue === undefined) continue;
-      // Runtime field update parity with python's hasattr + setattr.
       if (fieldName in (value as object)) {
         (value as Record<string, unknown>)[String(fieldName)] = fieldValue;
       }
