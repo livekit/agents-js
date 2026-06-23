@@ -38,6 +38,7 @@ export interface LLMOptions {
   httpOptions?: types.HttpOptions;
   seed?: number;
   serviceTier?: types.ServiceTier;
+  cachedContent?: string;
   mediaResolution?: types.MediaResolution;
 }
 
@@ -88,6 +89,7 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
+   * @param cachedContent - Resource name of an explicit context cache to attach to every request from this LLM instance, e.g. `cachedContents/abc123` for the Gemini API or `projects/<project>/locations/<location>/cachedContents/abc123` for VertexAI. The cache must already exist. When set, `systemInstruction`, `tools`, and `toolConfig` are omitted from outgoing requests because Gemini requires those fields to live inside the cached content resource.
    * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
   constructor(
@@ -110,6 +112,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
@@ -182,6 +185,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
       apiKey,
     };
@@ -280,6 +284,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.serviceTier !== undefined) {
       extras.serviceTier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.cachedContent !== undefined) {
+      extras.cachedContent = this.#opts.cachedContent;
     }
 
     if (this.#opts.mediaResolution !== undefined) {
@@ -401,6 +409,7 @@ export class LLMStream extends llm.LLMStream {
         }
         delete requestConfig.tools;
         delete requestConfig.toolConfig;
+        delete requestConfig.systemInstruction;
       }
 
       const httpOptions = {
