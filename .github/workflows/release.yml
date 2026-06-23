@@ -9,6 +9,12 @@ on:
     branches:
       - main
       - 0.x
+  workflow_dispatch:
+    inputs:
+      pre-release:
+        description: 'Publish a pre-release'
+        type: boolean
+        default: false
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -56,11 +62,21 @@ jobs:
           echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
+        if: ${{ github.event.inputs.pre-release != 'true' }}
         uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
         with:
           publish: pnpm ci:publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish pre-release
+        id: changeset-prerelease
+        if: ${{ github.event.inputs.pre-release == 'true' }}
+        run: |
+          pnpm changeset pre enter dev
+          pnpm changeset version
+          pnpm build
+          pnpm publish -r --tag dev --no-git-checks
       - name: Build docs
         if: steps.changesets.outputs.published == 'true'
         run: pnpm doc
