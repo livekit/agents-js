@@ -7,7 +7,9 @@ import {
   AudioByteStream,
   asLanguageCode,
   calculateAudioDurationSeconds,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -160,8 +162,17 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     model: override.model ?? base.model,
     sampleRate: override.sampleRate ?? base.sampleRate,
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
-    language: override.language ?? base.language,
+    language: override.language !== undefined ? normalizeLanguage(override.language) : base.language,
   };
+}
+
+/**
+ * Resolve the STT model from the configured language when the caller did not
+ * pass one explicitly. Mirrors the Python plugin: `ink-2` only supports
+ * English, so non-English languages route to the multilingual `ink-whisper`.
+ */
+function resolveSTTModel(language: string): STTModel {
+  return getBaseLanguage(language) === 'en' ? 'ink-2' : 'ink-whisper';
 }
 
 /**
@@ -206,6 +217,12 @@ export class STT extends stt.STT {
     }
 
     this.#opts = mergeSTTOptions({ ...defaultSTTOptions, apiKey }, opts);
+
+    // Route to the multilingual model for non-English languages unless the
+    // caller pinned a model. Matches the Python plugin's language→model logic.
+    if (opts.model === undefined) {
+      this.#opts.model = resolveSTTModel(this.#opts.language);
+    }
   }
 
   override get label(): string {
