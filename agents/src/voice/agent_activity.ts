@@ -1626,6 +1626,14 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onUserTurnExceeded(ev: UserTurnExceededEvent): void {
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      this.logger.warn(
+        { numWords: ev.accumulatedWordCount, duration: ev.duration },
+        'skipping user turn exceeded, speech scheduling is paused',
+      );
+      return;
+    }
+
     if (this.userTurnExceededLocked) {
       return;
     }
@@ -1687,6 +1695,12 @@ export class AgentActivity implements RecognitionHooks {
       if (!waitInactiveTask.done) {
         waitInactiveTask.cancel();
       }
+    }
+
+    // re-check after the wait phase: if a handoff started in the meantime,
+    // don't fire the callback on this now-stale activity.
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      return;
     }
 
     this.logger.debug(
