@@ -1144,6 +1144,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           });
         }
 
+        this.emitError(err, true);
         const retryInterval =
           this.numRetries === 100 ? 0 : this.options.connOptions.retryIntervalMs;
 
