@@ -72,6 +72,7 @@ export interface STTOptions {
     enableLanguageIdentification: boolean;
     // (undocumented)
     enableSpeakerDiarization: boolean;
+    endpointSensitivity?: number;
     // (undocumented)
     languageHints?: string[];
     // (undocumented)
