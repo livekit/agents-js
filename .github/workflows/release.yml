@@ -11,8 +11,8 @@ on:
       - 0.x
   workflow_dispatch:
     inputs:
-      pre-release:
-        description: 'Publish a pre-release'
+      snapshot:
+        description: 'Publish a snapshot release'
         type: boolean
         default: false
 
@@ -62,7 +62,7 @@ jobs:
           echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        if: ${{ github.event.inputs.pre-release != 'true' }}
+        if: ${{ github.event.inputs.snapshot != 'true' }}
         uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
         with:
           publish: pnpm ci:publish
@@ -71,10 +71,9 @@ jobs:
 
       - name: Publish pre-release
         id: changeset-prerelease
-        if: ${{ github.event.inputs.pre-release == 'true' }}
+        if: ${{ github.event.inputs.snapshot == 'true' }}
         run: |
-          pnpm changeset pre enter dev
-          pnpm changeset version
+          pnpm changeset version --snapshot preview
           pnpm build
           pnpm publish -r --tag dev --no-git-checks
       - name: Build docs
