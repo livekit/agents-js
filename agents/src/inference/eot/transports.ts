@@ -415,7 +415,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
       const err = msg.message.value;
       throw new APIStatusError({
         message: err.message,
-        options: { statusCode: err.code, requestId: msg.requestId },
+        options: { statusCode: err.code, requestId: msg.requestId, retryable: false },
       });
     } else if (kind === 'sessionCreated') {
       this._warnTransportLatency(msg);
