@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '@livekit/agents';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
 
 // LLMStream base class initializes a logger on construction.
@@ -73,7 +73,9 @@ describe('LLM', () => {
     const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
     const stream = llmInstance.chat({ chatCtx: ctx as never });
     llmInstance.on('error', () => {});
-    for await (const _ of stream) { /* consume */ }
+    for await (const _ of stream) {
+      /* consume */
+    }
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toContain('http://new-url:9090');
@@ -363,7 +365,10 @@ describe('LLM', () => {
 
       const llmInstance = new LLM({ botId: 'bot', authToken: 'tok', apiUrl: 'http://llm:8080' });
       const ctx = makeChatCtx([{ role: 'user', text: 'hi' }]);
-      const stream = llmInstance.chat({ chatCtx: ctx as never });
+      const stream = llmInstance.chat({
+        chatCtx: ctx as never,
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10000 },
+      });
 
       // The base class _mainTaskImpl emits errors on the LLM instance, then
       // rethrows.  The rethrow propagates as an unhandled rejection from the
@@ -377,7 +382,9 @@ describe('LLM', () => {
       });
 
       // Drain the stream — iterator ends normally; errors propagate via event.
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
       // Flush pending microtasks so the rejection fires while our handler is active.
       await new Promise((r) => setTimeout(r, 0));
@@ -438,7 +445,9 @@ describe('LLM', () => {
       const ctx = makeChatCtx([{ role: 'user', text: 'test' }]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toContain('use_tool_based=true');
@@ -454,7 +463,9 @@ describe('LLM', () => {
       const ctx = makeChatCtx([{ role: 'user', text: 'test' }]);
 
       const stream = llmInstance.chat({ chatCtx: ctx as never });
-      for await (const _ of stream) { /* consume */ }
+      for await (const _ of stream) {
+        /* consume */
+      }
 
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toContain('use_tool_based=false');

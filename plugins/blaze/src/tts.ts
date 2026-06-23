@@ -268,10 +268,18 @@ function snapshotTTSOptions(opts: ResolvedTTSOptions): ResolvedTTSOptions {
 // ────────────────────────────────────────────────
 
 function closeWebSocketSilently(ws: WebSocket): void {
+  // Suppress unhandled 'error' events during teardown (especially in CONNECTING).
   try {
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      ws.terminate?.();
+    ws.on('error', () => {});
+  } catch {
+    // best-effort cleanup
+  }
+
+  try {
+    if (ws.readyState === WebSocket.CONNECTING) {
       ws.close();
+    } else if (ws.readyState === WebSocket.OPEN) {
+      ws.terminate?.();
     }
   } catch {
     // best-effort cleanup
@@ -585,6 +593,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     let onAbort: (() => void) | undefined;
+    let canEmitFrames = false;
+    let cleanupWsListeners: (() => void) | undefined;
 
     try {
       // Wait for connection acknowledgment
@@ -634,6 +644,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let hasPrevSegment = false;
       let speechEnded = false;
       let inputConsumed = false;
+      canEmitFrames = true;
 
       let audioReaderResolve!: () => void;
       let audioReaderReject!: (err: Error) => void;
@@ -643,6 +654,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
       // Prevent transient unhandledRejection before we await audioReaderDone later.
       audioReaderDone.catch(() => {});
+
+      cleanupWsListeners = () => {
+        ws.removeAllListeners('message');
+        ws.removeAllListeners('error');
+        ws.removeAllListeners('close');
+      };
 
       const streamConnectionError = (message: string) =>
         new APIConnectionError({
@@ -674,7 +691,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       const emitFrame = (frame: AudioFrame, isFinal: boolean) => {
-        this.queue.put({ requestId, segmentId, frame, final: isFinal });
+        if (!canEmitFrames) return;
+        try {
+          this.queue.put({ requestId, segmentId, frame, final: isFinal });
+        } catch {
+          // Queue may already be closed during teardown.
+        }
+      };
+
+      const flushPendingAudio = (markFinal: boolean) => {
+        for (const frame of bstream.flush()) {
+          if (pendingFrame !== undefined) {
+            emitFrame(pendingFrame, false);
+          }
+          pendingFrame = frame;
+        }
+        if (markFinal && pendingFrame !== undefined) {
+          emitFrame(pendingFrame, true);
+          pendingFrame = undefined;
+        }
       };
 
       ws.on('message', (data: Buffer | string, isBinary: boolean) => {
@@ -712,18 +747,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               hasPrevSegment = true;
             } else if (status === 'speech-end') {
               speechEnded = true;
-              // Flush remaining buffered audio
-              for (const frame of bstream.flush()) {
-                if (pendingFrame !== undefined) {
-                  emitFrame(pendingFrame, false);
-                }
-                pendingFrame = frame;
-              }
-              // Emit last frame as final
-              if (pendingFrame !== undefined) {
-                emitFrame(pendingFrame, true);
-                pendingFrame = undefined;
-              }
+              flushPendingAudio(true);
               audioReaderResolve();
             } else if (status === 'failed-request' || status === 'error') {
               rejectStreamError(streamConnectionError(`Blaze TTS error: ${msg.message ?? status}`));
@@ -743,16 +767,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       ws.on('close', () => {
         if (!speechEnded) {
           // Unexpected close — flush what we have
-          for (const frame of bstream.flush()) {
-            if (pendingFrame !== undefined) {
-              emitFrame(pendingFrame, false);
-            }
-            pendingFrame = frame;
-          }
-          if (pendingFrame !== undefined) {
-            emitFrame(pendingFrame, true);
-            pendingFrame = undefined;
-          }
+          flushPendingAudio(true);
           audioReaderResolve();
         }
       });
@@ -877,15 +892,36 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         ws.send(JSON.stringify({ event: 'speech-end' }));
       }
 
-      // Wait for all audio to be received
-      await audioReaderDone;
+      // Wait for all audio to be received (with application-level timeout)
+      let audioTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const audioTimeout = new Promise<never>((_, reject) => {
+        audioTimeoutId = setTimeout(
+          () =>
+            reject(
+              new APITimeoutError({
+                message: `Blaze TTS stream timed out waiting for audio after ${opts.timeout}ms`,
+              }),
+            ),
+          opts.timeout,
+        );
+      });
+
+      try {
+        await Promise.race([audioReaderDone, audioTimeout]);
+      } finally {
+        if (audioTimeoutId !== undefined) {
+          clearTimeout(audioTimeoutId);
+        }
+      }
 
       // Signal end of stream to framework
       this.queue.put(tts.SynthesizeStream.END_OF_STREAM);
     } finally {
+      canEmitFrames = false;
       if (onAbort) {
         this.abortSignal.removeEventListener('abort', onAbort);
       }
+      cleanupWsListeners?.();
       closeWsIfOpen();
     }
   }

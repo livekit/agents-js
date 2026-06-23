@@ -11,15 +11,15 @@
  * Input: JSON array of `{ role, content }` messages
  * Output: SSE stream: `data: {"content": "..."}` then `data: [DONE]`
  */
-import { randomUUID } from 'node:crypto';
 import {
-  DEFAULT_API_CONNECT_OPTIONS,
-  llm,
+  APIConnectionError,
   APIError,
   APIStatusError,
-  APIConnectionError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  llm,
 } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
+import { randomUUID } from 'node:crypto';
 import {
   type BlazeConfig,
   type ResolvedBlazeConfig,
@@ -37,6 +37,9 @@ export interface BlazeDemographics {
   gender?: 'male' | 'female' | 'unknown';
   age?: number;
 }
+
+/** Default connect timeout in ms (aligns with Python httpx connect=5.0). */
+export const DEFAULT_LLM_CONNECT_TIMEOUT_MS = 5000;
 
 /** Options for the Blaze LLM plugin. */
 export interface LLMOptions {
@@ -60,8 +63,13 @@ export interface LLMOptions {
   enableTools?: boolean;
   /** User demographics for personalization. */
   demographics?: BlazeDemographics;
-  /** Request timeout in milliseconds. Default: 60000 */
+  /**
+   * Idle timeout between SSE chunks in milliseconds. Default: 60000.
+   * Long responses are allowed as long as chunks keep arriving within this window.
+   */
   timeout?: number;
+  /** Connect/first-byte timeout in milliseconds. Default: 5000 */
+  connectTimeout?: number;
   /** Centralized configuration object. */
   config?: BlazeConfig;
 }
@@ -75,6 +83,7 @@ interface ResolvedLLMOptions {
   enableTools: boolean;
   demographics?: BlazeDemographics;
   timeout: number;
+  connectTimeout: number;
 }
 
 function snapshotLLMOptions(opts: ResolvedLLMOptions): ResolvedLLMOptions {
@@ -98,6 +107,7 @@ function resolveLLMOptions(opts: LLMOptions): ResolvedLLMOptions {
     enableTools: opts.enableTools ?? false,
     demographics: opts.demographics,
     timeout: opts.timeout ?? cfg.llmTimeout,
+    connectTimeout: opts.connectTimeout ?? DEFAULT_LLM_CONNECT_TIMEOUT_MS,
   };
 }
 
@@ -188,9 +198,22 @@ export class BlazeLLMStream extends llm.LLMStream {
       url.searchParams.set('age', String(this.#opts.demographics.age));
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.#opts.timeout);
-    const signal = AbortSignal.any([this.abortController.signal, controller.signal]);
+    const connectController = new AbortController();
+    const connectTimeoutId = setTimeout(() => connectController.abort(), this.#opts.connectTimeout);
+    const connectSignal = AbortSignal.any([this.abortController.signal, connectController.signal]);
+
+    const streamIdleController = new AbortController();
+    let streamIdleTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const resetStreamIdleTimeout = () => {
+      if (streamIdleTimeoutId !== undefined) {
+        clearTimeout(streamIdleTimeoutId);
+      }
+      streamIdleTimeoutId = setTimeout(() => streamIdleController.abort(), this.#opts.timeout);
+    };
+    const streamSignal = AbortSignal.any([
+      this.abortController.signal,
+      streamIdleController.signal,
+    ]);
 
     try {
       const response = await fetch(url.toString(), {
@@ -200,8 +223,9 @@ export class BlazeLLMStream extends llm.LLMStream {
           ...buildAuthHeaders(this.#opts.authToken),
         },
         body: JSON.stringify(messages),
-        signal,
+        signal: connectSignal,
       });
+      clearTimeout(connectTimeoutId);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'unknown error');
@@ -222,11 +246,22 @@ export class BlazeLLMStream extends llm.LLMStream {
       let completionTokens = 0;
       let streamDone = false;
 
+      resetStreamIdleTimeout();
+      streamIdleController.signal.addEventListener(
+        'abort',
+        () => {
+          void reader.cancel().catch(() => {});
+        },
+        { once: true },
+      );
+
       try {
         while (!streamDone) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (signal.aborted) break;
+          if (streamSignal.aborted) break;
+
+          resetStreamIdleTimeout();
 
           lineBuffer += decoder.decode(value, { stream: true });
 
@@ -298,7 +333,10 @@ export class BlazeLLMStream extends llm.LLMStream {
         message: `Blaze LLM connection error: ${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
-      clearTimeout(timeoutId);
+      clearTimeout(connectTimeoutId);
+      if (streamIdleTimeoutId !== undefined) {
+        clearTimeout(streamIdleTimeoutId);
+      }
     }
   }
 
@@ -349,6 +387,7 @@ export class BlazeLLM extends llm.LLM {
     if (opts.enableTools !== undefined) this.#opts.enableTools = opts.enableTools;
     if (opts.demographics !== undefined) this.#opts.demographics = opts.demographics;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
+    if (opts.connectTimeout !== undefined) this.#opts.connectTimeout = opts.connectTimeout;
   }
 
   chat({
