@@ -664,6 +664,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
     const newChatCtx = chatCtx.copy();
+    // Drop `agent_config_update` items — they're framework-internal (inserted
+    // by `AgentActivity` on enter / tool / instructions changes) and have no
+    // OpenAI Realtime representation; `livekitItemToOpenAIItem` throws on
+    // them. Mirrors the non-realtime path's `excludeConfigUpdate: true` and
+    // the wire filter in `remote_session.ts`.
+    newChatCtx.items = newChatCtx.items.filter((item) => item.type !== 'agent_config_update');
     if (addMockAudio) {
       newChatCtx.items.push(createMockAudioItem());
     } else {
