@@ -369,6 +369,30 @@ describe('Agent', () => {
       await expect(collectReadableStream(result!)).resolves.toEqual([outputFrame]);
     });
 
+    it('forwards transformed output through an Agent.create transcriptionNode hook', async () => {
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *transcriptionNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          for await (const chunk of text) {
+            yield `${chunk}!`;
+          }
+        },
+      });
+
+      async function* textInput() {
+        yield 'hello';
+        yield 'world';
+      }
+
+      // Before transcriptionNode was wired as an Agent.create hook the override didn't exist,
+      // so the base default returned the input unchanged instead of the transformed output.
+      const result = await agent.transcriptionNode(textInput(), {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['hello!', 'world!']);
+    });
+
     it('accepts a plain AsyncIterable into Agent.default.ttsNode', async () => {
       const frame = 'frame' as unknown as AudioFrame;
       const agent = new Agent({ instructions: 'default instructions' });

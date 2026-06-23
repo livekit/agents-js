@@ -19,6 +19,7 @@ import { readStream, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent, AgentOptions, AgentTask, AgentTaskOptions, ModelSettings } from './agent.js';
 import type { AgentSession } from './agent_session.js';
+import type { TimedString } from './io.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 
 /** Context passed to hooks created with `Agent.create()`. */
@@ -93,6 +94,12 @@ export interface AgentHooks<
     audio: AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
   ) => AgentHookNodeResult<AudioFrame>;
+  /** Transforms the agent's output transcript before it is forwarded. */
+  transcriptionNode?: (
+    ctx: ContextT,
+    text: AsyncIterable<string | TimedString>,
+    modelSettings: ModelSettings,
+  ) => AgentHookNodeResult<string | TimedString>;
 }
 
 export interface AgentCreateOptions<UserData = any>
@@ -134,6 +141,7 @@ export function createAgentV2<UserData>(
       llmNode,
       ttsNode,
       realtimeAudioOutputNode,
+      transcriptionNode,
       ...agentOptions
     }: AgentCreateOptions<UserData>) {
       super({
@@ -150,6 +158,7 @@ export function createAgentV2<UserData>(
           llmNode,
           ttsNode,
           realtimeAudioOutputNode,
+          transcriptionNode,
         },
         new AgentHookContext(this),
       );
@@ -208,6 +217,15 @@ export function createAgentV2<UserData>(
         super.realtimeAudioOutputNode(audio, modelSettings),
       );
     }
+
+    override async transcriptionNode(
+      text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
+      modelSettings: ModelSettings,
+    ): Promise<ReadableStream<string | TimedString> | null> {
+      return this.hookAdapter.transcriptionNode(text, modelSettings, () =>
+        super.transcriptionNode(text, modelSettings),
+      );
+    }
   }
 
   return new AgentV2(options);
@@ -228,6 +246,7 @@ export function createAgentTaskV2<ResultT, UserData>(
       llmNode,
       ttsNode,
       realtimeAudioOutputNode,
+      transcriptionNode,
       ...taskOptions
     }: AgentTaskCreateOptions<ResultT, UserData>) {
       super({
@@ -244,6 +263,7 @@ export function createAgentTaskV2<ResultT, UserData>(
           llmNode,
           ttsNode,
           realtimeAudioOutputNode,
+          transcriptionNode,
         },
         new AgentTaskHookContext(this),
       );
@@ -300,6 +320,15 @@ export function createAgentTaskV2<ResultT, UserData>(
     ): Promise<ReadableStream<AudioFrame> | null> {
       return this.hookAdapter.realtimeAudioOutputNode(audio, modelSettings, () =>
         super.realtimeAudioOutputNode(audio, modelSettings),
+      );
+    }
+
+    override async transcriptionNode(
+      text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
+      modelSettings: ModelSettings,
+    ): Promise<ReadableStream<string | TimedString> | null> {
+      return this.hookAdapter.transcriptionNode(text, modelSettings, () =>
+        super.transcriptionNode(text, modelSettings),
       );
     }
   }
@@ -399,6 +428,20 @@ class AgentHookAdapter<UserData, ContextT extends AgentContext<UserData>> {
 
     const input = audio instanceof ReadableStream ? readStream(audio) : audio;
     const result = await this.hooks.realtimeAudioOutputNode(this.context, input, modelSettings);
+    return result === null ? null : toStream(result);
+  }
+
+  async transcriptionNode(
+    text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
+    modelSettings: ModelSettings,
+    fallback: () => Promise<ReadableStream<string | TimedString> | null>,
+  ): Promise<ReadableStream<string | TimedString> | null> {
+    if (!this.hooks.transcriptionNode) {
+      return fallback();
+    }
+
+    const input = text instanceof ReadableStream ? readStream(text) : text;
+    const result = await this.hooks.transcriptionNode(this.context, input, modelSettings);
     return result === null ? null : toStream(result);
   }
 }
