@@ -25,7 +25,6 @@ const NUM_CHANNELS = 1;
 // Fish Audio's default sample rate for raw PCM output.
 const DEFAULT_SAMPLE_RATE = 24000;
 
-/** @public */
 export interface TTSOptions {
   apiKey?: string;
   model?: TTSModels | string;
@@ -113,7 +112,6 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
   };
 };
 
-/** @public */
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   label = 'fishaudio.TTS';
@@ -193,7 +191,6 @@ export class TTS extends tts.TTS {
   }
 }
 
-/** @public */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'fishaudio.ChunkedStream';
   #logger = log();
@@ -327,7 +324,6 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 }
 
-/** @public */
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'fishaudio.SynthesizeStream';
   #logger = log();
