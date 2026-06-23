@@ -154,7 +154,9 @@ export class AnamAPI {
         params.sessionOptions.videoWidth === undefined ||
         params.sessionOptions.videoHeight === undefined
       ) {
-        throw new AnamException('videoWidth and videoHeight must be set together (both or neither)');
+        throw new AnamException(
+          'videoWidth and videoHeight must be set together (both or neither)',
+        );
       }
       payload.sessionOptions = {
         videoWidth: params.sessionOptions.videoWidth,
