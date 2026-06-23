@@ -664,12 +664,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     addMockAudio: boolean = false,
   ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
     const newChatCtx = chatCtx.copy();
-    // Drop `agent_config_update` items — they're framework-internal (inserted
-    // by `AgentActivity` on enter / tool / instructions changes) and have no
-    // OpenAI Realtime representation; `livekitItemToOpenAIItem` throws on
-    // them. Mirrors the non-realtime path's `excludeConfigUpdate: true` and
-    // the wire filter in `remote_session.ts`.
-    newChatCtx.items = newChatCtx.items.filter((item) => item.type !== 'agent_config_update');
+    // Drop framework-internal items that have no OpenAI Realtime
+    // representation. `livekitItemToOpenAIItem`'s default arm throws on
+    // anything other than `function_call` / `function_call_output` /
+    // `message`. `agent_config_update` is the reachable case today (inserted
+    // by `AgentActivity` on enter / tool / instructions changes — the
+    // original #1855 crash); `agent_handoff` is filtered as defense-in-depth
+    // to match the non-realtime path, which excludes both via
+    // `chatCtx.copy({ excludeHandoff: true, excludeConfigUpdate: true })`
+    // (agent_activity.ts:666).
+    newChatCtx.items = newChatCtx.items.filter(
+      (item) => item.type !== 'agent_config_update' && item.type !== 'agent_handoff',
+    );
     if (addMockAudio) {
       newChatCtx.items.push(createMockAudioItem());
     } else {

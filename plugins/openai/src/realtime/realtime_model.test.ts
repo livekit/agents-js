@@ -755,6 +755,38 @@ describe('RealtimeSession.createChatCtxUpdateEvents', () => {
 
     await expect(session.createChatCtxUpdateEvents(chatCtx)).resolves.toEqual([]);
   });
+
+  it('also skips agent_handoff items (defense-in-depth, no OpenAI Realtime representation)', async () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as {
+      createChatCtxUpdateEvents: (chatCtx: llm.ChatContext) => Promise<api_proto.ClientEvent[]>;
+    };
+
+    const userMessage = llm.ChatMessage.create({
+      id: 'item_user',
+      role: 'user',
+      content: ['hand me off please'],
+    });
+    const handoff = llm.AgentHandoffItem.create({
+      id: 'item_handoff',
+      oldAgentId: 'triage',
+      newAgentId: 'billing',
+    });
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.items.push(userMessage, handoff);
+
+    const events = await session.createChatCtxUpdateEvents(chatCtx);
+    const createdIds = events
+      .filter(
+        (e): e is api_proto.ConversationItemCreateEvent => e.type === 'conversation.item.create',
+      )
+      .map((e) => e.item.id);
+
+    expect(createdIds).toContain('item_user');
+    expect(createdIds).not.toContain('item_handoff');
+  });
 });
 
 describe('processBaseURL', () => {
