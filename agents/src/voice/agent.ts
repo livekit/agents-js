@@ -31,7 +31,7 @@ import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/i
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
@@ -307,7 +307,7 @@ export class Agent<UserData = any> {
   async onExit(): Promise<void> {}
 
   async transcriptionNode(
-    text: ReadableStream<string | TimedString>,
+    text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<string | TimedString> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
@@ -328,7 +328,7 @@ export class Agent<UserData = any> {
   }
 
   async sttNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
@@ -343,14 +343,14 @@ export class Agent<UserData = any> {
   }
 
   async ttsNode(
-    text: ReadableStream<string>,
+    text: ReadableStream<string> | AsyncIterable<string>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   async realtimeAudioOutputNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.realtimeAudioOutputNode(this, audio, modelSettings);
@@ -398,9 +398,10 @@ export class Agent<UserData = any> {
   static default = {
     async sttNode(
       agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
+      const input = audio instanceof ReadableStream ? audio : toStream(audio);
       const activity = agent.getActivityOrThrow();
       if (!activity.stt) {
         throw new Error('sttNode called but no STT node is available');
@@ -430,7 +431,7 @@ export class Agent<UserData = any> {
 
       stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
 
-      stream.updateInputStream(audio);
+      stream.updateInputStream(input);
 
       let cleaned = false;
       const cleanup = () => {
@@ -513,9 +514,10 @@ export class Agent<UserData = any> {
 
     async ttsNode(
       agent: Agent,
-      text: ReadableStream<string>,
+      text: ReadableStream<string> | AsyncIterable<string>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
+      const input = text instanceof ReadableStream ? text : toStream(text);
       const activity = agent.getActivityOrThrow();
       if (!activity.tts) {
         throw new Error('ttsNode called but no TTS node is available');
@@ -529,14 +531,14 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(text);
+      stream.updateInputStream(input);
 
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
         stream.close();
-        await text.cancel('tts node cleanup').catch(() => {});
+        await input.cancel('tts node cleanup').catch(() => {});
         if (wrappedTts !== activity.tts) {
           await wrappedTts.close();
         }
@@ -568,18 +570,18 @@ export class Agent<UserData = any> {
 
     async transcriptionNode(
       agent: Agent,
-      text: ReadableStream<string | TimedString>,
+      text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string | TimedString> | null> {
-      return text;
+      return text instanceof ReadableStream ? text : toStream(text);
     },
 
     async realtimeAudioOutputNode(
       _agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
-      return audio;
+      return audio instanceof ReadableStream ? audio : toStream(audio);
     },
   };
 }
