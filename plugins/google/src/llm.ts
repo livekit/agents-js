@@ -371,16 +371,24 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
+      // Gemini's API rejects `generateContent` requests that pass `cachedContent` together with
+      // `systemInstruction`, `tools`, or `toolConfig` — those fields must live INSIDE the
+      // CachedContent resource, not on the request. The application bakes them into the cache via
+      // `client.caches.create(...)`; here we just suppress the duplicates on the outgoing request
+      // whenever a cache is attached.
       const cachedContent = this.#extraKwargs.cachedContent;
       const usingCache = cachedContent !== undefined;
       const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
 
-      if (usingCache) {
+      if (!usingCache) {
+        requestConfig.systemInstruction = systemInstruction;
+        requestConfig.tools = tools;
+      } else {
         const dropped = ['tools', 'toolConfig'].filter((key) => key in requestConfig);
         if (tools && !dropped.includes('tools')) {
           dropped.push('tools');
         }
-        if (systemInstruction || 'systemInstruction' in requestConfig) {
+        if (systemInstruction) {
           dropped.push('systemInstruction');
         }
         if (dropped.length > 0) {
@@ -391,10 +399,6 @@ export class LLMStream extends llm.LLMStream {
         }
         delete requestConfig.tools;
         delete requestConfig.toolConfig;
-        delete requestConfig.systemInstruction;
-      } else {
-        requestConfig.systemInstruction = systemInstruction;
-        requestConfig.tools = tools;
       }
 
       const httpOptions = {
