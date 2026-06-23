@@ -100,9 +100,9 @@ export class STT extends stt.STT {
   #lastRecognizeTime: number = 0;
 
   // Safety limits (mirrors Python defaults)
-  readonly #maxPendingDuration: number = 5.0;  // seconds of buffered audio
-  readonly #maxPendingSegments: number = 3;     // consecutive empty segments
-  readonly #pendingIdleTimeout: number = 10.0;  // auto-clear after idle gap (s)
+  readonly #maxPendingDuration: number = 5.0; // seconds of buffered audio
+  readonly #maxPendingSegments: number = 3; // consecutive empty segments
+  readonly #pendingIdleTimeout: number = 10.0; // auto-clear after idle gap (s)
 
   constructor(opts: STTOptions = {}) {
     super({ streaming: false, interimResults: false, alignedTranscript: false });
@@ -125,11 +125,9 @@ export class STT extends stt.STT {
     // 1. Merge all audio frames into one
     const frame = mergeFrames(buffer);
 
-    // 2. Extract raw PCM from the merged frame (new segment only)
+    // 2. Extract raw PCM from the merged frame (copy to avoid sharing the input ArrayBuffer)
     const segmentPcm = Buffer.from(
-      frame.data.buffer,
-      frame.data.byteOffset,
-      frame.data.byteLength,
+      Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
     );
 
     // 3. Auto-clear stale pending buffer if too much time has elapsed

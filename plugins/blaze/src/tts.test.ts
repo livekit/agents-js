@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '@livekit/agents';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTS } from './tts.js';
 
 // TTS base classes initialize a logger on construction.
