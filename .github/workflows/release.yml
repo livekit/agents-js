@@ -73,9 +73,9 @@ jobs:
         id: changeset-prerelease
         if: ${{ github.event.inputs.snapshot == 'true' }}
         run: |
-          pnpm changeset version --snapshot preview
+          pnpm changeset version --snapshot next
           pnpm build
-          pnpm publish -r --tag dev --no-git-checks
+          pnpm publish -r --tag next --no-git-checks
       - name: Build docs
         if: steps.changesets.outputs.published == 'true'
         run: pnpm doc
