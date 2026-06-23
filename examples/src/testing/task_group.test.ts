@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Future, asError, beta, initializeLogger, llm, voice } from '@livekit/agents';
+import { Future, asError, initializeLogger, llm, voice, workflows } from '@livekit/agents';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-const { TaskGroup } = beta;
-type TaskGroupResult = beta.TaskGroupResult;
-type TaskCompletedEvent = beta.TaskCompletedEvent;
+const { TaskGroup } = workflows;
+type TaskGroupResult = workflows.TaskGroupResult;
+type TaskCompletedEvent = workflows.TaskCompletedEvent;
 
 initializeLogger({ pretty: true, level: 'warn' });
 

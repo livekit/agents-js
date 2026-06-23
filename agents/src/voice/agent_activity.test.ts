@@ -29,7 +29,7 @@ const agentMocks = vi.hoisted(() => ({
   getActivityTaskInfo: vi.fn(() => null),
 }));
 
-// Break circular dependency: agent_activity.ts → agent.js → beta/workflows/task_group.ts
+// Break circular dependency: agent_activity.ts → agent.js → workflows/task_group.ts
 vi.mock('./agent.js', () => {
   class Agent {}
   class AgentTask extends Agent {}
