@@ -56,6 +56,10 @@ export interface TTSOptions {
   voiceId?: string;
   voiceSettings?: VoiceSettings;
   model?: TTSModels | string;
+  /**
+   * Language code used to enforce a language for the model and text normalization. If the
+   * model does not support language overrides, it will be ignored.
+   */
   language?: string;
   // Legacy interface (backward compatibility)
   voice?: Voice;
