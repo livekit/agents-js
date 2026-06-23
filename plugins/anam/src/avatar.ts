@@ -99,6 +99,7 @@ export class AvatarSession extends voice.AvatarSession {
       {
         personaName: this.opts.personaConfig?.name,
         avatarId: this.opts.personaConfig?.avatarId,
+        personaId: this.opts.personaConfig?.personaId,
         apiUrl: apiUrl ?? '(default https://api.anam.ai)',
         livekitUrl,
         avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
@@ -119,10 +120,7 @@ export class AvatarSession extends voice.AvatarSession {
     logger.debug({ livekitUrl }, 'requesting Anam session token');
 
     const { sessionToken } = await anam.createSessionToken({
-      personaConfig: {
-        name: this.opts.personaConfig?.name,
-        avatarId: this.opts.personaConfig?.avatarId,
-      },
+      personaConfig: this.opts.personaConfig,
       livekitUrl,
       livekitToken: jwt,
       sessionOptions: this.opts.sessionOptions,
