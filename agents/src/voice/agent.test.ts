@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ChatContext, ChatMessage, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
+import { SynthesizeStream } from '../tts/index.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
@@ -337,6 +338,74 @@ describe('Agent', () => {
       const result = await agent.realtimeAudioOutputNode(audio, {});
 
       expect(result).toBe(audio);
+    });
+  });
+
+  describe('AsyncIterable pipeline node inputs', () => {
+    it('accepts a plain AsyncIterable into Agent.create stream hooks without getReader crash', async () => {
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *ttsNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          const chunks: string[] = [];
+          for await (const chunk of text) {
+            chunks.push(chunk);
+          }
+          expect(chunks).toEqual(['hello']);
+          yield outputFrame;
+        },
+      });
+
+      async function* textInput() {
+        yield 'hello';
+      }
+
+      // Before the fix the AgentV2 hook adapter called readStream(text).getReader()
+      // unconditionally, crashing with "getReader is not a function" on a plain iterable.
+      const result = await agent.ttsNode(textInput(), {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual([outputFrame]);
+    });
+
+    it('accepts a plain AsyncIterable into Agent.default.ttsNode', async () => {
+      const frame = 'frame' as unknown as AudioFrame;
+      const agent = new Agent({ instructions: 'default instructions' });
+
+      let capturedInput: unknown;
+      const ttsStream = {
+        startTimeOffset: 0,
+        updateInputStream(input: unknown) {
+          capturedInput = input;
+        },
+        close() {},
+        async *[Symbol.asyncIterator]() {
+          yield { frame, timedTranscripts: [] };
+          yield SynthesizeStream.END_OF_STREAM;
+        },
+      };
+
+      (agent as any)._agentActivity = {
+        tts: {
+          capabilities: { streaming: true },
+          stream: () => ttsStream,
+          close: async () => {},
+        },
+        agentSession: { connOptions: { ttsConnOptions: {} } },
+      };
+
+      async function* textInput() {
+        yield 'hello';
+      }
+
+      const result = await Agent.default.ttsNode(agent, textInput(), {});
+
+      expect(result).not.toBeNull();
+      // The default must normalize the AsyncIterable into a real ReadableStream before
+      // handing it to the TTS stream (the stream calls .cancel() during cleanup).
+      expect(capturedInput).toBeInstanceOf(ReadableStream);
+      await expect(collectReadableStream(result!)).resolves.toEqual([frame]);
     });
   });
 
