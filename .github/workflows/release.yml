@@ -61,6 +61,35 @@ jobs:
           publish: pnpm ci:publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve stable version from published packages
+        id: version
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          version=$(echo "$PUBLISHED_PACKAGES" | jq -r '.[] | select(.name == "@livekit/agents") | .version')
+          if [ -z "$version" ]; then
+            echo "::notice::@livekit/agents was not published; skipping downstream bump."
+            exit 0
+          fi
+          if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::notice::Published version '$version' is not a stable release; skipping downstream bump."
+            exit 0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch to internal-actions
+        if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_DISPATCH_TOKEN }}
+          TARGET_REPO: ${{ vars.TARGET_REPO }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh api -X POST "repos/${TARGET_REPO}/dispatches" \
+            -f event_type="livekit-agents-js-published" \
+            -f client_payload[version]="$VERSION" \
+            -f client_payload[source_repo]="${{ github.repository }}" \
+            -f client_payload[source_sha]="${{ github.sha }}"
       - name: Build docs
         if: steps.changesets.outputs.published == 'true'
         run: pnpm doc
