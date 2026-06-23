@@ -717,8 +717,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('Tools are missing in the session update event');
     }
 
-    // TODO(brian): these logics below are noops I think, leaving it here to keep
-    // parity with the python but we should remove them later
+    // TODO(brian): these logics below are noops I think; remove them later.
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
     const retainedTools = Object.fromEntries(
       Object.entries(_tools).filter(
@@ -896,11 +895,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
 
     if (hasAudioModality && hasServerSideAudio) {
+      // Guard against a non-finite audioEndMs (e.g. NaN from an unreported avatar
+      // playback position): JSON.stringify would serialize it as `null`, which the
+      // Realtime API rejects with an `invalid_type` error. Clamp to a valid
+      // non-negative integer (ms).
+      const audioEndMs = Number.isFinite(_options.audioEndMs)
+        ? Math.max(0, Math.floor(_options.audioEndMs))
+        : 0;
       this.sendEvent({
         type: 'conversation.item.truncate',
         content_index: 0,
         item_id: _options.messageId,
-        audio_end_ms: _options.audioEndMs,
+        audio_end_ms: audioEndMs,
       } as api_proto.ConversationItemTruncateEvent);
     } else if (_options.audioTranscript !== undefined) {
       // sync it to the remote chat context

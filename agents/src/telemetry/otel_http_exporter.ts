@@ -204,6 +204,11 @@ export class SimpleOTLPHttpLogExporter {
       };
     }
     if (typeof value === 'object') {
+      // Honor `toJSON()` like `JSON.stringify` does.
+      const toJSON = (value as { toJSON?: unknown }).toJSON;
+      if (typeof toJSON === 'function') {
+        return this.convertValue((value as { toJSON(): unknown }).toJSON(), path);
+      }
       return {
         kvlistValue: {
           values: Object.entries(value as Record<string, unknown>).map(([k, v]) => ({

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,7 +11,6 @@ import {
   log,
   voice,
 } from '@livekit/agents';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -79,12 +77,8 @@ class SchedulingAgent extends voice.Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       tts: new inference.TTS({

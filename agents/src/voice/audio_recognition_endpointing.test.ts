@@ -16,6 +16,7 @@ function createHooks(): RecognitionHooks {
     onInterimTranscript: () => {},
     onFinalTranscript: () => {},
     onPreemptiveGeneration: () => {},
+    onAgentBackchannelOpportunity: () => {},
     retrieveChatCtx: () => ChatContext.empty(),
     onEndOfTurn: async () => true,
   };

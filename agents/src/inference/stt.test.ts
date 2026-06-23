@@ -13,6 +13,7 @@ import {
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
+import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -343,9 +344,10 @@ describe('STT VAD handling for Speechmatics models', () => {
     await expect(stt.vadPromise).resolves.toBeUndefined();
   });
 
-  it('speechmatics model with no user vad sets up a silero loader', () => {
+  it('speechmatics model with no user vad falls back to the inference VAD', async () => {
     const stt = makeStt({ model: 'speechmatics/enhanced' });
-    expect(typeof stt['vad']).toBe('function');
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+    await expect(stt.vadPromise).resolves.toBe(stt['vad']);
   });
 
   it('speechmatics model with user vad uses that vad', async () => {
@@ -372,11 +374,11 @@ describe('STT VAD handling for Speechmatics models', () => {
     await expect(stt.vadPromise).resolves.toBeUndefined();
   });
 
-  it('updateOptions non-speechmatics → speechmatics sets up silero loader', () => {
+  it('updateOptions non-speechmatics → speechmatics falls back to the inference VAD', () => {
     const stt = makeStt({ model: 'deepgram/nova-3' });
     expect(stt['vad']).toBeUndefined();
 
     stt.updateOptions({ model: 'speechmatics/enhanced' });
-    expect(typeof stt['vad']).toBe('function');
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
   });
 });

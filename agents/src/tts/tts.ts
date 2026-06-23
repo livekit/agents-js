@@ -333,9 +333,6 @@ export abstract class SynthesizeStream
   // consuming the stream directly.
   //
   // A full refactor to native Web Streams was considered but is currently deferred.
-  // The primary reason is to maintain architectural parity with the Python SDK,
-  // which is a key design goal for the project. This ensures a consistent developer
-  // experience across both platforms.
   //
   // For more context, see the discussion in GitHub issue # 844.
   protected async pumpInput() {

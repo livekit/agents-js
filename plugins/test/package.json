@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugins-test",
-  "version": "1.4.5",
+  "version": "1.4.9",
   "description": "Testing suite for LiveKit Agents plugins",
   "author": "LiveKit",
   "type": "module",
@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "fastest-levenshtein": "^1.0.16",
-    "vitest": "^1.6.0"
+    "vitest": "^4.0.17"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

@@ -15,10 +15,13 @@ import type { ParticipantInfo } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { EventEmitter } from 'node:events';
 import { availableParallelism } from 'node:os';
+import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
+import { _getLocalInferenceModule } from './inference/_warmup.js';
+import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
@@ -32,6 +35,32 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 const PROJECT_TYPE = 'nodejs';
+
+let localEotRunnerRegistered = false;
+/**
+ * Register the local audio-EOT inference runner so it runs in the shared
+ * inference process. Idempotent and guarded by native-binding availability;
+ * a no-op (with a one-time warning) when `@livekit/local-inference` can't be
+ * loaded so the worker still starts on unsupported platforms.
+ */
+function maybeRegisterLocalEotRunner(): void {
+  if (localEotRunnerRegistered) return;
+  localEotRunnerRegistered = true;
+  if (InferenceRunner.registeredRunners[EOT_INFERENCE_METHOD]) return;
+  if (_getLocalInferenceModule() === undefined) {
+    log().warn(
+      '@livekit/local-inference native binding unavailable; local audio EOT disabled ' +
+        '(predictions will degrade to a positive default). cloud EOT and other turn ' +
+        'detection modes are unaffected.',
+    );
+    return;
+  }
+  const ext = extname(import.meta.url); // '.js' (built) or '.ts' (tsx/ts-node)
+  InferenceRunner.registerRunner(
+    EOT_INFERENCE_METHOD,
+    new URL(`./inference/eot/runner${ext}`, import.meta.url).toString(),
+  );
+}
 
 class Default {
   static loadThreshold(production: boolean): number {
@@ -169,7 +198,7 @@ export class ServerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
-    jobMemoryWarnMB = 500,
+    jobMemoryWarnMB = 1000,
     jobMemoryLimitMB = 0,
   }: {
     /**
@@ -307,6 +336,12 @@ export class AgentServer {
       );
 
     if (opts.workerToken) {
+      // Re-export into the environment so forked subprocesses inherit it (fork()
+      // copies process.env by default). The inference-header code in the child reads
+      // process.env.LIVEKIT_WORKER_TOKEN — see inference/utils.ts buildMetadataHeaders().
+      // Mirrors Python worker.py, which sets os.environ before spawning job procs.
+      process.env.LIVEKIT_WORKER_TOKEN = opts.workerToken;
+
       if (opts.loadFunc !== defaultCpuLoad) {
         this.#logger.warn(
           'custom loadFunc is not supported when deploying to Cloud, using defaults',
@@ -321,6 +356,13 @@ export class AgentServer {
         opts.loadThreshold = loadThreshold;
       }
     }
+
+    // Register the local audio-EOT runner so it runs in the shared inference
+    // process (loaded once per host, ~138 MB) instead of in every job worker.
+    // Guarded by binding availability: on a platform where
+    // `@livekit/local-inference` can't load, skip registration so the worker
+    // still starts (local EOT then degrades to a positive-default prediction).
+    maybeRegisterLocalEotRunner();
 
     if (Object.entries(InferenceRunner.registeredRunners).length) {
       this.#inferenceExecutor = new InferenceProcExecutor({
