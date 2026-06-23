@@ -1176,6 +1176,11 @@ export class AgentSession<
       let reusableResources: ReusableResources | undefined;
 
       try {
+        if (this.closing && newActivity === 'start') {
+          this.logger.warn({ agentId: agent.id }, 'Session is closing, skipping start of activity');
+          return;
+        }
+
         this.agent = agent;
         const prevActivityObj = this.activity;
 
