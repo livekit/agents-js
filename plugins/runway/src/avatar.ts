@@ -155,12 +155,14 @@ export class AvatarSession extends voice.AvatarSession {
       void this.ensureEndSessionPromise();
     });
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-      sampleRate: SAMPLE_RATE,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+        sampleRate: SAMPLE_RATE,
+      }),
+    );
   }
 
   private async createSession(

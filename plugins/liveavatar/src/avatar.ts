@@ -238,7 +238,7 @@ export class AvatarSession extends voice.AvatarSession {
     this.audioBuffer.on('clear_buffer', (ev: voice.QueueAudioOutputClearEvent) =>
       this.onClearBuffer(ev),
     );
-    agentSession.output.audio = this.audioBuffer;
+    agentSession.output.replaceAudioTail(this.audioBuffer);
 
     // Spawn the main task with an attached error handler so a websocket open or
     // protocol failure does not surface as an unhandled rejection. The main task
