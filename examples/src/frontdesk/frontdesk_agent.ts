@@ -1,20 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -196,9 +186,6 @@ You must infer the appropriate range implicitly from the conversational context 
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const timezone = 'UTC';
 
@@ -220,13 +207,11 @@ export default defineAgent({
     const userdata: Userdata = { cal };
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       llm: new openai.LLM({
         model: 'gpt-4.1',
       }),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: userdata,
       voiceOptions: {
         maxToolSteps: 1,

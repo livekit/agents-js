@@ -18,7 +18,8 @@ import {
   waitForParticipant,
   waitForTrackPublication,
 } from '../../utils.js';
-import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
+import { AudioOutput } from '../io.js';
+import { parsePlaybackFinishedPayload } from './playback_payload.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
 const RPC_PLAYBACK_FINISHED = 'lk.playback_finished';
@@ -237,8 +238,10 @@ export class DataStreamAudioOutput extends AudioOutput {
       'playback finished event received',
     );
 
-    const playbackFinishedEvent = JSON.parse(data.payload) as PlaybackFinishedEvent;
-    this.onPlaybackFinished(playbackFinishedEvent);
+    // The wire payload uses the protocol-canonical snake_case keys
+    // (`playback_position`, `synchronized_transcript`); parsePlaybackFinishedPayload
+    // normalizes them into the camelCase PlaybackFinishedEvent shape.
+    this.onPlaybackFinished(parsePlaybackFinishedPayload(data.payload));
     return 'ok';
   }
 

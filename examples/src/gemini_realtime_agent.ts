@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -12,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -117,14 +115,10 @@ class StoryAgent extends voice.Agent<StoryData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       llm: new google.realtime.RealtimeModel({
         thinkingConfig: {
           // Making the thoughts false to speed up the realtime response

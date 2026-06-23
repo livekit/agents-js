@@ -36,11 +36,13 @@ export interface TurnHandlingOptions {
    * - `"realtime_llm"` – use server-side detection from a realtime LLM
    * - `"manual"` – caller controls turn boundaries explicitly
    *
-   * If not set, the session chooses the best available mode in priority order
-   * `realtime_llm → vad → stt → manual`; it automatically falls back if the necessary model
-   * is missing.
+   * - `undefined` (not set) – the session auto-provisions a default
+   *   `inference.TurnDetector`, then chooses the best available mode in
+   *   priority order `realtime_llm → vad → stt → manual`, falling back if the
+   *   necessary model is missing.
+   * - `null` – explicitly opt out of turn detection (no default detector built).
    */
-  turnDetection: TurnDetectionMode | undefined;
+  turnDetection: TurnDetectionMode | null | undefined;
   /**
    * Configuration for endpointing.
    */
@@ -61,6 +63,8 @@ export interface TurnHandlingOptions {
 
 export interface InternalTurnHandlingOptions extends TurnHandlingOptions {
   endpointing: EndpointingOptions;
+  /** Sparse endpointing keys the user provided explicitly. */
+  endpointingOverrides: Partial<EndpointingOptions>;
   interruption: InterruptionOptions;
   preemptiveGeneration: PreemptiveGenerationOptions;
   userTurnLimit: UserTurnLimitOptions;
@@ -70,6 +74,7 @@ export const defaultTurnHandlingOptions: InternalTurnHandlingOptions = {
   turnDetection: undefined,
   interruption: defaultInterruptionOptions,
   endpointing: defaultEndpointingOptions,
+  endpointingOverrides: {},
   preemptiveGeneration: defaultPreemptiveGenerationOptions,
   userTurnLimit: defaultUserTurnLimitOptions,
 };

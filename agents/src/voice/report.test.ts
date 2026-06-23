@@ -4,7 +4,11 @@
 import { describe, expect, it } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { ModelUsage } from '../metrics/model_usage.js';
-import type { AgentSessionOptions, VoiceOptions } from './agent_session.js';
+import type {
+  AgentSessionOptions,
+  ResolvedRecordingOptions,
+  VoiceOptions,
+} from './agent_session.js';
 import { AgentSessionEventTypes, createSessionUsageUpdatedEvent } from './events.js';
 import type { AgentSessionUsage } from './index.js';
 import { createSessionReport, sessionReportToJSON } from './report.js';
@@ -211,5 +215,38 @@ describe('sessionReportToJSON', () => {
     const eventType: AgentSessionEventTypes = AgentSessionEventTypes.SessionUsageUpdated;
     expect(usage.modelUsage).toEqual([]);
     expect(eventType).toBe('session_usage_updated');
+  });
+});
+
+describe('createSessionReport recordingOptions', () => {
+  function makeReport(recordingOptions?: ResolvedRecordingOptions) {
+    return createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      recordingOptions,
+    });
+  }
+
+  it('defaults every recording category to off when omitted', () => {
+    expect(makeReport().recordingOptions).toEqual({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+    });
+  });
+
+  it('passes provided recording options through', () => {
+    const recordingOptions: ResolvedRecordingOptions = {
+      audio: true,
+      traces: false,
+      logs: true,
+      transcript: false,
+    };
+    expect(makeReport(recordingOptions).recordingOptions).toEqual(recordingOptions);
   });
 });

@@ -14,6 +14,7 @@ import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { RoomServiceClient } from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
@@ -21,8 +22,9 @@ import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
-import type { AgentSession } from './voice/agent_session.js';
-import { type SessionReport, createSessionReport } from './voice/report.js';
+import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
+import { AgentsConsole } from './voice/console_io.js';
+import { type SessionReport, createSessionReport, sessionReportToJSON } from './voice/report.js';
 
 // AsyncLocalStorage for job context, similar to Python's contextvars
 const jobContextStorage = new AsyncLocalStorage<JobContext<unknown>>();
@@ -88,6 +90,12 @@ export type RunningJobInfo = {
   workerId: string;
   apiKey?: string;
   apiSecret?: string;
+  /**
+   * A locally-synthesized job that is not backed by a LiveKit room (e.g. the
+   * `console` CLI runner). Room-bound operations (`connect`, `deleteRoom`,
+   * recording uploads) become no-ops. Mirrors python `RunningJobInfo.fake_job`.
+   */
+  fakeJob?: boolean;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -148,7 +156,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
-    this._sessionDirectory = path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
+    // In console mode, recordings land in a local user-visible directory
+    // (mirrors python's AgentsConsole); real jobs use a temp dir.
+    const agentsConsole = AgentsConsole.getInstance();
+    this._sessionDirectory = agentsConsole.enabled
+      ? agentsConsole.sessionDirectory
+      : path.join(os.tmpdir(), 'livekit-agents', `job-${this.#info.job.id}`);
   }
 
   get proc(): JobProcess<ProcessUserData> {
@@ -170,6 +183,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get info(): RunningJobInfo {
     return this.#info;
+  }
+
+  /** @returns Whether this job is a locally-synthesized fake job (e.g. console mode). */
+  get isFakeJob(): boolean {
+    return this.#info.fakeJob ?? false;
   }
 
   /** @returns The agent's participant if connected to the room, otherwise `undefined` */
@@ -249,6 +267,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    if (this.isFakeJob) {
+      this.#logger.debug('job_ctx.connect() is a no-op in console mode');
+      this.#onConnect();
+      this.connected = true;
+      return;
+    }
+
     const opts = {
       e2ee,
       autoSubscribe: autoSubscribe == AutoSubscribe.SUBSCRIBE_ALL,
@@ -286,6 +311,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   /** Deletes the room and disconnects all participants. */
   async deleteRoom(roomName?: string): Promise<void> {
+    if (this.isFakeJob) {
+      this.#logger.warn('job_ctx.deleteRoom() is not executed in console mode');
+      return;
+    }
+
     const targetRoomName = roomName ?? this.#room.name;
     if (!targetRoomName) {
       this.#logger.warn('cannot delete room because room name is missing');
@@ -321,6 +351,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       options: targetSession.sessionOptions,
       events: targetSession._recordedEvents,
       enableRecording: targetSession._enableRecording,
+      recordingOptions: targetSession._recordingOptions,
       chatHistory: targetSession.history.copy(),
       startedAt: targetSession._startedAt,
       audioRecordingPath: recorderIO?.outputPath,
@@ -335,29 +366,50 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
+    const recorderIO = session._recorderIO;
+    if (recorderIO?.recording) {
+      this.#logger.warn('recorder_io is still recording at session end, closing it');
+      await recorderIO.close();
+    }
+
     const report = this.makeSessionReport(session);
 
-    // TODO(brian): Implement CLI/console
-
-    // Upload session report to LiveKit Cloud if enabled
-    const url = new URL(this.#info.url);
-
-    if (report.enableRecording && isCloud(url)) {
+    // Console recording: dump the session report to a local file (mirrors python).
+    const agentsConsole = AgentsConsole.getInstance();
+    if (agentsConsole.enabled && agentsConsole.record) {
       try {
-        await uploadSessionReport({
-          agentName: this.job.agentName,
-          cloudHostname: url.hostname,
-          report,
-        });
-        this.#logger.info(
-          {
-            jobId: report.jobId,
-            roomId: report.roomId,
-          },
-          'Session report uploaded to LiveKit Cloud',
+        await mkdir(this._sessionDirectory, { recursive: true });
+        await writeFile(
+          path.join(this._sessionDirectory, 'session_report.json'),
+          JSON.stringify(sessionReportToJSON(report), null, 2),
         );
       } catch (error) {
-        this.#logger.error({ error }, 'Failed to upload session report');
+        this.#logger.error({ error }, 'failed to save the session report');
+      }
+    }
+
+    // Upload session report to LiveKit Cloud if enabled. A fake job (console
+    // mode) has no backing cloud URL, so skip the upload entirely.
+    if (!this.isFakeJob) {
+      const url = new URL(this.#info.url);
+
+      if (report.enableRecording && isCloud(url)) {
+        try {
+          await uploadSessionReport({
+            agentName: this.job.agentName,
+            cloudHostname: url.hostname,
+            report,
+          });
+          this.#logger.info(
+            {
+              jobId: report.jobId,
+              roomId: report.roomId,
+            },
+            'Session report uploaded to LiveKit Cloud',
+          );
+        } catch (error) {
+          this.#logger.error({ error }, 'Failed to upload session report');
+        }
       }
     }
 
@@ -399,7 +451,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         );
       }
       const result = callback(this, p);
-      result.finally(() => delete this.#participantTasks[p.identity!]);
+      result.finally(() => {
+        if (this.#participantTasks[p.identity!]?.result === result) {
+          delete this.#participantTasks[p.identity!];
+        }
+      });
       this.#participantTasks[p.identity!] = { callback, result };
     }
   }
@@ -419,9 +475,19 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#participantEntrypoints.push(callback);
   }
 
-  async initRecording() {
+  async initRecording(options: ResolvedRecordingOptions) {
+    if (this.isFakeJob) {
+      return;
+    }
+
     const url = new URL(this.#info.url);
     if (!isCloud(url)) {
+      return;
+    }
+
+    // The cloud tracer handles trace spans and OTel logs; only configure it
+    // when at least one of those categories is enabled.
+    if (!options.traces && !options.logs) {
       return;
     }
 
@@ -430,6 +496,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomId: this.job.room!.sid,
       jobId: this.job.id,
       cloudHostname: url.hostname,
+      enableTraces: options.traces,
+      enableLogs: options.logs,
     });
   }
 }

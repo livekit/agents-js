@@ -28,7 +28,7 @@ import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
-import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
+import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
@@ -310,7 +310,7 @@ export class Agent<UserData = any> {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<ChatChunk | string> | null> {
+  ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
     return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
@@ -346,7 +346,7 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
-  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
+  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
   async updateTools(tools: ToolContext): Promise<void> {
     if (!this._agentActivity) {
       this._tools = { ...tools };

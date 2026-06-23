@@ -66,6 +66,10 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     return this.#runningJob;
   }
 
+  protected get processKind(): string {
+    return 'job';
+  }
+
   createProcess(): ChildProcess {
     const forkUrl = new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url);
 

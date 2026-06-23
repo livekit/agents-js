@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream as NodeReadableStream } from 'stream/web';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall, type ToolContext, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
@@ -49,7 +49,12 @@ function createFunctionCallStreamFromArray(fcs: FunctionCall[]): NodeReadableStr
 describe('Generation + Tool Execution', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('should not abort tool when preamble forwarders are cleaned up', async () => {
+    vi.useFakeTimers();
     const replyAbortController = new AbortController();
     const forwarderController = new AbortController();
 
@@ -68,11 +73,9 @@ describe('Generation + Tool Execution', () => {
       description: 'weather',
       parameters: z.object({ location: z.string() }),
       execute: async ({ location }, { abortSignal }) => {
-        if (abortSignal) {
-          abortSignal.addEventListener('abort', () => {
-            toolAborted = true;
-          });
-        }
+        abortSignal.addEventListener('abort', () => {
+          toolAborted = true;
+        });
         // 6s delay
         await delay(6000);
         return `Sunny in ${location}`;
@@ -98,9 +101,12 @@ describe('Generation + Tool Execution', () => {
 
     // Ensure tool has started, then cancel forwarders mid-stream (without aborting parent AbortController)
     await toolOutput.firstToolStartedFuture.await;
-    await delay(100);
-    await cancelAndWait([textForwardTask], 5000);
+    await vi.advanceTimersByTimeAsync(100);
+    const cancelForwarder = cancelAndWait([textForwardTask], 5000);
+    await vi.advanceTimersByTimeAsync(20);
+    await cancelForwarder;
 
+    await vi.advanceTimersByTimeAsync(6000);
     await execTask.result;
 
     expect(toolOutput.output.length).toBe(1);
@@ -186,11 +192,9 @@ describe('Generation + Tool Execution', () => {
       description: 'longOp',
       parameters: z.object({ ms: z.number() }),
       execute: async ({ ms }, { abortSignal }) => {
-        if (abortSignal) {
-          abortSignal.addEventListener('abort', () => {
-            aborted = true;
-          });
-        }
+        abortSignal.addEventListener('abort', () => {
+          aborted = true;
+        });
         await delay(ms);
         return 'done';
       },

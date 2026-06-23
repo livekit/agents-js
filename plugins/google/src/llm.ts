@@ -205,6 +205,10 @@ export class LLM extends llm.LLM {
   }): LLMStream {
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
+    if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
+      extras.httpOptions = this.#opts.httpOptions;
+    }
+
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
 
     if (toolChoice) {
@@ -218,7 +222,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
+        const toolNames = llm.sortedToolNames(toolCtx);
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
@@ -392,14 +396,17 @@ export class LLMStream extends llm.LLMStream {
         requestConfig.tools = tools;
       }
 
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(this.connOptions.timeoutMs),
+      };
+
       const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
           ...requestConfig,
-          httpOptions: this.#extraKwargs.httpOptions ?? {
-            timeout: Math.floor(this.connOptions.timeoutMs),
-          },
+          httpOptions,
         },
       });
 

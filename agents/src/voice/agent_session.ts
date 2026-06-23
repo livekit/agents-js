@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
+import { AgentSession as pb } from '@livekit/protocol';
 import type { AudioFrame, Room } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
@@ -10,10 +12,13 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
+import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
+  TurnDetector as InferenceTurnDetector,
+  VAD as InferenceVAD,
   type LLMModels,
   type STTModelString,
   type TTSModelString,
@@ -52,6 +57,7 @@ import {
 } from './agent_activity.js';
 import type { AMD, AMDPredictionEvent } from './amd.js';
 import type { _TurnDetector } from './audio_recognition.js';
+import { AgentsConsole } from './console_io.js';
 import {
   type AgentEvent,
   type AgentFalseInterruptionEvent,
@@ -61,6 +67,7 @@ import {
   type CloseEvent,
   CloseReason,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -100,6 +107,60 @@ import { setParticipantSpanAttributes } from './utils.js';
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
   modelUsage: Array<Partial<ModelUsage>>;
+}
+
+/**
+ * Granular control over which recording features are active.
+ *
+ * All keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ *
+ * - `record: true` — all on (backward compatible)
+ * - `record: false` — all off (backward compatible)
+ * - `record: { audio: true, traces: false }` — granular
+ */
+export interface RecordingOptions {
+  /** Record session audio. Defaults to `true`. */
+  audio?: boolean;
+  /** Export OpenTelemetry trace spans. Defaults to `true`. */
+  traces?: boolean;
+  /** Export OpenTelemetry logs. Defaults to `true`. */
+  logs?: boolean;
+  /** Upload the conversation transcript (chat history). Defaults to `true`. */
+  transcript?: boolean;
+}
+
+/** @internal Recording options with every category resolved to a boolean. */
+export type ResolvedRecordingOptions = Required<RecordingOptions>;
+
+const RECORDING_ALL_ON: ResolvedRecordingOptions = {
+  audio: true,
+  traces: true,
+  logs: true,
+  transcript: true,
+};
+
+const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
+  audio: false,
+  traces: false,
+  logs: false,
+  transcript: false,
+};
+
+/**
+ * Resolve a `record` argument into explicit per-category flags. A boolean turns
+ * every category on or off; a partial object is merged onto all-on so omitted
+ * keys default to `true`.
+ *
+ * @internal
+ */
+export function resolveRecordingOptions(
+  record: boolean | RecordingOptions,
+): ResolvedRecordingOptions {
+  if (typeof record === 'boolean') {
+    return { ...(record ? RECORDING_ALL_ON : RECORDING_ALL_OFF) };
+  }
+  return { ...RECORDING_ALL_ON, ...record };
 }
 
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
@@ -143,7 +204,13 @@ export type VoiceOptions = {
   maxEndpointingDelay?: number;
 };
 
-export type TurnDetectionMode = 'stt' | 'vad' | 'realtime_llm' | 'manual' | _TurnDetector;
+export type TurnDetectionMode =
+  | 'stt'
+  | 'vad'
+  | 'realtime_llm'
+  | 'manual'
+  | _TurnDetector
+  | BaseStreamingTurnDetector;
 
 export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserInputTranscribed]: (ev: UserInputTranscribedEvent) => void;
@@ -153,16 +220,24 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
+  [AgentSessionEventTypes.DebugMessage]: (ev: pb.DebugMessage) => void;
   [AgentSessionEventTypes.SpeechCreated]: (ev: SpeechCreatedEvent) => void;
   [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
+  [AgentSessionEventTypes.EotPrediction]: (ev: EotPredictionEvent) => void;
 };
 
 export type AgentSessionOptions<UserData = UnknownUserData> = {
   stt?: STT | STTModelString;
-  vad?: VAD;
+  /**
+   * Voice Activity Detection. When omitted, `AgentSession` auto-provisions a
+   * bundled `inference.VAD({ model: 'silero' })` and marks it as the default
+   * (so sites that check whether the user supplied a VAD treat the bundled
+   * one as absent). Pass `null` to opt out entirely.
+   */
+  vad?: VAD | null;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
@@ -305,6 +380,15 @@ export class AgentSession<
 
   private _interruptionDetection?: InterruptionOptions['mode'];
 
+  /**
+   * True iff this session auto-provisioned the bundled silero VAD because the
+   * caller passed no `vad=`. Set once in the constructor; immutable from then
+   * on. Read it via `AgentActivity.usingDefaultVad` from voice-pipeline code.
+   *
+   * @internal
+   */
+  _usingDefaultVad: boolean = false;
+
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
@@ -330,8 +414,18 @@ export class AgentSession<
   /** @internal */
   _recordedEvents: AgentEvent[] = [];
 
-  /** @internal */
-  _enableRecording = false;
+  /** @internal Resolved per-category recording options for this session. */
+  _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
+
+  /** @internal True when any recording category is enabled. */
+  get _enableRecording(): boolean {
+    return (
+      this._recordingOptions.audio ||
+      this._recordingOptions.traces ||
+      this._recordingOptions.logs ||
+      this._recordingOptions.transcript
+    );
+  }
 
   /** @internal - Timestamp when the session started (milliseconds) */
   _startedAt?: number;
@@ -371,7 +465,19 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
-    this.vad = vad;
+    // VAD: undefined → auto-provision bundled inference.VAD (silero). The
+    // `_usingDefaultVad` marker is the single source of truth for "this VAD
+    // was framework-provisioned" — code paths that should ignore a default
+    // VAD read it via `AgentActivity.usingDefaultVad`. null → leave VAD off
+    // entirely. Otherwise use what the caller supplied.
+    this._usingDefaultVad = vad === undefined;
+    if (vad === undefined) {
+      this.vad = new InferenceVAD({ model: 'silero' });
+    } else if (vad === null) {
+      this.vad = undefined;
+    } else {
+      this.vad = vad;
+    }
 
     if (typeof stt === 'string') {
       this.stt = InferenceSTT.fromModelString(stt);
@@ -391,7 +497,16 @@ export class AgentSession<
       this.tts = tts;
     }
 
-    this.turnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    // Default turn_detection: when the caller didn't pin a mode or supply a
+    // detector instance (`undefined`/not-given), fall back to a fresh
+    // inference.TurnDetector so every session ships with audio EOT
+    // out of the box. An explicit `null` opts out entirely — no detector is
+    // built.
+    const configuredTurnDetection = resolvedSessionOptions.turnHandling.turnDetection;
+    this.turnDetection =
+      configuredTurnDetection === null
+        ? undefined
+        : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
 
@@ -483,7 +598,25 @@ export class AgentSession<
 
     const tasks: Promise<void>[] = [];
 
-    if (room && !this._roomIO) {
+    const consoleInst = AgentsConsole.getInstance();
+    if (consoleInst.enabled && !consoleInst.ioAcquired) {
+      if (this.input.audio || this.output.audio) {
+        this.logger.warn(
+          'agent started with the console subcommand, but input.audio/output.audio is already set, overriding...',
+        );
+      }
+
+      consoleInst.acquireIo(this);
+
+      if (consoleInst.transport) {
+        this.sessionHost = new SessionHost(
+          consoleInst.transport,
+          consoleInst.audioInput,
+          consoleInst.audioOutput,
+        );
+        this.sessionHost.registerSession(this);
+      }
+    } else if (room && !this._roomIO) {
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -530,23 +663,25 @@ export class AgentSession<
         tasks.push(ctx.connect());
       }
 
-      if (ctx._primaryAgentSession === undefined) {
-        ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
-        throw new Error(
-          'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
-        );
-      }
-
-      if (this.input.audio && this.output.audio && this._enableRecording) {
+      // `lk console --record` forces audio recording even if the session was
+      // started with `record: false`.
+      const consoleForcesRecord = consoleInst.enabled && consoleInst.record;
+      if (
+        this.input.audio &&
+        this.output.audio &&
+        (this._recordingOptions.audio || consoleForcesRecord)
+      ) {
         this._recorderIO = new RecorderIO({ agentSession: this });
         this.input.audio = this._recorderIO.recordInput(this.input.audio);
         this.output.audio = this._recorderIO.recordOutput(this.output.audio);
 
-        // Start recording to session directory
-        const sessionDir = ctx.sessionDirectory;
-        if (sessionDir) {
-          tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+        // Start recording to the session directory. In console mode the disk
+        // write is gated on --record.
+        if (consoleForcesRecord || !consoleInst.enabled) {
+          const sessionDir = ctx.sessionDirectory;
+          if (sessionDir) {
+            tasks.push(this._recorderIO.start(`${sessionDir}/audio.ogg`));
+          }
         }
       }
     }
@@ -599,7 +734,7 @@ export class AgentSession<
     room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
-    record?: boolean;
+    record?: boolean | RecordingOptions;
   }): Promise<void> {
     if (this.started) {
       return;
@@ -611,14 +746,31 @@ export class AgentSession<
     const ctx = getJobContext(false);
 
     if (ctx) {
+      const recordIsGiven = record !== undefined;
       if (record === undefined) {
+        // defer to the server-side setting for recording
         record = ctx.job.enableRecording;
       }
 
-      this._enableRecording = record;
+      this._recordingOptions = resolveRecordingOptions(record);
+
+      // Only one AgentSession per job can be the primary (and therefore record).
+      // Designate the primary before initRecording so a demoted secondary session
+      // never configures cloud recording. Mirrors Python's start() ordering.
+      if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
+        ctx._primaryAgentSession = this;
+      } else if (this._enableRecording) {
+        if (recordIsGiven) {
+          throw new Error(
+            'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
+          );
+        }
+        // record was not given: silently disable recording for the secondary session
+        this._recordingOptions = resolveRecordingOptions(false);
+      }
 
       if (this._enableRecording) {
-        await ctx.initRecording();
+        await ctx.initRecording(this._recordingOptions);
       }
     }
 
@@ -740,6 +892,12 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
+  /** @internal — emit a debug/trace payload to the debugger/recorder. */
+  _emitDebugMessage(payload: JsonObject): void {
+    const debugMessage = new pb.DebugMessage({ payload: Struct.fromJson(payload) });
+    super.emit(AgentSessionEventTypes.DebugMessage, debugMessage);
+  }
+
   /**
    * The currently bound `AMD` instance, or `null` if AMD is not in use.
    * Mirrors python `AgentSession.amd`.
@@ -751,6 +909,16 @@ export class AgentSession<
   /** @internal — used by AMD to register/unregister itself with the session. */
   _setAmd(amd: AMD | null): void {
     this._amd = amd;
+  }
+
+  /**
+   * The currently running activity, or `undefined` when none is active. Mirrors
+   * python `session._activity` — exposed so tightly-coupled internals (e.g. AMD)
+   * can read activity state such as the endpointing delay.
+   * @internal
+   */
+  get _activity(): AgentActivity | undefined {
+    return this.activity;
   }
 
   /**
@@ -797,9 +965,16 @@ export class AgentSession<
     const normalizedTurnDetection = turnDetection ?? undefined;
 
     if (endpointing !== undefined) {
+      const stripped = stripUndefined(endpointing);
       this.sessionOptions.turnHandling.endpointing = {
         ...this.sessionOptions.turnHandling.endpointing,
-        ...stripUndefined(endpointing),
+        ...stripped,
+      };
+      // record the explicit keys so a fresh activity (built on agent handoff)
+      // re-resolves with them instead of falling back to defaults.
+      this.sessionOptions.turnHandling.endpointingOverrides = {
+        ...this.sessionOptions.turnHandling.endpointingOverrides,
+        ...stripped,
       };
     }
 

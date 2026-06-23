@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -11,8 +10,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -39,9 +36,6 @@ class GameAgent extends voice.Agent<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const getWeather = llm.tool({
       description: ' Called when the user asks about the weather.',
@@ -133,17 +127,13 @@ export default defineAgent({
       },
     });
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
-
     const session = new voice.AgentSession({
-      vad,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'google/gemini-3-flash-preview' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
       }),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: { number: 0 },
       voiceOptions: {
         preemptiveGeneration: true,

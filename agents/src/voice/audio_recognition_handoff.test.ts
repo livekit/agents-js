@@ -19,6 +19,7 @@ function createHooks() {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
