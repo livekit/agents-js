@@ -79,7 +79,7 @@ export interface DeepgramOptions {
   /** Keywords with boost values. */
   keywords?: Array<[string, number]>;
   /** Key terms for recognition. */
-  keyterms?: string[];
+  keyterm?: string | string[];
   /** Enable profanity filter. */
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
@@ -120,6 +120,14 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
+  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  agent_context?: string;
+  /** Isolate the primary voice. Only supported with u3-rt-pro. */
+  voice_focus?: 'near-field' | 'far-field';
+  /** Background suppression strength. Only supported with u3-rt-pro. */
+  voice_focus_threshold?: number;
+  /** Accuracy/latency preset. Only supported with u3-rt-pro. */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
 }
 
 export interface XaiOptions {

@@ -59,6 +59,7 @@ export interface STTOptions {
   httpSession?: STTHTTPSession;
   modelId?: ElevenLabsSTTModels | string;
   keyterms?: string[];
+  noVerbatim?: boolean;
 }
 
 interface ResolvedSTTOptions {
@@ -71,6 +72,7 @@ interface ResolvedSTTOptions {
   sampleRate: STTRealtimeSampleRates;
   serverVad?: VADOptions | null;
   keyterms?: string[];
+  noVerbatim: boolean;
 }
 
 export interface STTRecognizeOptions {
@@ -234,6 +236,7 @@ export class STT extends stt.STT {
       includeTimestamps,
       modelId,
       keyterms: opts.keyterms,
+      noVerbatim: opts.noVerbatim ?? false,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -346,6 +349,9 @@ export class STT extends stt.STT {
         form.append('keyterms', keyterm);
       }
     }
+    if (this.#opts.noVerbatim) {
+      form.append('no_verbatim', 'true');
+    }
 
     try {
       const fetchFn = this.#session.fetch ?? fetch;
@@ -427,6 +433,7 @@ export class STT extends stt.STT {
     tagAudioEvents?: boolean;
     serverVad?: VADOptions | null;
     keyterms?: string[];
+    noVerbatim?: boolean;
   }): void {
     if (opts.tagAudioEvents !== undefined) {
       this.#opts.tagAudioEvents = opts.tagAudioEvents;
@@ -440,10 +447,14 @@ export class STT extends stt.STT {
       this.#opts.keyterms = opts.keyterms;
     }
 
+    if (opts.noVerbatim !== undefined) {
+      this.#opts.noVerbatim = opts.noVerbatim;
+    }
+
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions({ serverVad: opts.serverVad });
+        stream.updateOptions({ serverVad: opts.serverVad, noVerbatim: opts.noVerbatim });
       } else {
         this.#streams.delete(ref);
       }
@@ -493,9 +504,15 @@ export class SpeechStream extends stt.SpeechStream {
     );
   }
 
-  updateOptions(opts: { serverVad?: VADOptions | null }): void {
+  updateOptions(opts: { serverVad?: VADOptions | null; noVerbatim?: boolean }): void {
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
+      if (!this.#reconnectEvent.done) {
+        this.#reconnectEvent.resolve();
+      }
+    }
+    if (opts.noVerbatim !== undefined) {
+      this.#opts.noVerbatim = opts.noVerbatim;
       if (!this.#reconnectEvent.done) {
         this.#reconnectEvent.resolve();
       }
@@ -685,6 +702,10 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (this.#opts.includeTimestamps) {
       params.push('include_timestamps=true');
+    }
+
+    if (this.#opts.noVerbatim) {
+      params.push('no_verbatim=true');
     }
 
     const baseURL = this.#opts.baseURL.replace('https://', 'wss://').replace('http://', 'ws://');

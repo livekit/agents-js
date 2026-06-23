@@ -11,6 +11,7 @@ import {
   createTimedString,
   getBaseLanguage,
   log,
+  mergeFrames,
   normalizeLanguage,
   stt,
   waitForAbort,
@@ -107,9 +108,82 @@ export class STT extends stt.STT {
 
     if (this.#opts.detectLanguage) {
       this.#opts.language = undefined;
-    } else if (
-      this.#opts.language &&
-      getBaseLanguage(this.#opts.language) !== 'en' &&
+    } else {
+      this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
+    }
+  }
+
+  async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
+    const frame = mergeFrames(buffer);
+    const listenURL = new URL(`${this.#opts.baseUrl.replace(/^ws/, 'http')}/v1/listen`);
+    const params = {
+      model: this.#opts.model,
+      punctuate: this.#opts.punctuate,
+      detect_language: this.#opts.detectLanguage,
+      smart_format: this.#opts.smartFormat,
+      keywords: this.#opts.keywords.map((x) => x.join(':')),
+      profanity_filter: this.#opts.profanityFilter,
+      numerals: this.#opts.numerals,
+      mip_opt_out: this.#opts.mipOptOut,
+      language: this.#opts.language,
+      ...(this.#opts.keyterm.length > 0 ? { keyterm: this.#opts.keyterm } : {}),
+      ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
+    };
+
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined) {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          listenURL.searchParams.append(k, String(v));
+        } else {
+          v.forEach((x) => listenURL.searchParams.append(k, String(x)));
+        }
+      }
+    });
+
+    if (this.#opts.diarize) {
+      this.#logger.warn('speaker diarization is not supported in non-streaming mode, ignoring');
+    }
+
+    const resp = await fetch(listenURL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${this.#opts.apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'audio/wav',
+      },
+      body: new Blob([new Uint8Array(createWav(frame))], { type: 'audio/wav' }),
+      signal: abortSignal ?? null,
+    });
+
+    if (!resp.ok) {
+      throw new Error(
+        `Deepgram STT REST request failed with status ${resp.status}: ${await resp.text()}`,
+      );
+    }
+
+    return prerecordedTranscriptionToSpeechEvent(this.#opts.language, await resp.json());
+  }
+
+  updateOptions(opts: Partial<STTOptions>) {
+    const language =
+      opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language;
+    const model =
+      opts.model !== undefined || opts.language !== undefined
+        ? this.#validateModel(opts.model ?? this.#opts.model, language)
+        : this.#opts.model;
+
+    this.#opts = {
+      ...this.#opts,
+      ...opts,
+      language,
+      model,
+    };
+  }
+
+  #validateModel(model: STTModels, language?: string) {
+    if (
+      language &&
+      getBaseLanguage(language) !== 'en' &&
       [
         'nova-2-meeting',
         'nova-2-phonecall',
@@ -121,30 +195,24 @@ export class STT extends stt.STT {
         'nova-2-drivethru',
         'nova-2-automotive',
         'nova-3-general',
-      ].includes(this.#opts.model)
+      ].includes(model)
     ) {
       this.#logger.warn(
-        `${this.#opts.model} does not support language ${this.#opts.language}, falling back to nova-2-general`,
+        `${model} does not support language ${language}, falling back to nova-2-general`,
       );
-      this.#opts.model = 'nova-2-general';
+      return 'nova-2-general';
     }
-  }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
-    throw new Error('Recognize is not supported on Deepgram STT');
-  }
-
-  updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = {
-      ...this.#opts,
-      ...opts,
-      language:
-        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
-    };
+    return model;
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    // Deepgram only supports language detection for prerecorded audio, not streaming.
+    if (this.#opts.detectLanguage || this.#opts.language === undefined) {
+      throw new Error(
+        'language detection is not supported in streaming mode, please disable it and specify a language',
+      );
+    }
     return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 
@@ -451,6 +519,30 @@ export class SpeechStream extends stt.SpeechStream {
   }
 }
 
+function createWav(frame: AudioFrame): Buffer {
+  const bitsPerSample = 16;
+  const byteRate = (frame.sampleRate * frame.channels * bitsPerSample) / 8;
+  const blockAlign = (frame.channels * bitsPerSample) / 8;
+
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + frame.data.byteLength, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(frame.channels, 22);
+  header.writeUInt32LE(frame.sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(frame.data.byteLength, 40);
+
+  const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+  return Buffer.concat([header, pcm]);
+}
+
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
   data: { [id: string]: any },
@@ -483,3 +575,38 @@ const liveTranscriptionToSpeechData = (
     };
   });
 };
+
+function prerecordedTranscriptionToSpeechEvent(
+  language: STTLanguages | string | undefined,
+  data: { [id: string]: any },
+): stt.SpeechEvent {
+  const channel = data['results']['channels'][0];
+  const detectedLanguage = channel['detected_language'] ?? '';
+  const alternatives = channel['alternatives'].map((alt: { [id: string]: any }) => {
+    const wordsData: any[] = alt['words'] ?? [];
+
+    return {
+      language: normalizeLanguage(language ?? detectedLanguage),
+      startTime: wordsData.length ? wordsData[0]['start'] : 0,
+      endTime: wordsData.length ? wordsData[wordsData.length - 1]['end'] : 0,
+      confidence: alt['confidence'],
+      text: alt['transcript'],
+      words: wordsData.map((word) =>
+        createTimedString({
+          text: word['word'] ?? '',
+          startTime: word['start'] ?? 0,
+          endTime: word['end'] ?? 0,
+          confidence: word['confidence'] ?? 0.0,
+        }),
+      ),
+    };
+  }) as stt.SpeechData[];
+
+  return {
+    type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+    requestId: data['metadata']['request_id'],
+    ...(alternatives.length
+      ? { alternatives: alternatives as [stt.SpeechData, ...stt.SpeechData[]] }
+      : {}),
+  };
+}
