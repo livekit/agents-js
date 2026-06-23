@@ -130,12 +130,22 @@ export class AnamAPI {
     sessionOptions?: SessionOptions;
   }) {
     const pc = params.personaConfig;
-    const personaPayload = {
-      type: 'ephemeral',
-      name: pc.name,
-      avatarId: pc.avatarId,
-      llmId: 'CUSTOMER_CLIENT_V1',
-    };
+    // Anam's personaConfig is a `oneOf`: reference a previously created
+    // (stateful) persona by `personaId` — the "dev flow" — or configure an
+    // ephemeral persona inline with name/avatarId/llmId. The two are mutually
+    // exclusive, so when a personaId is given we must not also send the
+    // ephemeral fields.
+    const personaPayload: Record<string, unknown> = pc.personaId
+      ? { personaId: pc.personaId }
+      : {
+          type: 'ephemeral',
+          name: pc.name,
+          avatarId: pc.avatarId,
+          llmId: 'CUSTOMER_CLIENT_V1',
+          // Only forward the avatar model version when set; otherwise let Anam
+          // fall back to the avatar's default model.
+          ...(pc.avatarModel ? { avatarModel: pc.avatarModel } : {}),
+        };
 
     const payload: Record<string, unknown> = {
       personaConfig: personaPayload,
@@ -154,7 +164,9 @@ export class AnamAPI {
         params.sessionOptions.videoWidth === undefined ||
         params.sessionOptions.videoHeight === undefined
       ) {
-        throw new AnamException('videoWidth and videoHeight must be set together (both or neither)');
+        throw new AnamException(
+          'videoWidth and videoHeight must be set together (both or neither)',
+        );
       }
       payload.sessionOptions = {
         videoWidth: params.sessionOptions.videoWidth,

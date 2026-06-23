@@ -7,6 +7,8 @@ export type PersonaConfig = {
   name?: string;
   /** Optional avatar asset id (prod flow) */
   avatarId?: string;
+  /** Optional avatar model version, e.g. "cara-3" or "cara-4-latest" (prod flow) */
+  avatarModel?: string;
   /** Optional persona id (dev flow) */
   personaId?: string;
 };

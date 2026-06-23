@@ -62,7 +62,7 @@ export class AvatarSession extends voice.AvatarSession {
 }
 
 // @public (undocumented)
-export function mintAvatarJoinToken({ roomName, avatarIdentity, publishOnBehalf, apiKey, apiSecret, ttl, }: {
+export function mintAvatarJoinToken(input: {
     roomName: string;
     avatarIdentity: string;
     publishOnBehalf: string;
@@ -75,6 +75,7 @@ export function mintAvatarJoinToken({ roomName, avatarIdentity, publishOnBehalf,
 export type PersonaConfig = {
     name?: string;
     avatarId?: string;
+    avatarModel?: string;
     personaId?: string;
 };
 
