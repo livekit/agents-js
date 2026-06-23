@@ -384,7 +384,9 @@ export class LLMStream extends llm.LLMStream {
         requestConfig.systemInstruction = systemInstruction;
         requestConfig.tools = tools;
       } else {
-        const dropped = ['tools', 'toolConfig', 'systemInstruction'].filter((key) => key in requestConfig);
+        const dropped = ['tools', 'toolConfig', 'systemInstruction'].filter(
+          (key) => key in requestConfig,
+        );
         if (tools && !dropped.includes('tools')) {
           dropped.push('tools');
         }
