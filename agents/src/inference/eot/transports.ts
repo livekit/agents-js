@@ -8,7 +8,12 @@
 import { type Duration, Timestamp } from '@bufbuild/protobuf';
 import { AgentInference } from '@livekit/protocol';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { APIConnectionError, APIError, APIStatusError } from '../../_exceptions.js';
+import {
+  APIConnectionError,
+  APIError,
+  APIStatusError,
+  APITimeoutError,
+} from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -364,13 +369,37 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   }
 
   private async _defaultConnect(): Promise<CloudWebSocket> {
-    let baseUrl = this._cloudOpts.baseUrl;
-    if (baseUrl.startsWith('http://')) baseUrl = baseUrl.replace('http://', 'ws://');
-    else if (baseUrl.startsWith('https://')) baseUrl = baseUrl.replace('https://', 'wss://');
-    const token = await createAccessToken(this._cloudOpts.apiKey, this._cloudOpts.apiSecret);
-    const headers = { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` };
-    const ws = await connectWs(`${baseUrl}/eot`, headers, this._connOptions.timeoutMs);
-    return ws as unknown as CloudWebSocket;
+    try {
+      let baseUrl = this._cloudOpts.baseUrl;
+      if (baseUrl.startsWith('http://')) baseUrl = baseUrl.replace('http://', 'ws://');
+      else if (baseUrl.startsWith('https://')) baseUrl = baseUrl.replace('https://', 'wss://');
+      const token = await createAccessToken(this._cloudOpts.apiKey, this._cloudOpts.apiSecret);
+      const headers = { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` };
+      const ws = await connectWs(`${baseUrl}/eot`, headers, this._connOptions.timeoutMs);
+      return ws as unknown as CloudWebSocket;
+    } catch (err) {
+      if (err instanceof APIStatusError) {
+        throw new APIStatusError({
+          message: err.message,
+          options: {
+            statusCode: err.statusCode,
+            requestId: err.requestId,
+            body: err.body,
+            retryable: false,
+          },
+        });
+      }
+      if (err instanceof APITimeoutError) {
+        throw new APITimeoutError({
+          message: 'turn detector connection timed out',
+          options: { retryable: false },
+        });
+      }
+      throw new APIConnectionError({
+        message: 'failed to connect to turn detector',
+        options: { retryable: false },
+      });
+    }
   }
 
   private _warnTransportLatency(msg: ServerMsg): void {
