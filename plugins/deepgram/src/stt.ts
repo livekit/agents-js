@@ -192,6 +192,12 @@ export class STT extends stt.STT {
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    // Deepgram only supports language detection for prerecorded audio, not streaming.
+    if (this.#opts.detectLanguage || this.#opts.language === undefined) {
+      throw new Error(
+        'language detection is not supported in streaming mode, please disable it and specify a language',
+      );
+    }
     return new SpeechStream(this, this.#opts, options?.connOptions);
   }
 
