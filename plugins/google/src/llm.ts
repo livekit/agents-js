@@ -409,6 +409,7 @@ export class LLMStream extends llm.LLMStream {
         }
         delete requestConfig.tools;
         delete requestConfig.toolConfig;
+        delete requestConfig.systemInstruction;
       }
 
       const httpOptions = {
