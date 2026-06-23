@@ -380,7 +380,7 @@ export class LLMStream extends llm.LLMStream {
         if (tools && !dropped.includes('tools')) {
           dropped.push('tools');
         }
-        if (systemInstruction) {
+        if (systemInstruction || 'systemInstruction' in requestConfig) {
           dropped.push('systemInstruction');
         }
         if (dropped.length > 0) {
@@ -391,6 +391,7 @@ export class LLMStream extends llm.LLMStream {
         }
         delete requestConfig.tools;
         delete requestConfig.toolConfig;
+        delete requestConfig.systemInstruction;
       } else {
         requestConfig.systemInstruction = systemInstruction;
         requestConfig.tools = tools;
