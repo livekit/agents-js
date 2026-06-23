@@ -108,26 +108,8 @@ export class STT extends stt.STT {
 
     if (this.#opts.detectLanguage) {
       this.#opts.language = undefined;
-    } else if (
-      this.#opts.language &&
-      getBaseLanguage(this.#opts.language) !== 'en' &&
-      [
-        'nova-2-meeting',
-        'nova-2-phonecall',
-        'nova-2-finance',
-        'nova-2-conversationalai',
-        'nova-2-voicemail',
-        'nova-2-video',
-        'nova-2-medical',
-        'nova-2-drivethru',
-        'nova-2-automotive',
-        'nova-3-general',
-      ].includes(this.#opts.model)
-    ) {
-      this.#logger.warn(
-        `${this.#opts.model} does not support language ${this.#opts.language}, falling back to nova-2-general`,
-      );
-      this.#opts.model = 'nova-2-general';
+    } else {
+      this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
     }
   }
 
@@ -183,12 +165,45 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    const language =
+      opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language;
+    const model =
+      opts.model !== undefined || opts.language !== undefined
+        ? this.#validateModel(opts.model ?? this.#opts.model, language)
+        : this.#opts.model;
+
     this.#opts = {
       ...this.#opts,
       ...opts,
-      language:
-        opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
+      language,
+      model,
     };
+  }
+
+  #validateModel(model: STTModels, language?: string) {
+    if (
+      language &&
+      getBaseLanguage(language) !== 'en' &&
+      [
+        'nova-2-meeting',
+        'nova-2-phonecall',
+        'nova-2-finance',
+        'nova-2-conversationalai',
+        'nova-2-voicemail',
+        'nova-2-video',
+        'nova-2-medical',
+        'nova-2-drivethru',
+        'nova-2-automotive',
+        'nova-3-general',
+      ].includes(model)
+    ) {
+      this.#logger.warn(
+        `${model} does not support language ${language}, falling back to nova-2-general`,
+      );
+      return 'nova-2-general';
+    }
+
+    return model;
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
