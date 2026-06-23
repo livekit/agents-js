@@ -162,7 +162,8 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     model: override.model ?? base.model,
     sampleRate: override.sampleRate ?? base.sampleRate,
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
-    language: override.language !== undefined ? normalizeLanguage(override.language) : base.language,
+    language:
+      override.language !== undefined ? normalizeLanguage(override.language) : base.language,
   };
 }
 
