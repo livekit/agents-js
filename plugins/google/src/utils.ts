@@ -172,7 +172,6 @@ export function toToolsConfig({
   onlySingleType?: boolean;
 }): types.Tool[] | undefined {
   const tools: types.Tool[] = [];
-  const providerTools: types.Tool[] = [];
 
   if (toolCtx) {
     const functionDeclarations = toFunctionDeclarations(toolCtx);
@@ -189,27 +188,23 @@ export function toToolsConfig({
     }
   }
 
+  // Some Google LLMs do not support multiple tool types (either function tools or builtin tools).
+  // Short-circuit before adding provider tools, matching Python `create_tools_config`.
+  if (onlySingleType && tools.length > 0) {
+    return tools;
+  }
+
   if (geminiTools !== undefined) {
-    providerTools.push(geminiTools);
+    tools.push(geminiTools);
   }
 
   if (toolCtx) {
     for (const tool of toolCtx.providerTools) {
       if (tool instanceof GeminiTool) {
-        providerTools.push(tool.toToolConfig());
+        tools.push(tool.toToolConfig());
       }
     }
   }
-
-  if (tools.length > 0 && providerTools.length > 0) {
-    throw new Error('Gemini does not support mixing function tools and provider tools');
-  }
-
-  if (onlySingleType && tools.length > 0) {
-    return tools;
-  }
-
-  tools.push(...providerTools);
 
   return tools.length > 0 ? tools : undefined;
 }

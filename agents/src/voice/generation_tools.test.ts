@@ -11,6 +11,7 @@ import { cancelAndWait, delay } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { ToolExecutor } from './tool_executor.js';
 
 function createStringStream(chunks: string[], delayMs: number = 0): NodeReadableStream<string> {
   return new NodeReadableStream<string>({
@@ -191,6 +192,13 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     let aborted = false;
+    // Resolves once the tool body has begun and registered its abort listener. We cannot key off
+    // `firstToolStartedFuture` here: that future now resolves right after argument parsing (before
+    // execution), matching Python, so awaiting it does not guarantee the abort listener is wired.
+    let signalToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      signalToolStarted = resolve;
+    });
     const longOp = tool({
       name: 'longOp',
       description: 'longOp',
@@ -199,6 +207,7 @@ describe('Generation + Tool Execution', () => {
         abortSignal.addEventListener('abort', () => {
           aborted = true;
         });
+        signalToolStarted();
         await delay(ms);
         return 'done';
       },
@@ -219,7 +228,7 @@ describe('Generation + Tool Execution', () => {
       controller: replyAbortController,
     });
 
-    await toolOutput.firstToolStartedFuture.await;
+    await toolStarted;
     replyAbortController.abort();
     await execTask.result;
 
@@ -227,6 +236,64 @@ describe('Generation + Tool Execution', () => {
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
+  }, 20_000);
+
+  it('resolves firstToolStartedFuture even when the only tool call is duplicate-rejected', async () => {
+    const sharedExecutor = new ToolExecutor({ owningActivity: null });
+    const session = { _activity: { _toolExecutor: sharedExecutor } } as unknown as AgentSession;
+    const speechHandle = { id: 'speech_dup', _itemAdded: () => {} } as unknown as SpeechHandle;
+
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let signalFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve;
+    });
+    const slow = tool({
+      name: 'slow',
+      description: 'slow',
+      onDuplicate: 'reject',
+      parameters: z.object({}),
+      execute: async () => {
+        signalFirstStarted();
+        await firstBlocked;
+        return 'done';
+      },
+    });
+    const toolCtx = new ToolContext([slow]) as unknown as ToolContext;
+
+    // First call: starts and stays running so it occupies the executor's duplicate slot.
+    const fc1 = FunctionCall.create({ callId: 'dup_c1', name: 'slow', args: '{}' });
+    const [task1] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: createFunctionCallStream(fc1),
+      controller: new AbortController(),
+    });
+    await firstStarted;
+
+    // Second call: a duplicate of the still-running first call -> rejected by the executor.
+    const fc2 = FunctionCall.create({ callId: 'dup_c2', name: 'slow', args: '{}' });
+    const [task2, out2] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: createFunctionCallStream(fc2),
+      controller: new AbortController(),
+    });
+
+    // Would hang forever before the fix.
+    await out2.firstToolStartedFuture.await;
+    await task2.result;
+
+    // The duplicate produced a (rejection) output, and no real execution happened for it.
+    expect(out2.output.length).toBe(1);
+
+    releaseFirst();
+    await task1.result;
   }, 20_000);
 
   it('should surface zod validation errors to the LLM with field-level detail', async () => {

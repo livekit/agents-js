@@ -41,7 +41,7 @@ import type {
   ToolContextEntry,
   ToolContextInit,
 } from '../llm/index.js';
-import { normalizeToolContextInit } from '../llm/index.js';
+import { isToolset, normalizeToolContextInit } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -1662,10 +1662,7 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
-    const sessionToolsets = this._tools.filter(
-      (tool): tool is ToolContextEntry<UserData> & { aclose: () => Promise<void> } =>
-        typeof (tool as { aclose?: unknown }).aclose === 'function',
-    );
+    const sessionToolsets = this._tools.filter(isToolset);
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
 
     if (this.sessionSpan) {

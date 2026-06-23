@@ -249,6 +249,11 @@ export class AgentActivity implements RecognitionHooks {
   private _preemptiveGeneration?: PreemptiveGeneration;
   private _preemptiveGenerationCount = 0;
   private _toolsetsSetup = false;
+  // True only during the initial, awaited `setupToolsets()` window. While set, a toolset that
+  // pushes tools synchronously from its `setup()` must NOT trigger a callback-driven
+  // `AgentConfigUpdate`: those tools are already captured by the post-setup re-flatten and the
+  // initial `AgentConfigUpdate` recorded in `_startSession`, so firing here would duplicate it.
+  private _suppressToolsetConfigUpdate = false;
   private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
@@ -534,13 +539,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // Surface every tool the agent advertises at start — function tools by name and provider
-    // tools by id.
     const initialToolCtx = this.tools;
-    const initialTools = [
-      ...Object.keys(initialToolCtx.functionTools),
-      ...initialToolCtx.providerTools.map((t) => t.id),
-    ];
+    const initialTools = Object.keys(initialToolCtx.functionTools);
     if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
         instructions: this.agent.instructions,
@@ -4453,7 +4453,12 @@ export class AgentActivity implements RecognitionHooks {
       toSetup.push(...sessionToolsets);
     }
 
-    await this.setupToolsetList(toSetup);
+    this._suppressToolsetConfigUpdate = true;
+    try {
+      await this.setupToolsetList(toSetup);
+    } finally {
+      this._suppressToolsetConfigUpdate = false;
+    }
     // Re-flatten now that any factory toolsets have resolved their tools, so they're advertised.
     this.agent._toolCtx.updateTools(this.agent._toolCtx.tools);
   }
@@ -4487,6 +4492,7 @@ export class AgentActivity implements RecognitionHooks {
           // not the original (possibly closed) activity.
           updateTools: (tools) => {
             ts._setTools(tools);
+            if (this._suppressToolsetConfigUpdate) return;
             const activity = this.agentSession._activity ?? this;
             void activity
               .onToolsetToolsChanged()

@@ -1078,6 +1078,13 @@ export function performToolExecutions({
         continue;
       }
 
+      // Resolve right after argument parsing and before execution (including the
+      // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
+      // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
+      if (!toolOutput.firstToolStartedFuture.done) {
+        toolOutput.firstToolStartedFuture.resolve();
+      }
+
       onToolExecutionStarted(toolCall);
 
       logger.info(
@@ -1186,11 +1193,6 @@ export function performToolExecutions({
                 runCtx,
                 rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
-                onUserToolStarted: () => {
-                  if (!toolOutput.firstToolStartedFuture.done) {
-                    toolOutput.firstToolStartedFuture.resolve();
-                  }
-                },
               });
             },
           );

@@ -196,13 +196,11 @@ export class ToolExecutor {
     runCtx,
     rawArguments,
     abortSignal,
-    onUserToolStarted,
   }: {
     tool: FunctionTool<Parameters, UserData, Result>;
     runCtx: RunContext<UserData>;
     rawArguments: Parameters;
     abortSignal?: AbortSignal;
-    onUserToolStarted?: () => void;
   }): Promise<unknown> {
     const callId = runCtx.functionCall.callId;
     const functionName = runCtx.functionCall.name;
@@ -258,7 +256,6 @@ export class ToolExecutor {
         rawArguments: args as Parameters,
         firstUpdateFuture,
         controller,
-        onUserToolStarted,
         toolPromiseRef,
       }).finally(() => {
         this.runningTasks.delete(callId);
@@ -446,7 +443,6 @@ export class ToolExecutor {
     rawArguments,
     firstUpdateFuture,
     controller,
-    onUserToolStarted,
     toolPromiseRef,
   }: {
     tool: FunctionTool<Parameters, UserData, Result>;
@@ -454,7 +450,6 @@ export class ToolExecutor {
     rawArguments: Parameters;
     firstUpdateFuture: Future<unknown>;
     controller: AbortController;
-    onUserToolStarted?: () => void;
     toolPromiseRef: { promise?: Promise<unknown> };
   }): Promise<void> {
     let output: unknown;
@@ -474,7 +469,6 @@ export class ToolExecutor {
       () => undefined,
       () => undefined,
     );
-    onUserToolStarted?.();
 
     // Await the tool to completion. Cancellation responsiveness is handled by
     // `cancel()` (abandons this wait) and `drain()` (bounds the wait on the raw
