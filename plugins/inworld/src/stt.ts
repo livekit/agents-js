@@ -337,13 +337,10 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await this.input.next({ signal: this.abortSignal });
 
-          if (result === undefined) return;
           if (result.done) break;
 
           const data = result.value;

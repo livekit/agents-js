@@ -357,15 +357,10 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await this.input.next({ signal: this.abortSignal });
 
-          if (result === undefined) return; // aborted
           if (result.done) {
             break;
           }

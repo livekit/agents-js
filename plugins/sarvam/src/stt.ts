@@ -8,6 +8,7 @@ import {
   AudioEnergyFilter,
   Future,
   Task,
+  combineAbortSignals,
   log,
   mergeFrames,
   normalizeLanguage,
@@ -672,13 +673,11 @@ export class SpeechStream extends stt.SpeechStream {
     const sendTask = async () => {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
+      const inputSignal = combineAbortSignals([this.abortSignal, sessionController.signal]);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
-          if (result === undefined) return; // aborted
+          const result = await this.input.next({ signal: inputSignal });
           if (result.done) break;
 
           const data = result.value;

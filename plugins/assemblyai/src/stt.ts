@@ -8,6 +8,7 @@ import {
   AudioByteStream,
   Future,
   Task,
+  combineAbortSignals,
   createTimedString,
   delay,
   log,
@@ -384,14 +385,12 @@ export class SpeechStream extends stt.SpeechStream {
       const samplesPerBuffer = Math.floor((this.#opts.sampleRate * this.#opts.bufferSizeMs) / 1000);
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
 
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
+      const inputSignal = combineAbortSignals([this.abortSignal, sessionController.signal]);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
+          const result = await this.input.next({ signal: inputSignal });
 
-          if (result === undefined) return; // aborted
           if (result.done) break;
 
           const data = result.value;
