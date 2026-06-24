@@ -420,6 +420,22 @@ export class AgentServer {
     this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
   }
 
+  /** Update connection options before the server is started. */
+  updateOptions(
+    opts: Partial<
+      Pick<ServerOptions, 'wsURL' | 'apiKey' | 'apiSecret' | 'workerToken' | 'logLevel'>
+    >,
+  ): void {
+    if (!this.#closed) {
+      throw new WorkerError('cannot update options while worker is running');
+    }
+    this.#opts.wsURL = opts.wsURL || this.#opts.wsURL;
+    this.#opts.apiKey = opts.apiKey || this.#opts.apiKey;
+    this.#opts.apiSecret = opts.apiSecret || this.#opts.apiSecret;
+    this.#opts.workerToken = opts.workerToken || this.#opts.workerToken;
+    this.#opts.logLevel = opts.logLevel || this.#opts.logLevel;
+  }
+
   /** @throws {@link WorkerError} if worker failed to connect or already running */
   async run() {
     if (!this.#closed) {
