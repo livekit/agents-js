@@ -982,7 +982,7 @@ export function getActiveMockTools(): MockToolsMap | undefined {
 
 /** @internal */
 export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
-  const active = mockToolsStorage.getStore();
+  const active = getActiveMockTools();
   if (!active) return undefined;
 
   for (const [agentConstructor, mocks] of active) {
@@ -1025,7 +1025,7 @@ export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
 ): Disposable {
-  const previous = mockToolsStorage.getStore();
+  const previous = getActiveMockTools();
   const updated: MockToolsMap = new Map(previous ?? []);
   updated.set(agent, mocks);
   // `enterWith` mutates the current async context in place, preserving the synchronous
