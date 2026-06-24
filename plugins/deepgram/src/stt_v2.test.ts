@@ -274,11 +274,248 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
     }
   });
 
-  it('emits start of speech after reconnecting during an active turn', async () => {
+  it('recovers repeated runtime closes within the stream retry budget', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const receivedBinaryMessages: number[] = [];
+    const sttInstance = new STTv2({ apiKey: 'test-api-key', endpointUrl });
+    const errors: unknown[] = [];
+    sttInstance.on('error', (event) => errors.push(event.error));
+    const stream = sttInstance.stream({
+      connOptions: { ...TEST_CONN_OPTIONS, maxRetry: 2 },
+    });
+    const events: Array<{
+      type: stt.SpeechEventType;
+      text?: string;
+      start?: number;
+      end?: number;
+    }> = [];
+
+    wss.on('connection', (ws) => {
+      const connectionIndex = connections.push(ws) - 1;
+      receivedBinaryMessages[connectionIndex] = 0;
+
+      ws.on('message', (_data, isBinary) => {
+        if (!isBinary) return;
+
+        const receivedCount = (receivedBinaryMessages[connectionIndex] ?? 0) + 1;
+        receivedBinaryMessages[connectionIndex] = receivedCount;
+        if (receivedCount !== 1) return;
+
+        if (connectionIndex < 2) {
+          ws.close(1011, 'progress close');
+          return;
+        }
+
+        ws.send(
+          JSON.stringify({
+            type: 'TurnInfo',
+            event: 'Update',
+            transcript: 'after two closes',
+            audio_window_start: 0.1,
+            audio_window_end: 0.4,
+            words: [
+              { word: 'after', start: 0.1, end: 0.2, confidence: 0.9 },
+              { word: 'two', start: 0.2, end: 0.3, confidence: 0.9 },
+              { word: 'closes', start: 0.3, end: 0.4, confidence: 0.9 },
+            ],
+          }),
+        );
+      });
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        events.push({
+          type: event.type,
+          text: event.alternatives?.[0]?.text,
+          start: event.alternatives?.[0]?.startTime,
+          end: event.alternatives?.[0]?.endTime,
+        });
+      }
+    })();
+
+    const feedAudio = setInterval(() => {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+    }, 10);
+
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+
+      await waitFor(
+        () => events.some((event) => event.text === 'after two closes'),
+        'expected transcript after repeated runtime closes',
+      );
+
+      expect(connections).toHaveLength(3);
+      expect(receivedBinaryMessages[0]).toBeGreaterThan(0);
+      expect(receivedBinaryMessages[1]).toBeGreaterThan(0);
+      expect(receivedBinaryMessages[2]).toBeGreaterThan(0);
+      expect(
+        events.find((event) => event.text === 'after two closes')?.start,
+      ).toBeGreaterThanOrEqual(0.3);
+      expect(errors).toEqual([]);
+    } finally {
+      clearInterval(feedAudio);
+      stream.close();
+      await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('uses the stream retry budget for repeated runtime closes with audio progress', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const receivedBinaryMessages: number[] = [];
+    const sttInstance = new STTv2({ apiKey: 'test-api-key', endpointUrl });
+    const errors: unknown[] = [];
+    sttInstance.on('error', (event) => errors.push(event.error));
+    const stream = sttInstance.stream({
+      connOptions: { ...TEST_CONN_OPTIONS, maxRetry: 1 },
+    });
+
+    wss.on('connection', (ws) => {
+      const connectionIndex = connections.push(ws) - 1;
+      receivedBinaryMessages[connectionIndex] = 0;
+
+      ws.on('message', (_data, isBinary) => {
+        if (!isBinary) return;
+
+        const receivedCount = (receivedBinaryMessages[connectionIndex] ?? 0) + 1;
+        receivedBinaryMessages[connectionIndex] = receivedCount;
+        if (receivedCount === 1) {
+          ws.close(1011, 'progress close');
+        }
+      });
+    });
+
+    const consume = (async () => {
+      for await (const _event of stream) {
+        // Drain until the stream reports the final retry-budget error.
+      }
+    })().catch((error: unknown) => error);
+
+    const feedAudio = setInterval(() => {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+    }, 10);
+
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+
+      await waitFor(
+        () => errors.length > 0 || connections.length > 2,
+        'expected repeated progress closes to consume the retry budget',
+      );
+
+      expect(connections).toHaveLength(2);
+      expect(receivedBinaryMessages[0]).toBeGreaterThan(0);
+      expect(receivedBinaryMessages[1]).toBeGreaterThan(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(Error);
+    } finally {
+      clearInterval(feedAudio);
+      stream.close();
+      await consume;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('resets the stream retry budget after a final transcript', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const receivedBinaryMessages: number[] = [];
+    const sttInstance = new STTv2({ apiKey: 'test-api-key', endpointUrl });
+    const errors: unknown[] = [];
+    sttInstance.on('error', (event) => errors.push(event.error));
+    const stream = sttInstance.stream({
+      connOptions: { ...TEST_CONN_OPTIONS, maxRetry: 1 },
+    });
+    const events: Array<{ type: stt.SpeechEventType; text?: string }> = [];
+
+    wss.on('connection', (ws) => {
+      const connectionIndex = connections.push(ws) - 1;
+      receivedBinaryMessages[connectionIndex] = 0;
+
+      ws.on('message', (_data, isBinary) => {
+        if (!isBinary) return;
+        receivedBinaryMessages[connectionIndex] =
+          (receivedBinaryMessages[connectionIndex] ?? 0) + 1;
+      });
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        events.push({
+          type: event.type,
+          text: event.alternatives?.[0]?.text,
+        });
+      }
+    })();
+
+    const startOfTurn = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'StartOfTurn',
+      transcript: '',
+    });
+    const endOfTurn = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'EndOfTurn',
+      transcript: 'retry budget reset',
+      audio_window_start: 0.1,
+      audio_window_end: 0.5,
+      words: [
+        { word: 'retry', start: 0.1, end: 0.2, confidence: 0.9 },
+        { word: 'budget', start: 0.2, end: 0.35, confidence: 0.9 },
+        { word: 'reset', start: 0.35, end: 0.5, confidence: 0.9 },
+      ],
+    });
+
+    const feedAudio = setInterval(() => {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+    }, 10);
+
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(1600), 16_000, 1, 1600));
+
+      await waitFor(
+        () => (receivedBinaryMessages[0] ?? 0) > 0,
+        'expected audio on first WebSocket connection',
+      );
+      connections[0]!.close(1011, 'close before final');
+      await waitFor(() => connections.length === 2, 'expected first reconnect');
+
+      await waitFor(
+        () => (receivedBinaryMessages[1] ?? 0) > 0,
+        'expected audio on second WebSocket connection',
+      );
+      connections[1]!.send(startOfTurn);
+      connections[1]!.send(endOfTurn);
+      await waitFor(
+        () => events.some((event) => event.text === 'retry budget reset'),
+        'expected final transcript to reset retry budget',
+      );
+
+      connections[1]!.close(1011, 'close after final');
+      await waitFor(
+        () => connections.length === 3 || errors.length > 0,
+        'expected reconnect after final transcript reset',
+      );
+
+      expect(connections).toHaveLength(3);
+      expect(errors).toEqual([]);
+    } finally {
+      clearInterval(feedAudio);
+      stream.close();
+      await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not emit duplicate start of speech after reconnecting during an active turn', async () => {
     const { wss, endpointUrl } = await startWebSocketServer();
     const connections: WebSocket[] = [];
     const stream = createStream(endpointUrl);
-    const eventTypes: stt.SpeechEventType[] = [];
+    const events: Array<{ type: stt.SpeechEventType; text?: string }> = [];
 
     wss.on('connection', (ws) => {
       connections.push(ws);
@@ -286,32 +523,42 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
 
     const consume = (async () => {
       for await (const event of stream) {
-        eventTypes.push(event.type);
+        events.push({
+          type: event.type,
+          text: event.alternatives?.[0]?.text,
+        });
       }
     })();
 
-    const startOfTurn = JSON.stringify({ type: 'TurnInfo', event: 'StartOfTurn', transcript: '' });
+    const startOfTurn = (transcript = '') =>
+      JSON.stringify({
+        type: 'TurnInfo',
+        event: 'StartOfTurn',
+        transcript,
+        audio_window_start: 0.1,
+        audio_window_end: 0.2,
+        words: transcript ? [{ word: transcript, start: 0.1, end: 0.2, confidence: 0.9 }] : [],
+      });
 
     try {
       await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
 
-      connections[0]!.send(startOfTurn);
+      connections[0]!.send(startOfTurn());
       await waitFor(
         () =>
-          eventTypes.filter((eventType) => eventType === stt.SpeechEventType.START_OF_SPEECH)
-            .length === 1,
+          events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length === 1,
         'expected first start of speech',
       );
 
       connections[0]!.close(1011, 'unexpected close during speech');
       await waitFor(() => connections.length === 2, 'expected reconnect after unexpected close');
 
-      connections[1]!.send(startOfTurn);
+      connections[1]!.send(startOfTurn('still'));
       await waitFor(
         () =>
-          eventTypes.filter((eventType) => eventType === stt.SpeechEventType.START_OF_SPEECH)
-            .length === 2,
-        'expected second start of speech after reconnect',
+          events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length ===
+            1 && events.some((event) => event.text === 'still'),
+        'expected duplicate StartOfTurn transcript without duplicate start of speech',
       );
     } finally {
       stream.close();
@@ -320,7 +567,7 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
     }
   });
 
-  it('starts speech from a non-empty update after reconnecting when StartOfTurn is absent', async () => {
+  it('keeps an active turn open across reconnect when StartOfTurn is absent', async () => {
     const { wss, endpointUrl } = await startWebSocketServer();
     const connections: WebSocket[] = [];
     const stream = createStream(endpointUrl);
@@ -369,12 +616,120 @@ describe('Deepgram STTv2 WebSocket recovery', () => {
       await waitFor(
         () =>
           events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length ===
-            2 && events.some((event) => event.text === 'after reconnect'),
-        'expected synthesized start of speech and update transcript after reconnect',
+            1 && events.some((event) => event.text === 'after reconnect'),
+        'expected update transcript without duplicate start of speech after reconnect',
       );
     } finally {
       stream.close();
       await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not open a turn from trailing transcript after EndOfTurn without reconnect', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const stream = createStream(endpointUrl);
+    const events: Array<{ type: stt.SpeechEventType; text?: string }> = [];
+
+    wss.on('connection', (ws) => {
+      connections.push(ws);
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        events.push({
+          type: event.type,
+          text: event.alternatives?.[0]?.text,
+        });
+      }
+    })();
+
+    const startOfTurn = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'StartOfTurn',
+      transcript: 'hello',
+      audio_window_start: 0.1,
+      audio_window_end: 0.2,
+      words: [{ word: 'hello', start: 0.1, end: 0.2, confidence: 0.9 }],
+    });
+    const endOfTurn = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'EndOfTurn',
+      transcript: 'hello there',
+      audio_window_start: 0.1,
+      audio_window_end: 1.0,
+      words: [
+        { word: 'hello', start: 0.1, end: 0.5, confidence: 0.9 },
+        { word: 'there', start: 0.5, end: 1.0, confidence: 0.9 },
+      ],
+    });
+    const trailingUpdate = JSON.stringify({
+      type: 'TurnInfo',
+      event: 'Update',
+      transcript: 'and one more thing',
+      audio_window_start: 1.0,
+      audio_window_end: 2.0,
+      words: [
+        { word: 'and', start: 1.0, end: 1.2, confidence: 0.9 },
+        { word: 'one', start: 1.2, end: 1.4, confidence: 0.9 },
+        { word: 'more', start: 1.4, end: 1.7, confidence: 0.9 },
+        { word: 'thing', start: 1.7, end: 2.0, confidence: 0.9 },
+      ],
+    });
+    const startOfSpeechCount = () =>
+      events.filter((event) => event.type === stt.SpeechEventType.START_OF_SPEECH).length;
+
+    try {
+      await waitFor(() => connections.length === 1, 'expected initial WebSocket connection');
+
+      connections[0]!.send(startOfTurn);
+      await waitFor(() => startOfSpeechCount() === 1, 'expected first start of speech');
+
+      connections[0]!.send(endOfTurn);
+      await waitFor(
+        () => events.some((event) => event.type === stt.SpeechEventType.END_OF_SPEECH),
+        'expected end of speech',
+      );
+
+      connections[0]!.send(trailingUpdate);
+      await sleep(50);
+
+      expect(startOfSpeechCount()).toBe(1);
+      expect(events.some((event) => event.text === 'and one more thing')).toBe(false);
+    } finally {
+      stream.close();
+      await consume.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('uses the base retry budget for runtime closes that make no audio progress', async () => {
+    const { wss, endpointUrl } = await startWebSocketServer();
+    const connections: WebSocket[] = [];
+    const errors: unknown[] = [];
+    const sttInstance = new STTv2({ apiKey: 'test-api-key', endpointUrl });
+    sttInstance.on('error', (event) => errors.push(event.error));
+    const stream = sttInstance.stream({
+      connOptions: { ...TEST_CONN_OPTIONS, maxRetry: 1 },
+    });
+
+    wss.on('connection', (ws) => {
+      connections.push(ws);
+      if (connections.length === 1) {
+        ws.close(1011, 'no progress');
+      }
+    });
+
+    try {
+      await waitFor(
+        () => connections.length === 2,
+        `expected base retry to open a second WebSocket, saw ${connections.length}`,
+      );
+      expect(connections).toHaveLength(2);
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
       await closeWebSocketServer(wss);
     }
   });

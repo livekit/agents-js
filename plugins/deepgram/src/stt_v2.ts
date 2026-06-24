@@ -20,6 +20,10 @@ import type { V2Models } from './models.js';
 
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
 
+type ReceiveTaskResult =
+  | { status: 'expected-close' }
+  | { status: 'unexpected-close'; message: string };
+
 // --- Configuration ---
 
 /**
@@ -233,6 +237,13 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #sentAudioInS = 0;
   #connectionTimeBaseInS = 0;
 
+  // Set only when a runtime close reconnects the socket mid-stream. While true,
+  // the next transcript-bearing event may re-open speech to recover a turn
+  // whose StartOfTurn was delivered on the previous connection. Cleared at
+  // clean turn boundaries so steady-state trailing transcripts after EndOfTurn
+  // do not open spurious turns.
+  #reconnectRecoveryPending = false;
+
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
 
@@ -297,9 +308,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         // Snapshot the timeline base for this connection: the fresh socket's
         // audio_window starts at 0, so offset it by the audio already streamed.
         this.#connectionTimeBaseInS = this.#sentAudioInS;
-        // Provider turn state is scoped to one WebSocket. A reconnect during an
-        // active turn must not make the next connection suppress StartOfTurn.
-        this.#speaking = false;
 
         // 2. Run Concurrent Tasks (Send & Receive)
         const ws = this.#ws;
@@ -311,9 +319,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
         const reconnectWait = this.#reconnectEvent.wait();
 
         // 3. Race: Normal Completion vs Reconnect Signal
+        const streamTasks = Promise.all([sendPromise, recvPromise]) as Promise<
+          [void, ReceiveTaskResult]
+        >;
         const result = await Promise.race([
-          Promise.all([sendPromise, recvPromise]),
-          reconnectWait.then(() => 'RECONNECT'),
+          streamTasks,
+          reconnectWait.then(() => 'RECONNECT' as const),
         ]);
 
         if (result === 'RECONNECT') {
@@ -322,6 +333,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
           this.#expectWsClose(this.#ws);
           this.#ws.close();
         } else {
+          const [, receiveResult] = result;
+          if (receiveResult.status === 'unexpected-close') {
+            this.#reconnectRecoveryPending = this.#sentAudioInS > this.#connectionTimeBaseInS;
+            throw new APIConnectionError({ message: receiveResult.message });
+          }
+
           // Normal finish (Stream ended or Error thrown)
           break;
         }
@@ -391,8 +408,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
     }
   }
 
-  async #recvTask(ws: WebSocket, wsClosedEvent: Event) {
-    return new Promise<void>((resolve, reject) => {
+  async #recvTask(ws: WebSocket, wsClosedEvent: Event): Promise<ReceiveTaskResult> {
+    return new Promise<ReceiveTaskResult>((resolve) => {
       let wsError: Error | undefined;
 
       ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -413,7 +430,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#logger.debug(`Deepgram WebSocket closed: ${code} ${reason}`);
 
         if (this.#closingWs.has(ws) || this.closed || this.input.closed) {
-          resolve();
+          resolve({ status: 'expected-close' });
           return;
         }
 
@@ -421,11 +438,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
         const message = reasonText
           ? `Deepgram WebSocket closed unexpectedly: ${code} ${reasonText}`
           : `Deepgram WebSocket closed unexpectedly: ${code}`;
-        reject(
-          new APIConnectionError({
-            message: wsError ? `${message}: ${wsError.message}` : message,
-          }),
-        );
+        resolve({
+          status: 'unexpected-close',
+          message: wsError ? `${message}: ${wsError.message}` : message,
+        });
       });
 
       ws.on('error', (error) => {
@@ -443,9 +459,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
       const eventType = data.event;
 
       if (eventType === 'StartOfTurn') {
-        if (this.#speaking) return;
-
-        this.#startSpeech();
+        this.#reconnectRecoveryPending = false;
+        if (!this.#speaking) this.#startSpeech();
 
         this.#sendTranscriptEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT, data);
       } else if (eventType === 'Update') {
@@ -461,7 +476,9 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!this.#speaking && !this.#startSpeechFromTranscript(data)) return;
 
         this.#speaking = false;
+        this.#reconnectRecoveryPending = false;
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, data);
+        this.resetRetryBudget();
 
         this.queue.put({
           type: stt.SpeechEventType.END_OF_SPEECH,
@@ -476,6 +493,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #startSpeech() {
+    if (this.#speaking) return;
+
     this.#speaking = true;
     this.queue.put({
       type: stt.SpeechEventType.START_OF_SPEECH,
@@ -484,6 +503,8 @@ class SpeechStreamv2 extends stt.SpeechStream {
   }
 
   #startSpeechFromTranscript(data: Record<string, unknown>) {
+    if (!this.#reconnectRecoveryPending) return false;
+
     const transcript = data.transcript;
     if (typeof transcript !== 'string' || transcript.trim().length === 0) {
       return false;
