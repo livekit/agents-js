@@ -13,7 +13,7 @@ import {
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTools } from './tools.js';
-import { toFunctionDeclarations } from './utils.js';
+import { toToolsConfig } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -193,20 +193,21 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     toolChoice,
     extraKwargs,
     geminiTools,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
     geminiTools?: LLMTools;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
     if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
@@ -366,11 +367,11 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools =
-        functionDeclarations && functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined;
+      const tools = toToolsConfig({
+        toolCtx: this.toolCtx,
+        geminiTools: this.#geminiTools,
+        onlySingleType: true,
+      });
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {

@@ -4,11 +4,11 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   llm,
   voice,
+  workflows,
 } from '@livekit/agents';
 // import * as phonic from '@livekit/agents-plugin-phonic';
 import { open } from 'node:fs/promises';
@@ -76,6 +76,7 @@ async function writeCsvRow(path: string, data: Record<string, unknown>): Promise
 
 function disqualifyTool() {
   return llm.tool({
+    name: 'disqualify',
     description:
       'End the interview if the candidate refuses to cooperate, provides inappropriate answers, or is not a fit.',
     parameters: z.object({
@@ -101,8 +102,9 @@ export class IntroTask extends voice.AgentTask<IntroResults, SurveyUserData> {
     super({
       instructions:
         'You are Alex, an interviewer screening a software engineer candidate. Gather the candidate name and short self-introduction.',
-      tools: {
-        saveIntro: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'saveIntro',
           description: 'Save candidate name and intro notes.',
           parameters: z.object({
             name: z.string().describe('Candidate name'),
@@ -114,7 +116,7 @@ export class IntroTask extends voice.AgentTask<IntroResults, SurveyUserData> {
             return `Saved intro for ${name}.`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -132,9 +134,10 @@ export class EmailTask extends voice.AgentTask<EmailResults, SurveyUserData> {
     super({
       instructions:
         'Collect a valid email address. If the candidate refuses, call disqualify immediately.',
-      tools: {
+      tools: [
         disqualify,
-        saveEmail: llm.tool({
+        llm.tool({
+          name: 'saveEmail',
           description: 'Save candidate email address.',
           parameters: z.object({
             email: z.string().describe('Candidate email'),
@@ -144,7 +147,7 @@ export class EmailTask extends voice.AgentTask<EmailResults, SurveyUserData> {
             return `Saved email: ${email}`;
           },
         }),
-      },
+      ],
     });
   }
 
@@ -161,9 +164,10 @@ export class CommuteTask extends voice.AgentTask<CommuteResults, SurveyUserData>
     super({
       instructions:
         'Collect commute flexibility. The role expects office attendance three days per week.',
-      tools: {
+      tools: [
         disqualify,
-        saveCommute: llm.tool({
+        llm.tool({
+          name: 'saveCommute',
           description: 'Save candidate commute information.',
           parameters: z.object({
             canCommute: z.boolean().describe('Whether the candidate can commute to office'),
@@ -176,7 +180,7 @@ export class CommuteTask extends voice.AgentTask<CommuteResults, SurveyUserData>
             return 'Saved commute flexibility.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -194,9 +198,10 @@ export class ExperienceTask extends voice.AgentTask<ExperienceResults, SurveyUse
     super({
       instructions:
         'Collect years of experience and a concise timeline of previous roles relevant to software engineering.',
-      tools: {
+      tools: [
         disqualify,
-        saveExperience: llm.tool({
+        llm.tool({
+          name: 'saveExperience',
           description: 'Save candidate experience details.',
           parameters: z.object({
             yearsOfExperience: z
@@ -209,7 +214,7 @@ export class ExperienceTask extends voice.AgentTask<ExperienceResults, SurveyUse
             return 'Saved experience details.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -229,9 +234,10 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
     super({
       instructions:
         'Collect strengths, weaknesses, and work style. Keep a natural conversational tone and avoid bullet lists.',
-      tools: {
+      tools: [
         disqualify,
-        saveStrengths: llm.tool({
+        llm.tool({
+          name: 'saveStrengths',
           description: "Save a concise summary of the candidate's strengths.",
           parameters: z.object({
             strengths: z.string().describe('Strengths summary'),
@@ -242,7 +248,8 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
             return 'Saved strengths.';
           },
         }),
-        saveWeaknesses: llm.tool({
+        llm.tool({
+          name: 'saveWeaknesses',
           description: "Save a concise summary of the candidate's weaknesses.",
           parameters: z.object({
             weaknesses: z.string().describe('Weaknesses summary'),
@@ -253,7 +260,8 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
             return 'Saved weaknesses.';
           },
         }),
-        saveWorkStyle: llm.tool({
+        llm.tool({
+          name: 'saveWorkStyle',
           description: "Save candidate's work style.",
           parameters: z.object({
             workStyle: z.enum(['independent', 'team_player']).describe('Primary work style'),
@@ -264,7 +272,7 @@ export class BehavioralTask extends voice.AgentTask<BehavioralResults, SurveyUse
             return 'Saved work style.';
           },
         }),
-      },
+      ],
     });
   }
 
@@ -297,20 +305,21 @@ export class SurveyAgent extends voice.Agent<SurveyUserData> {
     super({
       instructions:
         'You are a survey interviewer for a software engineer screening. Be concise, professional, and natural. Call endScreening when the process is complete.',
-      tools: {
-        endScreening: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'endScreening',
           description: 'End interview and hang up.',
           execute: async (_, { ctx }: llm.ToolOptions<SurveyUserData>) => {
             ctx.session.shutdown();
             return 'Interview concluded.';
           },
         }),
-      },
+      ],
     });
   }
 
   async onEnter() {
-    const group = new beta.TaskGroup({
+    const group = new workflows.TaskGroup({
       summarizeChatCtx: false,
     });
 

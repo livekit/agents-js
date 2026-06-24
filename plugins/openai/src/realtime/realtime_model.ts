@@ -425,7 +425,7 @@ export function processBaseURL({
  * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
@@ -552,7 +552,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools() {
-    return { ...this._tools } as llm.ToolContext;
+    return this._tools.copy();
   }
 
   async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
@@ -719,13 +719,12 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // TODO(brian): these logics below are noops I think; remove them later.
     const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
-    const retainedTools = Object.fromEntries(
-      Object.entries(_tools).filter(
-        ([name, tool]) => llm.isFunctionTool(tool) && retainedToolNames.has(name),
-      ),
+    // Keep provider tools and Toolsets as-is; only drop function tools the server didn't accept.
+    const retainedEntries = _tools.tools.filter(
+      (entry) => !llm.isFunctionTool(entry) || retainedToolNames.has(entry.name),
     );
 
-    this._tools = retainedTools as llm.ToolContext;
+    this._tools = new llm.ToolContext(retainedEntries);
 
     unlock();
   }
@@ -733,26 +732,26 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
     const oaiTools: api_proto.Tool[] = [];
 
-    for (const [name, tool] of Object.entries(_tools)) {
-      if (!llm.isFunctionTool(tool)) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
-        continue;
-      }
+    for (const t of _tools.flatten()) {
+      // TODO: support provider tools in the Realtime session-update schema.
+      if (!llm.isFunctionTool(t)) continue;
 
-      const { parameters: toolParameters, description } = tool;
       try {
         const parameters = llm.toJsonSchema(
-          toolParameters,
+          t.parameters,
         ) as unknown as api_proto.Tool['parameters'];
 
         oaiTools.push({
-          name,
-          description,
+          name: t.name,
+          description: t.description,
           parameters: parameters,
           type: 'function',
         });
       } catch (e) {
-        this.#logger.error({ name, tool }, "OpenAI Realtime API doesn't support this tool type");
+        this.#logger.error(
+          { name: t.name, tool: t },
+          "OpenAI Realtime API doesn't support this tool type",
+        );
         continue;
       }
     }
@@ -842,7 +841,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<llm.GenerationCreatedEvent> {
-    const handle = this.createResponse({ instructions, userInitiated: true });
+    // In OpenAI realtime, the session-level instructions are completely replaced by the
+    // per-response instructions for this response. Prepend the session instructions so they
+    // are preserved (parity with the Python implementation).
+    let responseInstructions = instructions;
+    if (instructions && this.instructions) {
+      responseInstructions = `${this.instructions}\n${instructions}`;
+    }
+
+    const handle = this.createResponse({
+      instructions: responseInstructions,
+      userInitiated: true,
+    });
     this.textModeRecoveryRetries = 0;
 
     const onAbort = () => {
@@ -1056,7 +1066,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       events.push(this.createSessionUpdateEvent());
 
       // tools
-      if (Object.keys(this._tools).length > 0) {
+      if (Object.keys(this._tools.functionTools).length > 0) {
         events.push(this.createToolsUpdateEvent(this._tools));
       }
 

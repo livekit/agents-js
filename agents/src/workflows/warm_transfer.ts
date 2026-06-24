@@ -5,30 +5,30 @@ import type { SIPOutboundConfig } from '@livekit/protocol';
 import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
-import type { LLMModels, STTModelString, TTSModelString } from '../../inference/index.js';
-import { getJobContext } from '../../job.js';
+import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatContext,
   Instructions,
   LLM,
   RealtimeModel,
-  ToolContext,
-} from '../../llm/index.js';
-import { ToolError, ToolFlag, tool } from '../../llm/index.js';
-import { log } from '../../log.js';
-import type { STT } from '../../stt/index.js';
-import type { TTS } from '../../tts/index.js';
-import type { VAD } from '../../vad.js';
-import { Agent, AgentTask } from '../../voice/agent.js';
-import { AgentSession, type TurnDetectionMode } from '../../voice/agent_session.js';
+  ToolContextEntry,
+} from '../llm/index.js';
+import { ToolContext, ToolError, ToolFlag, tool } from '../llm/index.js';
+import { log } from '../log.js';
+import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/index.js';
+import type { VAD } from '../vad.js';
+import { Agent, AgentTask } from '../voice/agent.js';
+import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
 import {
   type AudioConfig,
   type AudioSourceType,
   BackgroundAudioPlayer,
   BuiltinAudioClip,
   type PlayHandle,
-} from '../../voice/background_audio.js';
-import { DEFAULT_PARTICIPANT_KINDS } from '../../voice/room_io/index.js';
+} from '../voice/background_audio.js';
+import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
 import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {
@@ -72,7 +72,7 @@ export interface WarmTransferTaskOptions {
   instructions?: InstructionParts | string;
   chatCtx?: ChatContext;
   turnDetection?: TurnDetectionMode | null;
-  tools?: ToolContext;
+  tools?: readonly ToolContextEntry[];
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
   llm?: LLM | RealtimeModel | LLMModels | null;
@@ -171,13 +171,13 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       this._resolveHumanAgentFailed = resolve;
     });
 
-    this._tools = {
-      ...this._tools,
-      connect_to_caller: this.buildConnectToCallerTool(),
-      decline_transfer: this.buildDeclineTransferTool(),
-      voicemail_detected: this.buildVoicemailDetectedTool(),
-    };
-    this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+    this._toolCtx = new ToolContext([
+      ...this._toolCtx.tools,
+      this.buildConnectToCallerTool(),
+      this.buildDeclineTransferTool(),
+      this.buildVoicemailDetectedTool(),
+    ]);
+    this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });
 
     this._taskTurnDetection = turnDetection ?? undefined;
     this._allowInterruptions = allowInterruptions;
@@ -268,6 +268,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
   private buildConnectToCallerTool() {
     return tool({
+      name: 'connect_to_caller',
       description: 'Called when the human agent wants to connect to the caller.',
       flags: ToolFlag.IGNORE_ON_ENTER,
       execute: async () => {
@@ -288,6 +289,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
   private buildDeclineTransferTool() {
     return tool({
+      name: 'decline_transfer',
       description:
         'Handles the case when the human agent explicitly declines to connect to the caller.',
       parameters: z.object({
@@ -304,6 +306,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
   private buildVoicemailDetectedTool() {
     return tool({
+      name: 'voicemail_detected',
       description:
         'Called when the call reaches voicemail. Use this tool AFTER you hear the voicemail greeting',
       flags: ToolFlag.IGNORE_ON_ENTER,
@@ -418,7 +421,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
         vad: this.vad,
         llm: this.llm,
         tts: this.tts,
-        tools: this.toolCtx,
+        tools: this.toolCtx.tools,
         chatCtx: this._chatCtx.copy(),
         turnDetection: this._taskTurnDetection,
         allowInterruptions: this._allowInterruptions,

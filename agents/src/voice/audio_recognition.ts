@@ -69,9 +69,9 @@ export interface EndOfTurnInfo {
   /** Confidence score of the transcript (0-1). */
   transcriptConfidence: number;
   /** Delay from speech stop to final transcription in milliseconds. */
-  transcriptionDelay: number;
+  transcriptionDelay: number | undefined;
   /** Delay from speech stop to end of utterance detection in milliseconds. */
-  endOfUtteranceDelay: number;
+  endOfUtteranceDelay: number | undefined;
   /** Timestamp when user started speaking (milliseconds since epoch). */
   startedSpeakingAt: number | undefined;
   /** Timestamp when user stopped speaking (milliseconds since epoch). */
@@ -83,6 +83,46 @@ export interface EndOfTurnInfo {
    * caller drives its own `generateReply` (e.g. leaving a voicemail).
    */
   skipReply?: boolean;
+}
+
+type EndOfTurnMetrics = {
+  startedSpeakingAt: number | undefined;
+  stoppedSpeakingAt: number | undefined;
+  transcriptionDelay: number | undefined;
+  endOfUtteranceDelay: number | undefined;
+};
+
+function computeEndOfTurnMetrics({
+  speechStartTime,
+  lastSpeakingTime,
+  lastFinalTranscriptTime,
+  now,
+}: {
+  speechStartTime: number | undefined;
+  lastSpeakingTime: number | undefined;
+  lastFinalTranscriptTime: number;
+  now: number;
+}): EndOfTurnMetrics {
+  if (
+    lastFinalTranscriptTime === 0 ||
+    lastSpeakingTime === undefined ||
+    speechStartTime === undefined ||
+    lastSpeakingTime < speechStartTime
+  ) {
+    return {
+      startedSpeakingAt: undefined,
+      stoppedSpeakingAt: undefined,
+      transcriptionDelay: undefined,
+      endOfUtteranceDelay: undefined,
+    };
+  }
+
+  return {
+    startedSpeakingAt: speechStartTime,
+    stoppedSpeakingAt: lastSpeakingTime,
+    transcriptionDelay: Math.max(lastFinalTranscriptTime - lastSpeakingTime, 0),
+    endOfUtteranceDelay: Math.max(now - lastSpeakingTime, 0),
+  };
 }
 
 export interface PreemptiveGenerationInfo {
@@ -1643,39 +1683,31 @@ export class AudioRecognition {
               this.finalTranscriptConfidence.length
             : 0;
 
-        let startedSpeakingAt: number | undefined;
-        let stoppedSpeakingAt: number | undefined;
-        let transcriptionDelay: number | undefined;
-        let endOfUtteranceDelay: number | undefined;
-
-        // sometimes, we can't calculate the metrics because VAD was unreliable.
-        // in this case, we just ignore the calculation, it's better than providing likely wrong values
-        if (
-          lastFinalTranscriptTime !== 0 &&
-          lastSpeakingTime !== undefined &&
-          speechStartTime !== undefined
-        ) {
-          startedSpeakingAt = speechStartTime;
-          stoppedSpeakingAt = lastSpeakingTime;
-          transcriptionDelay = Math.max(lastFinalTranscriptTime - lastSpeakingTime, 0);
-          endOfUtteranceDelay = Date.now() - lastSpeakingTime;
-        }
+        // sometimes, we can't calculate the metrics because VAD was unreliable or
+        // the speaking anchor is stale/out-of-order. in this case, we just ignore the
+        // calculation, it's better than providing likely wrong values
+        const metrics = computeEndOfTurnMetrics({
+          speechStartTime,
+          lastSpeakingTime,
+          lastFinalTranscriptTime,
+          now: Date.now(),
+        });
 
         const committed = await this.hooks.onEndOfTurn({
           newTranscript: this.audioTranscript,
           transcriptConfidence: confidenceAvg,
-          transcriptionDelay: transcriptionDelay ?? 0,
-          endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
-          startedSpeakingAt,
-          stoppedSpeakingAt,
+          transcriptionDelay: metrics.transcriptionDelay,
+          endOfUtteranceDelay: metrics.endOfUtteranceDelay,
+          startedSpeakingAt: metrics.startedSpeakingAt,
+          stoppedSpeakingAt: metrics.stoppedSpeakingAt,
         });
 
         if (committed) {
           this._endUserTurnSpan({
             transcript: this.audioTranscript,
             confidence: confidenceAvg,
-            transcriptionDelay: transcriptionDelay ?? 0,
-            endOfUtteranceDelay: endOfUtteranceDelay ?? 0,
+            transcriptionDelay: metrics.transcriptionDelay ?? 0,
+            endOfUtteranceDelay: metrics.endOfUtteranceDelay ?? 0,
           });
 
           // clear the transcript if the user turn was committed

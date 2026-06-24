@@ -254,7 +254,7 @@ interface GenerationState {
  * Realtime session for Phonic (https://docs.phonic.co/)
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeModelOptions;
@@ -307,7 +307,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   async updateInstructions(instructions: string): Promise<void> {
@@ -401,7 +401,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    this._tools = { ...tools };
+    this._tools = tools.copy();
     this.toolDefinitions = this.buildToolDefinitions(tools);
 
     this.toolsReady.resolve();
@@ -409,16 +409,18 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildToolDefinitions(tools: llm.ToolContext): Record<string, unknown>[] {
     this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
-    return Object.entries(tools)
-      .filter(([, tool]) => llm.isFunctionTool(tool))
-      .map(([name, tool]) => ({
+    // TODO: support provider tools in the Phonic schema.
+    return tools
+      .flatten()
+      .filter(llm.isFunctionTool)
+      .map((t) => ({
         type: 'custom_websocket',
         tool_schema: {
           type: 'function',
           function: {
-            name,
-            description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters),
+            name: t.name,
+            description: t.description,
+            parameters: llm.toJsonSchema(t.parameters),
             strict: true,
           },
         },
@@ -430,7 +432,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         // When true, Phonic does not auto-generate a spoken reply after this tool's
         // output. Used for tools that always hand off so the outgoing agent doesn't
         // speak a reply that the handoff's session reset would cancel.
-        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(name),
+        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
       }));
   }
 
@@ -448,7 +450,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.instructions = instructions;
     }
     if (tools !== undefined) {
-      this._tools = { ...tools };
+      this._tools = tools.copy();
       this.toolDefinitions = this.buildToolDefinitions(tools);
     }
     if (chatCtx !== undefined) {
@@ -612,6 +614,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private async connect(): Promise<void> {
     this.socket = await this.client.conversations.connect({
+      headers: { 'x-phonic-client': 'livekit-agents-js' },
       reconnectAttempts: this.options.connOptions.maxRetry,
     });
 

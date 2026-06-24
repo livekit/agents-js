@@ -120,6 +120,7 @@ describe('TTS stream idle timeout', () => {
 
     vi.useFakeTimers();
 
+    // Stray PLAYBACK_STARTED before this segment captures anything must be ignored.
     audioOutput.onPlaybackStarted(Date.now());
     expect(audioOut.firstFrameFut.done).toBe(false);
 
@@ -148,11 +149,13 @@ describe('TTS stream idle timeout', () => {
     const controller = new AbortController();
     const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
 
+    // Stray event before the loop captures anything must not skip resampling.
     audioOutput.onPlaybackStarted(Date.now());
 
     await task.result;
 
     expect(audioOut.firstFrameFut.done).toBe(true);
+    // Every captured frame must match the output sample rate (i.e. was resampled).
     expect(audioOutput.capturedFrames.length).toBeGreaterThan(0);
     for (const f of audioOutput.capturedFrames) {
       expect(f.sampleRate).toBe(24000);

@@ -4,13 +4,13 @@
 import {
   type JobContext,
   ServerOptions,
-  beta,
   cli,
   defineAgent,
   inference,
   llm,
   log,
   voice,
+  workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +23,9 @@ class SupportAgent extends voice.Agent {
   constructor() {
     super({
       instructions: INSTRUCTIONS,
-      tools: {
-        transfer_to_human: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'transfer_to_human',
           description: `Called when the user asks to speak to a human agent. This will put the user on hold while the supervisor is connected.
 
 Ensure that the user has confirmed that they wanted to be transferred. Do not start transfer until the user has confirmed.
@@ -52,7 +53,7 @@ Examples on when the tool should be called:
                 );
               }
 
-              const result = await new beta.WarmTransferTask({
+              const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
                 sipNumber: SIP_NUMBER,
@@ -83,7 +84,7 @@ Examples on when the tool should be called:
             }
           },
         }),
-      },
+      ],
     });
   }
 

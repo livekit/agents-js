@@ -16,6 +16,7 @@
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",
+    "typecheck": "turbo typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:examples": "vitest run examples",

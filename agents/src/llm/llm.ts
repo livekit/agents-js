@@ -11,7 +11,12 @@ import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
-import type { ToolChoice, ToolContext } from './tool_context.js';
+import {
+  type ToolChoice,
+  type ToolContext,
+  type ToolContextLike,
+  toToolContext,
+} from './tool_context.js';
 
 export interface ChoiceDelta {
   role: ChatRole;
@@ -33,6 +38,17 @@ export interface ChatChunk {
   id: string;
   delta?: ChoiceDelta;
   usage?: CompletionUsage;
+}
+
+export interface CollectedResponse {
+  text: string;
+  toolCalls: FunctionCall[];
+  usage?: CompletionUsage;
+  /**
+   * Provider-specific extra data accumulated across chunks
+   * (e.g., xAI encrypted reasoning, Google thought signatures).
+   */
+  extra: Record<string, unknown>;
 }
 
 export interface LLMError {
@@ -91,7 +107,12 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
     extraKwargs,
   }: {
     chatCtx: ChatContext;
-    toolCtx?: ToolContext;
+    /**
+     * Tools to advertise to the LLM. Accepts either a `ToolContext` instance or a raw
+     * `(FunctionTool | ProviderTool)[]` array — the array form is normalized into a
+     * `ToolContext` internally so callers don't have to construct one themselves.
+     */
+    toolCtx?: ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: ToolChoice;
@@ -134,13 +155,13 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       connOptions,
     }: {
       chatCtx: ChatContext;
-      toolCtx?: ToolContext;
+      toolCtx?: ToolContextLike;
       connOptions: APIConnectOptions;
     },
   ) {
     this.#llm = llm;
     this.#chatCtx = chatCtx;
-    this.#toolCtx = toolCtx;
+    this.#toolCtx = toToolContext(toolCtx);
     this._connOptions = connOptions;
     this.monitorMetrics();
     this.abortController.signal.addEventListener('abort', () => {
@@ -329,6 +350,53 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   close() {
     this.abortController.abort();
+  }
+
+  /**
+   * Collect the entire stream into a single response.
+   *
+   * @example
+   * ```ts
+   * const response = await myLlm.chat({ chatCtx, toolCtx }).collect();
+   *
+   * for (const tc of response.toolCalls) {
+   *   // execute the tool call...
+   * }
+   * ```
+   */
+  async collect(): Promise<CollectedResponse> {
+    const textParts: string[] = [];
+    const toolCalls: FunctionCall[] = [];
+    let usage: CompletionUsage | undefined;
+    const extra: Record<string, unknown> = {};
+
+    try {
+      for await (const chunk of this) {
+        if (chunk.delta) {
+          if (chunk.delta.content) {
+            textParts.push(chunk.delta.content);
+          }
+          if (chunk.delta.toolCalls) {
+            toolCalls.push(...chunk.delta.toolCalls);
+          }
+          if (chunk.delta.extra) {
+            Object.assign(extra, chunk.delta.extra);
+          }
+        }
+        if (chunk.usage !== undefined) {
+          usage = chunk.usage;
+        }
+      }
+    } finally {
+      this.close();
+    }
+
+    return {
+      text: textParts.join('').trim(),
+      toolCalls,
+      usage,
+      extra,
+    };
   }
 
   [Symbol.asyncIterator](): LLMStream {

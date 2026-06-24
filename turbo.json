@@ -28,6 +28,7 @@
     "HEDRA_API_KEY",
     "HEDRA_API_URL",
     "HEDRA_AVATAR_ID",
+    "HOTEL_TODAY",
     "LEMONSLICE_API_KEY",
     "LEMONSLICE_API_URL",
     "LEMONSLICE_IMAGE_URL",
@@ -87,6 +88,7 @@
     "SIP_PHONE_NUMBER",
     "LK_OPENAI_DEBUG",
     "LK_GOOGLE_DEBUG",
+    "LK_DRAIN_PLAYOUT_TIMEOUT_MS",
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
     "INWORLD_API_KEY",
@@ -112,6 +114,10 @@
       "outputs": ["dist/**"]
     },
     "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "api:check": {

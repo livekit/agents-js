@@ -3,16 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JSONSchema7 } from 'json-schema';
 import { z } from 'zod';
+import * as z4 from 'zod/v4';
 import type { Agent } from '../voice/agent.js';
 import type { RunContext, UnknownUserData } from '../voice/run_context.js';
-import { isZodObjectSchema, isZodSchema } from './zod-utils.js';
+import { isZod4Schema, isZodObjectSchema, isZodSchema } from './zod-utils.js';
 
 // heavily inspired by Vercel AI's `tool()`:
 // https://github.com/vercel/ai/blob/3b0983b/packages/ai/core/tool/tool.ts
 
 const TOOL_SYMBOL = Symbol('tool');
 const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
-const PROVIDER_DEFINED_TOOL_SYMBOL = Symbol('provider_defined_tool');
+const PROVIDER_TOOL_SYMBOL = Symbol('provider_tool');
+const TOOLSET_SYMBOL = Symbol('toolset');
 const TOOL_ERROR_SYMBOL = Symbol('tool_error');
 const HANDOFF_SYMBOL = Symbol('handoff');
 
@@ -57,7 +59,17 @@ export type InferToolInput<T> = T extends { _output: infer O }
     ? O
     : any; // eslint-disable-line @typescript-eslint/no-explicit-any -- Fallback type for JSON Schema objects without type inference
 
-export type ToolType = 'function' | 'provider-defined';
+/**
+ * Tool argument type for a (possibly absent) parameters schema. When `parameters` is omitted the
+ * generic defaults to `undefined`, yielding an empty-args type; otherwise the args are inferred
+ * from the schema via {@link InferToolInput}. Wrapped in tuples to keep the check non-distributive.
+ * @internal
+ */
+export type ToolArgs<Schema> = [Schema] extends [undefined]
+  ? Record<string, never>
+  : InferToolInput<Schema>;
+
+export type ToolType = 'function' | 'provider';
 
 export type ToolChoice =
   | 'auto'
@@ -69,6 +81,14 @@ export type ToolChoice =
         name: string;
       };
     };
+
+export type DuplicateMode = 'allow' | 'reject' | 'replace' | 'confirm';
+
+export const CONFIRM_DUPLICATE_PARAM = 'lk_agents_confirm_duplicate';
+
+const CONFIRM_DUPLICATE_DESCRIPTION =
+  'Set this to true to confirm you want to run a duplicate. ' +
+  'Only do this when user confirms the duplication is needed.';
 
 export class ToolError extends Error {
   constructor(message: string) {
@@ -83,6 +103,7 @@ export class ToolError extends Error {
 export const ToolFlag = {
   NONE: 0,
   IGNORE_ON_ENTER: 1 << 0,
+  CANCELLABLE: 1 << 1,
 } as const;
 
 export type ToolFlag = (typeof ToolFlag)[keyof typeof ToolFlag];
@@ -136,36 +157,46 @@ export type ToolExecuteFunction<
 export interface Tool {
   /**
    * The type of the tool.
-   * @internal Either user-defined core tool or provider-defined tool.
+   * @internal Either user-defined function tool or provider-side tool.
    */
   type: ToolType;
+
+  /**
+   * Stable identifier used to key the tool inside a `ToolContext`. For function tools this
+   * mirrors `name`; for provider tools this is the provider tool id.
+   */
+  id: string;
 
   [TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools
-export interface ProviderDefinedTool extends Tool {
-  type: 'provider-defined';
+// TODO(AJS-112): support provider tools
+export abstract class ProviderTool implements Tool {
+  readonly type = 'provider' as const;
 
-  /**
-   * The ID of the tool.
-   */
-  id: string;
+  readonly id: string;
 
-  /**
-   * The configuration of the tool.
-   */
-  config: Record<string, unknown>;
+  readonly [TOOL_SYMBOL] = true as const;
 
-  [PROVIDER_DEFINED_TOOL_SYMBOL]: true;
+  readonly [PROVIDER_TOOL_SYMBOL] = true as const;
+
+  constructor({ id }: { id: string }) {
+    this.id = id;
+  }
 }
 
 export interface FunctionTool<
-  Parameters extends JSONObject,
+  Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
   Result = unknown,
 > extends Tool {
   type: 'function';
+
+  /**
+   * The name of the tool. Used to identify it inside a `ToolContext` and exposed to the LLM
+   * as the function name to call. Also surfaced as the inherited `Tool.id`.
+   */
+  name: string;
 
   /**
    * The description of the tool. Will be used by the language model to decide whether to use the tool.
@@ -187,54 +218,384 @@ export interface FunctionTool<
 
   flags: number;
 
+  onDuplicate: DuplicateMode;
+
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider-defined tools in the future)
-export type ToolContext<UserData = UnknownUserData> = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic tool registry needs to accept any parameter/result types
-  [name: string]: FunctionTool<any, UserData, any>;
+export type AnonFunctionTool<
+  Parameters extends JSONObject = JSONObject,
+  UserData = UnknownUserData,
+  Result = unknown,
+> = Omit<FunctionTool<Parameters, UserData, Result>, 'id' | 'name'> & {
+  id?: never;
+  name?: never;
 };
 
-/** @internal */
+export interface ToolCalledEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolCompletedEvent<UserData = UnknownUserData> {
+  ctx: RunContext<UserData>;
+  output?: { type: 'output'; value: unknown } | { type: 'error'; value: Error };
+}
+
+/** Context passed to a {@link Toolset}'s `setup` hook when it activates. */
+export interface ToolsetContext {
+  /**
+   * Replace the toolset's tools. Useful for dynamic sources
+   * (e.g. an MCP server) whose tools are discovered after `setup` or change at runtime.
+   */
+  updateTools(tools: readonly ToolContextEntry[]): void;
+}
+
+/**
+ * Function tools of a `ToolContext`, sorted by name for deterministic provider payloads.
+ * Provider tools are intentionally excluded — callers that need them iterate `flatten()`.
+ * @internal
+ */
 export function sortedToolEntries<UserData = UnknownUserData>(
   toolCtx: ToolContext<UserData>,
-): Array<[string, ToolContext<UserData>[string]]> {
-  return Object.entries(toolCtx).sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries are generic function tools
+): Array<[string, FunctionTool<any, UserData, any>]> {
+  return Object.entries(toolCtx.functionTools).sort(([nameA], [nameB]) =>
+    nameA.localeCompare(nameB),
+  );
 }
 
-/** @internal */
+/** Function tool names of a `ToolContext`, sorted for deterministic output. @internal */
 export function sortedToolNames(toolCtx: ToolContext | undefined): string[] {
   if (!toolCtx) return [];
-  return Object.keys(toolCtx).sort((nameA, nameB) => nameA.localeCompare(nameB));
+  return Object.keys(toolCtx.functionTools).sort((nameA, nameB) => nameA.localeCompare(nameB));
 }
 
-export function isSameToolContext(ctx1: ToolContext, ctx2: ToolContext): boolean {
-  const toolNames = new Set(Object.keys(ctx1));
-  const toolNames2 = new Set(Object.keys(ctx2));
+/**
+ * A stateful collection of tools sharing a lifecycle. Tools registered through a `Toolset` are
+ * flattened into the surrounding `ToolContext`, while the `Toolset` itself is tracked so its
+ * `setup()` / `aclose()` hooks can be invoked by the agent runtime.
+ */
+export class Toolset {
+  readonly #id: string;
 
-  if (toolNames.size !== toolNames2.size) {
-    return false;
+  #tools: readonly ToolContextEntry[];
+
+  readonly [TOOLSET_SYMBOL] = true as const;
+
+  constructor({ id, tools }: { id: string; tools: readonly ToolContextEntry[] }) {
+    this.#id = id;
+    this.#tools = [...tools];
   }
 
-  for (const name of toolNames) {
-    if (!toolNames2.has(name)) {
-      return false;
+  /**
+   * For when your tools share something that needs setup or cleanup, like a DB pool, an open MCP
+   * client, or listeners on a shared bus. `setup` runs once at activation, `aclose` once at
+   * teardown. If the tool list itself is dynamic (e.g. an MCP server), push it from `setup` via
+   * {@link ToolsetContext.updateTools}.
+   *
+   * @example Static tool list with a shared backing resource
+   * ```ts
+   * function createPostgresToolset(connectionUrl: string): Toolset {
+   *   const pool = new pg.Pool({ connectionString: connectionUrl });
+   *   return Toolset.create({
+   *     id: 'postgres',
+   *     tools: [queryOrders, queryCustomers],
+   *     aclose: () => pool.end(),
+   *   });
+   * }
+   * ```
+   *
+   * @example Dynamic tool list bound to an external source
+   * ```ts
+   * function createMcpToolset(url: string): Toolset {
+   *   const client = new MCPClient({ url });
+   *   return Toolset.create({
+   *     id: 'mcp_remote',
+   *     // setup connects and wires listeners that push the server's tools whenever they change;
+   *     // the runtime re-advertises without re-running anything.
+   *     setup: async ({ updateTools }) => {
+   *       const sync = async () => updateTools(await client.listTools());
+   *       client.on('connect', sync);
+   *       client.on('tool_list_changed', sync);
+   *       await client.connect();
+   *     },
+   *     tools: [],
+   *     aclose: () => client.disconnect(),
+   *   });
+   * }
+   * ```
+   */
+  static create(options: ToolsetCreateOptions): Toolset {
+    return new ToolsetFactory(options);
+  }
+
+  get id(): string {
+    return this.#id;
+  }
+
+  get tools(): readonly ToolContextEntry[] {
+    return this.#tools;
+  }
+
+  /**
+   * Replace the toolset's current tools. Backs {@link ToolsetContext.updateTools}; the runtime
+   * re-flattens and re-advertises after calling it.
+   *
+   * @internal
+   */
+  _setTools(tools: readonly ToolContextEntry[]): void {
+    this.#tools = [...tools];
+  }
+
+  async setup(_ctx: ToolsetContext): Promise<void> {}
+
+  async aclose(): Promise<void> {}
+}
+
+/** Options accepted by `Toolset.create()` — id + tools plus optional setup/teardown hooks. */
+export interface ToolsetCreateOptions {
+  id: string;
+  /**
+   * One-time async initialization run when the toolset activates — e.g. connecting to a server
+   * and wiring listeners. Push a changed tool list via {@link ToolsetContext.updateTools}.
+   */
+  setup?: (ctx: ToolsetContext) => Promise<void>;
+  /** The toolset's initial tools. */
+  tools: readonly ToolContextEntry[];
+  /** Invoked when the toolset is being torn down. Release awaitable resources here. */
+  aclose?: () => Promise<void>;
+}
+
+/** Backing implementation of `Toolset.create()`. Kept private so callers go through the factory. */
+class ToolsetFactory extends Toolset {
+  readonly #setupFn?: (ctx: ToolsetContext) => Promise<void>;
+
+  readonly #acloseFn?: () => Promise<void>;
+
+  constructor({ id, setup, tools, aclose }: ToolsetCreateOptions) {
+    super({ id, tools });
+    this.#setupFn = setup;
+    this.#acloseFn = aclose;
+  }
+
+  override async setup(ctx: ToolsetContext): Promise<void> {
+    if (this.#setupFn) await this.#setupFn(ctx);
+  }
+
+  override async aclose(): Promise<void> {
+    if (this.#acloseFn) await this.#acloseFn();
+  }
+}
+
+/**
+ * Tool context or data that can be normalized into one. Used by APIs that accept an already-built
+ * context as well as direct tool lists or tool maps.
+ */
+export type ToolContextLike<UserData = UnknownUserData> =
+  | ToolContext<UserData>
+  | ToolContextInit<UserData>;
+
+/**
+ * Initial tool data accepted by `ToolContext` constructors and update methods.
+ */
+export type ToolContextInit<UserData = UnknownUserData> =
+  | readonly ToolContextEntry<UserData>[]
+  | ToolDefinitionMap<UserData>;
+
+/**
+ * Object shorthand for declaring anonymous function tools keyed by their model-visible names.
+ */
+export type ToolDefinitionMap<UserData = UnknownUserData> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- entries accept any parameter/result types
+  readonly [toolName: string]: AnonFunctionTool<any, UserData, any>;
+};
+
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolContextLike<UserData>,
+): ToolContext<UserData>;
+
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolContextLike<UserData> | undefined,
+): ToolContext<UserData> | undefined;
+
+export function toToolContext<UserData = UnknownUserData>(
+  input: ToolContextLike<UserData> | undefined,
+): ToolContext<UserData> | undefined {
+  if (input === undefined) return undefined;
+  return input instanceof ToolContext ? input : new ToolContext(input);
+}
+
+export function normalizeToolContextInit<UserData = UnknownUserData>(
+  input: ToolContextInit<UserData>,
+): ToolContextEntry<UserData>[] {
+  if (Array.isArray(input)) {
+    return [...input];
+  }
+
+  return Object.entries(input).map(([name, toolValue]) => {
+    if (name.length === 0) {
+      throw new Error('tools object keys must be non-empty');
     }
 
-    const tool1 = ctx1[name];
-    const tool2 = ctx2[name];
-
-    if (!tool1 || !tool2) {
-      return false;
+    if (!isAnonFunctionTool(toolValue)) {
+      throw new Error(`tools object entry "${name}" must be an anonymous function tool`);
     }
 
-    if (tool1.description !== tool2.description) {
-      return false;
+    if ('name' in toolValue || 'id' in toolValue) {
+      throw new Error(`tools object entry "${name}" must be anonymous`);
+    }
+
+    return {
+      ...toolValue,
+      id: name,
+      name,
+    };
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext entries accept any function-tool parameter/result types
+export type ToolContextEntry<UserData = any> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  FunctionTool<any, UserData, any> | ProviderTool | Toolset;
+
+export class ToolContext<UserData = UnknownUserData> {
+  private _tools: ToolContextEntry<UserData>[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolContext stores generic function tools
+  private _functionToolsMap: Map<string, FunctionTool<any, UserData, any>> = new Map();
+  private _providerTools: ProviderTool[] = [];
+  private _toolsets: Toolset[] = [];
+
+  constructor(tools: ToolContextInit<UserData> = []) {
+    this.updateTools(tools);
+  }
+
+  static empty<UserData = UnknownUserData>(): ToolContext<UserData> {
+    return new ToolContext<UserData>([]);
+  }
+
+  /** A copy of all function tools in the tool context, including those in tool sets. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  get functionTools(): Record<string, FunctionTool<any, UserData, any>> {
+    return Object.fromEntries(this._functionToolsMap);
+  }
+
+  /** A copy of all provider tools in the tool context, including those in tool sets. */
+  get providerTools(): ProviderTool[] {
+    return [...this._providerTools];
+  }
+
+  /** A copy of all toolsets registered in the context. */
+  get toolsets(): readonly Toolset[] {
+    return [...this._toolsets];
+  }
+
+  /**
+   * A copy of the raw tool list this context was constructed with.
+   */
+  get tools(): readonly ToolContextEntry<UserData>[] {
+    return [...this._tools];
+  }
+
+  /** Flatten the tool context to a list of tools. */
+  flatten(): Tool[] {
+    return [...this._functionToolsMap.values(), ...this._providerTools];
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic registry over any parameter/result types
+  getFunctionTool(id: string): FunctionTool<any, UserData, any> | undefined {
+    return this._functionToolsMap.get(id);
+  }
+
+  hasTool(id: string): boolean {
+    if (this._functionToolsMap.has(id)) {
+      return true;
+    }
+    return this._providerTools.some((tool) => tool.id === id);
+  }
+
+  updateTools(tools: ToolContextInit<UserData>): void {
+    const normalizedTools = normalizeToolContextInit(tools);
+    this._tools = normalizedTools;
+    this._functionToolsMap = new Map();
+    this._providerTools = [];
+    this._toolsets = [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
+    const addTool = (tool: any): void => {
+      if (isToolset(tool)) {
+        for (const inner of tool.tools) {
+          addTool(inner);
+        }
+        this._toolsets.push(tool);
+        return;
+      }
+
+      if (isProviderTool(tool)) {
+        this._providerTools.push(tool);
+        return;
+      }
+
+      if (isFunctionTool(tool)) {
+        const existing = this._functionToolsMap.get(tool.id);
+        if (existing !== undefined) {
+          if (existing !== tool) {
+            throw new Error(`duplicate function name: ${tool.id}`);
+          }
+          return; // same instance, skip
+        }
+        this._functionToolsMap.set(tool.id, tool);
+        return;
+      }
+
+      throw new Error(`unknown tool type: ${typeof tool}`);
+    };
+
+    for (const tool of normalizedTools) {
+      addTool(tool);
     }
   }
 
-  return true;
+  copy(): ToolContext<UserData> {
+    return new ToolContext<UserData>([...this._tools]);
+  }
+
+  equals(other: ToolContext): boolean {
+    if (this._functionToolsMap.size !== other._functionToolsMap.size) {
+      return false;
+    }
+
+    for (const [id, tool] of this._functionToolsMap) {
+      if (other._functionToolsMap.get(id) !== tool) {
+        return false;
+      }
+    }
+
+    if (this._providerTools.length !== other._providerTools.length) {
+      return false;
+    }
+
+    // Provider tools compare as identity sets to match Python's `set(id(t) for t in ...)`
+    // semantics — order is not significant.
+    const otherProviderIds = new Set(other._providerTools);
+    for (const tool of this._providerTools) {
+      if (!otherProviderIds.has(tool)) {
+        return false;
+      }
+    }
+
+    if (this._toolsets.length !== other._toolsets.length) {
+      return false;
+    }
+
+    const otherToolsets = new Set(other._toolsets);
+    for (const ts of this._toolsets) {
+      if (!otherToolsets.has(ts)) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice | null): boolean {
@@ -254,117 +615,230 @@ export function isSameToolChoice(choice1: ToolChoice | null, choice2: ToolChoice
 }
 
 /**
- * Create a function tool with inferred parameters from the schema.
+ * Create a function tool. Parameters are inferred from the schema; omit `parameters` for a tool
+ * that takes no arguments.
  */
 export function tool<
-  Schema extends ToolInputSchema<any>, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
+  Result = unknown,
+>({
+  name,
+  description,
+  parameters,
+  execute,
+  flags,
+  onDuplicate,
+}: {
+  /** Unique name the model calls the tool by. Must be non-empty. */
+  name: string;
+  /** Natural-language description that tells the model when to use this tool. */
+  description: string;
+  /**
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
+   */
+  parameters?: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
+   */
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
+  flags?: number;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
+}): FunctionTool<ToolArgs<Schema>, UserData, Result>;
+
+/**
+ * Create an anonymous (name-less) function tool. Parameters are inferred from the schema; omit
+ * `parameters` for a tool that takes no arguments.
+ */
+export function tool<
+  UserData = UnknownUserData,
+  Schema extends ToolInputSchema<any> | undefined = undefined, // eslint-disable-line @typescript-eslint/no-explicit-any -- Generic constraint needs to accept any JSONObject type
   Result = unknown,
 >({
   description,
   parameters,
   execute,
   flags,
+  onDuplicate,
 }: {
+  /** Omitted in object syntax; the containing object key becomes the tool name. */
+  name?: never;
+  /** Natural-language description that tells the model when to use this tool. */
   description: string;
-  parameters: Schema;
-  execute: ToolExecuteFunction<InferToolInput<Schema>, UserData, Result>;
+  /**
+   * Input schema for the tool's arguments — either a Zod object schema (args
+   * are type-inferred) or a raw JSON Schema. Omit for a tool that takes no
+   * arguments.
+   */
+  parameters?: Schema;
+  /**
+   * Called when the model invokes the tool. Receives the parsed arguments (an
+   * empty object when `parameters` is omitted) and a {@link RunContext}
+   * (`ctx`); the returned value is sent back to the model.
+   */
+  execute: ToolExecuteFunction<ToolArgs<Schema>, UserData, Result>;
+  /**
+   * Bitmask of {@link ToolFlag}s, e.g. `ToolFlag.CANCELLABLE` to allow the call
+   * to be cancelled mid-flight. Defaults to `ToolFlag.NONE`.
+   */
   flags?: number;
-}): FunctionTool<InferToolInput<Schema>, UserData, Result>;
-
-/**
- * Create a function tool without parameters.
- */
-export function tool<UserData = UnknownUserData, Result = unknown>({
-  description,
-  execute,
-  flags,
-}: {
-  description: string;
-  parameters?: never;
-  execute: ToolExecuteFunction<Record<string, never>, UserData, Result>;
-  flags?: number;
-}): FunctionTool<Record<string, never>, UserData, Result>;
-
-/**
- * Create a provider-defined tool.
- *
- * @param id - The ID of the tool.
- * @param config - The configuration of the tool.
- */
-export function tool({
-  id,
-  config,
-}: {
-  id: string;
-  config: Record<string, unknown>;
-}): ProviderDefinedTool;
+  /**
+   * How a concurrent duplicate call of this tool is handled while one is still
+   * running: `'allow'` | `'reject'` | `'replace'` | `'confirm'`. Defaults to
+   * `'allow'`.
+   */
+  onDuplicate?: DuplicateMode;
+}): AnonFunctionTool<ToolArgs<Schema>, UserData, Result>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function tool(tool: any): any {
-  if (tool.execute !== undefined) {
-    // Default parameters to z.object({}) if not provided
-    const parameters = tool.parameters ?? z.object({});
-
-    // if parameters is a Zod schema, ensure it's an object schema
-    if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
-      throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
-    }
-
-    // Ensure parameters is either a Zod schema or a plain object (JSON schema)
-    if (!isZodSchema(parameters) && !(typeof parameters === 'object')) {
-      throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
-    }
-
-    return {
-      type: 'function',
-      description: tool.description,
-      parameters,
-      execute: tool.execute,
-      flags: tool.flags ?? ToolFlag.NONE,
-      [TOOL_SYMBOL]: true,
-      [FUNCTION_TOOL_SYMBOL]: true,
-    };
+  if (tool.name !== undefined && (typeof tool.name !== 'string' || tool.name.length === 0)) {
+    throw new Error('tool({ name, ... }) requires a non-empty name');
   }
 
-  if (tool.config !== undefined && tool.id !== undefined) {
-    return {
-      type: 'provider-defined',
-      id: tool.id,
-      config: tool.config,
-      [TOOL_SYMBOL]: true,
-      [PROVIDER_DEFINED_TOOL_SYMBOL]: true,
-    };
+  const onDuplicate: DuplicateMode = tool.onDuplicate ?? 'allow';
+
+  // Default parameters to z.object({}) if not provided
+  let parameters = tool.parameters ?? z.object({});
+
+  // if parameters is a Zod schema, ensure it's an object schema
+  if (isZodSchema(parameters) && !isZodObjectSchema(parameters)) {
+    throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
   }
 
-  throw new Error('Invalid tool');
+  // Ensure parameters is either a Zod schema or a plain object (JSON schema)
+  if (!isZodSchema(parameters) && !(typeof parameters === 'object')) {
+    throw new Error('Tool parameters must be a Zod object schema or a raw JSON schema');
+  }
+
+  if (onDuplicate === 'confirm') {
+    parameters = injectConfirmDuplicateParameter(parameters);
+  }
+
+  const execute =
+    onDuplicate === 'confirm' ? wrapConfirmDuplicateExecute(tool.execute) : tool.execute;
+
+  const functionTool = {
+    type: 'function',
+    description: tool.description,
+    parameters,
+    execute,
+    flags: tool.flags ?? ToolFlag.NONE,
+    onDuplicate,
+    [TOOL_SYMBOL]: true,
+    [FUNCTION_TOOL_SYMBOL]: true,
+  };
+
+  if (tool.name === undefined) {
+    return functionTool;
+  }
+
+  return {
+    ...functionTool,
+    id: tool.name,
+    name: tool.name,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function injectConfirmDuplicateParameter(parameters: any): any {
+  if (isZodSchema(parameters)) {
+    const maybeObjectSchema = parameters as {
+      extend?: (shape: Record<string, unknown>) => unknown;
+    };
+    if (typeof maybeObjectSchema.extend === 'function') {
+      const confirmSchema = isZod4Schema(parameters)
+        ? z4.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION)
+        : z.boolean().nullable().describe(CONFIRM_DUPLICATE_DESCRIPTION);
+      return maybeObjectSchema.extend({ [CONFIRM_DUPLICATE_PARAM]: confirmSchema });
+    }
+    throw new Error('Tool parameters must be a Zod object schema (z.object(...))');
+  }
+
+  const properties = {
+    ...(parameters.properties ?? {}),
+    [CONFIRM_DUPLICATE_PARAM]: {
+      type: ['boolean', 'null'],
+      description: CONFIRM_DUPLICATE_DESCRIPTION,
+    },
+  };
+  const required = [...(parameters.required ?? [])];
+  if (!required.includes(CONFIRM_DUPLICATE_PARAM)) {
+    required.push(CONFIRM_DUPLICATE_PARAM);
+  }
+
+  return {
+    ...parameters,
+    properties,
+    required,
+  };
+}
+
+function wrapConfirmDuplicateExecute<
+  Parameters extends JSONObject,
+  UserData = UnknownUserData,
+  Result = unknown,
+>(
+  execute: ToolExecuteFunction<Parameters, UserData, Result>,
+): ToolExecuteFunction<Parameters, UserData, Result> {
+  return async (args, opts) => {
+    if (args && typeof args === 'object' && !Array.isArray(args)) {
+      const stripped = { ...args };
+      delete stripped[CONFIRM_DUPLICATE_PARAM];
+      return execute(stripped, opts);
+    }
+    return execute(args, opts);
+  };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isTool(tool: any): tool is Tool {
-  return tool && tool[TOOL_SYMBOL] === true;
+  return !!tool && tool[TOOL_SYMBOL] === true;
+}
+
+export function isFunctionTool(tool: unknown): tool is FunctionTool {
+  const maybeTool = tool as Partial<FunctionTool>;
+  return (
+    isAnonFunctionTool(tool) &&
+    typeof maybeTool.id === 'string' &&
+    typeof maybeTool.name === 'string'
+  );
+}
+
+function isAnonFunctionTool(tool: unknown): tool is AnonFunctionTool {
+  const maybeTool = tool as Partial<AnonFunctionTool>;
+  return isTool(tool) && maybeTool[FUNCTION_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isFunctionTool(tool: any): tool is FunctionTool<any, any, any> {
-  const isTool = tool && tool[TOOL_SYMBOL] === true;
-  const isFunctionTool = tool[FUNCTION_TOOL_SYMBOL] === true;
-  return isTool && isFunctionTool;
+export function isProviderTool(tool: any): tool is ProviderTool {
+  return isTool(tool) && (tool as ProviderTool)[PROVIDER_TOOL_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isProviderDefinedTool(tool: any): tool is ProviderDefinedTool {
-  const isTool = tool && tool[TOOL_SYMBOL] === true;
-  const isProviderDefinedTool = tool[PROVIDER_DEFINED_TOOL_SYMBOL] === true;
-  return isTool && isProviderDefinedTool;
+export function isToolset(value: any): value is Toolset {
+  return !!value && value[TOOLSET_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isToolError(error: any): error is ToolError {
-  return error && error[TOOL_ERROR_SYMBOL] === true;
+  return !!error && error[TOOL_ERROR_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isAgentHandoff(handoff: any): handoff is AgentHandoff {
-  return handoff && handoff[HANDOFF_SYMBOL] === true;
+  return !!handoff && handoff[HANDOFF_SYMBOL] === true;
 }
