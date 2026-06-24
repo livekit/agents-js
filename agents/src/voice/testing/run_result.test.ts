@@ -9,7 +9,15 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, withMockTools } from './run_result.js';
+import { getActiveMockTools, getMockTool, withMockTools } from './run_result.js';
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 class AgentA extends Agent {
   constructor() {
@@ -29,11 +37,11 @@ describe('withMockTools', () => {
 
     {
       using _mock = withMockTools(AgentA, { tool1: mock });
-      expect(activeMockTools).toBeDefined();
-      expect(activeMockTools?.get(AgentA)?.tool1).toBe(mock);
+      expect(getActiveMockTools()).toBeDefined();
+      expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(mock);
     }
 
-    expect(activeMockTools).toBeUndefined();
+    expect(getActiveMockTools()).toBeUndefined();
   });
 
   it('merges mocks across nested blocks and isolates per agent', () => {
@@ -44,12 +52,12 @@ describe('withMockTools', () => {
       using _mockA = withMockTools(AgentA, { toolA: mockA });
       {
         using _mockB = withMockTools(AgentB, { toolB: mockB });
-        expect(activeMockTools?.get(AgentA)?.toolA).toBe(mockA);
-        expect(activeMockTools?.get(AgentB)?.toolB).toBe(mockB);
+        expect(getActiveMockTools()?.get(AgentA)?.toolA).toBe(mockA);
+        expect(getActiveMockTools()?.get(AgentB)?.toolB).toBe(mockB);
       }
 
-      expect(activeMockTools?.get(AgentA)?.toolA).toBe(mockA);
-      expect(activeMockTools?.get(AgentB)).toBeUndefined();
+      expect(getActiveMockTools()?.get(AgentA)?.toolA).toBe(mockA);
+      expect(getActiveMockTools()?.get(AgentB)).toBeUndefined();
     }
   });
 
@@ -61,15 +69,15 @@ describe('withMockTools', () => {
       using _outer = withMockTools(AgentA, { tool1: outer });
       {
         using _inner = withMockTools(AgentA, { tool1: inner });
-        expect(activeMockTools?.get(AgentA)?.tool1).toBe(inner);
+        expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(inner);
       }
-      expect(activeMockTools?.get(AgentA)?.tool1).toBe(outer);
+      expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(outer);
     }
   });
 
   it('exposes the mock for invocation within the block', async () => {
     using _mock = withMockTools(AgentA, { tool1: async () => 42 });
-    const mock = activeMockTools?.get(AgentA)?.tool1;
+    const mock = getActiveMockTools()?.get(AgentA)?.tool1;
     expect(await mock?.()).toBe(42);
   });
 
@@ -178,5 +186,54 @@ describe('withMockTools', () => {
     await task.result;
     expect(output.output[0]?.rawException?.message).toBe('test failure');
     expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
+  });
+
+  it('propagates the mock registry to child async tasks started within the block', async () => {
+    const mock = () => 'child-visible';
+    using _mock = withMockTools(AgentA, { tool1: mock });
+
+    // A child async task started after withMockTools should inherit the registry.
+    const childSaw = await (async () => {
+      await Promise.resolve();
+      return getActiveMockTools()?.get(AgentA)?.tool1;
+    })();
+
+    expect(childSaw).toBe(mock);
+    expect(getMockTool(new AgentA(), 'tool1')).toBe(mock);
+  });
+
+  it('isolates mock registries across overlapping async contexts', async () => {
+    const mockA = () => 'a';
+    const mockB = () => 'b';
+
+    const aEntered = deferred();
+    const bEntered = deferred();
+
+    // Scope A installs its mock first, then stays alive while scope B installs a
+    // conflicting mock for the SAME agent/tool. With a module-level global, B would
+    // clobber A's registry; with AsyncLocalStorage each scope keeps its own view.
+    const scopeA = async () => {
+      // Detach into this scope's own async context before installing the mock.
+      await Promise.resolve();
+      using _mockA = withMockTools(AgentA, { tool1: mockA });
+      aEntered.resolve();
+      await bEntered.promise;
+      expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(mockA);
+      expect(getMockTool(new AgentA(), 'tool1')).toBe(mockA);
+    };
+
+    const scopeB = async () => {
+      await aEntered.promise;
+      using _mockB = withMockTools(AgentA, { tool1: mockB });
+      bEntered.resolve();
+      await Promise.resolve();
+      expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(mockB);
+      expect(getMockTool(new AgentA(), 'tool1')).toBe(mockB);
+    };
+
+    await Promise.all([scopeA(), scopeB()]);
+
+    // Both scopes have exited: nothing leaks into the outer context.
+    expect(getActiveMockTools()).toBeUndefined();
   });
 });

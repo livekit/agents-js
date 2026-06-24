@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import type { AgentHandoffItem, ChatItem, ChatRole } from '../../llm/chat_context.js';
 import { ChatContext } from '../../llm/chat_context.js';
@@ -961,14 +962,30 @@ export type MockToolFn = (...args: any[]) => any;
 /** Map from agent constructor to a record of mocked tools by name. */
 export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
-/** @internal */
-export let activeMockTools: MockToolsMap | undefined;
+/**
+ * Per-async-context storage for the active mock tool registry. Using
+ * {@link AsyncLocalStorage} (rather than a module-level mutable global) isolates the
+ * registry to the async context that installed it, so overlapping/concurrent tests
+ * cannot clobber each other's mock maps. This mirrors Python's per-async-context
+ * `ContextVar` (`_MockToolsContextVar`).
+ */
+const mockToolsStorage = new AsyncLocalStorage<MockToolsMap>();
+
+/**
+ * Returns the mock tool registry active in the current async context, if any.
+ *
+ * @internal
+ */
+export function getActiveMockTools(): MockToolsMap | undefined {
+  return mockToolsStorage.getStore();
+}
 
 /** @internal */
 export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
-  if (!activeMockTools) return undefined;
+  const active = mockToolsStorage.getStore();
+  if (!active) return undefined;
 
-  for (const [agentConstructor, mocks] of activeMockTools) {
+  for (const [agentConstructor, mocks] of active) {
     if (agent.constructor === agentConstructor) {
       return mocks[toolName];
     }
@@ -984,7 +1001,9 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
  * the enclosing block exits.
  *
  * Mirrors the Python `mock_tools` context manager, adapted to JS via the explicit
- * resource management `using` syntax (Python uses `with`).
+ * resource management `using` syntax (Python uses `with`). The registry is stored in
+ * an {@link AsyncLocalStorage}, so the binding is isolated to the current async
+ * context — matching the per-async-context isolation Python gets from `ContextVar`.
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
@@ -1006,14 +1025,16 @@ export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
 ): Disposable {
-  const previous = activeMockTools;
+  const previous = mockToolsStorage.getStore();
   const updated: MockToolsMap = new Map(previous ?? []);
   updated.set(agent, mocks);
-  activeMockTools = updated;
+  // `enterWith` mutates the current async context in place, preserving the synchronous
+  // enter/exit ergonomics of `using` while still isolating the registry per async context.
+  mockToolsStorage.enterWith(updated);
 
   return {
     [Symbol.dispose]() {
-      activeMockTools = previous;
+      mockToolsStorage.enterWith(previous as MockToolsMap);
     },
   };
 }
