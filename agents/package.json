@@ -52,7 +52,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "@livekit/local-inference": "^0.2.5",
+    "@livekit/local-inference": "^0.2.6",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.46.8",
     "@livekit/throws-transformer": "0.1.8",
