@@ -157,6 +157,8 @@ export class STTPipeline {
   private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
+  /** Wall-clock anchor for this stream, used with STT-relative timestamps. */
+  inputStartedAt?: number;
 
   constructor(sttNode: STTNode) {
     this.sttNode = sttNode;
@@ -366,7 +368,6 @@ export class AudioRecognition {
 
   // interruption detection
   private interruptionDetection?: AdaptiveInterruptionDetector;
-  private _inputStartedAt?: number;
   private ignoreUserTranscriptUntil?: number;
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
@@ -521,7 +522,7 @@ export class AudioRecognition {
 
   /** @internal */
   get inputStartedAt() {
-    return this._inputStartedAt;
+    return this.sttPipeline?.inputStartedAt;
   }
 
   /** @internal */
@@ -691,10 +692,9 @@ export class AudioRecognition {
 
   async start(options?: {
     sttPipeline?: STTPipeline;
-    inputStartedAt?: number;
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
   }) {
-    this.startSttTasks(options?.sttPipeline, options?.inputStartedAt);
+    this.startSttTasks(options?.sttPipeline);
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
@@ -888,7 +888,7 @@ export class AudioRecognition {
     if (
       !this.isInterruptionEnabled ||
       this.ignoreUserTranscriptUntil === undefined ||
-      this._inputStartedAt === undefined
+      this.inputStartedAt === undefined
     ) {
       this.resetInterruptionDetection();
       return;
@@ -927,7 +927,7 @@ export class AudioRecognition {
     // Snapshot the ignore-until before resetting so the added-delay diagnostic below mirrors
     // the value the holding decision was made against.
     const prevIgnoreUserTranscriptUntil = this.ignoreUserTranscriptUntil;
-    const prevInputStartedAt = this._inputStartedAt;
+    const prevInputStartedAt = this.inputStartedAt;
     this.resetInterruptionDetection();
 
     for (const event of eventsToEmit) {
@@ -965,7 +965,7 @@ export class AudioRecognition {
   ): boolean {
     if (
       this.ignoreUserTranscriptUntil === undefined ||
-      !this._inputStartedAt ||
+      !this.inputStartedAt ||
       alternative.endTime <= 0
     ) {
       return false;
@@ -973,7 +973,7 @@ export class AudioRecognition {
 
     // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
     // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.endTime * 1000 + this._inputStartedAt < this.ignoreUserTranscriptUntil;
+    return alternative.endTime * 1000 + this.inputStartedAt < this.ignoreUserTranscriptUntil;
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
@@ -1116,7 +1116,7 @@ export class AudioRecognition {
     }
 
     const firstAlternative = ev.alternatives?.[0];
-    const inputStartedAt = this._inputStartedAt;
+    const inputStartedAt = this.inputStartedAt;
     const hasSTTEndTime =
       firstAlternative !== undefined &&
       firstAlternative.endTime > 0 &&
@@ -1783,14 +1783,13 @@ export class AudioRecognition {
     );
   }
 
-  private startSttTasks(reusePipeline?: STTPipeline, inputStartedAt?: number) {
+  private startSttTasks(reusePipeline?: STTPipeline) {
     if (!this.stt) return;
 
     this.sttPipeline = reusePipeline ?? new STTPipeline(this.stt);
 
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
-    this._inputStartedAt = inputStartedAt;
     this.sttOwnershipTransferred = false;
 
     const pipeline = this.sttPipeline;
@@ -1831,6 +1830,8 @@ export class AudioRecognition {
 
   private async forwardInputAudioToStt(pipeline: STTPipeline, signal: AbortSignal) {
     for await (const frame of readStream(this.sttInputStream, signal)) {
+      const frameDurationMs = (frame.samplesPerChannel / frame.sampleRate) * 1000;
+      pipeline.inputStartedAt ??= Date.now() - frameDurationMs;
       await pipeline.audioChannel.write(frame);
     }
   }
@@ -2026,13 +2027,6 @@ export class AudioRecognition {
 
               const { value, done } = res;
               if (done) break;
-
-              if (value instanceof AudioFrame) {
-                const frameDurationMs = (value.samplesPerChannel / value.sampleRate) * 1000;
-                this._inputStartedAt ??= Date.now() - frameDurationMs;
-              } else {
-                this._inputStartedAt ??= Date.now();
-              }
 
               await stream.pushFrame(value);
             }
