@@ -6,18 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall } from '../../llm/chat_context.js';
 import { ToolContext, tool } from '../../llm/tool_context.js';
+import { Future } from '../../utils.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
 import { getActiveMockTools, getMockTool, withMockTools } from './run_result.js';
-
-function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 
 class AgentA extends Agent {
   constructor() {
@@ -206,8 +199,8 @@ describe('withMockTools', () => {
     const mockA = () => 'a';
     const mockB = () => 'b';
 
-    const aEntered = deferred();
-    const bEntered = deferred();
+    const aEntered = new Future<void>();
+    const bEntered = new Future<void>();
 
     // Scope A installs its mock first, then stays alive while scope B installs a
     // conflicting mock for the SAME agent/tool. With a module-level global, B would
@@ -217,13 +210,13 @@ describe('withMockTools', () => {
       await Promise.resolve();
       using _mockA = withMockTools(AgentA, { tool1: mockA });
       aEntered.resolve();
-      await bEntered.promise;
+      await bEntered.await;
       expect(getActiveMockTools()?.get(AgentA)?.tool1).toBe(mockA);
       expect(getMockTool(new AgentA(), 'tool1')).toBe(mockA);
     };
 
     const scopeB = async () => {
-      await aEntered.promise;
+      await aEntered.await;
       using _mockB = withMockTools(AgentA, { tool1: mockB });
       bEntered.resolve();
       await Promise.resolve();
