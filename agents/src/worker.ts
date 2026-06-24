@@ -302,6 +302,7 @@ export class AgentServer {
   #opts: ServerOptions;
   #procPool: ProcPool;
 
+  #deployment = process.env.LIVEKIT_AGENT_DEPLOYMENT || '';
   #id = 'unregistered';
   #closed = true;
   #draining = false;
@@ -411,6 +412,7 @@ export class AgentServer {
     const getWorkerInfo = () => ({
       agent_name: opts.agentName,
       agent_name_is_env: opts.agentNameIsEnv,
+      deployment: this.#deployment,
       worker_type: JobType[opts.serverType],
       active_jobs: this.activeJobs.length,
       sdk_version: version,
@@ -646,7 +648,11 @@ export class AgentServer {
         case 'register': {
           this.#id = msg.message.value.workerId;
           this.#logger
-            .child({ id: this.id, server_info: msg.message.value.serverInfo })
+            .child({
+              deployment: this.#deployment,
+              id: this.id,
+              server_info: msg.message.value.serverInfo,
+            })
             .info('registered worker');
           this.event.emit(
             'worker_registered',
@@ -706,6 +712,7 @@ export class AgentServer {
           value: {
             type: this.#opts.serverType,
             agentName: this.#opts.agentName,
+            deployment: this.#deployment,
             allowedPermissions: new ParticipantPermission({
               canPublish: this.#opts.permissions.canPublish,
               canSubscribe: this.#opts.permissions.canSubscribe,
