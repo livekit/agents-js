@@ -76,6 +76,8 @@ jobs:
           pnpm changeset version --snapshot next
           pnpm build
           pnpm publish -r --tag next --no-git-checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build docs
         if: steps.changesets.outputs.published == 'true'
         run: pnpm doc

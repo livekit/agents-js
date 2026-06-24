@@ -7,7 +7,9 @@ import {
   AudioByteStream,
   asLanguageCode,
   calculateAudioDurationSeconds,
+  getBaseLanguage,
   log,
+  normalizeLanguage,
   stt,
   waitForAbort,
 } from '@livekit/agents';
@@ -140,6 +142,7 @@ export type STTOptions = {
   sampleRate: number;
   baseUrl: string;
   audioChunkDurationMS: number;
+  language: string;
 };
 
 const defaultSTTOptions = {
@@ -149,6 +152,7 @@ const defaultSTTOptions = {
   /** recommended default */
   audioChunkDurationMS: 160,
   baseUrl: 'https://api.cartesia.ai',
+  language: 'en',
 };
 
 function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOptions {
@@ -158,7 +162,18 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     model: override.model ?? base.model,
     sampleRate: override.sampleRate ?? base.sampleRate,
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
+    language:
+      override.language !== undefined ? normalizeLanguage(override.language) : base.language,
   };
+}
+
+/**
+ * Resolve the STT model from the configured language when the caller did not
+ * pass one explicitly. Mirrors the Python plugin: `ink-2` only supports
+ * English, so non-English languages route to the multilingual `ink-whisper`.
+ */
+function resolveSTTModel(language: string): STTModel {
+  return getBaseLanguage(language) === 'en' ? 'ink-2' : 'ink-whisper';
 }
 
 /**
@@ -203,6 +218,12 @@ export class STT extends stt.STT {
     }
 
     this.#opts = mergeSTTOptions({ ...defaultSTTOptions, apiKey }, opts);
+
+    // Route to the multilingual model for non-English languages unless the
+    // caller pinned a model. Matches the Python plugin's language→model logic.
+    if (opts.model === undefined) {
+      this.#opts.model = resolveSTTModel(this.#opts.language);
+    }
   }
 
   override get label(): string {
@@ -223,6 +244,17 @@ export class STT extends stt.STT {
 
   override stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
     return new SpeechStream(this, this.#opts, options?.connOptions);
+  }
+
+  updateOptions(opts: Partial<STTOptions>) {
+    this.#opts = mergeSTTOptions(this.#opts, opts);
+
+    // Keep the model in sync with a newly set language (e.g. switching to a
+    // non-English language must move off the English-only ink-2), unless the
+    // caller pinned a model in the same call. Mirrors the constructor.
+    if (opts.language !== undefined && opts.model === undefined) {
+      this.#opts.model = resolveSTTModel(this.#opts.language);
+    }
   }
 }
 
@@ -536,7 +568,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.eager_end': {
         if (!this.#speaking) return;
-        const transcript = data.transcript;
+        const transcript = data.transcript || this.#currentTranscript;
         if (!transcript) return;
         this.#currentTranscript = transcript;
         this.#sendTranscriptEvent(stt.SpeechEventType.PREFLIGHT_TRANSCRIPT, transcript);
@@ -552,7 +584,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.end': {
         if (!this.#speaking) return;
-        const transcript = data.transcript;
+        const transcript = data.transcript || this.#currentTranscript;
 
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, transcript);
 
@@ -589,8 +621,7 @@ export class SpeechStream extends stt.SpeechStream {
       requestId: this.#requestId,
       alternatives: [
         {
-          // Cartesia STT only supports English at this time.
-          language: asLanguageCode('en'),
+          language: asLanguageCode(this.#opts.language),
           text: transcript,
           startTime: 0,
           endTime: 0,
@@ -601,6 +632,10 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #getCartesiaUrl(): string {
+    // The Cartesia /stt/turns/websocket endpoint only accepts model, sample_rate
+    // and encoding — there is no `language` query param. Language selection is
+    // expressed through the model (ink-2 for English, ink-whisper otherwise),
+    // so #opts.language is used only to tag emitted transcripts.
     const params = new URLSearchParams({
       model: this.#opts.model,
       sample_rate: this.#opts.sampleRate.toString(),
