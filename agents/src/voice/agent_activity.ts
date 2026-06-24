@@ -139,7 +139,6 @@ interface OnEnterData {
 
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
-  sttInputStartedAt?: number;
   rtSession?: RealtimeSession;
   turnDetectorStream?: BaseStreamingTurnDetectorStream;
 }
@@ -580,11 +579,6 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     const sttPipeline = reuseResources?.sttPipeline;
-    // carry the input epoch along with the reused pipeline: its stream clock
-    // is cumulative, so re-stamping inputStartedAt here would push STT-derived
-    // timestamps into the future and stall end-of-turn after every handoff
-    // (1.4.5 silence regression from #1603; see agent_task_handoff_eou.test.ts)
-    const sttInputStartedAt = reuseResources?.sttInputStartedAt;
     const turnDetectorStream = reuseResources?.turnDetectorStream;
     if (sttPipeline) {
       this.logger.debug('reusing STT pipeline from previous activity');
@@ -594,13 +588,11 @@ export class AgentActivity implements RecognitionHooks {
     }
     await this.audioRecognition.start({
       sttPipeline,
-      inputStartedAt: sttInputStartedAt,
       turnDetectorStream,
     });
     if (reuseResources) {
       // ownership transferred to the new AudioRecognition
       reuseResources.sttPipeline = undefined;
-      reuseResources.sttInputStartedAt = undefined;
       reuseResources.turnDetectorStream = undefined;
     }
 
@@ -639,7 +631,6 @@ export class AgentActivity implements RecognitionHooks {
         Object.getPrototypeOf(newActivity.agent).sttNode === Agent.prototype.sttNode
       ) {
         resources.sttPipeline = await this.audioRecognition.detachSttPipeline();
-        resources.sttInputStartedAt = this.audioRecognition.inputStartedAt;
       }
 
       // reuse the turn detector stream during a handoff whenever we can

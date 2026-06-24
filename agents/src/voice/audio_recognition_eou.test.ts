@@ -11,6 +11,7 @@ import { VAD, type VADEvent, type VADStream } from '../vad.js';
 import {
   AudioRecognition,
   type RecognitionHooks,
+  STTPipeline,
   type _TurnDetector,
 } from './audio_recognition.js';
 import type { STTNode } from './io.js';
@@ -98,7 +99,9 @@ describe('AudioRecognition EOU scheduling with STT timestamps', () => {
     // a freshly (re)started activity: input epoch base is "now", while the
     // (potentially reused) STT stream reports endTime relative to its own,
     // possibly much older, stream clock
-    await ar.start({ inputStartedAt: Date.now() });
+    const pipeline = new STTPipeline(sttNode);
+    pipeline.inputStartedAt = Date.now();
+    await ar.start({ sttPipeline: pipeline });
     await vi.advanceTimersByTimeAsync(0);
 
     sttController.enqueue({
