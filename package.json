@@ -52,6 +52,9 @@
   },
   "packageManager": "pnpm@9.7.0",
   "pnpm": {
+    "overrides": {
+      "@livekit/rtc-node>@livekit/rtc-ffi-bindings": "0.12.66"
+    },
     "patchedDependencies": {
       "@changesets/assemble-release-plan": "patches/@changesets__assemble-release-plan.patch"
     }
