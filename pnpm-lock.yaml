@@ -1299,6 +1299,34 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/speko:
+    dependencies:
+      '@spekoai/sdk':
+        specifier: ^0.4.1
+        version: 0.4.1
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-silero':
+        specifier: workspace:*
+        version: link:../silero
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.29
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/tavus:
     dependencies:
       livekit-server-sdk:
@@ -2814,6 +2842,12 @@ packages:
 
   '@rushstack/ts-command-line@4.21.0':
     resolution: {integrity: sha512-z38FLUCn8M9FQf19gJ9eltdwkvc47PxvJmVZS6aKwbBAa3Pis3r3A+ZcBCVPNb9h/Tbga+i0tHdzoSGUoji9GQ==}
+
+  '@sinclair/typebox@0.27.8':
+    resolution: {integrity: sha512-+Fj43pSMwJs4KRrH/938Uf+uAELIgVBmQzg/q1YG10djyfA3TnrU8N8XzqCh/okZdszqBQTZf96idMfE5lnwTA==}
+
+  '@spekoai/sdk@0.4.1':
+    resolution: {integrity: sha512-YAYu7fVDpzIgR7vCt03p9XImhmLMhXviSpQEnYXDzyMhL81P04ovcTw7/0FBJ+xjDi7w+CrCBR3bDyzqXI6mIQ==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -6686,6 +6720,12 @@ snapshots:
       string-argv: 0.3.2
     transitivePeerDependencies:
       - '@types/node'
+
+  '@sinclair/typebox@0.27.8': {}
+
+  '@spekoai/sdk@0.4.1':
+    dependencies:
+      tslib: 2.6.2
 
   '@standard-schema/spec@1.1.0': {}
 
