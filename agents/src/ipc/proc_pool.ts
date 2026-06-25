@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { MultiMutex, Mutex } from '@livekit/mutex';
+import { Mutex } from '@livekit/mutex';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
@@ -14,14 +14,17 @@ export class ProcPool {
   initializeTimeout: number;
   closeTimeout: number;
   executors: JobExecutor[] = [];
-  tasks: Promise<void>[] = [];
+  spawnTasks: Set<Promise<void>> = new Set();
   started = false;
   closed = false;
   controller = new AbortController();
   initMutex = new Mutex();
-  procMutex?: MultiMutex;
-  // Keep each lock token paired with its warmed process so MultiMutex slots are always released correctly.
-  warmedProcQueue = new Queue<{ proc: JobExecutor; unlock: () => void }>();
+
+  targetIdleProcesses: number;
+  defaultNumIdleProcesses: number;
+  jobsWaitingForProcess = 0;
+
+  warmedProcQueue = new Queue<JobExecutor>();
   inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
@@ -36,9 +39,8 @@ export class ProcPool {
     memoryLimitMB: number,
   ) {
     this.agent = agent;
-    if (numIdleProcesses > 0) {
-      this.procMutex = new MultiMutex(numIdleProcesses);
-    }
+    this.targetIdleProcesses = numIdleProcesses;
+    this.defaultNumIdleProcesses = numIdleProcesses;
     this.initializeTimeout = initializeTimeout;
     this.closeTimeout = closeTimeout;
     this.inferenceExecutor = inferenceExecutor;
@@ -54,33 +56,30 @@ export class ProcPool {
     return this.executors.find((x) => x.runningJob && x.runningJob.job.id === id) || null;
   }
 
+  setTargetIdleProcesses(num: number) {
+    this.targetIdleProcesses = num;
+  }
+
   async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
     let proc: JobExecutor;
-    if (this.procMutex) {
-      const entry = await this.warmedProcQueue.get();
-      proc = entry.proc;
-      // Release exactly the slot that produced this warmed process.
-      entry.unlock();
-    } else {
-      proc = new JobProcExecutor(
-        this.agent,
-        this.inferenceExecutor,
-        this.initializeTimeout,
-        this.closeTimeout,
-        this.memoryWarnMB,
-        this.memoryLimitMB,
-        2500,
-        60000,
-        500,
-      );
-      this.executors.push(proc);
-      await proc.start();
-      await proc.initialize();
+    this.jobsWaitingForProcess++;
+    try {
+      if (
+        this.warmedProcQueue.items.length === 0 &&
+        this.spawnTasks.size < this.jobsWaitingForProcess
+      ) {
+        const task = this.procWatchTask();
+        this.spawnTasks.add(task);
+        task.finally(() => this.spawnTasks.delete(task));
+      }
+      proc = await this.warmedProcQueue.get();
+    } finally {
+      this.jobsWaitingForProcess--;
     }
     await proc.launchJob(info);
   }
 
-  async procWatchTask(procUnlock: () => void) {
+  async procWatchTask() {
     const proc = new JobProcExecutor(
       this.agent,
       this.inferenceExecutor,
@@ -98,7 +97,6 @@ export class ProcPool {
 
       const unlock = await this.initMutex.lock();
       let initReleased = false;
-      let procUnlockTransferred = false;
       try {
         if (this.closed) {
           return;
@@ -107,23 +105,17 @@ export class ProcPool {
         await proc.start();
         try {
           await proc.initialize();
-          await this.warmedProcQueue.put({ proc, unlock: procUnlock });
-          procUnlockTransferred = true;
-          // Release initMutex after enqueue — holding it through join() serialises
-          // the pool to concurrency 1 since child procs are one-shot.
+          await this.warmedProcQueue.put(proc);
           unlock();
           initReleased = true;
         } catch {
-          // Initialization failed before enqueue, so release the acquired slot immediately.
+          // Initialization failed before enqueue
         }
 
         await proc.join();
       } finally {
         if (!initReleased) {
           unlock();
-        }
-        if (!procUnlockTransferred) {
-          procUnlock();
         }
       }
     } finally {
@@ -146,20 +138,31 @@ export class ProcPool {
   }
 
   async run(signal: AbortSignal) {
-    if (this.procMutex) {
-      while (!signal.aborted) {
-        const procUnlock = await this.procMutex.lock();
-        const task = this.procWatchTask(procUnlock);
-        this.tasks.push(task);
-        task.finally(() => {
-          const taskIndex = this.tasks.indexOf(task);
-          if (taskIndex !== -1) {
-            this.tasks.splice(taskIndex, 1);
-          } else {
-            throw new Error(`task ${task} not found in tasks`);
-          }
-        });
+    while (!signal.aborted) {
+      const currentPending = this.warmedProcQueue.items.length + this.spawnTasks.size;
+      const target = Math.max(
+        Math.min(this.targetIdleProcesses, this.defaultNumIdleProcesses),
+        this.jobsWaitingForProcess,
+      );
+      const toSpawn = target - currentPending;
+
+      for (let i = 0; i < toSpawn; i++) {
+        const task = this.procWatchTask();
+        this.spawnTasks.add(task);
+        task.finally(() => this.spawnTasks.delete(task));
       }
+
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 100);
+        signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timeout);
+            resolve();
+          },
+          { once: true },
+        );
+      });
     }
   }
 
@@ -169,11 +172,10 @@ export class ProcPool {
     }
     this.closed = true;
     this.controller.abort();
-    this.warmedProcQueue.items.forEach((e) => {
-      e.unlock();
-      e.proc.close();
+    this.warmedProcQueue.items.forEach((proc) => {
+      proc.close();
     });
     this.executors.forEach((e) => e.close());
-    await ThrowsPromise.allSettled(this.tasks);
+    await ThrowsPromise.allSettled(Array.from(this.spawnTasks));
   }
 }
