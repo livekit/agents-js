@@ -20,6 +20,7 @@ import type { RawData } from 'ws';
 import { WebSocket } from 'ws';
 import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
 
+// Speech models in the Universal-3 Pro family, which share the same parameter support.
 const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
 
 function isU3ProModel(model: STTModels): boolean {
@@ -72,11 +73,11 @@ export interface STTOptions {
   maxTurnSilence?: number;
   formatTurns?: boolean;
   keytermsPrompt?: string[];
-  /** Only supported with the `u3-rt-pro` model family. */
+  /** Only supported with the Universal-3 Pro model family. */
   prompt?: string;
-  /** Only supported with the `u3-rt-pro` model family. */
+  /** Only supported with the Universal-3 Pro model family. */
   agentContext?: string;
-  /** Only supported with the `u3-rt-pro` model family. Set at connection time only. */
+  /** Only supported with the Universal-3 Pro model family. Set at connection time only. */
   previousContextNTurns?: number;
   vadThreshold?: number;
   /**
@@ -95,8 +96,8 @@ export interface STTOptions {
   /** Background audio suppression aggressiveness, from 0.0 to 1.0. Connect-time only. */
   voiceFocusThreshold?: number;
   /**
-   * Accuracy/latency preset for u3-rt-pro: `min_latency`, `balanced`, or `max_accuracy`.
-   * Explicit silence, partials, or VAD options still take precedence over mode defaults.
+   * Accuracy/latency preset for the Universal-3 Pro model family: `min_latency`, `balanced`,
+   * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
   baseUrl: string;
@@ -132,8 +133,8 @@ export class STT extends stt.STT {
     });
 
     if (opts.speechModel === 'u3-pro') {
-      log().warn("'u3-pro' is deprecated, use 'u3-rt-pro' instead.");
-      opts.speechModel = 'u3-rt-pro';
+      log().warn("'u3-pro' is deprecated, use 'universal-3-5-pro' instead.");
+      opts.speechModel = 'universal-3-5-pro';
     }
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
@@ -161,8 +162,8 @@ export class STT extends stt.STT {
       );
     }
 
-    // Minimize latency; matches LK's end-of-turn detector well.
-    const minTurnSilence = opts.minTurnSilence ?? 100;
+    // Minimize latency by default, but let AssemblyAI's mode preset control silence tuning.
+    const minTurnSilence = opts.minTurnSilence ?? (opts.mode === undefined ? 100 : undefined);
 
     this.#opts = {
       ...defaultSTTOptions,
@@ -296,11 +297,13 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWS(): Promise<WebSocket> {
-    // u3-rt-pro family models default both min and max silence to 100ms when unset.
+    // Universal-3 Pro family models default both min and max silence to 100ms when unset.
+    // When a mode preset is selected, leave them unset unless explicitly provided so the
+    // server's per-mode silence tuning is not overridden by the latency-optimized default.
     let minSilence = this.#opts.minTurnSilence;
     let maxSilence = this.#opts.maxTurnSilence;
     if (isU3ProModel(this.#opts.speechModel)) {
-      if (minSilence === undefined) minSilence = 100;
+      if (minSilence === undefined && this.#opts.mode === undefined) minSilence = 100;
       if (maxSilence === undefined) maxSilence = minSilence;
     }
 
