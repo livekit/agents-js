@@ -1,0 +1,47 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sessionReportToJSON > serializes the full chat history to the Python snake_case wire format > chat-history-python-wire 1`] = `
+{
+  "items": [
+    {
+      "content": [
+        "Check out this image and audio:",
+      ],
+      "created_at": 3000000000,
+      "id": "msg_user_1",
+      "interrupted": false,
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "arguments": "{"location": "Paris, France", "unit": "celsius"}",
+      "call_id": "call_weather_123",
+      "created_at": 3000000001,
+      "group_id": "grp_1",
+      "id": "func_call_1",
+      "name": "get_weather",
+      "thought_signature": "sig_abc",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_weather_123",
+      "created_at": 3000000002,
+      "id": "func_output_1",
+      "is_error": false,
+      "name": "get_weather",
+      "output": "{"temperature": 22, "condition": "partly cloudy"}",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        "It is 22°C and partly cloudy in Paris.",
+      ],
+      "created_at": 3000000003,
+      "id": "msg_assistant_1",
+      "interrupted": false,
+      "role": "assistant",
+      "type": "message",
+    },
+  ],
+}
+`;

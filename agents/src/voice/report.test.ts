@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import type { AudioContent, ImageContent } from '../llm/chat_context.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { ModelUsage } from '../metrics/model_usage.js';
 import type {
   AgentSessionOptions,
@@ -289,6 +290,85 @@ describe('sessionReportToJSON', () => {
     expect(payload.audio_recording_started_at).toBe(1234);
     expect(typeof payload.sdk_version).toBe('string');
     expect((payload.options as Record<string, unknown>).user_away_timeout).toBe(15);
+  });
+
+  it('serializes the full chat history to the Python snake_case wire format', () => {
+    // Mirrors the camelCase fixtures snapshotted in chat_context.test.ts, but asserts the
+    // *converted* output: `chat_history` is what the report layer (toSnakeCaseDeep) emits, so
+    // this locks down the js->python field mapping for every chat-item type — message,
+    // multimodal content (image/audio), function_call (args->arguments), and
+    // function_call_output (isError->is_error).
+    const chatHistory = new ChatContext();
+
+    chatHistory.addMessage({
+      id: 'msg_user_1',
+      role: 'user',
+      content: [
+        'Check out this image and audio:',
+        {
+          id: 'img_test_1',
+          type: 'image_content',
+          image: 'https://example.com/test-image.jpg',
+          inferenceDetail: 'high',
+          inferenceWidth: 1024,
+          inferenceHeight: 768,
+          mimeType: 'image/jpeg',
+          _cache: {},
+        } satisfies ImageContent,
+        {
+          type: 'audio_content',
+          frame: [],
+          transcript: 'This is a test audio transcript',
+        } satisfies AudioContent,
+      ],
+      createdAt: 3000000000,
+    });
+
+    chatHistory.insert(
+      new FunctionCall({
+        id: 'func_call_1',
+        callId: 'call_weather_123',
+        name: 'get_weather',
+        args: '{"location": "Paris, France", "unit": "celsius"}',
+        groupId: 'grp_1',
+        thoughtSignature: 'sig_abc',
+        createdAt: 3000000001,
+      }),
+    );
+
+    chatHistory.insert(
+      new FunctionCallOutput({
+        id: 'func_output_1',
+        callId: 'call_weather_123',
+        name: 'get_weather',
+        output: '{"temperature": 22, "condition": "partly cloudy"}',
+        isError: false,
+        createdAt: 3000000002,
+      }),
+    );
+
+    chatHistory.addMessage({
+      id: 'msg_assistant_1',
+      role: 'assistant',
+      content: 'It is 22°C and partly cloudy in Paris.',
+      interrupted: false,
+      createdAt: 3000000003,
+    });
+
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory,
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    const payload = sessionReportToJSON(report);
+    expect(payload.chat_history).toMatchSnapshot('chat-history-python-wire');
   });
 
   it('exports AgentSessionUsage from the voice barrel', () => {
