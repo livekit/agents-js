@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -644,7 +644,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let hasPrevSegment = false;
       let speechEnded = false;
       let inputConsumed = false;
+      let queriesSent = false;
       canEmitFrames = true;
+
+      const streamMayRetry = () => !inputConsumed && !queriesSent;
 
       let audioReaderResolve!: () => void;
       let audioReaderReject!: (err: Error) => void;
@@ -664,12 +667,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const streamConnectionError = (message: string) =>
         new APIConnectionError({
           message,
-          options: { retryable: !inputConsumed },
+          options: { retryable: streamMayRetry() },
         });
 
       const rejectStreamError = (err: unknown) => {
         if (err instanceof APIConnectionError) {
-          if (!inputConsumed || !err.retryable) {
+          if (streamMayRetry() || !err.retryable) {
             audioReaderReject(err);
             return;
           }
@@ -792,6 +795,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!cleaned.trim()) return;
         batchCount++;
         ws.send(JSON.stringify({ query: cleaned }));
+        queriesSent = true;
       };
 
       const drainBatches = (force: boolean) => {
