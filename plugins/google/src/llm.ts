@@ -310,13 +310,15 @@ export class LLM extends llm.LLM {
       } else {
         // Gemini 2.5 and earlier: only supports thinkingBudget
         if (thinkingLevel !== undefined && thinkingBudget === undefined) {
-          throw new Error(
+          log().warn(
             `Model ${this.#opts.model} does not support thinkingLevel. ` +
-              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models.`,
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
           );
-        }
-        if (thinkingBudget !== undefined) {
-          extras.thinkingConfig = { thinkingBudget };
+          extras.thinkingConfig = { includeThoughts };
+        } else if (thinkingBudget !== undefined) {
+          // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
+          extras.thinkingConfig = { thinkingBudget, includeThoughts };
         } else {
           extras.thinkingConfig = this.#opts.thinkingConfig;
         }
