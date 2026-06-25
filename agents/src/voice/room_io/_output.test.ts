@@ -167,6 +167,10 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     playbackFinishedCount: number;
     playbackFinishedFuture: Future<void>;
     onPlaybackStarted: (createdAt: number) => void;
+    options: { queueSizeMs?: number };
+    recentFrames: unknown[];
+    recentFramesMs: number;
+    replayFrames: unknown[];
     audioSource: {
       clearQueue: () => void;
       captureFrame: (frame: CaptureFrameArg) => Promise<void>;
@@ -187,6 +191,11 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     output.playbackFinishedCount = 0;
     output.playbackFinishedFuture = new Future<void>();
     output.onPlaybackStarted = vi.fn();
+    // Object.create bypasses the constructor's field initializers; mirror them.
+    output.options = { queueSizeMs: 1000 };
+    output.recentFrames = [];
+    output.recentFramesMs = 0;
+    output.replayFrames = [];
     output.audioSource = { clearQueue: vi.fn(), captureFrame: vi.fn(async () => {}) };
     return output;
   };
@@ -218,5 +227,135 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     expect(output.playbackSegmentsCount).toBe(1);
     expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
     expect(output.pushedDuration).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Regression tests for the false-interruption audio loss fix.
+ *
+ * Before the fix, pause() called clearQueue() which permanently dropped every
+ * frame already pushed to the native AudioSource queue (up to queueSizeMs). On a
+ * false interruption (pause then resume) the agent never replayed them, so up to
+ * ~1s of audio (rtc-node default queue) vanished from both the call and the
+ * recording. The output now keeps a rolling window of recently pushed frames,
+ * captures the unplayed tail on pause(), and replays it on the next captureFrame
+ * after resume() — while discarding it on a real interruption (clearBuffer()).
+ */
+describe('ParticipantAudioOutput false-interruption replay', () => {
+  const FRAME_MS = 20;
+  const SR = 48000;
+  const SPF = (SR * FRAME_MS) / 1000;
+
+  type ReplayOutput = ParticipantAudioOutput & {
+    startedFuture: Future<void>;
+    playbackEnabledFuture: Future<void>;
+    interruptedFuture: Future<void>;
+    firstFrameEmitted: boolean;
+    pushedDuration: number;
+    _capturing: boolean;
+    playbackSegmentsCount: number;
+    playbackFinishedCount: number;
+    playbackFinishedFuture: Future<void>;
+    onPlaybackStarted: (createdAt: number) => void;
+    options: { queueSizeMs?: number };
+    recentFrames: unknown[];
+    recentFramesMs: number;
+    replayFrames: unknown[];
+    audioSource: {
+      clearQueue: () => void;
+      captureFrame: (frame: CaptureFrameArg) => Promise<void>;
+      queuedDuration: number;
+    };
+  };
+
+  // Tag each frame by id in data[0] so captured ids reveal exact ordering, lost
+  // frames (missing id), and replayed frames (duplicate id).
+  const frameOf = (id: number): CaptureFrameArg => {
+    const data = new Int16Array(SPF);
+    data[0] = id;
+    return { samplesPerChannel: SPF, sampleRate: SR, data } as unknown as CaptureFrameArg;
+  };
+
+  const makeOutput = (queueSizeMs: number, captured: number[]): ReplayOutput => {
+    const output = Object.create(ParticipantAudioOutput.prototype) as ReplayOutput;
+    output.startedFuture = new Future<void>();
+    output.startedFuture.resolve();
+    output.playbackEnabledFuture = new Future<void>();
+    output.playbackEnabledFuture.resolve();
+    output.interruptedFuture = new Future<void>();
+    output.firstFrameEmitted = false;
+    output.pushedDuration = 0;
+    output._capturing = false;
+    output.playbackSegmentsCount = 0;
+    output.playbackFinishedCount = 0;
+    output.playbackFinishedFuture = new Future<void>();
+    output.onPlaybackStarted = vi.fn();
+    // Object.create bypasses the constructor's field initializers; mirror them.
+    output.options = { queueSizeMs };
+    output.recentFrames = [];
+    output.recentFramesMs = 0;
+    output.replayFrames = [];
+    output.audioSource = {
+      clearQueue: vi.fn(),
+      queuedDuration: 0,
+      captureFrame: vi.fn(async (frame: CaptureFrameArg) => {
+        captured.push((frame as unknown as { data: Int16Array }).data[0]!);
+      }),
+    };
+    return output;
+  };
+
+  it('replays the unplayed tail on resume (false interruption) — zero loss', async () => {
+    const captured: number[] = [];
+    const output = makeOutput(100, captured);
+
+    for (let i = 0; i < 10; i++) {
+      await output.captureFrame(frameOf(i));
+    }
+
+    // 100ms == 5 frames still queued (unplayed) when the false interruption hits.
+    output.audioSource.queuedDuration = 100;
+    output.pause();
+    output.resume();
+
+    await output.captureFrame(frameOf(10));
+
+    // initial 0..9, then the unplayed tail 5..9 replayed, then 10 — nothing lost.
+    expect(captured).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('discards the unplayed tail on clearBuffer (real interruption) — no replay', async () => {
+    const captured: number[] = [];
+    const output = makeOutput(100, captured);
+
+    for (let i = 0; i < 10; i++) {
+      await output.captureFrame(frameOf(i));
+    }
+
+    output.audioSource.queuedDuration = 100;
+    output.pause();
+    output.clearBuffer(); // real interruption: the user cut the agent off
+    output.resume();
+
+    await output.captureFrame(frameOf(10));
+
+    expect(captured).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('does not replay when nothing was queued at pause', async () => {
+    const captured: number[] = [];
+    const output = makeOutput(100, captured);
+
+    for (let i = 0; i < 10; i++) {
+      await output.captureFrame(frameOf(i));
+    }
+
+    output.audioSource.queuedDuration = 0;
+    output.pause();
+    output.resume();
+
+    await output.captureFrame(frameOf(10));
+
+    expect(captured).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 });

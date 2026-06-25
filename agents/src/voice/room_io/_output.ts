@@ -385,6 +385,18 @@ export class ParticipantAudioOutput extends AudioOutput {
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
 
+  // Rolling window of the most recently pushed frames (covering ~queueSizeMs),
+  // used to recover the unplayed tail that clearQueue() drops on pause(). On a
+  // false interruption (pause -> resume) these are replayed so no audio is lost;
+  // on a real interruption (clearBuffer) they are discarded.
+  private recentFrames: AudioFrame[] = [];
+  private recentFramesMs: number = 0;
+  private replayFrames: AudioFrame[] = [];
+
+  private static frameMs(frame: AudioFrame): number {
+    return (frame.samplesPerChannel / frame.sampleRate) * 1000;
+  }
+
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
     this.room = room;
@@ -400,6 +412,19 @@ export class ParticipantAudioOutput extends AudioOutput {
   pause(): void {
     if (this.playbackEnabledFuture.done) {
       this.playbackEnabledFuture = new Future();
+    }
+    // Capture the unplayed tail (what clearQueue is about to drop) so a false
+    // interruption can replay it on resume instead of losing it forever.
+    const queuedMs = this.audioSource.queuedDuration;
+    if (queuedMs > 0 && this.recentFrames.length > 0) {
+      const tail: AudioFrame[] = [];
+      let acc = 0;
+      for (let i = this.recentFrames.length - 1; i >= 0 && acc < queuedMs; i--) {
+        const f = this.recentFrames[i]!;
+        tail.unshift(f);
+        acc += ParticipantAudioOutput.frameMs(f);
+      }
+      this.replayFrames = tail;
     }
     // Drop already-buffered audio so playback stops promptly instead of draining the prebuffer.
     this.audioSource.clearQueue();
@@ -434,6 +459,18 @@ export class ParticipantAudioOutput extends AudioOutput {
       }
     }
 
+    // Replay the unplayed tail that pause() dropped, when the pause ended in a
+    // resume (false interruption). These frames were already counted in
+    // pushedDuration on their first push, so don't recount them.
+    if (this.replayFrames.length > 0) {
+      const replay = this.replayFrames;
+      this.replayFrames = [];
+      for (const rf of replay) {
+        await this.audioSource.captureFrame(rf);
+        this.trackRecentFrame(rf);
+      }
+    }
+
     // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
     // bumps playbackSegmentsCount; if a frame interrupted-while-paused bailed at the gate after
     // that bump, the count would strand ahead of playbackFinishedCount and the next
@@ -448,6 +485,25 @@ export class ParticipantAudioOutput extends AudioOutput {
     // TODO(AJS-102): use frame.durationMs once available in rtc-node
     this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
     await this.audioSource.captureFrame(frame);
+    this.trackRecentFrame(frame);
+  }
+
+  // Maintain a rolling window of recently pushed frames covering ~queueSizeMs,
+  // enough to recover the unplayed tail (<= queuedDuration) that pause() drops.
+  private trackRecentFrame(frame: AudioFrame): void {
+    // Keep a little headroom over queueSizeMs: queuedDuration can momentarily
+    // exceed the nominal queue size by up to one frame, and we must retain enough
+    // history to recover the entire unplayed tail.
+    const cap = (this.options.queueSizeMs ?? 1000) + 200;
+    this.recentFrames.push(frame);
+    this.recentFramesMs += ParticipantAudioOutput.frameMs(frame);
+    while (
+      this.recentFrames.length > 1 &&
+      this.recentFramesMs - ParticipantAudioOutput.frameMs(this.recentFrames[0]!) >= cap
+    ) {
+      const dropped = this.recentFrames.shift()!;
+      this.recentFramesMs -= ParticipantAudioOutput.frameMs(dropped);
+    }
   }
 
   private async waitForPlayoutTask(abortController: AbortController): Promise<void> {
@@ -483,6 +539,13 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     this.pushedDuration = 0;
     this.firstFrameEmitted = false;
+    // Segment finished: drop the rolling window. On an interruption also drop any
+    // pending replay tail (the user chose to cut the agent off).
+    this.recentFrames = [];
+    this.recentFramesMs = 0;
+    if (interrupted) {
+      this.replayFrames = [];
+    }
 
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
@@ -522,6 +585,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {
+    this.replayFrames = [];
     // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
     if (!this.interruptedFuture.done) {
       this.interruptedFuture.resolve();

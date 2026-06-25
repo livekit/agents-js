@@ -137,6 +137,10 @@ const DEFAULT_ROOM_OUTPUT_OPTIONS: RoomOutputOptions = {
   syncTranscription: true,
   audioPublishOptions: new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
   jsonFormat: false,
+  // Match Python (_output.py: queue_size_ms=200). The rtc-node AudioSource
+  // default is 1000ms; a smaller prebuffer keeps the playout queue close to
+  // realtime so interruptions take effect promptly.
+  queueSizeMs: 200,
 };
 
 export class RoomIO {
