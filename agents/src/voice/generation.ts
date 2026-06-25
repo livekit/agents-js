@@ -56,6 +56,7 @@ import {
   type TimedString,
   isTimedString,
 } from './io.js';
+import { toSnakeCaseDeep } from './report.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
@@ -485,7 +486,9 @@ export function performLLMInference(
   const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
-      JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
     );
     span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 

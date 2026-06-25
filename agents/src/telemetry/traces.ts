@@ -27,7 +27,7 @@ import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
-import type { SessionReport } from '../voice/report.js';
+import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 
@@ -637,9 +637,14 @@ export async function uploadSessionReport(options: {
     },
   });
 
-  // Add chat_history JSON (only when transcript recording is enabled)
+  // Add chat_history JSON (only when transcript recording is enabled).
+  // Reuse the report layer's serialization so the uploaded chat history carries the
+  // snake_case (Python wire) field names — chat-item toJSON() emits camelCase, and the
+  // snake_case conversion lives only in sessionReportToJSON (toSnakeCaseDeep). Serializing
+  // raw toJSON() here would send camelCase and fail the Python consumer's pydantic validation
+  // (e.g. call_id/arguments/is_error/new_agent_id reported as missing).
   if (report.recordingOptions.transcript) {
-    const chatHistoryJson = JSON.stringify(report.chatHistory.toJSON({ excludeTimestamp: false }));
+    const chatHistoryJson = JSON.stringify(sessionReportToJSON(report).chat_history);
     const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
     formData.append('chat_history', chatHistoryBuffer, {
       filename: 'chat_history.json',

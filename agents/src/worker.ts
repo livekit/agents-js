@@ -18,6 +18,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
+import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
 import { _getLocalInferenceModule } from './inference/_warmup.js';
@@ -173,6 +174,7 @@ export class ServerOptions {
   port: number;
   logLevel: string;
   production: boolean;
+  simulation: boolean;
   jobMemoryWarnMB: number;
   jobMemoryLimitMB: number;
 
@@ -198,6 +200,7 @@ export class ServerOptions {
     port = undefined,
     logLevel = 'info',
     production = false,
+    simulation = false,
     jobMemoryWarnMB = 1000,
     jobMemoryLimitMB = 0,
   }: {
@@ -239,6 +242,7 @@ export class ServerOptions {
     port?: number;
     logLevel?: string;
     production?: boolean;
+    simulation?: boolean;
     jobMemoryWarnMB?: number;
     jobMemoryLimitMB?: number;
   }) {
@@ -248,14 +252,19 @@ export class ServerOptions {
     }
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
-    this.loadThreshold = loadThreshold || Default.loadThreshold(production);
+    this.loadThreshold = simulation ? Infinity : loadThreshold || Default.loadThreshold(production);
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
     // cli.ts spreads an existing ServerOptions instance), so prefer it when defined.
-    if (agentName) {
+    if (process.env.LIVEKIT_AGENT_NAME_OVERRIDE) {
+      // Highest priority: `lk simulate` sets this to force the worker to register
+      // under the agent name it dispatches to, overriding any configured agentName.
+      this.agentName = process.env.LIVEKIT_AGENT_NAME_OVERRIDE;
+      this.agentNameIsEnv = agentNameIsEnv ?? true;
+    } else if (agentName) {
       this.agentName = agentName;
       this.agentNameIsEnv = agentNameIsEnv ?? false;
     } else if (process.env.LIVEKIT_AGENT_NAME) {
@@ -275,6 +284,7 @@ export class ServerOptions {
     this.port = port || Default.port(production);
     this.logLevel = logLevel;
     this.production = production;
+    this.simulation = simulation;
     this.jobMemoryWarnMB = jobMemoryWarnMB;
     this.jobMemoryLimitMB = jobMemoryLimitMB;
   }
@@ -312,7 +322,7 @@ export class AgentServer {
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
-  #httpServer: HTTPServer;
+  #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
 
@@ -364,18 +374,7 @@ export class AgentServer {
     // still starts (local EOT then degrades to a positive-default prediction).
     maybeRegisterLocalEotRunner();
 
-    if (Object.entries(InferenceRunner.registeredRunners).length) {
-      this.#inferenceExecutor = new InferenceProcExecutor({
-        runners: InferenceRunner.registeredRunners,
-        initializeTimeout: 30000,
-        closeTimeout: 5000,
-        memoryWarnMB: 2000,
-        memoryLimitMB: 0,
-        pingInterval: 5000,
-        pingTimeout: 60000,
-        highPingThreshold: 2500,
-      });
-    }
+    this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
     this.#procPool = new ProcPool(
       opts.agent,
@@ -389,35 +388,39 @@ export class AgentServer {
 
     this.#opts = opts;
 
-    const healthCheck = () => {
-      // Check if inference executor exists and is not alive
-      if (this.#inferenceExecutor && !this.#inferenceExecutor.isAlive) {
-        return { healthy: false, message: 'inference process not running' };
-      }
+    // Simulations run ephemeral workers side by side; a health endpoint on a fixed port would make
+    // concurrent runs collide.
+    if (!opts.simulation) {
+      const healthCheck = () => {
+        // Check if inference executor exists and is not alive
+        if (this.#inferenceExecutor && !this.#inferenceExecutor.isAlive) {
+          return { healthy: false, message: 'inference process not running' };
+        }
 
-      // Only healthy when fully connected with an active WebSocket
-      if (
-        this.#closed ||
-        this.#connecting ||
-        !this.#session ||
-        this.#session.readyState !== WebSocket.OPEN
-      ) {
-        return { healthy: false, message: 'not connected to livekit' };
-      }
+        // Only healthy when fully connected with an active WebSocket
+        if (
+          this.#closed ||
+          this.#connecting ||
+          !this.#session ||
+          this.#session.readyState !== WebSocket.OPEN
+        ) {
+          return { healthy: false, message: 'not connected to livekit' };
+        }
 
-      return { healthy: true, message: 'OK' };
-    };
+        return { healthy: true, message: 'OK' };
+      };
 
-    const getWorkerInfo = () => ({
-      agent_name: opts.agentName,
-      agent_name_is_env: opts.agentNameIsEnv,
-      worker_type: JobType[opts.serverType],
-      active_jobs: this.activeJobs.length,
-      sdk_version: version,
-      project_type: PROJECT_TYPE,
-    });
+      const getWorkerInfo = () => ({
+        agent_name: opts.agentName,
+        agent_name_is_env: opts.agentNameIsEnv,
+        worker_type: JobType[opts.serverType],
+        active_jobs: this.activeJobs.length,
+        sdk_version: version,
+        project_type: PROJECT_TYPE,
+      });
 
-    this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+      this.#httpServer = new HTTPServer(opts.host, opts.port, healthCheck, getWorkerInfo);
+    }
   }
 
   /** @throws {@link WorkerError} if worker failed to connect or already running */
@@ -484,7 +487,11 @@ export class AgentServer {
       }
     };
 
-    await ThrowsPromise.all([workerWS(), this.#httpServer.run()]);
+    const tasks = [workerWS()];
+    if (this.#httpServer) {
+      tasks.push(this.#httpServer.run());
+    }
+    await ThrowsPromise.all(tasks);
     this.#close.resolve();
   }
 
@@ -646,7 +653,12 @@ export class AgentServer {
         case 'register': {
           this.#id = msg.message.value.workerId;
           this.#logger
-            .child({ id: this.id, server_info: msg.message.value.serverInfo })
+            .child({
+              id: this.id,
+              agentName: this.#opts.agentName,
+              agentNameIsEnv: this.#opts.agentNameIsEnv,
+              server_info: msg.message.value.serverInfo,
+            })
             .info('registered worker');
           this.event.emit(
             'worker_registered',
@@ -818,7 +830,13 @@ export class AgentServer {
               participantIdentity: args.identity,
               participantName: args.name,
               participantMetadata: args.metadata,
-              participantAttributes: args.attributes,
+              // Stamp the agent name on the participant (matches the Python SDK).
+              // Consumers like `lk agent simulate` find the agent participant by
+              // this attribute; without it they never detect the agent joining.
+              participantAttributes: {
+                ...args.attributes,
+                [ATTRIBUTE_AGENT_NAME]: this.#opts.agentName,
+              },
             },
           },
         }),
@@ -917,7 +935,7 @@ export class AgentServer {
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();
-    await this.#httpServer.close();
+    await this.#httpServer?.close();
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();

@@ -30,7 +30,7 @@ const runServer = async (args: CliArgs) => {
 
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+  const server = new AgentServer(new ServerOptions({ ...opts, production: args.production }));
 
   if (args.room) {
     server.event.once('worker_registered', () => {
@@ -136,6 +136,13 @@ export const runApp = (opts: ServerOptions) => {
     .command('start')
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
+    .addOption(
+      new Option(
+        '--simulation',
+        'Run under an agent simulation: the worker load limit is disabled so runs ' +
+          'can saturate the agent, and the worker HTTP server is not started. Set by `lk simulate`.',
+      ).hideHelp(),
+    )
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
@@ -144,6 +151,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      opts.simulation = commandOptions.simulation || opts.simulation;
       runServer({
         opts,
         production: true,
