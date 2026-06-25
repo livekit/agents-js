@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
@@ -17,6 +22,16 @@ import { toFunctionDeclarations } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
+}
+
+function isGemini3Model(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3') || modelLower.startsWith('gemini-3');
+}
+
+function isGemini3FlashModel(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.startsWith('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
@@ -275,7 +290,17 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
-      extras.thinkingConfig = this.#opts.thinkingConfig;
+      if (isGemini3Model(this.#opts.model)) {
+        const { includeThoughts, thinkingLevel } = this.#opts.thinkingConfig;
+        extras.thinkingConfig = {
+          includeThoughts,
+          thinkingLevel:
+            thinkingLevel ??
+            (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
+        };
+      } else {
+        extras.thinkingConfig = this.#opts.thinkingConfig;
+      }
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
