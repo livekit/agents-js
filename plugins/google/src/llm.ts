@@ -27,12 +27,12 @@ interface GoogleFormatData {
 
 function isGemini3Model(model: string): boolean {
   const modelLower = model.toLowerCase();
-  return modelLower.includes('gemini-3') || modelLower.startsWith('gemini-3');
+  return modelLower.includes('gemini-3');
 }
 
 function isGemini3FlashModel(model: string): boolean {
   const modelLower = model.toLowerCase();
-  return modelLower.startsWith('gemini-3') && modelLower.includes('flash');
+  return modelLower.includes('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
