@@ -14,6 +14,7 @@ import {
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
@@ -290,8 +291,16 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
+      const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
+
       if (isGemini3Model(this.#opts.model)) {
-        const { includeThoughts, thinkingLevel } = this.#opts.thinkingConfig;
+        // Gemini 3: only supports thinkingLevel
+        if (thinkingBudget !== undefined && thinkingLevel === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
+              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
+          );
+        }
         extras.thinkingConfig = {
           includeThoughts,
           thinkingLevel:
@@ -299,7 +308,18 @@ export class LLM extends llm.LLM {
             (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
         };
       } else {
-        extras.thinkingConfig = this.#opts.thinkingConfig;
+        // Gemini 2.5 and earlier: only supports thinkingBudget
+        if (thinkingLevel !== undefined && thinkingBudget === undefined) {
+          throw new Error(
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models.`,
+          );
+        }
+        if (thinkingBudget !== undefined) {
+          extras.thinkingConfig = { thinkingBudget };
+        } else {
+          extras.thinkingConfig = this.#opts.thinkingConfig;
+        }
       }
     }
 

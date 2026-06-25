@@ -476,6 +476,7 @@ export function performLLMInference(
   model?: string,
   provider?: string,
 ): [Task<void>, _LLMGenerationData] {
+  const logger = log();
   const textStream = new IdentityTransform<string | FlushSentinel>();
   const toolCallStream = new IdentityTransform<FunctionCall>();
 
@@ -584,6 +585,8 @@ export function performLLMInference(
         // Abort signal was triggered, handle gracefully
         return;
       }
+      // surface inference silent errors even when this task's rejection is never awaited
+      logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
       llmStreamReader?.releaseLock();
