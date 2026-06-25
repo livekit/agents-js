@@ -336,8 +336,8 @@ export class AudioRecognition {
   // provider's logs for debugging.
   private sttRequestIds: string[] = [];
 
-  private vadInputStream: ReadableStream<AudioFrame>;
-  private sttInputStream: ReadableStream<AudioFrame>;
+  private vadInputStream: ReadableStream<AudioFrame> | null = null;
+  private sttInputStream: ReadableStream<AudioFrame> | null = null;
   /**
    * Active subscriber writers fed from {@link subscribersBroadcast}. Each
    * {@link subscribeAudioStream} call appends one entry; entries are dropped
@@ -498,13 +498,31 @@ export class AudioRecognition {
       );
       this.interruptionStreamChannel = createStreamChannel();
       this.interruptionStreamChannel.addStreamInput(inputStream);
-    } else {
+    } else if (opts.vad) {
       const [vadInputStream, sttInputStream] = primaryInputStream.tee();
       this.vadInputStream = vadInputStream;
       this.sttInputStream = mergeReadableStreams(
         replaceSttInputWithSilence(sttInputStream),
         this.silenceAudioTransform.readable,
       );
+    } else if (opts.stt) {
+      this.sttInputStream = mergeReadableStreams(
+        replaceSttInputWithSilence(primaryInputStream),
+        this.silenceAudioTransform.readable,
+      );
+    } else {
+      // No VAD or STT consumer — drain the primary stream so the broadcast
+      // transform keeps flowing without queuing frames indefinitely.
+      const reader = primaryInputStream.getReader();
+      void (async () => {
+        try {
+          while (!(await reader.read()).done);
+        } catch {
+          /* stream closed */
+        } finally {
+          reader.releaseLock();
+        }
+      })();
     }
     this.silenceAudioWriter = this.silenceAudioTransform.writable.getWriter();
   }
@@ -1830,6 +1848,7 @@ export class AudioRecognition {
   }
 
   private async forwardInputAudioToStt(pipeline: STTPipeline, signal: AbortSignal) {
+    if (!this.sttInputStream) return;
     for await (const frame of readStream(this.sttInputStream, signal)) {
       await pipeline.audioChannel.write(frame);
     }
@@ -1842,11 +1861,11 @@ export class AudioRecognition {
   }
 
   private async createVadTask(vad: VAD | undefined, signal: AbortSignal) {
-    if (!vad) return;
+    if (!vad || !this.vadInputStream) return;
 
     const vadStream = vad.stream();
     this.vadStream = vadStream;
-    vadStream.updateInputStream(this.vadInputStream);
+    vadStream.updateInputStream(this.vadInputStream!);
 
     const abortHandler = () => {
       vadStream.detachInputStream();
