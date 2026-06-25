@@ -52,7 +52,6 @@ export class ParticipantAudioInputStream extends AudioInput {
 
     this.room.on(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-    this.room.on(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
   }
 
   setParticipant(participant: RemoteParticipant | string | null) {
@@ -153,25 +152,7 @@ export class ParticipantAudioInputStream extends AudioInput {
         outputRate: this.sampleRate,
       }),
     );
-    this.frameProcessor?.onStreamInfoUpdated({
-      participantIdentity: participant.identity,
-      roomName: this.room.name!,
-      publicationSid: publication.sid!,
-    });
-    this.frameProcessor?.onCredentialsUpdated({
-      token: this.room.token!,
-      url: this.room.serverUrl!,
-    });
     return true;
-  };
-
-  private onTokenRefreshed = () => {
-    if (this.room.token && this.room.serverUrl) {
-      this.frameProcessor?.onCredentialsUpdated({
-        token: this.room.token,
-        url: this.room.serverUrl,
-      });
-    }
   };
 
   private createStream(track: RemoteTrack): ReadableStream<AudioFrame> {
@@ -186,7 +167,6 @@ export class ParticipantAudioInputStream extends AudioInput {
   override async close() {
     this.room.off(RoomEvent.TrackSubscribed, this.onTrackSubscribed);
     this.room.off(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-    this.room.off(RoomEvent.TokenRefreshed, this.onTokenRefreshed);
     this.closeStream();
     await super.close();
 
