@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import type { AudioContent, ImageContent } from '../llm/chat_context.js';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import type { ModelUsage } from '../metrics/model_usage.js';
 import type {
   AgentSessionOptions,
@@ -354,6 +359,15 @@ describe('sessionReportToJSON', () => {
       interrupted: false,
       createdAt: 3000000003,
     });
+
+    chatHistory.insert(
+      new AgentHandoffItem({
+        id: 'item_handoff_1',
+        oldAgentId: 'agent_greeter',
+        newAgentId: 'agent_booking',
+        createdAt: 3000000004,
+      }),
+    );
 
     const report = createSessionReport({
       jobId: 'job',
