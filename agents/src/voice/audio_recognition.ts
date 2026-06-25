@@ -51,6 +51,7 @@ import {
   createUserTurnExceededEvent,
 } from './events.js';
 import type { STTNode } from './io.js';
+import { toSnakeCaseDeep } from './report.js';
 import {
   type BaseEndpointing,
   createEndpointing,
@@ -1552,7 +1553,11 @@ export class AudioRecognition {
 
                 span.setAttribute(
                   traceTypes.ATTR_CHAT_CTX,
-                  JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+                  // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span
+                  // attribute (toJSON() emits camelCase). Defaults exclude image/audio/timestamps.
+                  // NOTE: Python's EOU path additionally trims to the last N turns and excludes
+                  // function calls; aligning that is left to a follow-up (behavioral change).
+                  JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
                 );
                 if (endOfTurnProbability !== undefined) {
                   span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);

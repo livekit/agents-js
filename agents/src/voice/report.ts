@@ -111,8 +111,11 @@ function jsToPythonFieldName(key: string): string {
  * so their output is recursed into here rather than trusted. Arrays are mapped; primitives pass
  * through; `extra` dicts are emitted verbatim (Python keeps `extra` as a free-form dict, so its
  * provider-supplied keys must not be converted).
+ *
+ * @internal Exported so other Python-facing serialization boundaries (e.g. the `lk.chat_ctx`
+ * span attribute) can emit the same snake_case wire shape as the session report.
  */
-function toSnakeCaseDeep(value: unknown): unknown {
+export function toSnakeCaseDeep(value: unknown): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
