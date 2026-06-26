@@ -28,14 +28,40 @@ export class TavusException extends Error {
 
 /** @public */
 export interface CreateConversationOptions {
-  /** Tavus replica id. Falls back to `TAVUS_REPLICA_ID`. */
+  /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
+  faceId?: string;
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; created automatically when omitted. */
+  palId?: string;
+  /** @deprecated Use {@link CreateConversationOptions.faceId | faceId} instead. */
   replicaId?: string;
-  /** Tavus persona id. Falls back to `TAVUS_PERSONA_ID`; created automatically when omitted. */
+  /** @deprecated Use {@link CreateConversationOptions.palId | palId} instead. */
   personaId?: string;
   /** Conversation properties passed through to Tavus. */
   properties?: Record<string, unknown>;
   /** Additional fields to merge into the Tavus conversation creation payload. */
   extraPayload?: Record<string, unknown>;
+}
+
+function resolveRenamedOption(
+  newValue: string | undefined,
+  deprecatedValue: string | undefined,
+  deprecatedName: string,
+  newName: string,
+): string | undefined {
+  // Prefer the new option; fall back to the deprecated alias and warn when it's used.
+  if (deprecatedValue) {
+    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+  }
+  return newValue || deprecatedValue;
+}
+
+function deprecatedEnv(deprecatedName: string, newName: string): string | undefined {
+  // Read a deprecated env var, warning if it's set so callers migrate to `newName`.
+  const value = process.env[deprecatedName];
+  if (value) {
+    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+  }
+  return value;
 }
 
 /** @public */
@@ -80,19 +106,26 @@ export class TavusAPI {
   }
 
   async createConversation(options: CreateConversationOptions = {}): Promise<string> {
-    const replicaId = options.replicaId || process.env.TAVUS_REPLICA_ID;
-    if (!replicaId) {
-      throw new TavusException('TAVUS_REPLICA_ID must be set');
+    const faceId =
+      resolveRenamedOption(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
+      process.env.TAVUS_FACE_ID ||
+      deprecatedEnv('TAVUS_REPLICA_ID', 'TAVUS_FACE_ID');
+    if (!faceId) {
+      throw new TavusException('TAVUS_FACE_ID must be set');
     }
 
-    let personaId = options.personaId || process.env.TAVUS_PERSONA_ID;
-    if (!personaId) {
-      personaId = await this.createPersona();
+    let palId =
+      resolveRenamedOption(options.palId, options.personaId, 'personaId', 'palId') ||
+      process.env.TAVUS_PAL_ID ||
+      deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
+    if (!palId) {
+      palId = await this.createPersona();
     }
 
     const payload: Record<string, unknown> = {
-      replica_id: replicaId,
-      persona_id: personaId,
+      // Wire keys stay replica_id/persona_id; the Tavus API still expects them.
+      replica_id: faceId,
+      persona_id: palId,
       properties: options.properties ?? {},
     };
 
