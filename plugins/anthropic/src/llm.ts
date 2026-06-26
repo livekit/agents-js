@@ -101,6 +101,8 @@ export class LLM extends llm.LLM {
    *   strict alternating-turn requirement.
    * - A dummy `(empty)` user message is injected if the conversation doesn't
    *   start with a user turn.
+   * - A dummy user message is appended if the conversation ends with an
+   *   assistant turn, since Claude 4.6+ does not support prefilling.
    */
   protected _buildAnthropicContext(chatCtx: llm.ChatContext): {
     system: Anthropic.TextBlockParam[];
@@ -170,6 +172,11 @@ export class LLM extends llm.LLM {
     // Anthropic requires conversations to start with a user turn
     if (messages.length === 0 || messages[0]!.role !== 'user') {
       messages.unshift({ role: 'user', content: '(empty)' });
+    }
+
+    // Claude 4.6+ does not support prefilling (trailing assistant messages).
+    if (messages.length > 0 && messages[messages.length - 1]!.role === 'assistant') {
+      messages.push({ role: 'user', content: [{ type: 'text', text: '.' }] });
     }
 
     return { system, messages };
