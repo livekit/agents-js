@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-hedra
 
+## 1.4.10
+
+### Patch Changes
+
+- Updated dependencies [[`fafdeb68c59404adc3dfabaece10ea155a5b30c4`](https://github.com/livekit/agents-js/commit/fafdeb68c59404adc3dfabaece10ea155a5b30c4), [`7309e113bd98ba620e84cc216d12395e32662186`](https://github.com/livekit/agents-js/commit/7309e113bd98ba620e84cc216d12395e32662186), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f`](https://github.com/livekit/agents-js/commit/06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f)]:
+  - @livekit/agents@1.4.10
+
 ## 1.4.9
 
 ### Patch Changes
