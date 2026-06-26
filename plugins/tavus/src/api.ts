@@ -51,8 +51,8 @@ function resolveRenamedOption(
   deprecatedName: string,
   newName: string,
 ): string | undefined {
-  // Prefer the new option; fall back to the deprecated alias and warn when it's used.
-  if (deprecatedValue) {
+  // Prefer the new option; fall back to the deprecated alias and warn only when it's used.
+  if (!newValue && deprecatedValue) {
     log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
   }
   return newValue || deprecatedValue;

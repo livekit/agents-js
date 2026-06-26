@@ -54,6 +54,21 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(msgs.some((m) => m.includes('personaId') && m.includes('palId'))).toBe(true);
   });
 
+  it('does not warn when both the new and deprecated options are supplied', async () => {
+    const f = mockFetchOk({ conversation_id: 'cb' });
+    await new TavusAPI({ apiKey: 'k' }).createConversation({
+      faceId: 'f1',
+      replicaId: 'r1',
+      palId: 'p1',
+      personaId: 'x1',
+    });
+    // the new values win, so the deprecated aliases are unused -> no warning
+    expect(warnMock).not.toHaveBeenCalled();
+    const body = sentBody(f);
+    expect(body.face_id).toBe('f1');
+    expect(body.pal_id).toBe('p1');
+  });
+
   it('falls back to TAVUS_FACE_ID / TAVUS_PAL_ID env vars', async () => {
     process.env.TAVUS_FACE_ID = 'envf';
     process.env.TAVUS_PAL_ID = 'envp';
