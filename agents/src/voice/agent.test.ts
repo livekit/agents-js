@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { ChatContext } from '../llm/chat_context.js';
 import { tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { Task } from '../utils.js';
@@ -22,6 +23,49 @@ describe('Agent', () => {
 
     expect(agent).toBeDefined();
     expect(agent.instructions).toBe(instructions);
+  });
+
+  it('should wait for active activity chat context updates', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const chatCtx = new ChatContext();
+    let resolveUpdate: () => void = () => {
+      throw new Error('update promise was not initialized');
+    };
+    const updatePromise = new Promise<void>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const updateChatCtx = vi.fn(() => updatePromise);
+    (
+      agent as unknown as { _agentActivity: { updateChatCtx: typeof updateChatCtx } }
+    )._agentActivity = { updateChatCtx };
+
+    let settled = false;
+    const update = agent.updateChatCtx(chatCtx).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+
+    expect(updateChatCtx).toHaveBeenCalledWith(chatCtx);
+    expect(settled).toBe(false);
+
+    resolveUpdate();
+    await update;
+
+    expect(settled).toBe(true);
+  });
+
+  it('should propagate active activity chat context update failures', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const chatCtx = new ChatContext();
+    const error = new Error('update failed');
+    const updateChatCtx = vi.fn(() => Promise.reject(error));
+    (
+      agent as unknown as { _agentActivity: { updateChatCtx: typeof updateChatCtx } }
+    )._agentActivity = { updateChatCtx };
+
+    await expect(agent.updateChatCtx(chatCtx)).rejects.toBe(error);
+    expect(updateChatCtx).toHaveBeenCalledWith(chatCtx);
   });
 
   it('should create agent with instructions and tools', () => {
@@ -62,6 +106,57 @@ describe('Agent', () => {
     // Verify tool properties with proper checks
     expect(agentTools.getTool1?.description).toBe('First test tool');
     expect(agentTools.getTool2?.description).toBe('Second test tool');
+  });
+
+  it('should wait for realtime session chat context updates', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity & {
+      agent: Agent;
+      realtimeSession: { updateChatCtx: ReturnType<typeof vi.fn> };
+    };
+    const chatCtx = new ChatContext();
+    let resolveUpdate: () => void = () => {
+      throw new Error('update promise was not initialized');
+    };
+    const updatePromise = new Promise<void>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    activity.agent = agent;
+    activity.realtimeSession = {
+      updateChatCtx: vi.fn(() => updatePromise),
+    };
+
+    let settled = false;
+    const update = activity.updateChatCtx(chatCtx).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+
+    expect(activity.realtimeSession.updateChatCtx).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    resolveUpdate();
+    await update;
+
+    expect(settled).toBe(true);
+  });
+
+  it('should propagate realtime session chat context update failures', async () => {
+    const agent = new Agent({ instructions: 'test' });
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity & {
+      agent: Agent;
+      realtimeSession: { updateChatCtx: ReturnType<typeof vi.fn> };
+    };
+    const chatCtx = new ChatContext();
+    const error = new Error('realtime update failed');
+    activity.agent = agent;
+    activity.realtimeSession = {
+      updateChatCtx: vi.fn(() => Promise.reject(error)),
+    };
+
+    await expect(activity.updateChatCtx(chatCtx)).rejects.toBe(error);
+    expect(activity.realtimeSession.updateChatCtx).toHaveBeenCalledOnce();
   });
 
   it('should return a copy of tools, not the original reference', () => {
