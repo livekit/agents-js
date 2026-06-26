@@ -38,8 +38,8 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(id).toBe('c1');
     expect(f).toHaveBeenCalledTimes(1);
     const body = sentBody(f);
-    expect(body.replica_id).toBe('f1');
-    expect(body.persona_id).toBe('p1');
+    expect(body.face_id).toBe('f1');
+    expect(body.pal_id).toBe('p1');
     expect(warnMock).not.toHaveBeenCalled();
   });
 
@@ -47,8 +47,8 @@ describe('Tavus TavusAPI.createConversation', () => {
     const f = mockFetchOk({ conversation_id: 'c2' });
     await new TavusAPI({ apiKey: 'k' }).createConversation({ replicaId: 'r1', personaId: 'x1' });
     const body = sentBody(f);
-    expect(body.replica_id).toBe('r1');
-    expect(body.persona_id).toBe('x1');
+    expect(body.face_id).toBe('r1');
+    expect(body.pal_id).toBe('x1');
     const msgs = warnMock.mock.calls.map((c) => String(c[0]));
     expect(msgs.some((m) => m.includes('replicaId') && m.includes('faceId'))).toBe(true);
     expect(msgs.some((m) => m.includes('personaId') && m.includes('palId'))).toBe(true);
@@ -60,9 +60,30 @@ describe('Tavus TavusAPI.createConversation', () => {
     const f = mockFetchOk({ conversation_id: 'c3' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
     const body = sentBody(f);
-    expect(body.replica_id).toBe('envf');
-    expect(body.persona_id).toBe('envp');
+    expect(body.face_id).toBe('envf');
+    expect(body.pal_id).toBe('envp');
     expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it('auto-creates a pal via /v2/pals (with default_face_id) when no pal is given', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pal_id: 'pal_new' }) } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ conversation_id: 'c5' }),
+      } as Response);
+    global.fetch = f as unknown as typeof fetch;
+
+    await new TavusAPI({ apiKey: 'k' }).createConversation({ faceId: 'f1' });
+
+    const palUrl = String(f.mock.calls[0]![0]);
+    const palBody = JSON.parse(String((f.mock.calls[0]![1] as RequestInit).body));
+    const convBody = JSON.parse(String((f.mock.calls[1]![1] as RequestInit).body));
+    expect(palUrl).toContain('/pals');
+    expect(palBody.default_face_id).toBe('f1');
+    expect(convBody.face_id).toBe('f1');
+    expect(convBody.pal_id).toBe('pal_new');
   });
 
   it('throws TAVUS_FACE_ID must be set when no face id is provided', async () => {

@@ -65,6 +65,16 @@ function deprecatedEnv(deprecatedName: string, newName: string): string | undefi
 }
 
 /** @public */
+export interface CreatePalOptions {
+  /** Tavus pal name. Generated automatically when omitted. */
+  name?: string;
+  /** Default face id for the pal (required by `/v2/pals`). */
+  defaultFaceId: string;
+  /** Additional fields to merge into the Tavus pal creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+/** @public */
 export interface CreatePersonaOptions {
   /** Tavus persona name. Generated automatically when omitted. */
   name?: string;
@@ -119,13 +129,12 @@ export class TavusAPI {
       process.env.TAVUS_PAL_ID ||
       deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
     if (!palId) {
-      palId = await this.createPersona();
+      palId = await this.createPal({ defaultFaceId: faceId });
     }
 
     const payload: Record<string, unknown> = {
-      // Wire keys stay replica_id/persona_id; the Tavus API still expects them.
-      replica_id: faceId,
-      persona_id: palId,
+      face_id: faceId,
+      pal_id: palId,
       properties: options.properties ?? {},
     };
 
@@ -141,7 +150,27 @@ export class TavusAPI {
     return responseData.conversation_id;
   }
 
+  async createPal(options: CreatePalOptions): Promise<string> {
+    const payload: Record<string, unknown> = {
+      pal_name: options.name || shortuuid('lk_pal_'),
+      default_face_id: options.defaultFaceId,
+      pipeline_mode: 'echo',
+      layers: {
+        transport: { transport_type: 'livekit' },
+      },
+    };
+
+    if (options.extraPayload) {
+      Object.assign(payload, options.extraPayload);
+    }
+
+    const responseData = (await this.post('pals', payload)) as { pal_id: string };
+    return responseData.pal_id;
+  }
+
+  /** @deprecated Use {@link TavusAPI.createPal | createPal} instead. */
   async createPersona(options: CreatePersonaOptions = {}): Promise<string> {
+    log().warn('`createPersona` is deprecated, use `createPal` instead');
     const payload: Record<string, unknown> = {
       persona_name: options.name || shortuuid('lk_persona_'),
       pipeline_mode: 'echo',
