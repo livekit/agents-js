@@ -6,13 +6,13 @@ import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
+  type TimedString,
   asError,
   createTimedString,
   llm,
   log,
   shortuuid,
   stream,
-  type TimedString,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
@@ -661,22 +661,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
         toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
       }),
-      ...(this.options.additionalLanguages !== undefined && {
-        additional_languages: this.options.additionalLanguages,
-      }),
-      ...(this.options.multilingualMode !== undefined && {
-        multilingual_mode: this.options.multilingualMode,
-      }),
-      audio_speed: this.options.audioSpeed,
-      tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
-      boosted_keywords: this.options.boostedKeywords,
-      ...(this.options.minWordsToInterrupt !== undefined && {
-        min_words_to_interrupt: this.options.minWordsToInterrupt,
-      }),
-      generate_no_input_poke_text: this.options.generateNoInputPokeText,
-      no_input_poke_sec: this.options.noInputPokeSec,
-      no_input_poke_text: this.options.noInputPokeText,
-      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
@@ -963,9 +947,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       audio_speed: this.options.audioSpeed,
       tools: toolsPayload,
       boosted_keywords: this.options.boostedKeywords,
-      // ...(this.options.minWordsToInterrupt !== undefined && {
-      //   min_words_to_interrupt: this.options.minWordsToInterrupt,
-      // }),
+      ...(this.options.minWordsToInterrupt !== undefined && {
+        min_words_to_interrupt: this.options.minWordsToInterrupt,
+      }),
       generate_no_input_poke_text: this.options.generateNoInputPokeText,
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
