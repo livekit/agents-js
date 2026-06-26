@@ -26,7 +26,9 @@ export interface TTSOptions {
   model: TTSModels | string;
   encoding: TTSEncoding;
   sampleRate: number;
+  bitRate?: number | null;
   speed?: number;
+  mipOptOut: boolean;
   apiKey?: string;
   baseUrl?: string;
   sentenceTokenizer: tokenize.SentenceTokenizer;
@@ -34,9 +36,11 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'aura-asteria-en',
+  model: 'aura-2-andromeda-en',
   encoding: 'linear16',
   sampleRate: 24000,
+  bitRate: null,
+  mipOptOut: false,
   apiKey: process.env.DEEPGRAM_API_KEY,
   baseUrl: 'https://api.deepgram.com',
   capabilities: {
@@ -57,6 +61,10 @@ export class TTS extends tts.TTS {
 
   get provider(): string {
     return 'Deepgram';
+  }
+
+  override get sampleRate(): number {
+    return this.opts.sampleRate;
   }
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -91,6 +99,17 @@ export class TTS extends tts.TTS {
   stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
     return new SynthesizeStream(this, this.opts, options?.connOptions);
   }
+
+  updateOptions(
+    opts: Partial<
+      Pick<TTSOptions, 'model' | 'encoding' | 'sampleRate' | 'bitRate' | 'speed' | 'mipOptOut'>
+    >,
+  ) {
+    this.opts = {
+      ...this.opts,
+      ...opts,
+    };
+  }
 }
 
 export class ChunkedStream extends tts.ChunkedStream {
@@ -119,6 +138,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    url.searchParams.append('container', 'none');
+    url.searchParams.append('mip_opt_out', String(this.opts.mipOptOut));
+    if (this.opts.bitRate !== undefined && this.opts.bitRate !== null) {
+      url.searchParams.append('bit_rate', this.opts.bitRate.toString());
+    }
     if (this.opts.speed !== undefined) {
       url.searchParams.append('speed', this.opts.speed.toString());
     }
@@ -275,6 +299,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    url.searchParams.append('mip_opt_out', String(this.opts.mipOptOut));
+    if (this.opts.bitRate !== undefined && this.opts.bitRate !== null) {
+      url.searchParams.append('bit_rate', this.opts.bitRate.toString());
+    }
     if (this.opts.speed !== undefined) {
       url.searchParams.append('speed', this.opts.speed.toString());
     }
