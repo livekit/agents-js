@@ -491,8 +491,15 @@ export class AgentServer {
     if (this.#httpServer) {
       tasks.push(this.#httpServer.run());
     }
-    await ThrowsPromise.all(tasks);
-    this.#close.resolve();
+    try {
+      await ThrowsPromise.all(tasks);
+      this.#close.resolve();
+    } catch (e) {
+      if (!this.#close.done) {
+        this.#close.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+      throw e;
+    }
   }
 
   get id(): string {
@@ -925,7 +932,7 @@ export class AgentServer {
 
   async close() {
     if (this.#closed) {
-      await this.#close.await;
+      await this.#close.await.catch(() => undefined);
       return;
     }
 
@@ -939,7 +946,7 @@ export class AgentServer {
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#close.await;
+    await this.#close.await.catch(() => undefined);
   }
 }
 
