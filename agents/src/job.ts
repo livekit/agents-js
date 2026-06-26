@@ -20,6 +20,7 @@ import * as path from 'node:path';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import { SimulationContext, type SimulationDispatch } from './simulation.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
 import { isCloud } from './utils.js';
 import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
@@ -132,6 +133,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   _primaryAgentSession?: AgentSession;
 
   /** @internal */
+  _simulationEndFunc?: (ctx: SimulationContext<ProcessUserData>) => unknown;
+
+  #simulationContext?: SimulationContext<ProcessUserData>;
+  #simulationResolved = false;
+
+  /** @internal */
   _sessionDirectory: string;
 
   private connected: boolean = false;
@@ -198,6 +205,35 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @returns The global inference executor */
   get inferenceExecutor(): InferenceExecutor {
     return this.#inferenceExecutor;
+  }
+
+  simulationContext(): SimulationContext<ProcessUserData> | undefined {
+    if (this.#simulationResolved) {
+      return this.#simulationContext;
+    }
+
+    this.#simulationResolved = true;
+
+    const jobWithMetadata = this.#info.job as proto.Job & { metadata?: string };
+    const roomWithMetadata = this.#room as Room & { metadata?: string };
+    const metadata = jobWithMetadata.metadata || roomWithMetadata.metadata;
+    if (!metadata) {
+      return undefined;
+    }
+
+    let dispatch: SimulationDispatch;
+    try {
+      dispatch = JSON.parse(metadata) as SimulationDispatch;
+    } catch {
+      return undefined;
+    }
+
+    if (!(dispatch.simulationRunId || dispatch.simulation_run_id)) {
+      return undefined;
+    }
+
+    this.#simulationContext = new SimulationContext(dispatch, this);
+    return this.#simulationContext;
   }
 
   /**

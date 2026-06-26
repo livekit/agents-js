@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess } from './job.js';
+import type { SimulationContext } from './simulation.js';
 
 /** @see {@link defineAgent} */
 export interface Agent<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
+  onSimulationEnd?: (ctx: SimulationContext<ProcessUserData>) => unknown;
 }
 
 /** Helper to check if an object is an agent before running it.
@@ -19,7 +21,9 @@ export function isAgent(obj: unknown): obj is Agent {
     obj !== null &&
     'entry' in obj &&
     typeof (obj as Agent).entry === 'function' &&
-    (('prewarm' in obj && typeof (obj as Agent).prewarm === 'function') || !('prewarm' in obj))
+    (('prewarm' in obj && typeof (obj as Agent).prewarm === 'function') || !('prewarm' in obj)) &&
+    (('onSimulationEnd' in obj && typeof (obj as Agent).onSimulationEnd === 'function') ||
+      !('onSimulationEnd' in obj))
   );
 }
 
