@@ -96,10 +96,20 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('throws when neither face id nor pal id is provided', async () => {
-    mockFetchOk({ conversation_id: 'c5' });
-    await expect(new TavusAPI({ apiKey: 'k' }).createConversation()).rejects.toThrow(
-      /face_id .* or pal_id/,
-    );
+  it('falls back to the default face id when neither face nor pal is provided', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ pal_id: 'pal_new' }) } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ conversation_id: 'c5' }),
+      } as Response);
+    global.fetch = f as unknown as typeof fetch;
+
+    await new TavusAPI({ apiKey: 'k' }).createConversation();
+
+    expect(String(f.mock.calls[0]![0])).toContain('/pals');
+    const palBody = JSON.parse(String((f.mock.calls[0]![1] as RequestInit).body));
+    expect(palBody.default_face_id).toBe('r72f7f7f7c8b');
   });
 });

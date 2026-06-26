@@ -14,6 +14,9 @@ import { log } from './log.js';
 /** @public */
 export const DEFAULT_API_URL = 'https://tavusapi.com/v2';
 
+// Stock face used when the caller provides neither a face nor a pal.
+const DEFAULT_FACE_ID = 'r72f7f7f7c8b';
+
 /**
  * Exception thrown when the Tavus plugin or Tavus service errors.
  *
@@ -127,13 +130,8 @@ export class TavusAPI {
       deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
 
     if (!palId) {
-      // no pal to reuse, so create one — which requires a face
-      if (!faceId) {
-        throw new TavusException(
-          'either face_id (TAVUS_FACE_ID) or pal_id (TAVUS_PAL_ID) must be set',
-        );
-      }
-      palId = await this.createPal({ defaultFaceId: faceId });
+      // no pal to reuse, so create one — falling back to the default face
+      palId = await this.createPal({ defaultFaceId: faceId || DEFAULT_FACE_ID });
     }
 
     const payload: Record<string, unknown> = {
