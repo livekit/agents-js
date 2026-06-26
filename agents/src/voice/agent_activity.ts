@@ -1599,7 +1599,7 @@ export class AgentActivity implements RecognitionHooks {
     const onAbort = () => waitInactiveTask.cancel();
     signal.addEventListener('abort', onAbort, { once: true });
     const waitInactiveResult = waitInactiveTask.result.catch((error) => {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         return;
       }
       throw error;
