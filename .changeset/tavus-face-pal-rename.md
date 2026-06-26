@@ -2,4 +2,4 @@
 '@livekit/agents-plugin-tavus': minor
 ---
 
-Rename the Tavus plugin's `replicaId`/`personaId` options (and `TAVUS_REPLICA_ID`/`TAVUS_PERSONA_ID` env vars) to `faceId`/`palId` (`TAVUS_FACE_ID`/`TAVUS_PAL_ID`). The old names continue to work as deprecated aliases.
+Align the Tavus plugin with the new face/pal API: `faceId`/`palId` options and `TAVUS_FACE_ID`/`TAVUS_PAL_ID` env vars, sending `face_id`/`pal_id` on the wire and auto-creating pals via `/v2/pals` (`createPal`). The old `replicaId`/`personaId` options, `TAVUS_REPLICA_ID`/`TAVUS_PERSONA_ID` env vars, and `createPersona()` keep working as deprecated aliases.
