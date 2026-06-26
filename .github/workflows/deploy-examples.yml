@@ -1,0 +1,122 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Deploy Examples
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or ref to deploy from (default: main)'
+        type: string
+        required: false
+        default: 'main'
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: frontdesk
+            entry: ./frontdesk/frontdesk_agent.js
+            agent_id_secret: LIVEKIT_EXAMPLES_FRONTDESK_AGENT_ID
+          - example: survey
+            entry: ./survey_agent.js
+            agent_id_secret: LIVEKIT_EXAMPLES_SURVEY_AGENT_ID
+          - example: drive-thru
+            entry: ./drive-thru/drivethru_agent.js
+            agent_id_secret: LIVEKIT_EXAMPLES_DRIVE_THRU_AGENT_ID
+          - example: avatar
+            entry: ./lemonslice_realtime_avatar.js
+            agent_id_secret: LIVEKIT_EXAMPLES_AVATAR_AGENT_ID
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
+      - name: Install LiveKit CLI
+        run: |
+          curl -sSL https://get.livekit.io/cli | bash
+          lk --version
+
+      - name: Add LiveKit Cloud project
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_EXAMPLES_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_EXAMPLES_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_EXAMPLES_API_SECRET }}
+        run: |
+          lk project add examples \
+            --url "$LIVEKIT_URL" \
+            --api-key "$LIVEKIT_API_KEY" \
+            --api-secret "$LIVEKIT_API_SECRET" \
+            --default
+
+      - name: Prepare deploy directory
+        env:
+          AGENT_ID: ${{ secrets[matrix.agent_id_secret] }}
+        run: |
+          if [ -z "$AGENT_ID" ]; then
+            echo "::error::${{ matrix.agent_id_secret }} is required"
+            exit 1
+          fi
+
+          deploy_dir="deploy/${{ matrix.example }}"
+          mkdir -p "$deploy_dir"
+          cp -R examples/. "$deploy_dir"
+          cp "$deploy_dir/src/Dockerfile-example" "$deploy_dir/Dockerfile"
+          cat > "$deploy_dir/src/agent.ts" <<'EOF'
+          import '${{ matrix.entry }}';
+          EOF
+          cat > "$deploy_dir/livekit.toml" <<EOF
+          [project]
+            subdomain = "examples-wfxyig8v"
+
+          [agent]
+            id = "$AGENT_ID"
+          EOF
+
+      - name: Build secrets file
+        working-directory: deploy/${{ matrix.example }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LEMONSLICE_API_KEY: ${{ secrets.LEMONSLICE_API_KEY }}
+        run: |
+          : > .env.deploy
+          # Register the agent under a deterministic name so the playground can
+          # dispatch to it explicitly.
+          echo "LIVEKIT_AGENT_NAME=${{ matrix.example }}" >> .env.deploy
+          case "${{ matrix.example }}" in
+            avatar)
+              keys="LEMONSLICE_API_KEY"
+              ;;
+            *)
+              keys=""
+              ;;
+          esac
+          for k in $keys; do
+            val="${!k}"
+            if [ -n "$val" ]; then
+              echo "${k}=${val}" >> .env.deploy
+            fi
+          done
+
+      - name: Deploy ${{ matrix.example }}
+        working-directory: deploy/${{ matrix.example }}
+        run: |
+          args=()
+          if [ -s .env.deploy ]; then
+            args+=(--secrets-file .env.deploy)
+          fi
+          lk agent deploy "${args[@]}" .
