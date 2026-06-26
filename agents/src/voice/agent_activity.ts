@@ -115,12 +115,14 @@ import {
   type _AudioOut,
   type _TextOut,
   applyInstructionsModality,
+  injectRunningToolCalls,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
   performTextForwarding,
   performToolExecutions,
   removeInstructions,
+  stripRunningToolCalls,
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
@@ -2560,6 +2562,8 @@ export class AgentActivity implements RecognitionHooks {
     // apply the correct variant of the instructions for the turn's input modality
     applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
 
+    injectRunningToolCalls(chatCtx, this.runningToolCalls());
+
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
@@ -3062,6 +3066,7 @@ export class AgentActivity implements RecognitionHooks {
       ...functionToolsExecutedEvent.functionCallOutputs,
     ] as ChatItem[];
     if (shouldGenerateToolReply) {
+      stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
 
       // Increment step count on the existing handle.
@@ -3852,6 +3857,26 @@ export class AgentActivity implements RecognitionHooks {
     this.speechQueue.push([priority, Number(process.hrtime.bigint()), speechHandle]);
     speechHandle._markScheduled();
     this.wakeupMainTask();
+  }
+
+  private runningToolCalls(): FunctionCall[] {
+    const runningCalls: FunctionCall[] = [];
+
+    for (const speech of this._backgroundSpeeches) {
+      const completedCallIds = new Set(
+        speech.chatItems
+          .filter((item) => item.type === 'function_call_output')
+          .map((item) => item.callId),
+      );
+
+      for (const item of speech.chatItems) {
+        if (item.type === 'function_call' && !completedCallIds.has(item.callId)) {
+          runningCalls.push(item);
+        }
+      }
+    }
+
+    return runningCalls;
   }
 
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {

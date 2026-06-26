@@ -81,6 +81,68 @@ export class _LLMGenerationData {
   }
 }
 
+const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
+const RUNNING_PLACEHOLDER_KEY = '__lk_running_placeholder__';
+
+/** @internal */
+export function injectRunningToolCalls(
+  chatCtx: ChatContext,
+  runningCalls: Iterable<FunctionCall>,
+  placeholder: string = RUNNING_TOOL_PLACEHOLDER,
+): void {
+  const existing = new Set(
+    chatCtx.items.flatMap((item) =>
+      item.type === 'function_call' || item.type === 'function_call_output' ? [item.callId] : [],
+    ),
+  );
+
+  for (const fncCall of runningCalls) {
+    if (existing.has(fncCall.callId)) continue;
+    existing.add(fncCall.callId);
+
+    chatCtx.insert([
+      FunctionCall.create({
+        id: fncCall.id,
+        callId: fncCall.callId,
+        name: fncCall.name,
+        args: fncCall.args,
+        createdAt: fncCall.createdAt,
+        extra: { ...fncCall.extra, [RUNNING_PLACEHOLDER_KEY]: true },
+        groupId: fncCall.groupId,
+        thoughtSignature: fncCall.thoughtSignature,
+      }),
+      FunctionCallOutput.create({
+        callId: fncCall.callId,
+        name: fncCall.name,
+        output: placeholder,
+        isError: false,
+        createdAt: fncCall.createdAt,
+      }),
+    ]);
+  }
+}
+
+/** @internal */
+export function stripRunningToolCalls(chatCtx: ChatContext): void {
+  const flagged = new Set(
+    chatCtx.items.flatMap((item) =>
+      item.type === 'function_call' && item.extra[RUNNING_PLACEHOLDER_KEY] === true
+        ? [item.callId]
+        : [],
+    ),
+  );
+
+  if (flagged.size === 0) return;
+
+  chatCtx.items = chatCtx.items.filter(
+    (item) =>
+      !(
+        (item.type === 'function_call' || item.type === 'function_call_output') &&
+        flagged.has(item.callId)
+      ),
+  );
+}
+
 /**
  * TTS generation data containing audio stream and optional timed transcripts.
  * @internal
