@@ -6,7 +6,9 @@ import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
+  type TimedString,
   asError,
+  createTimedString,
   llm,
   log,
   shortuuid,
@@ -17,8 +19,8 @@ import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
 
-const PHONIC_INPUT_SAMPLE_RATE = 44100;
-const PHONIC_OUTPUT_SAMPLE_RATE = 44100;
+const PHONIC_INPUT_SAMPLE_RATE = 24000;
+const PHONIC_OUTPUT_SAMPLE_RATE = 24000;
 const PHONIC_NUM_CHANNELS = 1;
 const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
@@ -183,7 +185,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
       perResponseToolChoice: false,
-      nativeTranscriptSync: true,
+      nativeTranscriptSync: false,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;
@@ -245,9 +247,10 @@ interface GenerationState {
   responseId: string;
   messageChannel: stream.StreamChannel<llm.MessageGeneration>;
   functionChannel: stream.StreamChannel<llm.FunctionCall>;
-  textChannel: stream.StreamChannel<string>;
+  textChannel: stream.StreamChannel<string | TimedString>;
   audioChannel: stream.StreamChannel<AudioFrame>;
   outputText: string;
+  audioCursorSec: number;
 }
 
 /**
@@ -274,7 +277,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolsReady = new Future<void>();
   private closedFuture = new Future<void, never>();
   private connectTask: Promise<void>;
-  private toolDefinitions: Record<string, unknown>[] = [];
+  private toolDefinitions: Phonic.InlineWebSocketTool[] = [];
   private forbidSpeechAfterToolCall = new Set<string>();
   private pendingToolCallIds = new Set<string>();
   private readyToStart = new Future<void>();
@@ -407,7 +410,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.toolsReady.resolve();
   }
 
-  private buildToolDefinitions(tools: llm.ToolContext): Record<string, unknown>[] {
+  private buildToolDefinitions(tools: llm.ToolContext): Phonic.InlineWebSocketTool[] {
     this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
     return Object.entries(tools)
       .filter(([, tool]) => llm.isFunctionTool(tool))
@@ -418,7 +421,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           function: {
             name,
             description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters),
+            parameters: llm.toJsonSchema(tool.parameters) as Phonic.OpenAiFunctionParameters,
             strict: true,
           },
         },
@@ -466,7 +469,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.closeCurrentGeneration({ interrupted: true });
     this.pendingUserText = undefined;
 
-    const toolsPayload: Phonic.ConfigOptions.Tools.Item[] = [
+    const toolsPayload: Phonic.ToolDefinition[] = [
       ...(this.options.phonicTools ?? []),
       ...this.toolDefinitions,
     ];
@@ -658,22 +661,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         systemPrompt: this.options.instructions + this.systemPromptPostfix,
         toolsPayload: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
       }),
-      ...(this.options.additionalLanguages !== undefined && {
-        additional_languages: this.options.additionalLanguages,
-      }),
-      ...(this.options.multilingualMode !== undefined && {
-        multilingual_mode: this.options.multilingualMode,
-      }),
-      audio_speed: this.options.audioSpeed,
-      tools: [...(this.options.phonicTools ?? []), ...this.toolDefinitions],
-      boosted_keywords: this.options.boostedKeywords,
-      ...(this.options.minWordsToInterrupt !== undefined && {
-        min_words_to_interrupt: this.options.minWordsToInterrupt,
-      }),
-      generate_no_input_poke_text: this.options.generateNoInputPokeText,
-      no_input_poke_sec: this.options.noInputPokeSec,
-      no_input_poke_text: this.options.noInputPokeText,
-      no_input_end_conversation_sec: this.options.noInputEndConversationSec,
     });
   }
 
@@ -749,10 +736,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const gen = this.currentGeneration;
     if (gen === undefined) return;
 
-    if (message.text) {
-      gen.outputText += message.text;
-      gen.textChannel.write(message.text);
-    }
+    let audioFrame: AudioFrame | undefined;
+    let audioDurationSec = 0;
 
     if (message.audio) {
       const bytes = Buffer.from(message.audio, 'base64');
@@ -764,14 +749,30 @@ export class RealtimeSession extends llm.RealtimeSession {
             bytes.byteOffset + sampleCount * Int16Array.BYTES_PER_ELEMENT,
           ),
         );
-        const frame = new AudioFrame(
+        audioFrame = new AudioFrame(
           pcm,
           PHONIC_OUTPUT_SAMPLE_RATE,
           PHONIC_NUM_CHANNELS,
           sampleCount / PHONIC_NUM_CHANNELS,
         );
-        gen.audioChannel.write(frame);
+        audioDurationSec = audioFrame.samplesPerChannel / PHONIC_OUTPUT_SAMPLE_RATE;
       }
+    }
+
+    if (message.text) {
+      gen.outputText += message.text;
+      gen.textChannel.write(
+        createTimedString({
+          text: message.text,
+          startTime: gen.audioCursorSec,
+          endTime: gen.audioCursorSec + audioDurationSec,
+        }),
+      );
+    }
+
+    if (audioFrame) {
+      gen.audioChannel.write(audioFrame);
+      gen.audioCursorSec += audioDurationSec;
     }
   }
 
@@ -838,7 +839,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const responseId = shortuuid('PS_');
 
-    const textChannel = stream.createStreamChannel<string>();
+    const textChannel = stream.createStreamChannel<string | TimedString>();
     const audioChannel = stream.createStreamChannel<AudioFrame>();
     const functionChannel = stream.createStreamChannel<llm.FunctionCall>();
     const messageChannel = stream.createStreamChannel<llm.MessageGeneration>();
@@ -857,6 +858,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       textChannel,
       audioChannel,
       outputText: '',
+      audioCursorSec: 0,
     };
 
     const generationEvent: llm.GenerationCreatedEvent = {
@@ -922,7 +924,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     toolsPayload,
   }: {
     systemPrompt: string;
-    toolsPayload: Phonic.ConfigOptions.Tools.Item[];
+    toolsPayload: Phonic.ToolDefinition[];
   }): Phonic.ConfigOptions {
     return {
       agent: this.options.phonicAgent,
@@ -931,8 +933,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       generate_welcome_message: this.options.generateWelcomeMessage,
       system_prompt: systemPrompt,
       voice_id: this.options.voice,
-      input_format: 'pcm_44100',
-      output_format: 'pcm_44100',
+      input_format: 'pcm_24000',
+      output_format: 'pcm_24000',
       ...(this.options.defaultLanguage !== undefined && {
         default_language: this.options.defaultLanguage,
       }),
@@ -945,13 +947,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       audio_speed: this.options.audioSpeed,
       tools: toolsPayload,
       boosted_keywords: this.options.boostedKeywords,
-      // ...(this.options.minWordsToInterrupt !== undefined && {
-      //   min_words_to_interrupt: this.options.minWordsToInterrupt,
-      // }),
+      ...(this.options.minWordsToInterrupt !== undefined && {
+        min_words_to_interrupt: this.options.minWordsToInterrupt,
+      }),
       generate_no_input_poke_text: this.options.generateNoInputPokeText,
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+      stream_ahead_of_real_time: true,
     };
   }
 
