@@ -31,6 +31,14 @@ type ResponseDoneSessionInternals = {
   };
 };
 
+type ChatCtxUpdateSessionInternals = {
+  createChatCtxUpdateEvents: (
+    chatCtx: llm.ChatContext,
+    addMockAudio?: boolean,
+  ) => Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+  remoteChatCtx: llm.RemoteChatContext;
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
@@ -62,6 +70,29 @@ describe('RealtimeSession.generateReply', () => {
       expect.objectContaining({ type: 'response.create' }),
     );
     expect(session.sendEvent).toHaveBeenCalledWith({ type: 'response.cancel' });
+  });
+});
+
+describe('RealtimeSession.createChatCtxUpdateEvents', () => {
+  it('deletes empty remote items', async () => {
+    const remoteChatCtx = new llm.RemoteChatContext();
+    const audioItem = new llm.ChatMessage({ role: 'user', content: [], id: 'audio_item' });
+    const keptItem = new llm.ChatMessage({
+      role: 'assistant',
+      content: 'kept',
+      id: 'assistant_item',
+    });
+    remoteChatCtx.insert(undefined, audioItem);
+    remoteChatCtx.insert(audioItem.id, keptItem);
+
+    const session = Object.create(RealtimeSession.prototype) as ChatCtxUpdateSessionInternals;
+    session.remoteChatCtx = remoteChatCtx;
+    const events = await session.createChatCtxUpdateEvents(new llm.ChatContext([keptItem]));
+
+    const deleteIds = events
+      .filter((event) => event.type === 'conversation.item.delete')
+      .map((event) => event.item_id);
+    expect(deleteIds).toEqual(['audio_item']);
   });
 });
 
