@@ -1,5 +1,25 @@
 # @livekit/agents
 
+## 1.4.10
+
+### Patch Changes
+
+- Add Deepgram `keyterm` to inference STT model options and support batch recognition in the Deepgram STT plugin. - [#1766](https://github.com/livekit/agents-js/pull/1766) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(dep): update local-inference dep - [#1873](https://github.com/livekit/agents-js/pull/1873) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Simulation fixes: do not start the worker HTTP server, disable the worker load limit so runs can saturate the agent, and honor `LIVEKIT_AGENT_NAME_OVERRIDE` so the worker registers under the name `lk simulate` dispatches to. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Emit the `lk.chat_ctx` span attribute (on LLM-generation and EOU-prediction spans) in snake_case to match the Python framework, which serializes the same attribute via `chat_ctx.to_dict()`. The JS side was stringifying `chatCtx.toJSON()` directly, which emits camelCase field names (`callId`, `args`, `isError`, `createdAt`), so traces from JS agents diverged from Python agents. The chat context is now run through the shared `toSnakeCaseDeep` conversion (exported from the report layer), and the timestamp exclusion is aligned with Python (`toJSON()` defaults exclude image/audio/timestamps). Note: the Python EOU path additionally trims to the last N turns and excludes function calls — aligning that behavior is left to a follow-up. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize chat-item `toJSON()` output in snake_case (e.g. `new_agent_id`, `call_id`, `arguments`, `is_error`, `created_at`) to match the Python session-report schema. The uploaded `chat_history.json` previously used camelCase keys, so LiveKit Cloud's parser rejected required fields (e.g. `agent_handoff.new_agent_id`). Constructor/`create()` APIs are unchanged. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the session report's `events` and `usage` arrays in snake_case to match the Python session-report schema. Event fields (`old_state`, `new_state`, `is_final`, `speaker_id`, `function_calls`, `created_at`, …) and model-usage fields (`input_tokens`, `session_duration`, `audio_duration`, `characters_count`, `total_requests`, …) previously leaked camelCase keys, so LiveKit Cloud's Python parser dropped them. Usage durations are now emitted in seconds (matching the proto wire format and Python model). Also adds the `audio_recording_path`, `audio_recording_started_at`, `sdk_version`, and `options.user_away_timeout` fields to match Python's `SessionReport.to_dict()`. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the uploaded session-recording `chat_history` in snake_case to match the Python wire schema. `uploadSessionReport` was stringifying `chatHistory.toJSON()` directly, which emits camelCase field names; the snake_case conversion lives only in `sessionReportToJSON` (`toSnakeCaseDeep`). As a result the uploaded chat history carried camelCase keys (`callId`, `args`, `isError`, `newAgentId`, `createdAt`), and the Python consumer's pydantic validation rejected the chat items with "field required" errors for `call_id`, `arguments`, `is_error`, and `new_agent_id`. The upload now reuses `sessionReportToJSON(report).chat_history` so the two serializations can't drift. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Keep the STT input timestamp anchor attached to reused STT pipelines across agent handoff. - [#1870](https://github.com/livekit/agents-js/pull/1870) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.9
 
 ### Patch Changes
