@@ -27,7 +27,7 @@ export interface STTOptions {
   detectLanguage: boolean;
   interimResults: boolean;
   punctuate: boolean;
-  model: STTModels;
+  model: STTModels | string;
   smartFormat: boolean;
   noDelay: boolean;
   endpointing: number;
@@ -43,6 +43,9 @@ export interface STTOptions {
    * See https://developers.deepgram.com/docs/redaction for details.
    */
   redact: string | string[];
+  utteranceEndMs?: number | null;
+  replace?: Record<string, string> | null;
+  search?: string[] | null;
   dictation: boolean;
   diarize: boolean;
   numerals: boolean;
@@ -67,6 +70,9 @@ const defaultSTTOptions: STTOptions = {
   keyterm: [],
   profanityFilter: false,
   redact: [],
+  utteranceEndMs: null,
+  replace: null,
+  search: null,
   dictation: false,
   diarize: false,
   numerals: false,
@@ -130,15 +136,7 @@ export class STT extends stt.STT {
       ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
     };
 
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined) {
-        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-          listenURL.searchParams.append(k, String(v));
-        } else {
-          v.forEach((x) => listenURL.searchParams.append(k, String(x)));
-        }
-      }
-    });
+    appendSearchParams(listenURL, params);
 
     if (this.#opts.diarize) {
       this.#logger.warn('speaker diarization is not supported in non-streaming mode, ignoring');
@@ -180,7 +178,7 @@ export class STT extends stt.STT {
     };
   }
 
-  #validateModel(model: STTModels, language?: string) {
+  #validateModel(model: STTModels | string, language?: string) {
     if (
       language &&
       getBaseLanguage(language) !== 'en' &&
@@ -268,18 +266,13 @@ export class SpeechStream extends stt.SpeechStream {
         keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
         redact: this.#opts.redact,
+        utterance_end_ms: this.#opts.utteranceEndMs,
+        replace: this.#opts.replace,
+        search: this.#opts.search,
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
       };
-      Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined) {
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            streamURL.searchParams.append(k, String(v));
-          } else {
-            v.forEach((x) => streamURL.searchParams.append(k, String(x)));
-          }
-        }
-      });
+      appendSearchParams(streamURL, params);
 
       ws = new WebSocket(streamURL, {
         headers: { Authorization: `Token ${this.#opts.apiKey}` },
@@ -479,6 +472,13 @@ export class SpeechStream extends stt.SpeechStream {
               case 'Metadata': {
                 break;
               }
+              case 'UtteranceEnd': {
+                if (this.#speaking) {
+                  this.#speaking = false;
+                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                }
+                break;
+              }
               default: {
                 this.#logger.child({ msg: json }).warn('received unexpected message from Deepgram');
                 break;
@@ -517,6 +517,22 @@ export class SpeechStream extends stt.SpeechStream {
     };
     this.queue.put(usageEvent);
   }
+}
+
+function appendSearchParams(url: URL, params: Record<string, unknown>) {
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => url.searchParams.append(key, String(item)));
+    } else if (typeof value === 'object') {
+      Object.entries(value).forEach(([term, replacement]) => {
+        url.searchParams.append(key, `${term}:${replacement}`);
+      });
+    } else {
+      url.searchParams.append(key, String(value));
+    }
+  });
 }
 
 function createWav(frame: AudioFrame): Buffer {
