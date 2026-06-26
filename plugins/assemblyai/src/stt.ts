@@ -40,6 +40,7 @@ interface StreamEventMessage {
   end_of_turn_confidence?: number;
   turn_is_formatted?: boolean;
   language_code?: string;
+  language_confidence?: number;
   speaker_label?: string;
   words?: Array<{
     text?: string;
@@ -51,6 +52,18 @@ interface StreamEventMessage {
   // Termination
   audio_duration_seconds?: number;
   session_duration_seconds?: number;
+}
+
+function speechDataMetadata(data: StreamEventMessage): stt.SpeechData['metadata'] | undefined {
+  const assemblyai: Record<string, number> = {};
+
+  if (typeof data.language_confidence === 'number') {
+    assemblyai.languageConfidence = data.language_confidence;
+  }
+
+  if (Object.keys(assemblyai).length === 0) return undefined;
+
+  return { assemblyai };
 }
 
 export interface STTOptions {
@@ -522,6 +535,7 @@ export class SpeechStream extends stt.SpeechStream {
     const utterance = data.utterance ?? '';
     const transcript = data.transcript ?? '';
     const language = normalizeLanguage(data.language_code ?? 'en');
+    const metadata = speechDataMetadata(data);
 
     // Word timestamps are in milliseconds:
     // https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api#receive.receiveTurn.words
@@ -556,6 +570,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });
@@ -583,6 +598,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence: utteranceConfidence,
             words: utteranceWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });
@@ -603,6 +619,7 @@ export class SpeechStream extends stt.SpeechStream {
             endTime,
             confidence,
             words: timedWords,
+            ...(metadata ? { metadata } : {}),
           },
         ],
       });
