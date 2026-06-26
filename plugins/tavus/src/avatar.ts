@@ -25,9 +25,13 @@ const AVATAR_AGENT_NAME = 'tavus-avatar-agent';
  * @public
  */
 export interface AvatarSessionOptions {
-  /** Tavus replica id. Falls back to `TAVUS_REPLICA_ID`. */
+  /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
+  faceId?: string;
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; created automatically when omitted. */
+  palId?: string;
+  /** @deprecated Use {@link AvatarSessionOptions.faceId | faceId} instead. */
   replicaId?: string;
-  /** Tavus persona id. Falls back to `TAVUS_PERSONA_ID`; created automatically when omitted. */
+  /** @deprecated Use {@link AvatarSessionOptions.palId | palId} instead. */
   personaId?: string;
   /** Override the Tavus API base URL. */
   apiUrl?: string;
@@ -61,6 +65,9 @@ export interface StartOptions {
  * @public
  */
 export class AvatarSession extends voice.AvatarSession {
+  private faceId?: string;
+  private palId?: string;
+  // Deprecated aliases for faceId/palId; resolved in TavusAPI.createConversation.
   private replicaId?: string;
   private personaId?: string;
   private avatarParticipantIdentity: string;
@@ -73,6 +80,8 @@ export class AvatarSession extends voice.AvatarSession {
 
   constructor(options: AvatarSessionOptions = {}) {
     super();
+    this.faceId = options.faceId;
+    this.palId = options.palId;
     this.replicaId = options.replicaId;
     this.personaId = options.personaId;
     this.avatarParticipantIdentity = options.avatarParticipantIdentity || AVATAR_AGENT_IDENTITY;
@@ -144,8 +153,10 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.#logger.debug('starting avatar session');
     this.conversationId = await this.api.createConversation({
-      personaId: this.personaId,
+      faceId: this.faceId,
+      palId: this.palId,
       replicaId: this.replicaId,
+      personaId: this.personaId,
       properties: { livekit_ws_url: livekitUrl, livekit_room_token: livekitToken },
     });
 
