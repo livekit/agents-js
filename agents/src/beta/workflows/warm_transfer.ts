@@ -6,7 +6,7 @@ import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@l
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../../inference/index.js';
-import { getJobContext } from '../../job.js';
+import { type JobContext, getJobContext } from '../../job.js';
 import type {
   ChatContext,
   Instructions,
@@ -83,6 +83,11 @@ export interface WarmTransferTaskOptions {
 export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   private _callerRoom: Room | null = null;
   private _humanAgentRoom: Room | null = null;
+  // Captured while the task runs inside the live job context. The post-merge
+  // caller-room cleanup listener fires from a native rtc-node FFI callback whose
+  // AsyncLocalStorage context is pinned to FfiClient-singleton creation, so
+  // getJobContext() is unreliable there; we capture the context eagerly instead.
+  private _jobCtx: JobContext | null = null;
   private _humanAgentSession: AgentSession | null = null;
   // Assigned in the constructor; a field initializer here would run after the
   // resolver is captured and clobber it (ES2022 class-field semantics).
@@ -229,6 +234,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
   async onEnter(): Promise<void> {
     const jobCtx = getJobContext();
+    this._jobCtx = jobCtx;
     this._callerRoom = jobCtx.room;
 
     if (this._holdAudio !== null) {
@@ -338,8 +344,16 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 
     this._callerRoom.off(RoomEvent.ParticipantDisconnected, this.onCallerParticipantDisconnected);
 
-    const rooms = new RoomServiceClient(getJobContext().info.url);
-    void rooms.deleteRoom(this._callerRoom.name).catch((error) => {
+    // Use the eagerly-captured job context: this callback runs from a native
+    // rtc-node FFI event, where getJobContext() reads an empty/stale
+    // AsyncLocalStorage store and would throw as an unhandled rejection.
+    const jobCtx = this._jobCtx;
+    if (!jobCtx) {
+      this._logger.warn('no job context captured, cannot delete caller room');
+      return;
+    }
+    const callerRoomName = this._callerRoom.name;
+    void jobCtx.deleteRoom(callerRoomName).catch((error) => {
       this._logger.warn({ error }, 'failed to delete caller room');
     });
   };
@@ -518,7 +532,8 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       'moving human agent to caller room',
     );
 
-    const rooms = new RoomServiceClient(getJobContext().info.url);
+    const info = (this._jobCtx ?? getJobContext()).info;
+    const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
     await rooms.moveParticipant(
       this._humanAgentRoom.name,
       this._humanAgentIdentity,
