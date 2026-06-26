@@ -120,23 +120,30 @@ export class TavusAPI {
       resolveRenamedOption(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
       process.env.TAVUS_FACE_ID ||
       deprecatedEnv('TAVUS_REPLICA_ID', 'TAVUS_FACE_ID');
-    if (!faceId) {
-      throw new TavusException('TAVUS_FACE_ID must be set');
-    }
 
     let palId =
       resolveRenamedOption(options.palId, options.personaId, 'personaId', 'palId') ||
       process.env.TAVUS_PAL_ID ||
       deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
+
     if (!palId) {
+      // no pal to reuse, so create one — which requires a face
+      if (!faceId) {
+        throw new TavusException(
+          'either face_id (TAVUS_FACE_ID) or pal_id (TAVUS_PAL_ID) must be set',
+        );
+      }
       palId = await this.createPal({ defaultFaceId: faceId });
     }
 
     const payload: Record<string, unknown> = {
-      face_id: faceId,
       pal_id: palId,
       properties: options.properties ?? {},
     };
+    // send face_id only when given; otherwise the pal's default_face_id is used
+    if (faceId) {
+      payload.face_id = faceId;
+    }
 
     if (options.extraPayload) {
       Object.assign(payload, options.extraPayload);
