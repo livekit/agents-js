@@ -358,4 +358,45 @@ describe('ParticipantAudioOutput false-interruption replay', () => {
 
     expect(captured).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
+
+  // A false interruption at the very end of an utterance has no following
+  // captureFrame() in the same segment to consume the replay tail. The segment
+  // completes non-interrupted (pause's clearQueue lets waitForPlayout resolve),
+  // so the tail must be dropped at segment end — otherwise it leaks into the
+  // start of the next utterance.
+  it('drops the unplayed tail at segment end (end-of-utterance false interruption)', async () => {
+    const captured: number[] = [];
+    const output = makeOutput(100, captured) as ReplayOutput & {
+      onPlaybackFinished: (event: { playbackPosition: number; interrupted: boolean }) => void;
+      waitForPlayoutTask: (abortController: AbortController) => Promise<void>;
+      audioSource: ReplayOutput['audioSource'] & { waitForPlayout: () => Promise<void> };
+    };
+    output.onPlaybackFinished = vi.fn();
+    let resolvePlayout!: () => void;
+    const playout = new Promise<void>((resolve) => {
+      resolvePlayout = resolve;
+    });
+    output.audioSource.waitForPlayout = () => playout;
+
+    for (let i = 0; i < 10; i++) {
+      await output.captureFrame(frameOf(i));
+    }
+
+    // False interruption right at the end: the tail (5..9) is captured for replay.
+    output.audioSource.queuedDuration = 100;
+    output.pause();
+    expect(output.replayFrames.length).toBe(5);
+
+    // Segment completes normally: clearQueue (from pause) let waitForPlayout
+    // resolve and no clearBuffer fired, so interrupted === false.
+    const task = output.waitForPlayoutTask(new AbortController());
+    resolvePlayout();
+    await task;
+    expect(output.replayFrames.length).toBe(0);
+
+    // Next utterance must not be prefixed with the stale tail.
+    output.resume();
+    await output.captureFrame(frameOf(10));
+    expect(captured).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
 });

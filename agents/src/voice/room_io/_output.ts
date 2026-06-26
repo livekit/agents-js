@@ -539,13 +539,14 @@ export class ParticipantAudioOutput extends AudioOutput {
 
     this.pushedDuration = 0;
     this.firstFrameEmitted = false;
-    // Segment finished: drop the rolling window. On an interruption also drop any
-    // pending replay tail (the user chose to cut the agent off).
+    // Segment finished: drop the rolling window and any pending replay tail. A
+    // replay tail belongs to the segment that just ended: mid-utterance false
+    // interruptions already consume it on the next captureFrame() before flush,
+    // so anything still pending here is end-of-utterance and must be dropped —
+    // otherwise it leaks into the start of the next utterance.
     this.recentFrames = [];
     this.recentFramesMs = 0;
-    if (interrupted) {
-      this.replayFrames = [];
-    }
+    this.replayFrames = [];
 
     this.onPlaybackFinished({
       playbackPosition: pushedDuration,
