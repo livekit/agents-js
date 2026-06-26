@@ -269,6 +269,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
+  #numRetries = 0;
 
   protected abortController = new AbortController();
 
@@ -288,19 +289,26 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+    startSoon(async () => {
+      try {
+        await this.mainTask();
+      } catch {
+        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } finally {
+        this.queue.close();
+      }
+    });
   }
 
   /**
-   * Runs the STT with retry logic. Errors are emitted via {@link STT} error events
-   * and then re-thrown to trigger `.finally()` cleanup.
+   * Runs the STT with retry logic. Errors are emitted via {@link STT} error events.
    *
-   * @throws {APIError} When the STT request fails with a non-retryable error
-   * @throws {APIConnectionError} When all retry attempts are exhausted
-   * @internal Not annotated with Throws<> because this is fire-and-forget via startSoon()
+   * @throws APIError when the STT request fails with a non-retryable error.
+   * @throws APIConnectionError when all retry attempts are exhausted.
+   * @internal Not annotated with Throws because this is fire-and-forget via startSoon.
    */
   private async mainTask(): Promise<void> {
-    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+    while (true) {
       try {
         return await this.run();
       } catch (error) {
@@ -313,12 +321,13 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         }
 
         if (error instanceof APIError) {
-          const retryInterval = intervalForRetry(this._connOptions, i);
+          const retryCount = this.#numRetries;
+          const retryInterval = intervalForRetry(this._connOptions, retryCount);
 
           if (this._connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });
             throw error;
-          } else if (i === this._connOptions.maxRetry) {
+          } else if (retryCount === this._connOptions.maxRetry) {
             this.emitError({ error, recoverable: false });
             throw new APIConnectionError({
               message: `failed to recognize speech after ${this._connOptions.maxRetry + 1} attempts`,
@@ -328,7 +337,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
-              { stt: this.#stt.label, attempt: i + 1, error },
+              { stt: this.#stt.label, attempt: retryCount + 1, error },
               `failed to recognize speech, retrying in ${retryInterval}ms`,
             );
           }
@@ -336,12 +345,17 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
           if (retryInterval > 0) {
             await delay(retryInterval);
           }
+          this.#numRetries += 1;
         } else {
           this.emitError({ error: toError(error), recoverable: false });
           throw error;
         }
       }
     }
+  }
+
+  protected resetRetryBudget(): void {
+    this.#numRetries = 0;
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
