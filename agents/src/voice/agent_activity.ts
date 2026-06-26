@@ -202,6 +202,34 @@ interface PausedSpeechInfo {
   timeout: number;
 }
 
+/** @internal */
+export function filterFunctionCallOutputsForRealtimeSession(
+  chatCtx: ChatContext,
+  functionCallOutputs: FunctionCallOutput[],
+): {
+  currentFunctionCallOutputs: FunctionCallOutput[];
+  staleFunctionCallOutputs: FunctionCallOutput[];
+} {
+  const currentFunctionCallIds = new Set<string>();
+  for (const item of chatCtx.items) {
+    if (item.type === 'function_call') {
+      currentFunctionCallIds.add(item.callId);
+    }
+  }
+
+  const currentFunctionCallOutputs: FunctionCallOutput[] = [];
+  const staleFunctionCallOutputs: FunctionCallOutput[] = [];
+  for (const output of functionCallOutputs) {
+    if (currentFunctionCallIds.has(output.callId)) {
+      currentFunctionCallOutputs.push(output);
+    } else {
+      staleFunctionCallOutputs.push(output);
+    }
+  }
+
+  return { currentFunctionCallOutputs, staleFunctionCallOutputs };
+}
+
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
@@ -3592,8 +3620,12 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const { functionToolsExecutedEvent, shouldGenerateToolReply, newAgentTask, ignoreTaskSwitch } =
-      this.summarizeToolExecutionOutput(toolOutput, speechHandle);
+    const {
+      functionToolsExecutedEvent,
+      replyRequiredFunctionCallIds,
+      newAgentTask,
+      ignoreTaskSwitch,
+    } = this.summarizeToolExecutionOutput(toolOutput, speechHandle);
 
     this.agentSession.emit(
       AgentSessionEventTypes.FunctionToolsExecuted,
@@ -3605,6 +3637,8 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
     }
+
+    let shouldGenerateToolReply = false;
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
       // wait all speeches played before updating the tool output and generating the response
@@ -3621,12 +3655,39 @@ export class AgentActivity implements RecognitionHooks {
           await new ThrowsPromise<void, never>((resolve) => setImmediate(resolve));
         }
       }
-      const chatCtx = realtimeSession.chatCtx.copy();
-      chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
+      const { currentFunctionCallOutputs, staleFunctionCallOutputs } =
+        filterFunctionCallOutputsForRealtimeSession(
+          realtimeSession.chatCtx,
+          functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
+        );
 
-      this.agentSession._toolItemsAdded(
-        functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
+      if (staleFunctionCallOutputs.length > 0) {
+        this.logger.warn(
+          {
+            callIds: staleFunctionCallOutputs.map((output) => output.callId),
+          },
+          'discarding tool outputs for function calls no longer present in the realtime session',
+        );
+      }
+
+      if (currentFunctionCallOutputs.length === 0) {
+        if (this.agentSession.agentState === 'thinking') {
+          this.agentSession._updateAgentState('listening');
+          if (this.audioRecognition) {
+            this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          }
+        }
+        return;
+      }
+
+      shouldGenerateToolReply = currentFunctionCallOutputs.some((output) =>
+        replyRequiredFunctionCallIds.has(output.callId),
       );
+
+      const chatCtx = realtimeSession.chatCtx.copy();
+      chatCtx.items.push(...currentFunctionCallOutputs);
+
+      this.agentSession._toolItemsAdded(currentFunctionCallOutputs);
 
       // If the realtime model auto-generates the tool reply, install a
       // placeholder so the active RunResult waits for that reply.
@@ -3726,6 +3787,7 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     let shouldGenerateToolReply = false;
+    const replyRequiredFunctionCallIds = new Set<string>();
     let newAgentTask: Agent | null = null;
     let ignoreTaskSwitch = false;
 
@@ -3736,6 +3798,7 @@ export class AgentActivity implements RecognitionHooks {
         functionToolsExecutedEvent.functionCallOutputs.push(sanitizedOut.toolCallOutput);
         if (sanitizedOut.replyRequired) {
           shouldGenerateToolReply = true;
+          replyRequiredFunctionCallIds.add(sanitizedOut.toolCall.callId);
         }
       }
 
@@ -3761,6 +3824,7 @@ export class AgentActivity implements RecognitionHooks {
     return {
       functionToolsExecutedEvent,
       shouldGenerateToolReply,
+      replyRequiredFunctionCallIds,
       newAgentTask,
       ignoreTaskSwitch,
     };

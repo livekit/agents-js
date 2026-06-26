@@ -1045,6 +1045,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
       this.responseCreatedFutures = {};
+      this.closeCurrentGeneration('session reconnection');
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
@@ -1061,11 +1062,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
 
       // chat context
-      const chatCtx = this.chatCtx.copy({
-        excludeFunctionCall: true,
-        excludeInstructions: true,
-        excludeEmptyMessage: true,
-      });
+      const chatCtx = this.chatCtxForReconnect();
 
       const oldChatCtx = this.remoteChatCtx;
       this.remoteChatCtx = new llm.RemoteChatContext();
@@ -1148,6 +1145,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       reconnecting = true;
     }
+  }
+
+  private chatCtxForReconnect(): llm.ChatContext {
+    return this.chatCtx.copy({
+      excludeFunctionCall: true,
+      excludeInstructions: true,
+      excludeEmptyMessage: true,
+    });
   }
 
   private async runWs(wsConn: WebSocket): Promise<void> {
@@ -1336,27 +1341,39 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.itemDeleteFutures = {};
 
     this.inputTranscriptAccumulators.clear();
-
-    // Clean up current generation if exists
-    if (this.currentGeneration) {
-      for (const gen of this.currentGeneration.messages.values()) {
-        gen.textChannel.close();
-        gen.audioChannel.close();
-        if (!gen.modalities.done) {
-          gen.modalities.resolve(this._options.modalities);
-        }
-      }
-      this.currentGeneration.messages.clear();
-      this.currentGeneration.messageChannel.close();
-      this.currentGeneration.functionChannel.close();
-      if (!this.currentGeneration._doneFut.done) {
-        this.currentGeneration._doneFut.resolve();
-      }
-      this.currentGeneration = undefined;
-    }
+    this.closeCurrentGeneration('session close');
 
     // Clear the message queue
     this.messageChannel.items.length = 0;
+  }
+
+  private closeCurrentGeneration(reason: string): void {
+    if (!this.currentGeneration) {
+      return;
+    }
+
+    this.#logger.debug(
+      {
+        reason,
+        messageCount: this.currentGeneration.messages.size,
+      },
+      'Closing current OpenAI Realtime generation',
+    );
+
+    for (const gen of this.currentGeneration.messages.values()) {
+      gen.textChannel.close();
+      gen.audioChannel.close();
+      if (!gen.modalities.done) {
+        gen.modalities.resolve(this._options.modalities);
+      }
+    }
+    this.currentGeneration.messages.clear();
+    this.currentGeneration.messageChannel.close();
+    this.currentGeneration.functionChannel.close();
+    if (!this.currentGeneration._doneFut.done) {
+      this.currentGeneration._doneFut.resolve();
+    }
+    this.currentGeneration = undefined;
   }
 
   private handleInputAudioBufferSpeechStarted(
