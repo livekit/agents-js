@@ -9,6 +9,7 @@ export {
 } from './task_group.js';
 export {
   WarmTransferTask,
+  createWarmTransferTask,
   type WarmTransferResult,
   type WarmTransferTaskOptions,
 } from './warm_transfer.js';

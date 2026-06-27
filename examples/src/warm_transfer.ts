@@ -64,23 +64,23 @@ Examples on when the tool should be called:
               }).run();
 
               logger.info(
-                { supervisorIdentity: result.humanAgentIdentity },
-                'transfer to supervisor successful',
+                { managerIdentity: result.managerIdentity },
+                'transfer to manager successful',
               );
               const goodbyeSpeech = ctx.session.say(
-                "you are on the line with my supervisor. I'll be hanging up now.",
+                "you are on the line with my manager. I'll be hanging up now.",
                 { allowInterruptions: false },
               );
               await goodbyeSpeech.waitForPlayout();
               ctx.session.shutdown();
             } catch (error) {
               if (error instanceof llm.ToolError) {
-                logger.error({ error }, 'failed to transfer to supervisor with tool error');
+                logger.error({ error }, 'failed to transfer to manager with tool error');
                 throw error;
               }
 
-              logger.error({ error }, 'failed to transfer to supervisor');
-              throw new llm.ToolError(`failed to transfer to supervisor with error: ${error}`);
+              logger.error({ error }, 'failed to transfer to manager');
+              throw new llm.ToolError(`failed to transfer to manager with error: ${error}`);
             }
           },
         }),
@@ -156,4 +156,10 @@ WHY a human agent is requested or needed at this point
 Brief summary in 100-200 characters from a first-person perspective
 `;
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'sip-inbound' }));
+// IMPORTANT: set `agentName` so this worker uses EXPLICIT dispatch. Without it,
+// the worker auto-dispatches an agent into EVERY new room in the project —
+// including the consultation room that WarmTransferTask creates — which puts a
+// second agent on the line with the manager and produces overlapping voices.
+cli.runApp(
+  new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: 'warm-transfer' }),
+);
