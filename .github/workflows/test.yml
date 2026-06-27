@@ -39,13 +39,14 @@ jobs:
             agents-or-tests:
               - 'agents/**'
               - 'plugins/test/**'
+              - 'plugins/openai/src/realtime/realtime_model.test.ts'
             plugins: 
               - 'plugins/**'
             examples:
               - 'examples/**'
-      - name: Test agents
+      - name: Test agents and OpenAI realtime unit tests
         if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
-        run: pnpm test agents
+        run: pnpm test agents plugins/openai/src/realtime/realtime_model.test.ts
       # - name: Test examples
       #   if: (steps.filter.outputs.examples == 'true' || github.event_name == 'push')
       #   env:
