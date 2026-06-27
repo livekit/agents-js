@@ -447,6 +447,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
 
 export interface ResponseCancelEvent extends BaseClientEvent {
   type: 'response.cancel';
+  response_id?: string;
 }
 
 export type ClientEvent =
