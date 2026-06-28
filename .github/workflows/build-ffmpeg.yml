@@ -43,7 +43,7 @@ jobs:
   build:
     needs: config
     strategy:
-      fail-fast: true
+      fail-fast: false # let every platform report its own result instead of cancelling siblings
       matrix:
         include:
           - target: darwin-arm64

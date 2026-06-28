@@ -49,7 +49,10 @@ case "$TARGET" in
   win32-x64)
     CROSS_PREFIX="x86_64-w64-mingw32-"
     CROSS_FLAGS=(--arch=x86_64 --target-os=mingw32 "--cross-prefix=${CROSS_PREFIX}" --pkg-config=pkg-config)
-    OPUS_HOST_FLAGS=(--host=x86_64-w64-mingw32)
+    # --disable-hardening: opus enables -fstack-protector-strong by default, which on mingw
+    # references __stack_chk_* from libssp that opus.pc doesn't advertise. FFmpeg's static
+    # link test for opus would then fail to link and report "opus not found using pkg-config".
+    OPUS_HOST_FLAGS=(--host=x86_64-w64-mingw32 --disable-hardening)
     BIN_NAME="ffmpeg.exe"
     ;;
   darwin-arm64|darwin-x64|linux-x64|linux-arm64)
@@ -73,6 +76,9 @@ echo "::endgroup::"
 echo "::group::build ffmpeg $FFMPEG_VERSION ($TARGET)"
 curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 tar xf ffmpeg.tar.xz && cd "ffmpeg-${FFMPEG_VERSION}"
+# Dump config.log on a configure failure — its tail holds the real cause (e.g. a failed
+# dependency link test), which the terminal "X not found" message alone does not show.
+trap 'status=$?; if [ "$status" -ne 0 ]; then echo "::group::ffbuild/config.log (tail)"; tail -n 60 ffbuild/config.log 2>/dev/null || true; echo "::endgroup::"; fi' EXIT
 ./configure \
   --prefix="$PREFIX" \
   --pkg-config-flags="--static" \
@@ -92,6 +98,7 @@ tar xf ffmpeg.tar.xz && cd "ffmpeg-${FFMPEG_VERSION}"
   --enable-filter=aresample,aformat,anull,abuffer,abuffersink \
   --enable-libopus \
   ${CROSS_FLAGS[@]+"${CROSS_FLAGS[@]}"}
+trap - EXIT # configure succeeded; stop watching for its config.log
 make -j"$JOBS"
 echo "::endgroup::"
 
