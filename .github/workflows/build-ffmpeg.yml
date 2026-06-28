@@ -10,11 +10,6 @@ name: Build FFmpeg binaries
 
 on:
   workflow_dispatch:
-  # TEMP(dz/build-ffmpeg): test the build matrix on real runners before merge. The release
-  # job is guarded to only publish on workflow_dispatch, so these push runs build + upload
-  # artifacts without creating a release. Remove this `push:` block before merging.
-  push:
-    branches: [dz/build-ffmpeg]
 
 permissions:
   contents: write # create the release + upload assets
