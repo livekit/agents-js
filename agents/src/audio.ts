@@ -1,15 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { AudioFrame } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
 import type { ReadableStream } from 'node:stream/web';
+import { configureFfmpeg } from './ffmpeg.js';
 import { log } from './log.js';
 import { createStreamChannel } from './stream/stream_channel.js';
 import { type AudioBuffer, isFfmpegTeardownError } from './utils.js';
-
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 export interface AudioDecodeOptions {
   sampleRate?: number;
@@ -118,23 +116,9 @@ export function audioFramesFromFile(
   const channel = createStreamChannel<AudioFrame>();
   const logger = log();
 
-  // TODO (Brian): decode WAV using a custom decoder instead of FFmpeg
-  const command = ffmpeg(filePath)
-    .inputOptions([
-      '-probesize',
-      '32',
-      '-analyzeduration',
-      '0',
-      '-fflags',
-      '+nobuffer+flush_packets',
-      '-flags',
-      'low_delay',
-    ])
-    .format('s16le') // signed 16-bit little-endian PCM to be consistent cross-platform
-    .audioChannels(numChannels)
-    .audioFrequency(sampleRate);
-
+  let command: ffmpeg.FfmpegCommand | undefined;
   let commandRunning = true;
+  let aborted = false;
 
   const onClose = () => {
     logger.debug('Audio file playback aborted');
@@ -142,49 +126,84 @@ export function audioFramesFromFile(
     channel.close();
     if (commandRunning) {
       commandRunning = false;
-      command.kill('SIGKILL');
+      command?.kill('SIGKILL');
     }
   };
 
-  command.on('error', (err: Error) => {
-    if (isFfmpegTeardownError(err)) {
-      // Expected during teardown — not an error
-      logger.debug('FFmpeg command ended during shutdown');
-    } else {
-      logger.error(err, 'FFmpeg command error');
-    }
-    commandRunning = false;
-    onClose();
-  });
+  options.abortSignal?.addEventListener(
+    'abort',
+    () => {
+      aborted = true;
+      onClose();
+    },
+    { once: true },
+  );
 
-  const outputStream = command.pipe();
-  options.abortSignal?.addEventListener('abort', onClose, { once: true });
+  // Resolve (and if necessary download) the ffmpeg binary lazily, then start decoding. The
+  // stream is returned synchronously; frames begin flowing once ffmpeg is configured.
+  void (async () => {
+    await configureFfmpeg();
+    if (aborted) return;
 
-  outputStream.on('data', (chunk: Buffer) => {
-    const arrayBuffer = chunk.buffer.slice(
-      chunk.byteOffset,
-      chunk.byteOffset + chunk.byteLength,
-    ) as ArrayBuffer;
+    // TODO (Brian): decode WAV using a custom decoder instead of FFmpeg
+    command = ffmpeg(filePath)
+      .inputOptions([
+        '-probesize',
+        '32',
+        '-analyzeduration',
+        '0',
+        '-fflags',
+        '+nobuffer+flush_packets',
+        '-flags',
+        'low_delay',
+      ])
+      .format('s16le') // signed 16-bit little-endian PCM to be consistent cross-platform
+      .audioChannels(numChannels)
+      .audioFrequency(sampleRate);
 
-    const frames = audioStream.write(arrayBuffer);
-    for (const frame of frames) {
-      channel.write(frame);
-    }
-  });
+    command.on('error', (err: Error) => {
+      if (isFfmpegTeardownError(err)) {
+        // Expected during teardown — not an error
+        logger.debug('FFmpeg command ended during shutdown');
+      } else {
+        logger.error(err, 'FFmpeg command error');
+      }
+      commandRunning = false;
+      onClose();
+    });
 
-  outputStream.on('end', () => {
-    const frames = audioStream.flush();
-    for (const frame of frames) {
-      channel.write(frame);
-    }
+    const outputStream = command.pipe();
+
+    outputStream.on('data', (chunk: Buffer) => {
+      const arrayBuffer = chunk.buffer.slice(
+        chunk.byteOffset,
+        chunk.byteOffset + chunk.byteLength,
+      ) as ArrayBuffer;
+
+      const frames = audioStream.write(arrayBuffer);
+      for (const frame of frames) {
+        channel.write(frame);
+      }
+    });
+
+    outputStream.on('end', () => {
+      const frames = audioStream.flush();
+      for (const frame of frames) {
+        channel.write(frame);
+      }
+      commandRunning = false;
+      channel.close();
+    });
+
+    outputStream.on('error', (err: Error) => {
+      logger.error(err);
+      commandRunning = false;
+      onClose();
+    });
+  })().catch((err: unknown) => {
+    logger.error({ err }, 'failed to start ffmpeg audio decoding');
     commandRunning = false;
     channel.close();
-  });
-
-  outputStream.on('error', (err: Error) => {
-    logger.error(err);
-    commandRunning = false;
-    onClose();
   });
 
   return channel.stream();

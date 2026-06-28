@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
+import { BUILD_REVISION, FFMPEG_VERSION } from './scripts/ffmpeg/release.mjs';
 
 export default defineConfig(({ mode }) => ({
   define: {
     __PACKAGE_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.0.0-test'),
+    __FFMPEG_VERSION__: JSON.stringify(FFMPEG_VERSION),
+    __FFMPEG_BUILD_REVISION__: JSON.stringify(BUILD_REVISION),
   },
   test: {
     include: ['**/*.test.ts'],

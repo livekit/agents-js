@@ -26,11 +26,14 @@
     "dist",
     "src",
     "resources",
-    "README.md"
+    "scripts/postinstall.mjs",
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsup --onSuccess \"pnpm build:types\"",
     "build:types": "tsc --declaration --emitDeclarationOnly && node ../scripts/copyDeclarationOutput.js",
+    "postinstall": "node ./scripts/postinstall.mjs",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
@@ -51,7 +54,6 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@livekit/local-inference": "^0.2.6",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.46.8",

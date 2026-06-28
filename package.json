@@ -9,6 +9,7 @@
     "build:agents": "turbo run build --filter=@livekit/agents...",
     "build:plugins": "turbo run build --filter=@livekit/agents-plugin-*...",
     "agents:download-files": "pnpm --filter livekit-agents-examples exec livekit-agents download-files",
+    "ffmpeg:local": "bash scripts/ffmpeg/build-local.sh",
     "ci:publish": "pnpm build && changeset publish",
     "api:check": "turbo run api:check",
     "api:update": "turbo run api:update",

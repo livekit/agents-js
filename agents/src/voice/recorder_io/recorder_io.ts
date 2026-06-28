@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
@@ -10,6 +9,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
+import { configureFfmpeg } from '../../ffmpeg.js';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -24,8 +24,6 @@ import {
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { createSilenceFrame } from '../utils.js';
-
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
@@ -225,32 +223,38 @@ export class RecorderIO {
   private startFFmpeg(): void {
     if (this.pcmStream) return;
 
+    // Created synchronously so callers can write immediately; the PassThrough buffers until
+    // ffmpeg attaches as a consumer below (after the binary is resolved/downloaded).
     this.pcmStream = new PassThrough();
+    const pcmStream = this.pcmStream;
 
-    this.ffmpegPromise = new Promise<void>((resolve, reject) => {
-      ffmpeg(this.pcmStream!)
-        .inputFormat('s16le')
-        .inputOptions([`-ar ${this.sampleRate}`, '-ac 2'])
-        .audioCodec('libopus')
-        .audioChannels(2)
-        .audioFrequency(this.sampleRate)
-        .format('ogg')
-        .output(this._outputPath!)
-        .on('end', () => {
-          this.logger.debug('FFmpeg encoding finished');
-          resolve();
-        })
-        .on('error', (err) => {
-          // Ignore errors from intentional stream closure or SIGINT during shutdown
-          if (isFfmpegTeardownError(err)) {
+    this.ffmpegPromise = (async () => {
+      await configureFfmpeg();
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(pcmStream)
+          .inputFormat('s16le')
+          .inputOptions([`-ar ${this.sampleRate}`, '-ac 2'])
+          .audioCodec('libopus')
+          .audioChannels(2)
+          .audioFrequency(this.sampleRate)
+          .format('ogg')
+          .output(this._outputPath!)
+          .on('end', () => {
+            this.logger.debug('FFmpeg encoding finished');
             resolve();
-          } else {
-            this.logger.error({ err }, 'FFmpeg encoding error');
-            reject(err);
-          }
-        })
-        .run();
-    });
+          })
+          .on('error', (err) => {
+            // Ignore errors from intentional stream closure or SIGINT during shutdown
+            if (isFfmpegTeardownError(err)) {
+              resolve();
+            } else {
+              this.logger.error({ err }, 'FFmpeg encoding error');
+              reject(err);
+            }
+          })
+          .run();
+      });
+    })();
   }
 
   /**

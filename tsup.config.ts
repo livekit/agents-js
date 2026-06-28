@@ -1,6 +1,9 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { Options } from 'tsup';
+// Single source of truth for the bundled LGPL FFmpeg release (see scripts/ffmpeg/release.mjs).
+// Resolved relative to this config file so it works regardless of which package's cwd tsup runs in.
+import { BUILD_REVISION, FFMPEG_VERSION } from './scripts/ffmpeg/release.mjs';
 
 const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8'));
 
@@ -18,6 +21,8 @@ const defaultOptions: Options = {
   define: {
     __PACKAGE_NAME__: JSON.stringify(pkg.name),
     __PACKAGE_VERSION__: JSON.stringify(pkg.version),
+    __FFMPEG_VERSION__: JSON.stringify(FFMPEG_VERSION),
+    __FFMPEG_BUILD_REVISION__: JSON.stringify(BUILD_REVISION),
   },
   esbuildOptions: (options, context) => {
     if (context.format === 'esm') {
