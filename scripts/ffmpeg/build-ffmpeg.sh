@@ -45,7 +45,9 @@ if command -v nproc >/dev/null 2>&1; then JOBS="$(nproc)"; else JOBS="$(sysctl -
 CROSS_FLAGS=()       # extra ffmpeg ./configure flags
 OPUS_HOST_FLAGS=()   # extra libopus ./configure flags
 OPUS_CFLAGS=""       # extra CFLAGS for the opus build ("" = use opus defaults)
+OPUS_LDFLAGS=""      # extra LDFLAGS for the opus build
 FF_EXTRA_CFLAGS=""   # appended to ffmpeg --extra-cflags
+FF_EXTRA_LDFLAGS=""  # appended to ffmpeg --extra-ldflags
 BIN_NAME="ffmpeg"
 case "$TARGET" in
   win32-x64)
@@ -62,7 +64,20 @@ case "$TARGET" in
     FF_EXTRA_CFLAGS="-fno-stack-protector -D_FORTIFY_SOURCE=0"
     BIN_NAME="ffmpeg.exe"
     ;;
-  darwin-arm64|darwin-x64|linux-x64|linux-arm64)
+  darwin-x64)
+    # GitHub's Intel (macos-13) runners are deprecated and queue for hours, so build the
+    # x86_64 binary by cross-compiling on the plentiful arm64 (macos-14) runner. macOS clang
+    # and the SDK are universal and nasm cross-assembles x86_64 regardless of host. The
+    # resulting binary can't be executed here, but the license/patent guards read config
+    # headers (no execution), so the pipeline still works end to end.
+    CROSS_FLAGS=(--enable-cross-compile --arch=x86_64 --target-os=darwin)
+    OPUS_HOST_FLAGS=(--host=x86_64-apple-darwin)
+    OPUS_CFLAGS="-arch x86_64"
+    OPUS_LDFLAGS="-arch x86_64"
+    FF_EXTRA_CFLAGS="-arch x86_64"
+    FF_EXTRA_LDFLAGS="-arch x86_64"
+    ;;
+  darwin-arm64|linux-x64|linux-arm64)
     : # native build on the matching runner
     ;;
   *)
@@ -75,10 +90,11 @@ echo "::group::build libopus $OPUS_VERSION"
 curl -fsSL -o opus.tar.gz "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"
 tar xf opus.tar.gz && cd "opus-${OPUS_VERSION}"
 if [ -n "$OPUS_CFLAGS" ]; then export CFLAGS="$OPUS_CFLAGS"; fi
+if [ -n "$OPUS_LDFLAGS" ]; then export LDFLAGS="$OPUS_LDFLAGS"; fi
 ./configure --prefix="$PREFIX" --disable-shared --enable-static --disable-doc \
   --disable-extra-programs ${OPUS_HOST_FLAGS[@]+"${OPUS_HOST_FLAGS[@]}"}
 make -j"$JOBS" && make install
-unset CFLAGS # don't leak opus CFLAGS into the ffmpeg build (it uses --extra-cflags)
+unset CFLAGS LDFLAGS # don't leak opus flags into the ffmpeg build (it uses --extra-*flags)
 cd "$WORK"
 echo "::endgroup::"
 
@@ -92,7 +108,7 @@ trap 'status=$?; if [ "$status" -ne 0 ]; then echo "::group::ffbuild/config.log 
   --prefix="$PREFIX" \
   --pkg-config-flags="--static" \
   --extra-cflags="-I$PREFIX/include $FF_EXTRA_CFLAGS" \
-  --extra-ldflags="-L$PREFIX/lib" \
+  --extra-ldflags="-L$PREFIX/lib $FF_EXTRA_LDFLAGS" \
   --enable-static --disable-shared \
   --disable-gpl --disable-nonfree \
   --disable-doc --disable-debug --disable-network --disable-autodetect \

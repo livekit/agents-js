@@ -49,7 +49,7 @@ jobs:
           - target: darwin-arm64
             runner: macos-14
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-14 # cross-compiled x86_64 (Intel macos-13 runners are deprecated/scarce)
           - target: linux-x64
             runner: ubuntu-22.04
           - target: linux-arm64
