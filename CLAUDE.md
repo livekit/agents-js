@@ -129,7 +129,7 @@ Plugin capabilities by type:
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
-- **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
+- **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
 - **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did
 - **Test mocks**: test (private, for unit tests)
 
