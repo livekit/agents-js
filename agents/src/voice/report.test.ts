@@ -254,6 +254,7 @@ describe('sessionReportToJSON', () => {
         type: 'user_input_transcribed',
         transcript: 'hello',
         is_final: true,
+        item_id: null,
         speaker_id: 'spk_1',
         language: null,
         created_at: 9,
