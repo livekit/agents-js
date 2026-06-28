@@ -92,11 +92,14 @@ jobs:
           path: ${{ github.workspace }}/out/ffmpeg-${{ matrix.target }}.gz
           if-no-files-found: error
 
+  # Publishes all platform binaries + checksums.sha256 to a single GitHub Release at the
+  # pinned tag (scripts/ffmpeg/release.mjs). This release is the stable, discoverable
+  # location that `@livekit/agents` downloads from at install time — the per-job
+  # upload-artifact steps above are just transport into this job. `needs: build` gates this
+  # on ALL platforms succeeding, so a release is never partial. Runs on push (branch tests)
+  # and workflow_dispatch alike; re-running updates the existing release in place.
   release:
     needs: [config, build]
-    # TEMP(dz/build-ffmpeg): only publish on manual dispatch, so the push test runs above
-    # validate the builds without creating a release. Remove this `if:` before merging.
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

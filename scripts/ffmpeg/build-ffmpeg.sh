@@ -44,15 +44,22 @@ if command -v nproc >/dev/null 2>&1; then JOBS="$(nproc)"; else JOBS="$(sysctl -
 # --- per-target toolchain configuration ---------------------------------------------------
 CROSS_FLAGS=()       # extra ffmpeg ./configure flags
 OPUS_HOST_FLAGS=()   # extra libopus ./configure flags
+OPUS_CFLAGS=""       # extra CFLAGS for the opus build ("" = use opus defaults)
+FF_EXTRA_CFLAGS=""   # appended to ffmpeg --extra-cflags
 BIN_NAME="ffmpeg"
 case "$TARGET" in
   win32-x64)
     CROSS_PREFIX="x86_64-w64-mingw32-"
     CROSS_FLAGS=(--arch=x86_64 --target-os=mingw32 "--cross-prefix=${CROSS_PREFIX}" --pkg-config=pkg-config)
-    # --disable-hardening: opus enables -fstack-protector-strong by default, which on mingw
-    # references __stack_chk_* from libssp that opus.pc doesn't advertise. FFmpeg's static
-    # link test for opus would then fail to link and report "opus not found using pkg-config".
     OPUS_HOST_FLAGS=(--host=x86_64-w64-mingw32 --disable-hardening)
+    # Debian/Ubuntu patch their mingw-w64 gcc to default -fstack-protector-strong and
+    # _FORTIFY_SOURCE=2. Those inject __stack_chk_*/__memcpy_chk references (normally
+    # satisfied by libssp) into libopus.a and the ffmpeg objects, breaking the static link
+    # — FFmpeg's opus link test then fails with the misleading "opus not found using
+    # pkg-config". Turn both off for the cross build (opus's --disable-hardening alone does
+    # not counter the compiler default). Harmless on toolchains that don't default them on.
+    OPUS_CFLAGS="-O2 -fno-stack-protector -D_FORTIFY_SOURCE=0"
+    FF_EXTRA_CFLAGS="-fno-stack-protector -D_FORTIFY_SOURCE=0"
     BIN_NAME="ffmpeg.exe"
     ;;
   darwin-arm64|darwin-x64|linux-x64|linux-arm64)
@@ -67,9 +74,11 @@ cd "$WORK"
 echo "::group::build libopus $OPUS_VERSION"
 curl -fsSL -o opus.tar.gz "https://downloads.xiph.org/releases/opus/opus-${OPUS_VERSION}.tar.gz"
 tar xf opus.tar.gz && cd "opus-${OPUS_VERSION}"
+if [ -n "$OPUS_CFLAGS" ]; then export CFLAGS="$OPUS_CFLAGS"; fi
 ./configure --prefix="$PREFIX" --disable-shared --enable-static --disable-doc \
   --disable-extra-programs ${OPUS_HOST_FLAGS[@]+"${OPUS_HOST_FLAGS[@]}"}
 make -j"$JOBS" && make install
+unset CFLAGS # don't leak opus CFLAGS into the ffmpeg build (it uses --extra-cflags)
 cd "$WORK"
 echo "::endgroup::"
 
@@ -82,7 +91,7 @@ trap 'status=$?; if [ "$status" -ne 0 ]; then echo "::group::ffbuild/config.log 
 ./configure \
   --prefix="$PREFIX" \
   --pkg-config-flags="--static" \
-  --extra-cflags="-I$PREFIX/include" \
+  --extra-cflags="-I$PREFIX/include $FF_EXTRA_CFLAGS" \
   --extra-ldflags="-L$PREFIX/lib" \
   --enable-static --disable-shared \
   --disable-gpl --disable-nonfree \
