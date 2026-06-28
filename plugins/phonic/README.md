@@ -84,6 +84,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `noInputPokeSec` | `number` | Seconds of silence before sending poke message |
 | `noInputPokeText` | `string` | Poke message text (ignored when `generateNoInputPokeText` is true) |
 | `noInputEndConversationSec` | `number` | Seconds of silence before ending conversation |
+| `forbidSpeechAfterToolCall` | `string[]` | Tool names after which Phonic should NOT auto-generate a spoken reply. Use for tools that always hand off (e.g., TaskGroup task-advancement tools). Only list tools that ALWAYS hand off — a listed tool that returns without handing off will leave the agent silent |
 
 If you already have an agent set up on the Phonic platform, you can use the `phonicAgent` option to specify the agent name. As a note, configuration options you set in the LiveKit Agents SDK will override the agent settings set on the Phonic platform. This means the system prompt you have set on the Phonic platform will be ignored in favor of the `instructions` field set on the LiveKit `voice.Agent`. Likewise, options explicitly set in the `RealtimeModel` constructor will override the Phonic agent's settings. 
 
