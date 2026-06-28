@@ -27,8 +27,8 @@ jobs:
       opus: ${{ steps.rel.outputs.opus }}
       tag: ${{ steps.rel.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
       - id: rel
@@ -58,7 +58,7 @@ jobs:
             runner: ubuntu-22.04 # cross-compiled with mingw-w64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install build deps (macOS)
         if: startsWith(matrix.runner, 'macos')
@@ -86,7 +86,7 @@ jobs:
           bin="ffmpeg"; [ "${{ matrix.target }}" = "win32-x64" ] && bin="ffmpeg.exe"
           gzip -9 -c "$bin" > "ffmpeg-${{ matrix.target }}.gz"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ffmpeg-${{ matrix.target }}
           path: ${{ github.workspace }}/out/ffmpeg-${{ matrix.target }}.gz
@@ -99,7 +99,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
           merge-multiple: true
@@ -109,7 +109,7 @@ jobs:
           sha256sum ffmpeg-*.gz > checksums.sha256
           cat checksums.sha256
       - name: Create / update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           tag_name: ${{ needs.config.outputs.tag }}
           name: ${{ needs.config.outputs.tag }}
