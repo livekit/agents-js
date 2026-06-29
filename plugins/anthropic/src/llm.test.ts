@@ -91,12 +91,15 @@ describe('Anthropic LLM', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { messages } = (anthropicLlm as any)._buildAnthropicContext(chatCtx);
 
-    // Two user messages should be merged into one with array content
-    expect(messages).toHaveLength(2);
+    // Two user messages should be merged into one with array content, followed by a
+    // trailing dummy user turn for Claude 4.6+.
+    expect(messages).toHaveLength(3);
     expect(messages[0].role).toBe('user');
     expect(Array.isArray(messages[0].content)).toBe(true);
     expect(messages[0].content).toHaveLength(2);
     expect(messages[1].role).toBe('assistant');
+    expect(messages[2].role).toBe('user');
+    expect(messages[2].content).toEqual([{ type: 'text', text: '.' }]);
   });
 
   it('injects a dummy user message if conversation starts with assistant', () => {
