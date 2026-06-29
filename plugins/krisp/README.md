@@ -34,7 +34,7 @@ import * as silero from '@livekit/agents-plugin-silero';
 
 export default async function entry(ctx: JobContext) {
   // Default: LiveKit Cloud auth + bundled model. No keys or model files.
-  const noiseCancellation = new krisp.vivaFilter({
+  const noiseCancellation = krisp.vivaFilter({
     noiseSuppressionLevel: 100, // 0-100
   });
 
@@ -72,9 +72,10 @@ Input frames of any size and sample rate are buffered and adapted automatically.
 ### Runtime control
 
 ```ts
-processor.setNoiseSuppressionLevel(50); // adjust 0-100 on the fly
+noiseCancellation.setEnabled(false); // pass audio through unmodified
+noiseCancellation.setNoiseSuppressionLevel(50); // adjust 0-100 on the fly
+noiseCancellation.close(); // free resources when done
 ```
-
 
 ## Alternative: Krisp license auth
 
@@ -99,21 +100,22 @@ This path uses the public `krisp-audio-node-sdk` together with a Krisp license k
 
 ### Usage
 
-Select the license backend by passing `authProvider`:
+Select the license backend by passing `authProvider`. The license key is read
+from `KRISP_VIVA_SDK_LICENSE_KEY` by the native SDK, so `krispLicense()` only
+needs the model path:
 
 ```ts
 import * as krisp from '@livekit/agents-plugin-krisp';
 
-const processor = new krisp.vivaFilter({
+const noiseCancellation = krisp.vivaFilter({
   authProvider: krisp.auth.krispLicense({
-    licenseKey: '...', // or KRISP_VIVA_SDK_LICENSE_KEY
     modelPath: '/path/to/noise_model.kef', // or KRISP_VIVA_FILTER_MODEL_PATH
   }),
   noiseSuppressionLevel: 100,
 });
 ```
 
-`licenseKey` and `modelPath` fall back to the environment variables above when omitted.
+`modelPath` falls back to `KRISP_VIVA_FILTER_MODEL_PATH` when omitted.
 
 ## Troubleshooting
 
