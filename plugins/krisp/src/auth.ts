@@ -15,7 +15,7 @@
  *   framework hands to the FrameProcessor via the standard `onCredentialsUpdated`
  *   callback.
  * - {@link KrispLicenseAuthProvider}: selects the public `krisp-audio-node-sdk`
- *   together with a Krisp license key and a `.kef` model file.
+ *   with a `.kef` model file (license key supplied via `KRISP_VIVA_SDK_LICENSE_KEY`).
  *
  * Preferred call sites use the {@link auth} namespace:
  *
