@@ -2442,58 +2442,62 @@ export class AgentActivity implements RecognitionHooks {
         .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+    try {
+      await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
-
-    if (speechHandle.interrupted) {
-      replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       if (audioOutput) {
-        audioOutput.clearBuffer();
-        await audioOutput.waitForPlayout();
+        await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
       }
-    }
 
-    if (addToChatCtx) {
-      const replyStoppedSpeakingAt = Date.now();
-      const replyAssistantMetrics: MetricsReport = {};
-      if (replyTtsGenData?.ttfb !== undefined) {
-        replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
-      }
-      if (replyStartedSpeakingAt !== undefined) {
-        replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
-        replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
-
-        if (replyStartedForwardingAt !== undefined) {
-          replyAssistantMetrics.playbackLatency =
-            (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+      if (speechHandle.interrupted) {
+        replyAbortController.abort();
+        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        if (audioOutput) {
+          audioOutput.clearBuffer();
+          await audioOutput.waitForPlayout();
         }
       }
 
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        interrupted: speechHandle.interrupted,
-        metrics: replyAssistantMetrics,
-      });
-      this.agent._chatCtx.insert(message);
-      this.agentSession._conversationItemAdded(message);
-    }
+      if (addToChatCtx) {
+        const replyStoppedSpeakingAt = Date.now();
+        const replyAssistantMetrics: MetricsReport = {};
+        if (replyTtsGenData?.ttfb !== undefined) {
+          replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
+        }
+        if (replyStartedSpeakingAt !== undefined) {
+          replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
+          replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
 
-    if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          if (replyStartedForwardingAt !== undefined) {
+            replyAssistantMetrics.playbackLatency =
+              (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+          }
+        }
+
+        const message = ChatMessage.create({
+          role: 'assistant',
+          content: textOut?.text || '',
+          interrupted: speechHandle.interrupted,
+          metrics: replyAssistantMetrics,
+        });
+        this.agent._chatCtx.insert(message);
+        this.agentSession._conversationItemAdded(message);
       }
-      this.restoreInterruptionByAudioActivity();
-    }
 
-    // Settle firstFrameFut to remove its PLAYBACK_STARTED listener now that playout is
-    // done/interrupted. forwardAudio no longer rejects it (#1909).
-    this.settleFirstFrameFut(audioOut);
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        this.restoreInterruptionByAudioActivity();
+      }
+    } finally {
+      // Settle firstFrameFut to remove its PLAYBACK_STARTED listener now that playout is
+      // done/interrupted. In a finally so the listener is dropped even if an await above
+      // throws — otherwise it would leak on the shared audioOutput. forwardAudio no
+      // longer rejects firstFrameFut itself (#1909).
+      this.settleFirstFrameFut(audioOut);
+    }
   }
 
   /**
