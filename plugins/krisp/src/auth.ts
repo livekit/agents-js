@@ -23,7 +23,7 @@
  * import { auth } from '@livekit/agents-plugin-krisp';
  *
  * auth.livekitCloud();
- * auth.krispLicense({ licenseKey: '...', modelPath: '/path/to/model.kef' });
+ * auth.krispLicense({ modelPath: '/path/to/model.kef' });
  * ```
  */
 import { existsSync, statSync } from 'node:fs';
@@ -61,28 +61,25 @@ export class LiveKitCloudAuthProvider {
  * @public
  */
 export interface KrispLicenseAuthProviderOptions {
-  /** Krisp license key. Falls back to `KRISP_VIVA_SDK_LICENSE_KEY`. */
-  licenseKey?: string;
   /** Path to the Krisp `.kef` model file. Falls back to `KRISP_VIVA_FILTER_MODEL_PATH`. */
   modelPath?: string;
 }
 
 /**
- * Krisp-direct auth using a license key + `.kef` model file.
+ * Krisp-direct auth using a `.kef` model file.
  *
- * Defaults to reading `KRISP_VIVA_SDK_LICENSE_KEY` and
- * `KRISP_VIVA_FILTER_MODEL_PATH` from the environment.
+ * The `modelPath` defaults to `KRISP_VIVA_FILTER_MODEL_PATH`. The Krisp license
+ * key is supplied separately via the `KRISP_VIVA_SDK_LICENSE_KEY` environment
+ * variable, which the native SDK reads on initialization.
  *
  * @public
  */
 export class KrispLicenseAuthProvider {
   /** @internal */
   readonly kind: typeof KRISP_LICENSE_KIND = KRISP_LICENSE_KIND;
-  readonly licenseKey: string;
   readonly modelPath: string;
 
   constructor(opts: KrispLicenseAuthProviderOptions = {}) {
-    const resolvedLicenseKey = opts.licenseKey ?? process.env.KRISP_VIVA_SDK_LICENSE_KEY ?? '';
     const resolvedModelPath = opts.modelPath ?? process.env.KRISP_VIVA_FILTER_MODEL_PATH;
 
     if (!resolvedModelPath) {
@@ -97,7 +94,6 @@ export class KrispLicenseAuthProvider {
       throw new Error(`Krisp model file not found: ${resolvedModelPath}`);
     }
 
-    this.licenseKey = resolvedLicenseKey;
     this.modelPath = resolvedModelPath;
   }
 }
@@ -112,7 +108,7 @@ export type AuthProvider = LiveKitCloudAuthProvider | KrispLicenseAuthProvider;
  * import { auth } from '@livekit/agents-plugin-krisp';
  *
  * auth.livekitCloud();
- * auth.krispLicense({ licenseKey: '...', modelPath: '/path/to/model.kef' });
+ * auth.krispLicense({ modelPath: '/path/to/model.kef' });
  * ```
  *
  * @public
