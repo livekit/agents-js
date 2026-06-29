@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-google",
-  "version": "1.4.3",
+  "version": "1.4.9",
   "description": "Google Gemini plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -43,10 +43,12 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@google/genai": "^1.44.0",
+    "@google/genai": "^1.52.0",
+    "google-auth-library": "^10.6.2",
     "@livekit/mutex": "^1.1.1",
     "@types/json-schema": "^7.0.15",
-    "json-schema": "^0.4.0"
+    "json-schema": "^0.4.0",
+    "openai": "^6.8.1"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

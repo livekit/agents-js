@@ -19,7 +19,7 @@
     "@types/node": "^22.5.5",
     "tsx": "^4.19.2",
     "typescript": "^5.0.0",
-    "vitest": "^3.2.2",
+    "vitest": "^4.0.17",
     "zod": "^4.1.12"
   },
   "dependencies": {
@@ -29,6 +29,7 @@
     "@livekit/agents-plugin-bey": "workspace:*",
     "@livekit/agents-plugin-cartesia": "workspace:*",
     "@livekit/agents-plugin-deepgram": "workspace:*",
+    "@livekit/agents-plugin-did": "workspace:*",
     "@livekit/agents-plugin-elevenlabs": "workspace:*",
     "@livekit/agents-plugin-fishaudio": "workspace:*",
     "@livekit/agents-plugin-google": "workspace:*",
@@ -44,6 +45,7 @@
     "@livekit/agents-plugin-rime": "workspace:*",
     "@livekit/agents-plugin-runway": "workspace:*",
     "@livekit/agents-plugin-silero": "workspace:*",
+    "@livekit/agents-plugin-tavus": "workspace:*",
     "@livekit/agents-plugin-trugen": "workspace:*",
     "@livekit/agents-plugin-minimax": "workspace:*",
     "@livekit/agents-plugin-mistralai": "workspace:*",

@@ -19,15 +19,18 @@ import type { ChatChunk } from '../llm/llm.js';
 import {
   type ToolChoice,
   type ToolContext,
+  ToolError,
   isAgentHandoff,
   isFunctionTool,
   isToolError,
+  sortedToolNames,
 } from '../llm/tool_context.js';
+import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
+import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT, isFlushSentinel } from '../types.js';
 import {
   Future,
   IdleTimeoutError,
@@ -51,9 +54,9 @@ import {
   type TTSNode,
   type TextOutput,
   type TimedString,
-  createTimedString,
   isTimedString,
 } from './io.js';
+import { toSnakeCaseDeep } from './report.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
@@ -70,7 +73,7 @@ export class _LLMGenerationData {
   ttft?: number;
 
   constructor(
-    public readonly textStream: ReadableStream<string>,
+    public readonly textStream: ReadableStream<string | FlushSentinel>,
     public readonly toolCallStream: ReadableStream<FunctionCall>,
   ) {
     this.id = shortuuid('item_');
@@ -473,7 +476,8 @@ export function performLLMInference(
   model?: string,
   provider?: string,
 ): [Task<void>, _LLMGenerationData] {
-  const textStream = new IdentityTransform<string>();
+  const logger = log();
+  const textStream = new IdentityTransform<string | FlushSentinel>();
   const toolCallStream = new IdentityTransform<FunctionCall>();
 
   const textWriter = textStream.writable.getWriter();
@@ -483,9 +487,11 @@ export function performLLMInference(
   const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
     span.setAttribute(
       traceTypes.ATTR_CHAT_CTX,
-      JSON.stringify(chatCtx.toJSON({ excludeTimestamp: false })),
+      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
     );
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx)));
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
 
     if (model) {
       span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
@@ -494,8 +500,9 @@ export function performLLMInference(
       span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
     }
 
-    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk> | null = null;
-    let llmStream: ReadableStream<string | ChatChunk> | null = null;
+    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk | FlushSentinel> | null =
+      null;
+    let llmStream: ReadableStream<string | ChatChunk | FlushSentinel> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstTokenReceived = false;
 
@@ -525,7 +532,9 @@ export function performLLMInference(
           data.ttft = performance.now() / 1000 - startTime;
         }
 
-        if (typeof chunk === 'string') {
+        if (isFlushSentinel(chunk)) {
+          await textWriter.write(chunk);
+        } else if (typeof chunk === 'string') {
           data.generatedText += chunk;
           await textWriter.write(chunk);
           // TODO(shubhra): better way to check??
@@ -539,7 +548,8 @@ export function performLLMInference(
               if (tool.type !== 'function_call') continue;
 
               const toolCall = FunctionCall.create({
-                callId: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                id: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                callId: tool.callId,
                 name: tool.name,
                 args: tool.args,
                 // Preserve thought signature for Gemini 3+ thinking mode
@@ -575,6 +585,8 @@ export function performLLMInference(
         // Abort signal was triggered, handle gracefully
         return;
       }
+      // surface inference silent errors even when this task's rejection is never awaited
+      logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
       llmStreamReader?.releaseLock();
@@ -658,7 +670,6 @@ export function performTTSInference(
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    let pushedDuration = 0;
     const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
@@ -682,11 +693,6 @@ export function performTTSInference(
 
       ttsStreamReader = ttsStream.getReader();
 
-      // In Python, perform_tts_inference has a while loop processing multiple input segments
-      // (separated by FlushSentinel), with pushed_duration accumulating across segments.
-      // JS currently only does single inference, so initialPushedDuration is always 0.
-      // TODO: Add FlushSentinel + multi-segment loop
-      const initialPushedDuration = pushedDuration;
       while (true) {
         if (signal.aborted) {
           break;
@@ -715,26 +721,9 @@ export function performTTSInference(
           | undefined;
         if (timedTranscripts && timedTranscripts.length > 0) {
           for (const timedText of timedTranscripts) {
-            // Uses the INITIAL value (from previous inferences), not the accumulated value
-            const adjustedTimedText = createTimedString({
-              text: timedText.text,
-              startTime:
-                timedText.startTime !== undefined
-                  ? timedText.startTime + initialPushedDuration
-                  : undefined,
-              endTime:
-                timedText.endTime !== undefined
-                  ? timedText.endTime + initialPushedDuration
-                  : undefined,
-              confidence: timedText.confidence,
-              startTimeOffset: timedText.startTimeOffset,
-            });
-            await timedTextsWriter.write(adjustedTimedText);
+            await timedTextsWriter.write(timedText);
           }
         }
-
-        const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-        pushedDuration += frameDuration;
       }
     } catch (error) {
       if (error instanceof IdleTimeoutError) {
@@ -853,8 +842,14 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
+  // The audio output is shared across overlapping segments, so ignore a
+  // PLAYBACK_STARTED from another segment until we capture our own first frame.
+  // Resolving `firstFrameFut` early skips resampler creation and pushes an
+  // unresampled frame (`RtcError: sample_rate and num_channels don't match`).
+  let hasCapturedOwnFrame = false;
+
   const onPlaybackStarted = (ev: { createdAt: number }) => {
-    if (!out.firstFrameFut.done) {
+    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
       out.firstFrameFut.resolve(ev.createdAt);
     }
   };
@@ -876,14 +871,13 @@ async function forwardAudio(
         out.startedForwardingAt = Date.now();
       }
 
-      if (
-        !out.firstFrameFut.done &&
-        audioOutput.sampleRate &&
-        audioOutput.sampleRate !== frame.sampleRate &&
-        !resampler
-      ) {
-        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, 1);
+      if (audioOutput.sampleRate && audioOutput.sampleRate !== frame.sampleRate && !resampler) {
+        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, frame.channels);
       }
+
+      // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
+      // the first captureFrame is attributed to this segment.
+      hasCapturedOwnFrame = true;
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
@@ -914,6 +908,9 @@ async function forwardAudio(
 
     reader?.releaseLock();
     audioOutput.flush();
+    if (signal?.aborted) {
+      audioOutput.clearBuffer();
+    }
     resampler?.close();
   }
 }
@@ -1019,7 +1016,12 @@ export function performToolExecutions({
 
       // Ensure valid arguments
       try {
-        const jsonArgs = JSON.parse(toolCall.args);
+        const rawArgs = toolCall.args || '{}';
+        const jsonArgs = parseFunctionArguments(rawArgs);
+        const canonicalArgs = JSON.stringify(jsonArgs);
+        if (canonicalArgs !== rawArgs) {
+          toolCall.args = canonicalArgs;
+        }
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1042,10 +1044,13 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
         toolCompleted(
           createToolOutput({
             toolCall,
-            exception: error,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
           }),
         );
         continue;

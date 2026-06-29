@@ -18,7 +18,13 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { RawData } from 'ws';
 import { WebSocket } from 'ws';
-import type { STTEncoding, STTModels } from './models.js';
+import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
+
+const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+
+function isU3ProModel(model: STTModels): boolean {
+  return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
 // since we narrow on `type` before reading anything else.
@@ -66,8 +72,12 @@ export interface STTOptions {
   maxTurnSilence?: number;
   formatTurns?: boolean;
   keytermsPrompt?: string[];
-  /** Only supported with the `u3-rt-pro` model. */
+  /** Only supported with the `u3-rt-pro` model family. */
   prompt?: string;
+  /** Only supported with the `u3-rt-pro` model family. */
+  agentContext?: string;
+  /** Only supported with the `u3-rt-pro` model family. Set at connection time only. */
+  previousContextNTurns?: number;
   vadThreshold?: number;
   /**
    * Enable speaker diarization. Note: AssemblyAI will return per-word speaker
@@ -80,6 +90,15 @@ export interface STTOptions {
   speakerLabels?: boolean;
   maxSpeakers?: number;
   domain?: string;
+  /** Isolate the primary voice and suppress background noise. Connect-time only. */
+  voiceFocus?: VoiceFocus;
+  /** Background audio suppression aggressiveness, from 0.0 to 1.0. Connect-time only. */
+  voiceFocusThreshold?: number;
+  /**
+   * Accuracy/latency preset for u3-rt-pro: `min_latency`, `balanced`, or `max_accuracy`.
+   * Explicit silence, partials, or VAD options still take precedence over mode defaults.
+   */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
   baseUrl: string;
 }
 
@@ -88,7 +107,7 @@ const defaultSTTOptions: STTOptions = {
   sampleRate: 16000,
   bufferSizeMs: 50,
   encoding: 'pcm_s16le',
-  speechModel: 'universal-streaming-english',
+  speechModel: 'universal-3-5-pro',
   baseUrl: 'wss://streaming.assemblyai.com',
 };
 
@@ -117,8 +136,22 @@ export class STT extends stt.STT {
       opts.speechModel = 'u3-rt-pro';
     }
 
-    if (opts.prompt !== undefined && opts.speechModel !== 'u3-rt-pro') {
-      throw new Error("The 'prompt' parameter is only supported with the 'u3-rt-pro' model.");
+    const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
+    if (!isU3ProModel(speechModel)) {
+      for (const param of [
+        'prompt',
+        'agentContext',
+        'previousContextNTurns',
+        'voiceFocus',
+        'voiceFocusThreshold',
+        'mode',
+      ] as const) {
+        if (opts[param] !== undefined) {
+          throw new Error(
+            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+          );
+        }
+      }
     }
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
@@ -204,6 +237,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };
     if (opts.prompt !== undefined) configMsg.prompt = opts.prompt;
+    if (opts.agentContext !== undefined) configMsg.agent_context = opts.agentContext;
     if (opts.keytermsPrompt !== undefined) configMsg.keyterms_prompt = opts.keytermsPrompt;
     if (opts.maxTurnSilence !== undefined) configMsg.max_turn_silence = opts.maxTurnSilence;
     if (opts.minTurnSilence !== undefined) configMsg.min_turn_silence = opts.minTurnSilence;
@@ -262,17 +296,17 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWS(): Promise<WebSocket> {
-    // u3-rt-pro has different silence defaults — if unset, both min and max default to 100ms.
+    // u3-rt-pro family models default both min and max silence to 100ms when unset.
     let minSilence = this.#opts.minTurnSilence;
     let maxSilence = this.#opts.maxTurnSilence;
-    if (this.#opts.speechModel === 'u3-rt-pro') {
+    if (isU3ProModel(this.#opts.speechModel)) {
       if (minSilence === undefined) minSilence = 100;
       if (maxSilence === undefined) maxSilence = minSilence;
     }
 
-    // Default language_detection to true for multilingual / u3-rt-pro models, false otherwise.
+    // Default language_detection to true for multilingual / u3-rt-pro-family models, false otherwise.
     const defaultLanguageDetection =
-      this.#opts.speechModel.includes('multilingual') || this.#opts.speechModel === 'u3-rt-pro';
+      this.#opts.speechModel.includes('multilingual') || isU3ProModel(this.#opts.speechModel);
     const languageDetection = this.#opts.languageDetection ?? defaultLanguageDetection;
 
     const liveConfig: Record<string, unknown> = {
@@ -289,10 +323,15 @@ export class SpeechStream extends stt.SpeechStream {
           : undefined,
       language_detection: languageDetection,
       prompt: this.#opts.prompt,
+      agent_context: this.#opts.agentContext,
+      previous_context_n_turns: this.#opts.previousContextNTurns,
       vad_threshold: this.#opts.vadThreshold,
       speaker_labels: this.#opts.speakerLabels,
       max_speakers: this.#opts.maxSpeakers,
       domain: this.#opts.domain,
+      voice_focus: this.#opts.voiceFocus,
+      voice_focus_threshold: this.#opts.voiceFocusThreshold,
+      mode: this.#opts.mode,
     };
 
     const url = new URL(`${this.#opts.baseUrl}/v3/ws`);

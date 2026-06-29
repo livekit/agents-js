@@ -19,6 +19,8 @@ function createHooks() {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
+    onUserTurnExceeded: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
 
@@ -118,27 +120,27 @@ describe('AudioRecognition STT pipeline handoff', () => {
     }
   });
 
-  it('resets handoff-sensitive STT state when attaching a pipeline', async () => {
+  it('resets handoff-sensitive STT state without clearing the pipeline input anchor', async () => {
     const sttNode: STTNode = async () =>
       new ReadableStream<SpeechEvent | string>({
         start() {},
       });
 
     const pipeline = new STTPipeline(sttNode);
+    pipeline.inputStartedAt = Date.now() - 60_000;
     const { recognition } = createRecognition(sttNode);
 
     (recognition as any).transcriptBuffer = [
       { type: SpeechEventType.FINAL_TRANSCRIPT, alternatives: [{ text: 'stale transcript' }] },
     ];
     (recognition as any).ignoreUserTranscriptUntil = Date.now();
-    (recognition as any)._inputStartedAt = Date.now();
 
     try {
       await recognition.start({ sttPipeline: pipeline });
 
       expect((recognition as any).transcriptBuffer).toEqual([]);
       expect((recognition as any).ignoreUserTranscriptUntil).toBeUndefined();
-      expect((recognition as any)._inputStartedAt).toBeUndefined();
+      expect(recognition.inputStartedAt).toBe(pipeline.inputStartedAt);
     } finally {
       await recognition.close();
       await pipeline.close();
@@ -193,6 +195,30 @@ describe('AudioRecognition STT pipeline handoff', () => {
       await flushTasks();
 
       expect((recognition as any).sttPipeline).toBeDefined();
+    } finally {
+      await recognition.close();
+    }
+  });
+
+  it('does not accumulate user turn limit state after clearing the user turn', async () => {
+    const hooks = createHooks();
+    const recognition = new AudioRecognition({
+      recognitionHooks: hooks,
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+      userTurnLimit: { maxWords: 5, maxDuration: null },
+    });
+
+    try {
+      (recognition as any).checkUserTurnLimit('one two three');
+      expect((recognition as any).userTurnTracker.words).toBe(3);
+      expect(hooks.onUserTurnExceeded).not.toHaveBeenCalled();
+
+      recognition.clearUserTurn();
+
+      (recognition as any).checkUserTurnLimit('four five six');
+      expect((recognition as any).userTurnTracker.words).toBe(3);
+      expect(hooks.onUserTurnExceeded).not.toHaveBeenCalled();
     } finally {
       await recognition.close();
     }

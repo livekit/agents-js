@@ -1,0 +1,174 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  intervalForRetry,
+  shortuuid,
+} from '@livekit/agents';
+import { log } from './log.js';
+
+/** @public */
+export const DEFAULT_API_URL = 'https://tavusapi.com/v2';
+
+/**
+ * Exception thrown when the Tavus plugin or Tavus service errors.
+ *
+ * @public
+ */
+export class TavusException extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TavusException';
+  }
+}
+
+/** @public */
+export interface CreateConversationOptions {
+  /** Tavus replica id. Falls back to `TAVUS_REPLICA_ID`. */
+  replicaId?: string;
+  /** Tavus persona id. Falls back to `TAVUS_PERSONA_ID`; created automatically when omitted. */
+  personaId?: string;
+  /** Conversation properties passed through to Tavus. */
+  properties?: Record<string, unknown>;
+  /** Additional fields to merge into the Tavus conversation creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+/** @public */
+export interface CreatePersonaOptions {
+  /** Tavus persona name. Generated automatically when omitted. */
+  name?: string;
+  /** Additional fields to merge into the Tavus persona creation payload. */
+  extraPayload?: Record<string, unknown>;
+}
+
+/** @public */
+export interface TavusAPIOptions {
+  /** Tavus API key. Falls back to `TAVUS_API_KEY`. */
+  apiKey?: string;
+  /** Override the Tavus API base URL. */
+  apiUrl?: string;
+  /** API retry/timeout options. */
+  connOptions?: APIConnectOptions;
+}
+
+/**
+ * Thin client for the Tavus HTTP API.
+ *
+ * @public
+ */
+export class TavusAPI {
+  private apiKey: string;
+  private apiUrl: string;
+  private connOptions: APIConnectOptions;
+
+  #logger = log();
+
+  constructor(options: TavusAPIOptions = {}) {
+    const apiKey = options.apiKey ?? process.env.TAVUS_API_KEY ?? '';
+    if (!apiKey) {
+      throw new TavusException('TAVUS_API_KEY must be set');
+    }
+
+    this.apiKey = apiKey;
+    this.apiUrl = options.apiUrl || DEFAULT_API_URL;
+    this.connOptions = options.connOptions || DEFAULT_API_CONNECT_OPTIONS;
+  }
+
+  async createConversation(options: CreateConversationOptions = {}): Promise<string> {
+    const replicaId = options.replicaId || process.env.TAVUS_REPLICA_ID;
+    if (!replicaId) {
+      throw new TavusException('TAVUS_REPLICA_ID must be set');
+    }
+
+    let personaId = options.personaId || process.env.TAVUS_PERSONA_ID;
+    if (!personaId) {
+      personaId = await this.createPersona();
+    }
+
+    const payload: Record<string, unknown> = {
+      replica_id: replicaId,
+      persona_id: personaId,
+      properties: options.properties ?? {},
+    };
+
+    if (options.extraPayload) {
+      Object.assign(payload, options.extraPayload);
+    }
+
+    if (!('conversation_name' in payload)) {
+      payload.conversation_name = shortuuid('lk_conversation_');
+    }
+
+    const responseData = (await this.post('conversations', payload)) as { conversation_id: string };
+    return responseData.conversation_id;
+  }
+
+  async createPersona(options: CreatePersonaOptions = {}): Promise<string> {
+    const payload: Record<string, unknown> = {
+      persona_name: options.name || shortuuid('lk_persona_'),
+      pipeline_mode: 'echo',
+      layers: {
+        transport: { transport_type: 'livekit' },
+      },
+    };
+
+    if (options.extraPayload) {
+      Object.assign(payload, options.extraPayload);
+    }
+
+    const responseData = (await this.post('personas', payload)) as { persona_id: string };
+    return responseData.persona_id;
+  }
+
+  private async post(endpoint: string, payload: Record<string, unknown>): Promise<unknown> {
+    const url = `${this.apiUrl}/${endpoint}`;
+
+    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.apiKey,
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(this.connOptions.timeoutMs),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new APIStatusError({
+            message: 'Server returned an error',
+            options: { statusCode: response.status, body: { error: text } },
+          });
+        }
+
+        return await response.json();
+      } catch (e) {
+        if (e instanceof APIStatusError && !e.retryable) {
+          throw e;
+        }
+        if (e instanceof APIConnectionError) {
+          this.#logger.warn({ error: String(e) }, 'failed to call tavus api');
+        } else {
+          this.#logger.error({ error: e }, 'failed to call tavus api');
+        }
+
+        if (i < this.connOptions.maxRetry) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, intervalForRetry(this.connOptions, i)),
+          );
+        }
+      }
+    }
+
+    throw new APIConnectionError({
+      message: 'Failed to call Tavus API after all retries',
+    });
+  }
+}

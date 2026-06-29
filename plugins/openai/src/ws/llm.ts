@@ -447,7 +447,7 @@ export class WSLLMStream extends llm.LLMStream {
     )) as OpenAI.Responses.ResponseInputItem[];
 
     const tools = this.toolCtx
-      ? Object.entries(this.toolCtx).map(([name, func]) => {
+      ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
           const oaiParams = {
             type: 'function' as const,
             name,
@@ -591,6 +591,15 @@ export class WSLLMStream extends llm.LLMStream {
               args: event.item.arguments,
             }),
           ],
+        },
+      };
+    } else if (event.item.type === 'message' && event.item.phase !== undefined) {
+      return {
+        id: this.#responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase: event.item.phase } },
         },
       };
     }

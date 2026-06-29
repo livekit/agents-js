@@ -56,6 +56,10 @@ export interface TTSOptions {
   voiceId?: string;
   voiceSettings?: VoiceSettings;
   model?: TTSModels | string;
+  /**
+   * Language code used to enforce a language for the model and text normalization. If the
+   * model does not support language overrides, it will be ignored.
+   */
   language?: string;
   // Legacy interface (backward compatibility)
   voice?: Voice;
@@ -136,8 +140,8 @@ function sampleRateFromFormat(encoding: TTSEncoding): number {
 }
 
 function synthesizeUrl(opts: ResolvedTTSOptions): string {
-  const { baseURL, voiceId, model, encoding, streamingLatency } = opts;
-  let url = `${baseURL}/text-to-speech/${voiceId}/stream?model_id=${model}&output_format=${encoding}`;
+  const { baseURL, voiceId, encoding, streamingLatency } = opts;
+  let url = `${baseURL}/text-to-speech/${voiceId}/stream?output_format=${encoding}&enable_logging=${String(opts.enableLogging).toLowerCase()}`;
   if (streamingLatency !== undefined) {
     url += `&optimize_streaming_latency=${streamingLatency}`;
   }
@@ -470,7 +474,7 @@ class Connection {
         if (result.done || this.#closed) break;
 
         const data = result.value;
-        const contextId = data.contextId as string | undefined;
+        const contextId = (data.contextId || data.context_id) as string | undefined;
         const ctx = contextId ? this.#contextData.get(contextId) : undefined;
 
         if (data.error) {
@@ -488,6 +492,14 @@ class Connection {
         }
 
         if (!ctx) {
+          if (data.type === 'flush_done') {
+            this.#logger.debug(
+              { context_id: contextId, data },
+              'ignoring elevenlabs flush_done message for inactive context',
+            );
+            continue;
+          }
+
           this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
           continue;
         }
@@ -829,6 +841,13 @@ export class ChunkedStream extends tts.ChunkedStream {
     const voiceSettings = this.#opts.voiceSettings
       ? stripUndefined(this.#opts.voiceSettings)
       : undefined;
+    const extraParams: Record<string, string | boolean> = {};
+    if (this.#opts.language) {
+      extraParams.language_code = getBaseLanguage(this.#opts.language);
+    }
+    if (this.#opts.applyLanguageTextNormalization !== undefined) {
+      extraParams.apply_language_text_normalization = this.#opts.applyLanguageTextNormalization;
+    }
 
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
@@ -844,6 +863,8 @@ export class ChunkedStream extends tts.ChunkedStream {
           text: this.inputText,
           model_id: this.#opts.model,
           voice_settings: voiceSettings,
+          apply_text_normalization: this.#opts.applyTextNormalization,
+          ...extraParams,
         }),
         signal: this.abortSignal,
       });
@@ -961,6 +982,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       waiterReject = reject;
       connection.registerStream(this, { resolve, reject });
     });
+    let contextClosed = false;
+
+    const closeContext = (suppressErrors = false) => {
+      if (contextClosed) {
+        return;
+      }
+
+      if (suppressErrors) {
+        contextClosed = true;
+        try {
+          connection.closeContext(this.#contextId);
+        } catch {
+          // The connection may already be closed during cancellation.
+        }
+        return;
+      }
+
+      connection.closeContext(this.#contextId);
+      contextClosed = true;
+    };
 
     // Handle abort - reject the waiter so Promise.all can complete
     const abortHandler = () => {
@@ -1024,7 +1065,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       // Send final empty text to signal end of input
       connection.sendContent({ contextId: this.#contextId, text: '', flush: true });
-      connection.closeContext(this.#contextId);
+      closeContext();
     };
 
     const audioProcessTask = async () => {
@@ -1101,6 +1142,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
+      closeContext(true);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }

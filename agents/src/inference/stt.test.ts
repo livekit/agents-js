@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { VAD, type VADStream } from '../vad.js';
 import {
   STT,
   type STTFallbackModel,
@@ -12,6 +13,7 @@ import {
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
+import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -322,5 +324,61 @@ describe('STT diarization capabilities', () => {
     expect(stream['opts'].modelOptions).toHaveProperty('endpointing', 500);
 
     stream.close();
+  });
+});
+
+describe('STT VAD handling for Speechmatics models', () => {
+  class MockVAD extends VAD {
+    label = 'mock';
+    constructor() {
+      super({ updateInterval: 0 });
+    }
+    stream(): VADStream {
+      throw new Error('not implemented');
+    }
+  }
+
+  it('non-speechmatics model has no VAD', async () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    expect(stt['vad']).toBeUndefined();
+    await expect(stt.vadPromise).resolves.toBeUndefined();
+  });
+
+  it('speechmatics model with no user vad falls back to the inference VAD', async () => {
+    const stt = makeStt({ model: 'speechmatics/enhanced' });
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+    await expect(stt.vadPromise).resolves.toBe(stt['vad']);
+  });
+
+  it('speechmatics model with user vad uses that vad', async () => {
+    const vad = new MockVAD();
+    const stt = makeStt({ model: 'speechmatics/enhanced', vad });
+    expect(stt['vad']).toBe(vad);
+    await expect(stt.vadPromise).resolves.toBe(vad);
+  });
+
+  it('user vad with non-speechmatics model is ignored', async () => {
+    const vad = new MockVAD();
+    const stt = makeStt({ model: 'deepgram/nova-3', vad });
+    expect(stt['vad']).toBeUndefined();
+    await expect(stt.vadPromise).resolves.toBeUndefined();
+  });
+
+  it('updateOptions speechmatics → non-speechmatics clears VAD', async () => {
+    const vad = new MockVAD();
+    const stt = makeStt({ model: 'speechmatics/enhanced', vad });
+    await expect(stt.vadPromise).resolves.toBe(vad);
+
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+    expect(stt['vad']).toBeUndefined();
+    await expect(stt.vadPromise).resolves.toBeUndefined();
+  });
+
+  it('updateOptions non-speechmatics → speechmatics falls back to the inference VAD', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    expect(stt['vad']).toBeUndefined();
+
+    stt.updateOptions({ model: 'speechmatics/enhanced' });
+    expect(stt['vad']).toBeInstanceOf(InferenceVAD);
   });
 });

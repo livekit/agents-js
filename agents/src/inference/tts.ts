@@ -34,10 +34,13 @@ import {
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 
 export type CartesiaModels =
+  | 'cartesia/sonic-3.5'
   | 'cartesia/sonic-3'
   | 'cartesia/sonic-2'
   | 'cartesia/sonic-turbo'
-  | 'cartesia/sonic';
+  | 'cartesia/sonic'
+  | 'cartesia/sonic-3-latest'
+  | 'cartesia/sonic-latest';
 
 export type DeepgramTTSModels = 'deepgram/aura' | 'deepgram/aura-2';
 
@@ -46,16 +49,20 @@ export type ElevenlabsModels =
   | 'elevenlabs/eleven_flash_v2_5'
   | 'elevenlabs/eleven_turbo_v2'
   | 'elevenlabs/eleven_turbo_v2_5'
-  | 'elevenlabs/eleven_multilingual_v2';
+  | 'elevenlabs/eleven_multilingual_v2'
+  | 'elevenlabs/eleven_v3';
 
 export type InworldModels =
   | 'inworld/inworld-tts-2'
   | 'inworld/inworld-tts-1.5-max'
   | 'inworld/inworld-tts-1.5-mini'
+  | 'inworld/inworld-tts-1.5'
   | 'inworld/inworld-tts-1-max'
   | 'inworld/inworld-tts-1';
 
-export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2';
+export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mistv3' | 'rime/mist';
+
+export type XaiTTSModels = 'xai/tts-1';
 
 export interface CartesiaOptions {
   emotion?: string;
@@ -101,6 +108,8 @@ export interface DeepgramTTSOptions {
 export interface RimeOptions {
   /** Maximum number of tokens to generate. */
   max_tokens?: number;
+  /** Values above 1 slow down audio; values below 1 speed it up. */
+  time_scale_factor?: number;
   /** Default 1.0, <1 = faster, >1 = slower. */
   speed_alpha?: number;
   /** Default false. */
@@ -124,12 +133,18 @@ export interface InworldOptions {
   text_normalization?: 'ON' | 'OFF';
 }
 
+export interface XaiTTSOptions {
+  /** Output bit rate in bits per second. */
+  bit_rate?: 32000 | 64000 | 96000 | 128000 | 192000;
+}
+
 type _TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
   | ElevenlabsModels
   | RimeModels
-  | InworldModels;
+  | InworldModels
+  | XaiTTSModels;
 
 export type TTSModels =
   | CartesiaModels
@@ -137,6 +152,7 @@ export type TTSModels =
   | ElevenlabsModels
   | RimeModels
   | InworldModels
+  | XaiTTSModels
   | AnyString;
 
 export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
@@ -151,7 +167,9 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
         ? RimeOptions
         : TModel extends InworldModels
           ? InworldOptions
-          : Record<string, unknown>;
+          : TModel extends XaiTTSModels
+            ? XaiTTSOptions
+            : Record<string, unknown>;
 
 /** Parse a model string into [model, voice]. Voice is undefined if not specified. */
 export function parseTTSModelString(model: string): [string, string | undefined] {
@@ -589,10 +607,20 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       for await (const ev of sendTokenizerStream) {
         if (signal.aborted || closing) break;
 
+        // Carry per-utterance generation config so mid-stream voice/model/language
+        // changes ride the gateway's hot path (no reconnect needed on the active
+        // session). The gateway also merges `extra` into the live session.
+        const generationConfig: Record<string, string> = {};
+        if (this.opts.voice) generationConfig.voice = this.opts.voice;
+        if (this.opts.model) generationConfig.model = this.opts.model;
+        if (this.opts.language) generationConfig.language = this.opts.language;
+
         await sendClientEvent(
           {
             type: 'input_transcript',
             transcript: ev.token + ' ',
+            generation_config: generationConfig,
+            extra: (this.opts.modelOptions as Record<string, unknown>) ?? {},
           },
           ws,
           signal,

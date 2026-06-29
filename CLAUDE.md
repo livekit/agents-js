@@ -48,6 +48,9 @@ pnpm build && node ./examples/src/basic_agent.ts dev --log-level=debug
 
 Required env vars: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, plus provider keys (e.g. `OPENAI_API_KEY`).
 
+> **Rule (must follow before handing off to the user to run any example/agent file):**
+> Always run `pnpm build` first and iterate on TypeScript / dependency errors until it exits 0. Never tell the user to `node ./examples/src/<file>.ts` (or any `.ts` entrypoint) until the build succeeds — this includes after editing example files, after modifying framework code that breaks `tsc`, and after copy-pasting reproductions from external sources. If the build fails, fix the errors yourself (add missing deps, fix outdated API usage, update types) before asking the user to run anything.
+
 ### Pre-downloading plugin assets (for Docker builds)
 
 `@livekit/agents` ships a `livekit-agents` bin with a `download-files` subcommand that discovers installed `@livekit/agents-plugin-*` packages from `node_modules` and runs each plugin's `downloadFiles()` (e.g. HuggingFace models for the turn detector) — without loading the user's agent code. Use it in Dockerfiles to separate dependency installation from app code so the download layer can be cached:
@@ -113,7 +116,7 @@ Subdirectories: `room_io/` (LiveKit Room I/O), `transcription/` (word-level sync
 
 ### Remote Sessions (`voice/remote_session.ts`)
 
-Wire protocol for distributed agents via LiveKit room message channels. `SessionTransport` abstraction with `RoomSessionTransport` implementation.
+Wire protocol for distributed agents. `SessionTransport` abstraction with `RoomSessionTransport` (LiveKit room channels) and `TcpSessionTransport` (raw TCP socket) implementations.
 
 ### Plugins (`plugins/`)
 
@@ -122,12 +125,12 @@ Each extends `Plugin` base class, auto-registers on import via `Plugin.registerP
 Plugin capabilities by type:
 
 - **LLM**: openai, google, baseten, mistralai
-- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai
+- **STT**: deepgram (v1+v2), openai, baseten, sarvam (v1/v2/v3), mistralai, inworld, cartesia
 - **TTS**: cartesia, elevenlabs, deepgram, openai, neuphonic, resemble, rime, inworld, baseten, sarvam (v1/v2/v3), mistralai, fishaudio, hume
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
-- **Realtime**: openai (+ responses/, ws/ modules), google (beta), xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar
+- **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
+- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns
@@ -158,7 +161,7 @@ The framework uses Node.js `AsyncLocalStorage` for implicit context passing:
 - **Framework**: Vitest with 5s default timeout.
 - **Pattern**: `*.test.ts` files co-located with source.
 - **Snapshots**: Used in LLM chat/tool context tests (`agents/src/llm/__snapshots__/`).
-- **Inference LLM tests**: Always use full model names from `agents/src/inference/models.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
+- **Inference LLM tests**: Always use full model names from `agents/src/inference/llm.ts` (e.g. `'openai/gpt-4o-mini'`, not `'gpt-4o-mini'`). Initialize logger first: `initializeLogger({ pretty: true })`.
 - **Test plugin**: `@livekit/agents-plugins-test` provides mock LLM, STT, TTS for unit tests without external APIs.
 - **STT testing utilities**: `stt.testing.FakeSTT` (from `@livekit/agents`) provides a configurable test harness for unit testing STT infrastructure (e.g. `FallbackAdapter`) with scripted transcripts, exceptions, timeouts, and observability channels.
 - **PR validation for major changes**: Verify `restaurant_agent.ts` and `realtime_agent.ts` work properly in [Agent Playground](https://agents-playground.livekit.io).

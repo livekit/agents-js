@@ -182,7 +182,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       )) as OpenAI.Responses.ResponseInputItem[];
 
       const tools = this.toolCtx
-        ? Object.entries(this.toolCtx).map(([name, func]) => {
+        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {
               type: 'function' as const,
               name: name,
@@ -316,6 +316,19 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
               args: event.item.arguments,
             }),
           ],
+        },
+      };
+    } else if (event.item.type === 'message') {
+      const phase = (event.item as OpenAI.Responses.ResponseOutputMessage & { phase?: string })
+        .phase;
+      if (phase === undefined) return undefined;
+
+      chunk = {
+        id: this.responseId,
+        delta: {
+          role: 'assistant',
+          content: undefined,
+          extra: { openai: { phase } },
         },
       };
     }

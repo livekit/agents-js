@@ -27,7 +27,7 @@ import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
-import type { SessionReport } from '../voice/report.js';
+import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 
@@ -215,8 +215,10 @@ export async function setupCloudTracer(options: {
   roomId: string;
   jobId: string;
   cloudHostname: string;
+  enableTraces?: boolean;
+  enableLogs?: boolean;
 }): Promise<void> {
-  const { roomId, jobId, cloudHostname } = options;
+  const { roomId, jobId, cloudHostname, enableTraces = true, enableLogs = true } = options;
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -249,31 +251,35 @@ export async function setupCloudTracer(options: {
       job_id: jobId,
     });
 
-    // Configure OTLP exporter to send traces to LiveKit Cloud
-    const spanExporter = new OTLPTraceExporter({
-      url: `https://${cloudHostname}/observability/traces/otlp/v0`,
-      headers,
-      compression: CompressionAlgorithm.GZIP,
-    });
+    if (enableTraces) {
+      // Configure OTLP exporter to send traces to LiveKit Cloud
+      const spanExporter = new OTLPTraceExporter({
+        url: `https://${cloudHostname}/observability/traces/otlp/v0`,
+        headers,
+        compression: CompressionAlgorithm.GZIP,
+      });
 
-    const tracerProvider = new NodeTracerProvider({
-      resource,
-      spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
-    });
-    // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
-    // and sets the global tracer provider. Both use set-once semantics in the OTel API,
-    // so if the user already called NodeSDK.start(), these are safe no-ops.
-    tracerProvider.register();
-    setTracerProvider(tracerProvider);
+      const tracerProvider = new NodeTracerProvider({
+        resource,
+        spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
+      });
+      // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
+      // and sets the global tracer provider. Both use set-once semantics in the OTel API,
+      // so if the user already called NodeSDK.start(), these are safe no-ops.
+      tracerProvider.register();
+      setTracerProvider(tracerProvider);
+    }
 
-    // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
-    initPinoCloudExporter({
-      cloudHostname,
-      roomId,
-      jobId,
-    });
+    if (enableLogs) {
+      // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
+      initPinoCloudExporter({
+        cloudHostname,
+        roomId,
+        jobId,
+      });
 
-    enableOtelLogging();
+      enableOtelLogging();
+    }
   } catch (error) {
     console.error('Failed to setup cloud tracer:', error);
     throw error;
@@ -551,7 +557,8 @@ export async function uploadSessionReport(options: {
   // This fixes the issue where function_call and function_call_output with same timestamp
   // get reordered by the dashboard
   let lastTimestamp = 0;
-  for (const item of report.chatHistory.items) {
+  const chatItems = report.recordingOptions.transcript ? report.chatHistory.items : [];
+  for (const item of chatItems) {
     // Skip null/undefined items
     if (!item) continue;
 
@@ -585,6 +592,15 @@ export async function uploadSessionReport(options: {
   }
 
   await logExporter.export(logRecords);
+
+  const hasAudio = Boolean(
+    report.recordingOptions.audio && report.audioRecordingPath && report.audioRecordingStartedAt,
+  );
+  // Nothing to send to the recordings endpoint when neither the transcript nor
+  // audio is being captured.
+  if (!report.recordingOptions.transcript && !hasAudio) {
+    return;
+  }
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -621,21 +637,32 @@ export async function uploadSessionReport(options: {
     },
   });
 
-  // Add chat_history JSON
-  const chatHistoryJson = JSON.stringify(report.chatHistory.toJSON({ excludeTimestamp: false }));
-  const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
-  formData.append('chat_history', chatHistoryBuffer, {
-    filename: 'chat_history.json',
-    contentType: 'application/json',
-    knownLength: chatHistoryBuffer.length,
-    header: {
-      'Content-Type': 'application/json',
-      'Content-Length': chatHistoryBuffer.length.toString(),
-    },
-  });
+  // Add chat_history JSON (only when transcript recording is enabled).
+  // Reuse the report layer's serialization so the uploaded chat history carries the
+  // snake_case (Python wire) field names — chat-item toJSON() emits camelCase, and the
+  // snake_case conversion lives only in sessionReportToJSON (toSnakeCaseDeep). Serializing
+  // raw toJSON() here would send camelCase and fail the Python consumer's pydantic validation
+  // (e.g. call_id/arguments/is_error/new_agent_id reported as missing).
+  if (report.recordingOptions.transcript) {
+    const chatHistoryJson = JSON.stringify(sessionReportToJSON(report).chat_history);
+    const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
+    formData.append('chat_history', chatHistoryBuffer, {
+      filename: 'chat_history.json',
+      contentType: 'application/json',
+      knownLength: chatHistoryBuffer.length,
+      header: {
+        'Content-Type': 'application/json',
+        'Content-Length': chatHistoryBuffer.length.toString(),
+      },
+    });
+  }
 
   // Add audio recording file if available
-  if (report.audioRecordingPath && report.audioRecordingStartedAt) {
+  if (
+    report.recordingOptions.audio &&
+    report.audioRecordingPath &&
+    report.audioRecordingStartedAt
+  ) {
     let audioBytes: Buffer;
     try {
       audioBytes = await fs.readFile(report.audioRecordingPath);

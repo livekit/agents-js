@@ -4,7 +4,7 @@
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
 import { isInstructions } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
-import { groupToolCalls } from './utils.js';
+import { convertMidConversationInstructions, groupToolCalls } from './utils.js';
 
 export interface GoogleFormatData {
   systemMessages: string[] | null;
@@ -14,6 +14,8 @@ export async function toChatCtx(
   chatCtx: ChatContext,
   injectDummyUserMessage: boolean = true,
 ): Promise<[Record<string, unknown>[], GoogleFormatData]> {
+  chatCtx = convertMidConversationInstructions(chatCtx);
+
   const turns: Record<string, unknown>[] = [];
   const systemMessages: string[] = [];
   let currentRole: string | null = null;

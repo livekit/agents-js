@@ -96,7 +96,7 @@ const alwaysTrueTurnDetector: _TurnDetector = {
   predictEndOfTurn: async () => 1.0,
 };
 
-describe('AudioRecognition user_turn span parity', () => {
+describe('AudioRecognition user_turn span', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   it('creates user_turn and parents eou_detection under it (stt mode)', async () => {
@@ -110,6 +110,8 @@ describe('AudioRecognition user_turn span parity', () => {
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
       retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };
@@ -191,6 +193,8 @@ describe('AudioRecognition user_turn span parity', () => {
       onInterimTranscript: vi.fn(),
       onFinalTranscript: vi.fn(),
       onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
       retrieveChatCtx: () => ChatContext.empty(),
       onEndOfTurn: vi.fn(async () => true),
     };

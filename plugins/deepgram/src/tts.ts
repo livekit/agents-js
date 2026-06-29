@@ -6,6 +6,7 @@ import {
   APIConnectionError,
   APIError,
   APIStatusError,
+  APITimeoutError,
   AudioByteStream,
   log,
   shortuuid,
@@ -25,7 +26,9 @@ export interface TTSOptions {
   model: TTSModels | string;
   encoding: TTSEncoding;
   sampleRate: number;
+  bitRate?: number | null;
   speed?: number;
+  mipOptOut: boolean;
   apiKey?: string;
   baseUrl?: string;
   sentenceTokenizer: tokenize.SentenceTokenizer;
@@ -33,9 +36,11 @@ export interface TTSOptions {
 }
 
 const defaultTTSOptions: TTSOptions = {
-  model: 'aura-asteria-en',
+  model: 'aura-2-andromeda-en',
   encoding: 'linear16',
   sampleRate: 24000,
+  bitRate: null,
+  mipOptOut: false,
   apiKey: process.env.DEEPGRAM_API_KEY,
   baseUrl: 'https://api.deepgram.com',
   capabilities: {
@@ -56,6 +61,10 @@ export class TTS extends tts.TTS {
 
   get provider(): string {
     return 'Deepgram';
+  }
+
+  override get sampleRate(): number {
+    return this.opts.sampleRate;
   }
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -87,8 +96,19 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.opts, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.opts);
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    return new SynthesizeStream(this, this.opts, options?.connOptions);
+  }
+
+  updateOptions(
+    opts: Partial<
+      Pick<TTSOptions, 'model' | 'encoding' | 'sampleRate' | 'bitRate' | 'speed' | 'mipOptOut'>
+    >,
+  ) {
+    this.opts = {
+      ...this.opts,
+      ...opts,
+    };
   }
 }
 
@@ -118,6 +138,11 @@ export class ChunkedStream extends tts.ChunkedStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    url.searchParams.append('container', 'none');
+    url.searchParams.append('mip_opt_out', String(this.opts.mipOptOut));
+    if (this.opts.bitRate !== undefined && this.opts.bitRate !== null) {
+      url.searchParams.append('bit_rate', this.opts.bitRate.toString());
+    }
     if (this.opts.speed !== undefined) {
       url.searchParams.append('speed', this.opts.speed.toString());
     }
@@ -215,8 +240,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   private static readonly FLUSH_MSG = JSON.stringify({ type: 'Flush' });
   private static readonly CLOSE_MSG = JSON.stringify({ type: 'Close' });
 
-  constructor(tts: TTS, opts: TTSOptions) {
-    super(tts);
+  constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.opts = opts;
     this.tokenizer = opts.sentenceTokenizer.stream();
   }
@@ -274,6 +299,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     url.searchParams.append('sample_rate', this.opts.sampleRate.toString());
     url.searchParams.append('model', this.opts.model);
     url.searchParams.append('encoding', this.opts.encoding);
+    url.searchParams.append('mip_opt_out', String(this.opts.mipOptOut));
+    if (this.opts.bitRate !== undefined && this.opts.bitRate !== null) {
+      url.searchParams.append('bit_rate', this.opts.bitRate.toString());
+    }
     if (this.opts.speed !== undefined) {
       url.searchParams.append('speed', this.opts.speed.toString());
     }
@@ -302,25 +331,36 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.tokenizer.close();
     };
 
-    const sendTask = async () => {
-      for await (const event of this.tokenizer) {
-        if (this.abortController.signal.aborted) break;
+    let markInputSent: () => void = () => {};
+    const inputSent = new Promise<void>((resolve) => {
+      markInputSent = resolve;
+    });
 
-        let text = event.token;
-        if (!text.endsWith(' ')) {
-          text += ' ';
+    const sendTask = async () => {
+      try {
+        for await (const event of this.tokenizer) {
+          if (this.abortController.signal.aborted) break;
+
+          let text = event.token;
+          if (!text.endsWith(' ')) {
+            text += ' ';
+          }
+
+          const message = JSON.stringify({
+            type: 'Speak',
+            text: text,
+          });
+
+          ws.send(message);
+          markInputSent();
         }
 
-        const message = JSON.stringify({
-          type: 'Speak',
-          text: text,
-        });
-
-        ws.send(message);
-      }
-
-      if (!this.abortController.signal.aborted) {
-        ws.send(SynthesizeStream.FLUSH_MSG);
+        if (!this.abortController.signal.aborted) {
+          ws.send(SynthesizeStream.FLUSH_MSG);
+          markInputSent();
+        }
+      } finally {
+        markInputSent();
       }
     };
 
@@ -344,7 +384,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
+      const resetMessageTimeout = (reject: (reason?: unknown) => void) => {
+        clearMessageTimeout();
+        timeout = setTimeout(() => {
+          reject(new APITimeoutError({ message: 'Deepgram TTS recv idle timeout' }));
+        }, this.connOptions.timeoutMs);
+      };
+
+      await inputSent;
+      if (this.abortController.signal.aborted) return;
+
       return new Promise<void>((resolve, reject) => {
+        resetMessageTimeout(reject);
+
         ws.on('message', (data: RawData, isBinary: boolean) => {
           clearMessageTimeout();
 
@@ -352,7 +404,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const message = JSON.parse(data.toString());
             if (message.type === 'Flushed') {
               finalReceived = true;
-              clearMessageTimeout();
               for (const frame of bstream.flush()) {
                 sendLastFrame(segmentId, false);
                 lastFrame = frame;
@@ -363,14 +414,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               resolve();
+              return;
             } else if (message.type === 'Warning') {
               this.#logger.warn(`Deepgram warning: ${message.warn_msg}`);
             } else if (message.type === 'Error' || message.type === 'error') {
               reject(new APIError('Deepgram TTS returned error', { body: message }));
+              return;
             } else if (message.type !== 'Metadata') {
               this.#logger.warn({ message }, 'Unknown Deepgram message type');
             }
 
+            resetMessageTimeout(reject);
             return;
           }
 
@@ -382,9 +436,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             sendLastFrame(segmentId, false);
             lastFrame = frame;
           }
+          resetMessageTimeout(reject);
         });
 
         ws.on('close', (code, reason) => {
+          clearMessageTimeout();
           if (!finalReceived) {
             reject(
               new APIStatusError({

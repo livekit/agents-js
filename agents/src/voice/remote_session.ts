@@ -7,6 +7,7 @@ import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
+import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type {
@@ -15,9 +16,10 @@ import type {
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
 import { isInstructions, renderInstructions } from '../llm/chat_context.js';
-import type { ToolContext } from '../llm/tool_context.js';
+import { type ToolContext, sortedToolNames } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
+  EOTModelUsage,
   InterruptionModelUsage,
   LLMModelUsage,
   STTModelUsage,
@@ -27,11 +29,13 @@ import { Future, Task, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
+import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
   type ConversationItemAddedEvent,
+  type EotPredictionEvent,
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
@@ -62,7 +66,9 @@ export type RemoteSessionEventTypes =
   | 'function_tools_executed'
   | 'overlapping_speech'
   | 'amd_prediction'
+  | 'eot_prediction'
   | 'session_usage'
+  | 'debug_message'
   | 'error';
 
 /** @experimental */
@@ -74,7 +80,9 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
+  eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
+  debug_message: (ev: pb.DebugMessage) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
 
@@ -226,6 +234,123 @@ export class RoomSessionTransport extends SessionTransport {
         });
       },
     };
+  }
+}
+
+const TCP_HEADER_SIZE = 4;
+const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
+const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
+
+/**
+ * Resolve once the socket's write buffer drains, or when the socket closes or
+ * errors. Unlike a bare `once('drain')`, this can't hang forever if the peer
+ * stops reading and the socket is then torn down.
+ */
+function waitForDrain(socket: net.Socket): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      socket.removeListener('drain', done);
+      socket.removeListener('close', done);
+      socket.removeListener('error', done);
+      resolve();
+    };
+    socket.once('drain', done);
+    socket.once('close', done);
+    socket.once('error', done);
+  });
+}
+
+/**
+ * {@link SessionTransport} that frames protobuf messages over a raw TCP socket.
+ *
+ * @experimental
+ */
+export class TcpSessionTransport extends SessionTransport {
+  private readonly host: string;
+  private readonly port: number;
+  private socket: net.Socket | null = null;
+  private closed = false;
+
+  constructor(host: string, port: number) {
+    super();
+    this.host = host;
+    this.port = port;
+  }
+
+  override async start(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const socket = net.createConnection({ host: this.host, port: this.port }, () => {
+        socket.setNoDelay(true);
+        socket.removeListener('error', onConnectError);
+        this.socket = socket;
+        resolve();
+      });
+      const onConnectError = (err: Error) => {
+        socket.destroy();
+        reject(err);
+      };
+      socket.once('error', onConnectError);
+    });
+  }
+
+  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+    const socket = this.socket;
+    if (this.closed || socket === null) return;
+
+    const data = msg.toBinary();
+    const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
+    header.writeUInt32BE(data.length, 0);
+    const flushed = socket.write(Buffer.concat([header, data]));
+
+    // Only block on backpressure once the write buffer is backed up. The wait
+    // also settles on close/error so a stalled reader can't hang teardown.
+    if (!flushed && socket.writableLength > TCP_DRAIN_THRESHOLD) {
+      await waitForDrain(socket);
+    }
+  }
+
+  override async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
+  override async *[Symbol.asyncIterator](): AsyncIterableIterator<pb.AgentSessionMessage> {
+    const socket = this.socket;
+    if (socket === null) return;
+
+    let buffer = Buffer.alloc(0);
+    try {
+      for await (const chunk of socket) {
+        buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk]);
+
+        while (buffer.length >= TCP_HEADER_SIZE) {
+          const length = buffer.readUInt32BE(0);
+          if (length > TCP_MAX_MESSAGE_SIZE) {
+            log().error({ length }, 'TCP session message too large, closing transport');
+            return;
+          }
+          if (buffer.length < TCP_HEADER_SIZE + length) break;
+
+          const payload = buffer.subarray(TCP_HEADER_SIZE, TCP_HEADER_SIZE + length);
+          buffer = buffer.subarray(TCP_HEADER_SIZE + length);
+
+          let msg: pb.AgentSessionMessage;
+          try {
+            msg = pb.AgentSessionMessage.fromBinary(payload);
+          } catch (e) {
+            log().warn({ error: e }, 'failed to parse TCP session message');
+            continue;
+          }
+          yield msg;
+        }
+      }
+    } catch (e) {
+      if (!this.closed) {
+        log().warn({ error: e }, 'TCP session transport read error');
+      }
+    }
   }
 }
 
@@ -464,14 +589,29 @@ function sessionUsageToProto(usage: AgentSessionUsage): pb.AgentSessionUsage {
         );
         break;
       }
+      case 'eot_usage': {
+        const eu = mu as Partial<EOTModelUsage>;
+        modelUsages.push(
+          new pb.ModelUsage({
+            usage: {
+              case: 'eot',
+              value: new pb.EotModelUsage({
+                provider: eu.provider ?? '',
+                model: eu.model ?? '',
+                totalRequests: eu.totalRequests ?? 0,
+              }),
+            },
+          }),
+        );
+        break;
+      }
     }
   }
   return new pb.AgentSessionUsage({ modelUsage: modelUsages });
 }
 
 function toolNames(toolCtx: ToolContext | undefined): string[] {
-  if (!toolCtx) return [];
-  return Object.keys(toolCtx);
+  return sortedToolNames(toolCtx);
 }
 
 function protoSerializeOptions(opts: {
@@ -499,15 +639,22 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 export class SessionHost {
   private readonly transport: SessionTransport;
+  private readonly audioInput: TcpAudioInput | undefined;
+  private readonly audioOutput: TcpAudioOutput | undefined;
   private session: AgentSession | undefined;
   private started = false;
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
-  private textInputCb: TextInputCallback | undefined;
 
-  constructor(transport: SessionTransport) {
+  constructor(
+    transport: SessionTransport,
+    audioInput?: TcpAudioInput,
+    audioOutput?: TcpAudioOutput,
+  ) {
     this.transport = transport;
+    this.audioInput = audioInput;
+    this.audioOutput = audioOutput;
   }
 
   registerSession(session: AgentSession): void {
@@ -521,12 +668,10 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
+      session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
-  }
-
-  registerTextInput(textInputCb: TextInputCallback): void {
-    this.textInputCb = textInputCb;
   }
 
   async start(): Promise<void> {
@@ -549,7 +694,9 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
+      this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
     }
 
     if (this.recvTask) {
@@ -565,12 +712,22 @@ export class SessionHost {
   private async recvLoop(): Promise<void> {
     try {
       for await (const msg of this.transport) {
-        if (msg.message.case === 'request') {
-          if (this.session) {
-            this.trackTask(
-              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
-            );
-          }
+        switch (msg.message.case) {
+          case 'request':
+            if (this.session) {
+              this.trackTask(
+                Task.from(async () =>
+                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
+                ),
+              );
+            }
+            break;
+          case 'audioInput':
+            this.audioInput?.pushFrame(msg.message.value);
+            break;
+          case 'audioPlaybackFinished':
+            this.audioOutput?.notifyPlayoutFinished();
+            break;
         }
       }
     } catch (e) {
@@ -676,6 +833,10 @@ export class SessionHost {
     );
   };
 
+  private onEotPrediction = (event: EotPredictionEvent): void => {
+    this._onEotPrediction(event);
+  };
+
   private onOverlappingSpeech = (event: OverlappingSpeechEvent): void => {
     const value = new pb.AgentSessionEvent_OverlappingSpeech({
       isInterruption: event.isInterruption,
@@ -706,11 +867,15 @@ export class SessionHost {
       {
         case: 'error',
         value: new pb.AgentSessionEvent_Error({
-          message: event.error ? String(event.error) : 'Unknown error',
+          message: event.error ? event.error.label : 'Unknown error',
         }),
       },
       event.createdAt,
     );
+  };
+
+  private onDebugMessage = (event: pb.DebugMessage): void => {
+    this.emitEvent({ case: 'debugMessage', value: event });
   };
 
   /**
@@ -727,6 +892,22 @@ export class SessionHost {
         category: AMD_CATEGORY_MAP[event.category],
         reason: event.reason,
         transcript: event.transcript,
+      }),
+    });
+  }
+
+  /**
+   * @internal — forwards an audio-EOT prediction to the connected
+   * {@link RemoteSession} peer.
+   */
+  _onEotPrediction(event: EotPredictionEvent): void {
+    this.emitEvent({
+      case: 'eotPrediction',
+      value: new pb.AgentSessionEvent_EotPrediction({
+        probability: event.probability,
+        threshold: event.threshold,
+        inferenceDuration: msToDuration(event.inferenceDurationMs),
+        delay: msToDuration(event.delayMs),
       }),
     });
   }
@@ -788,7 +969,34 @@ export class SessionHost {
             sdkVersion: version,
           }),
         });
+      case 'updateIo':
+        return this.handleUpdateIo(req.requestId, req.request.value);
     }
+  }
+
+  private async handleUpdateIo(
+    requestId: string,
+    update: pb.SessionRequest_UpdateIO,
+  ): Promise<void> {
+    const session = this.session!;
+    // Each field is proto3 `optional`; only apply the ones the peer actually set.
+    // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
+    if (update.input?.audioEnabled !== undefined) {
+      session.input.setAudioEnabled(update.input.audioEnabled);
+    }
+    if (update.output) {
+      if (update.output.audioEnabled !== undefined) {
+        session.output.setAudioEnabled(update.output.audioEnabled);
+      }
+      if (update.output.transcriptionEnabled !== undefined) {
+        session.output.setTranscriptionEnabled(update.output.transcriptionEnabled);
+      }
+    }
+
+    return this.sendResponse(requestId, {
+      case: 'updateIo',
+      value: new pb.SessionResponse_UpdateIOResponse(),
+    });
   }
 
   private async handleGetChatHistory(requestId: string): Promise<void> {
@@ -820,26 +1028,31 @@ export class SessionHost {
     let items: pb.ChatContext_ChatItem[] = [];
     let error: string | undefined;
 
-    if (text) {
-      if (this.textInputCb) {
-        const cbResult = this.textInputCb(this.session!, { text });
-        if (cbResult instanceof Promise) {
-          await cbResult;
-        }
-      } else {
-        try {
-          await this.session!.interrupt({ force: true }).await;
-        } catch {
-          // ignore
-        }
+    if (!text) {
+      error = 'empty run_input text';
+    } else {
+      // Drive the reply through session.run() directly and capture its events,
+      // ignoring any registered text-input callback. The room's default text
+      // input callback is fire-and-forget (interrupt + generateReply) and never
+      // surfaces the resulting chat items, so routing run_input through it would
+      // always return empty responses to the remote driver. This mirrors the
+      // Python SessionHost behavior.
+      try {
+        await this.session!.interrupt({ force: true }).await;
+      } catch {
+        // ignore
+      }
 
-        const result = this.session!.run({ userInput: text });
-        try {
-          await result.wait();
-        } catch (e) {
-          error = e instanceof Error ? e.message : String(e);
-        }
-        items = chatItemsToProto(result.events.map((ev) => ev.item));
+      const result = this.session!.run({ userInput: text });
+      try {
+        await result.wait();
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      items = chatItemsToProto(result.events.map((ev) => ev.item));
+
+      if (items.length === 0 && !error) {
+        error = 'agent produced no response items';
       }
     }
 
@@ -1001,8 +1214,14 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       case 'amdPrediction':
         this.emit('amd_prediction', ev.value);
         break;
+      case 'eotPrediction':
+        this.emit('eot_prediction', ev.value);
+        break;
       case 'sessionUsageUpdated':
         this.emit('session_usage', ev.value);
+        break;
+      case 'debugMessage':
+        this.emit('debug_message', ev.value);
         break;
       case 'error':
         this.emit('error', ev.value);

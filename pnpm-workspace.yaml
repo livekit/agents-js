@@ -6,12 +6,18 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - '@livekit/*'
-  # Renovate security update: vite@7.3.2
-  - vite@7.3.2
+  # Renovate security update: vite@7.3.2 || 7.3.5
+  - vite@7.3.2 || 7.3.5
   # Renovate security update: ws@8.20.1
   - ws@8.20.1
+  # Renovate security update: vitest@4.1.0
+  - vitest@4.1.0
+  # Renovate security update: form-data@4.0.6
+  - form-data@4.0.6
+  # Renovate security update: @opentelemetry/core@2.8.0
+  - "@opentelemetry/core@2.8.0"
 
 catalog:
-  '@livekit/rtc-node': ^0.13.27
+  '@livekit/rtc-node': ^0.13.29
   ws: ^8.18.0
   '@types/ws': ^8.5.10

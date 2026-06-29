@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -12,7 +11,6 @@ import {
   voice,
 } from '@livekit/agents';
 import * as google from '@livekit/agents-plugin-google';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -28,10 +26,9 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 const getWeatherDelayMs = 4000;
 
-const toolBehavior: google.beta.realtime.Behavior | undefined =
-  google.beta.realtime.Behavior.NON_BLOCKING;
-const toolResponseScheduling: google.beta.realtime.FunctionResponseScheduling | undefined =
-  google.beta.realtime.FunctionResponseScheduling.WHEN_IDLE;
+const toolBehavior: google.realtime.Behavior | undefined = google.realtime.Behavior.NON_BLOCKING;
+const toolResponseScheduling: google.realtime.FunctionResponseScheduling | undefined =
+  google.realtime.FunctionResponseScheduling.WHEN_IDLE;
 
 console.log(
   `[gemini_realtime_agent] toolBehavior=${toolBehavior ?? 'unset'} ` +
@@ -118,15 +115,11 @@ class StoryAgent extends voice.Agent<StoryData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      llm: new google.beta.realtime.RealtimeModel({
+      llm: new google.realtime.RealtimeModel({
         thinkingConfig: {
           // Making the thoughts false to speed up the realtime response
           // If you want to keep the thoughts, set includeThoughts to true or leave it undefined

@@ -18,6 +18,7 @@ import {
 } from '../stt/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
+import { type VAD, VADEventType, type VADStream } from '../vad.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -26,9 +27,9 @@ import {
   sttServerEventSchema,
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
+import { VAD as InferenceVAD } from './vad.js';
 
 export type DeepgramModels =
-  | 'deepgram/flux-general'
   | 'deepgram/nova-3'
   | 'deepgram/nova-3-medical'
   | 'deepgram/nova-2'
@@ -36,17 +37,26 @@ export type DeepgramModels =
   | 'deepgram/nova-2-conversationalai'
   | 'deepgram/nova-2-phonecall';
 
-export type CartesiaModels = 'cartesia/ink-whisper';
+export type DeepgramFluxModels =
+  | 'deepgram/flux-general'
+  | 'deepgram/flux-general-en'
+  | 'deepgram/flux-general-multi';
+
+export type CartesiaModels = 'cartesia/ink-whisper' | 'cartesia/ink-2';
 
 export type AssemblyaiModels =
   | 'assemblyai/universal-streaming'
-  | 'assemblyai/universal-streaming-multilingual';
+  | 'assemblyai/universal-streaming-multilingual'
+  | 'assemblyai/u3-rt-pro'
+  | 'assemblyai/universal-3-5-pro';
 
 export type ElevenlabsSTTModels = 'elevenlabs/scribe_v2_realtime';
 
 export type XaiSTTModels = 'xai/stt-1';
 
 export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standard';
+
+export type InworldSTTModels = 'inworld/inworld-stt-1';
 
 export interface CartesiaOptions {
   /** Minimum volume threshold. Default: not specified. */
@@ -69,7 +79,7 @@ export interface DeepgramOptions {
   /** Keywords with boost values. */
   keywords?: Array<[string, number]>;
   /** Key terms for recognition. */
-  keyterms?: string[];
+  keyterm?: string | string[];
   /** Enable profanity filter. */
   profanity_filter?: boolean;
   /** Convert spoken numbers to numerals. */
@@ -78,8 +88,23 @@ export interface DeepgramOptions {
   mip_opt_out?: boolean;
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
-  /** Eager end-of-turn threshold (0.0–1.0). Enables preflight transcripts for preemptive generation. */
+}
+
+export interface DeepgramFluxOptions {
+  /** Eager end-of-turn threshold (0.3–0.9). Enables preflight transcripts for preemptive generation. Default: 0.5. */
   eager_eot_threshold?: number;
+  /** End-of-turn threshold (0.5–0.9). */
+  eot_threshold?: number;
+  /** End-of-turn timeout in milliseconds. */
+  eot_timeout_ms?: number;
+  /** Key terms for recognition. */
+  keyterm?: string | string[];
+  /** Opt out of model improvement program. Default: false. */
+  mip_opt_out?: boolean;
+  /** Language hint. */
+  language_hint?: string;
+  /** Enable automatic language detection. */
+  detect_language?: boolean;
 }
 
 export interface AssemblyAIOptions {
@@ -95,6 +120,14 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
+  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  agent_context?: string;
+  /** Isolate the primary voice. Only supported with u3-rt-pro. */
+  voice_focus?: 'near-field' | 'far-field';
+  /** Background suppression strength. Only supported with u3-rt-pro. */
+  voice_focus_threshold?: number;
+  /** Accuracy/latency preset. Only supported with u3-rt-pro. */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
 }
 
 export interface XaiOptions {
@@ -147,6 +180,27 @@ export interface SpeechmaticsOptions {
   transcript_filtering_config?: Record<string, unknown>;
 }
 
+export interface InworldSTTOptions {
+  /** Enable Voice Profile detection. Default: true. */
+  enable_voice_profile?: boolean;
+  /** Max labels per category in voice-profile responses (1–20). Default: 10. */
+  voice_profile_top_n?: number;
+  /** Enable word-level timestamps. Default: true. */
+  include_word_timestamps?: boolean;
+  /** Wire-format encoding sent to Inworld. Default: LINEAR16. */
+  audio_encoding?: 'LINEAR16' | 'AUTO_DETECT';
+  /** Stop transcription after this many seconds of silence; 0 disables. */
+  inactivity_timeout_seconds?: number;
+  /** End-of-turn confidence threshold (0.0–1.0). Default: 0.5. */
+  end_of_turn_confidence_threshold?: number;
+  /** Domain-specific contextual hints passed to the model. */
+  prompts?: string[];
+  /** Minimum end-of-turn silence in milliseconds when confident. */
+  min_end_of_turn_silence_when_confident?: number;
+  /** VAD threshold (0.0–1.0). Default: 0.5. */
+  vad_threshold?: number;
+}
+
 export type STTLanguages =
   | 'multi'
   | 'en'
@@ -172,27 +226,33 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
 
 type _STTModels =
   | DeepgramModels
+  | DeepgramFluxModels
   | CartesiaModels
   | AssemblyaiModels
   | ElevenlabsSTTModels
   | XaiSTTModels
-  | SpeechmaticsModels;
+  | SpeechmaticsModels
+  | InworldSTTModels;
 
 export type STTModels = _STTModels | 'auto' | AnyString;
 
 export type ModelWithLanguage = `${_STTModels}:${STTLanguages}` | STTModels;
 
-export type STTOptions<TModel extends STTModels> = TModel extends DeepgramModels
-  ? DeepgramOptions
-  : TModel extends CartesiaModels
-    ? CartesiaOptions
-    : TModel extends AssemblyaiModels
-      ? AssemblyAIOptions
-      : TModel extends XaiSTTModels
-        ? XaiOptions
-        : TModel extends SpeechmaticsModels
-          ? SpeechmaticsOptions
-          : Record<string, unknown>;
+export type STTOptions<TModel extends STTModels> = TModel extends DeepgramFluxModels
+  ? DeepgramFluxOptions
+  : TModel extends DeepgramModels
+    ? DeepgramOptions
+    : TModel extends CartesiaModels
+      ? CartesiaOptions
+      : TModel extends AssemblyaiModels
+        ? AssemblyAIOptions
+        : TModel extends XaiSTTModels
+          ? XaiOptions
+          : TModel extends SpeechmaticsModels
+            ? SpeechmaticsOptions
+            : TModel extends InworldSTTModels
+              ? InworldSTTOptions
+              : Record<string, unknown>;
 
 /** Inference Fallback Adapter: configuration for a fallback STT model that runs server-side in LiveKit Inference, providing automatic fallback between providers. Extra fields are passed through to the provider. */
 export interface STTFallbackModel {
@@ -231,6 +291,24 @@ export function normalizeSTTFallback(
   return [makeFallback(fallback)];
 }
 
+function isSpeechmaticsModel(model: string | undefined): boolean {
+  return model?.startsWith('speechmatics/') ?? false;
+}
+
+function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
+  const speechmatics = isSpeechmaticsModel(model);
+  if (vad && !speechmatics) {
+    log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
+    return undefined;
+  }
+  if (speechmatics && vad === undefined) {
+    // Speechmatics doesn't endpoint server-side, so fall back to the in-tree
+    // local inference VAD rather than the deprecated silero plugin.
+    return new InferenceVAD();
+  }
+  return vad;
+}
+
 export type STTEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: STTEncoding = 'pcm_s16le';
@@ -256,6 +334,19 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
 export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
+  private vad?: VAD;
+  private _vadPromise?: Promise<VAD | undefined>;
+
+  /**
+   * Resolves to the VAD instance for the current model, or `undefined` if the model
+   * handles endpointing server-side. Lazily computed on first read.
+   */
+  get vadPromise(): Promise<VAD | undefined> {
+    if (this._vadPromise === undefined) {
+      this._vadPromise = Promise.resolve(this.vad);
+    }
+    return this._vadPromise;
+  }
 
   #logger = log();
 
@@ -270,6 +361,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     modelOptions?: STTOptions<TModel>;
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
+    vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     super({
@@ -289,6 +381,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiSecret,
       fallback,
       connOptions,
+      vad,
     } = opts || {};
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
@@ -321,6 +414,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       }
     }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
+    this.vad = resolveVADForModel(nextModel, vad);
 
     this.opts = {
       model: nextModel as TModel,
@@ -360,25 +454,40 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
+    const nextOpts = { ...opts };
+    if (typeof nextOpts.model === 'string') {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(nextOpts.model);
+      nextOpts.model = parsedModel as TModel;
+      if (parsedLanguage !== undefined && nextOpts.language === undefined) {
+        nextOpts.language = parsedLanguage;
+      }
+    }
+
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
       : this.opts.modelOptions;
 
     this.opts = {
       ...this.opts,
-      ...opts,
-      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
+      ...nextOpts,
+      language:
+        nextOpts.language !== undefined ? normalizeLanguage(nextOpts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
 
-    if (opts.modelOptions) {
+    if (nextOpts.model !== undefined) {
+      this.vad = resolveVADForModel(nextOpts.model, this.vad);
+      this._vadPromise = undefined;
+    }
+
+    if (nextOpts.modelOptions) {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
     }
 
     for (const stream of this.streams) {
-      stream.updateOptions(opts);
+      stream.updateOptions(nextOpts);
     }
   }
 
@@ -457,6 +566,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
+  private activeWs?: WebSocket;
 
   #logger = log();
 
@@ -488,15 +598,33 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
-    this.reconnectEvent.set();
+
+    // When the WebSocket is live, send a mid-stream session.update so providers
+    // that support it (e.g. AssemblyAI, Deepgram Flux) apply changes without
+    // reconnecting. Unsupported providers ignore the message.
+    if (this.activeWs && this.activeWs.readyState === 1) {
+      const settings: Record<string, unknown> = {};
+      if (opts.model !== undefined) settings.model = opts.model;
+      if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
+      if (opts.modelOptions !== undefined) settings.extra = opts.modelOptions;
+      if (Object.keys(settings).length > 0) {
+        try {
+          this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
+        } catch (e) {
+          this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
+        }
+      }
+    }
   }
 
   protected async run(): Promise<void> {
     while (true) {
+      const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let closing = false;
       let finalReceived = false;
+      let vadStream: VADStream | null = null;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
@@ -574,6 +702,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               frames = audioStream.flush();
             } else {
               const frame = ev as AudioFrame;
+              vadStream?.pushFrame(frame);
               frames = audioStream.write(new Int16Array(frame.data).buffer);
             }
 
@@ -586,12 +715,37 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           }
 
           closing = true;
+          vadStream?.endInput();
           socket.send(JSON.stringify({ type: 'session.finalize' }));
         } catch (e) {
           if ((e as Error).message === 'Send aborted') {
             // Expected abort, don't log
             return;
           }
+          throw e;
+        }
+      };
+
+      const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
+        const abortPromise = new ThrowsPromise<never, Error>((_, reject) => {
+          if (signal.aborted) {
+            return reject(new Error('VAD aborted'));
+          }
+          const onAbort = () => reject(new Error('VAD aborted'));
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+
+        const iterator = stream[Symbol.asyncIterator]();
+        try {
+          while (true) {
+            const result = await ThrowsPromise.race([iterator.next(), abortPromise]);
+            if (result.done) break;
+            if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
+            if (socket.readyState !== 1) return;
+            socket.send(JSON.stringify({ type: 'session.finalize' }));
+          }
+        } catch (e) {
+          if ((e as Error).message === 'VAD aborted') return;
           throw e;
         }
       };
@@ -659,6 +813,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       try {
         ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        this.activeWs = ws;
+        vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
         const connController = new AbortController();
@@ -671,16 +827,20 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           connController,
         );
         const recvTask = Task.from(({ signal }) => recv(signal), connController);
+        const activeVADStream = vadStream;
+        const vadTask = activeVADStream
+          ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
+          : undefined;
         const waitReconnectTask = Task.from(
           ({ signal }) => ThrowsPromise.race([this.reconnectEvent.wait(), waitForAbort(signal)]),
           connController,
         );
 
         try {
-          await ThrowsPromise.race([
-            ThrowsPromise.all([sendTask.result, wsListenerTask.result, recvTask.result]),
-            waitReconnectTask.result,
-          ]);
+          const taskResults = [sendTask.result, wsListenerTask.result, recvTask.result];
+          if (vadTask) taskResults.push(vadTask.result);
+
+          await ThrowsPromise.race([ThrowsPromise.all(taskResults), waitReconnectTask.result]);
 
           // If reconnect didn't trigger, tasks finished - exit loop
           if (!waitReconnectTask.done) break;
@@ -690,16 +850,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         } finally {
           connController.abort();
           this.abortController.signal.removeEventListener('abort', onStreamAbort);
-          await cancelAndWait(
-            [sendTask, wsListenerTask, recvTask, waitReconnectTask],
-            DEFAULT_CANCEL_TIMEOUT,
-          );
+          this.activeWs = undefined;
+          vadStream?.close();
+          const tasks = [sendTask, wsListenerTask, recvTask, waitReconnectTask];
+          if (vadTask) tasks.push(vadTask);
+          await cancelAndWait(tasks, DEFAULT_CANCEL_TIMEOUT);
           resourceCleanup();
         }
 
         if (this.abortController.signal.aborted) break;
       } finally {
         // Ensure cleanup even if connectWs throws
+        this.activeWs = undefined;
         resourceCleanup();
       }
     }

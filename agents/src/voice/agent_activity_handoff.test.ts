@@ -14,6 +14,8 @@ import {
   type ReusableResources,
   cleanupReusableResources,
 } from './agent_activity.js';
+import type { EndOfTurnInfo } from './audio_recognition.js';
+import type { UserTurnExceededEvent } from './events.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
@@ -26,8 +28,8 @@ type FakeActivity = {
   realtimeSession: unknown;
 };
 
-function createFakeActivity(agent: Agent, stt: unknown) {
-  const detachedPipeline = { id: Symbol('pipeline') };
+function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number) {
+  const detachedPipeline = { id: Symbol('pipeline'), inputStartedAt };
   const activity = {
     agent,
     audioRecognition: {
@@ -65,6 +67,22 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
 
     expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
     expect(oldActivity.activity.audioRecognition?.detachSttPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the original input start time with a reused STT pipeline', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldInputStartedAt = Date.now() - 60_000;
+    const oldActivity = createFakeActivity(
+      new Agent({ instructions: 'a' }),
+      sharedStt,
+      oldInputStartedAt,
+    );
+    const newActivity = createFakeActivity(new Agent({ instructions: 'b' }), sharedStt);
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+    expect(resources.sttPipeline?.inputStartedAt).toBe(oldInputStartedAt);
   });
 
   it('does not reuse when the STT instances differ', async () => {
@@ -112,7 +130,7 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
-  it('reuses when the new agent inherits the same sttNode implementation', async () => {
+  it('does not reuse when the new agent inherits the same custom sttNode implementation', async () => {
     const sharedStt = { id: 'shared-stt' };
 
     class AgentA extends Agent {
@@ -128,8 +146,8 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
 
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
-    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
-    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).toHaveBeenCalledTimes(1);
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
   it('does not reuse when the old activity has no audioRecognition', async () => {
@@ -286,6 +304,156 @@ describe('AgentActivity RT session reuse eligibility', () => {
 
     expect(resources.rtSession).toBeUndefined();
   });
+});
+
+describe('AgentActivity blockNewTurns (handoff transition)', () => {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  function createBareActivity(): any {
+    const activity = Object.create(AgentActivity.prototype);
+    activity.logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
+    activity.cancelPreemptiveGeneration = vi.fn();
+    activity.createSpeechTask = vi.fn(() => ({ cancel: vi.fn() }));
+    return activity;
+  }
+
+  const endOfTurnInfo: EndOfTurnInfo = {
+    newTranscript: 'hello again',
+    transcriptConfidence: 1,
+    transcriptionDelay: 0,
+    endOfUtteranceDelay: 0,
+    startedSpeakingAt: undefined,
+    stoppedSpeakingAt: undefined,
+  };
+
+  // Regression for the mis-ported #5396 fix: blockNewTurns() must gate the speech
+  // scheduling paths (here onEndOfTurn) during the handoff transition window — even
+  // before drain() flips schedulingPaused — so a user turn arriving in that window is
+  // dropped instead of scheduling a reply against the outgoing agent.
+  it('onEndOfTurn skips a new user turn while new turns are blocked, even when scheduling is still running', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false; // scheduling still running (pre-drain window)
+    activity.newTurnsBlocked = false;
+
+    (activity as AgentActivity).blockNewTurns();
+    const handled = await (activity as AgentActivity).onEndOfTurn(endOfTurnInfo);
+
+    expect(handled).toBe(true);
+    expect(activity.cancelPreemptiveGeneration).toHaveBeenCalledTimes(1);
+    // The turn is dropped at the guard; userTurnCompleted is never scheduled.
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+  });
+
+  it('onEndOfTurn schedules the turn normally when new turns are not blocked', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    // `get stt` returns undefined here, short-circuiting the interruption branch.
+    activity.agent = { stt: undefined };
+    activity.agentSession = { stt: undefined };
+    activity._currentSpeech = undefined;
+    activity._userTurnCompletedTask = undefined;
+
+    const handled = await (activity as AgentActivity).onEndOfTurn(endOfTurnInfo);
+
+    expect(handled).toBe(true);
+    expect(activity.createSpeechTask).toHaveBeenCalledTimes(1);
+  });
+
+  // The bot's port wrongly gated the user-turn-exceeded callback on newTurnsBlocked;
+  // Python never does. onUserTurnExceeded must stay independent of the handoff flag.
+  it('onUserTurnExceeded is independent of newTurnsBlocked', () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity.userTurnExceededLocked = false;
+    activity.userTurnExceededTask = undefined;
+
+    (activity as AgentActivity).blockNewTurns();
+
+    const ev: UserTurnExceededEvent = {
+      type: 'user_turn_exceeded',
+      transcript: 'hi',
+      accumulatedTranscript: 'hi',
+      accumulatedWordCount: 10,
+      duration: 5000,
+      createdAt: Date.now(),
+    };
+    (activity as AgentActivity).onUserTurnExceeded(ev);
+
+    expect(activity.createSpeechTask).toHaveBeenCalledTimes(1);
+  });
+
+  // When new turns are blocked before the turn completes, the reply must be skipped
+  // before onUserTurnCompleted runs. When the session is not closing, the message
+  // is dropped instead of being added to the chat context.
+  it('userTurnCompleted skips before the callback when new turns are blocked (not closing)', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity._currentSpeech = undefined;
+    const onUserTurnCompleted = vi.fn(async () => {});
+    activity.agent = { llm: undefined, chatCtx: ChatContext.empty(), onUserTurnCompleted };
+    activity.agentSession = { llm: undefined, _closing: false, _conversationItemAdded: vi.fn() };
+
+    (activity as AgentActivity).blockNewTurns();
+    await (activity as any).userTurnCompleted(endOfTurnInfo);
+
+    expect(onUserTurnCompleted).not.toHaveBeenCalled();
+    expect(activity.agentSession._conversationItemAdded).not.toHaveBeenCalled();
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+  });
+
+  // The skipped message is still committed to the chat context when the session is
+  // closing, so it is not lost.
+  it('userTurnCompleted commits the skipped message to chat ctx when closing', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity._currentSpeech = undefined;
+    const push = vi.fn();
+    const conversationItemAdded = vi.fn();
+    activity.agent = {
+      llm: undefined,
+      chatCtx: ChatContext.empty(),
+      _chatCtx: { items: { push } },
+      onUserTurnCompleted: vi.fn(async () => {}),
+    };
+    activity.agentSession = {
+      llm: undefined,
+      _closing: true,
+      _conversationItemAdded: conversationItemAdded,
+    };
+
+    (activity as AgentActivity).blockNewTurns();
+    await (activity as any).userTurnCompleted(endOfTurnInfo);
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(conversationItemAdded).toHaveBeenCalledTimes(1);
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+  });
+
+  // The post-callback re-check catches a handoff triggered inside
+  // onUserTurnCompleted, so no reply is scheduled against the outgoing agent even
+  // though new turns were not blocked when the turn started.
+  it('userTurnCompleted re-checks after the callback when a handoff blocks new turns mid-callback', async () => {
+    const activity = createBareActivity();
+    activity._schedulingPaused = false;
+    activity.newTurnsBlocked = false;
+    activity._currentSpeech = undefined;
+    // A handoff inside the user callback blocks new turns after guard A has already passed.
+    const onUserTurnCompleted = vi.fn(async () => {
+      activity.newTurnsBlocked = true;
+    });
+    const plainLlm = { id: 'plain-llm' };
+    activity.agent = { llm: plainLlm, chatCtx: ChatContext.empty(), onUserTurnCompleted };
+    activity.agentSession = { llm: undefined, _closing: false, _conversationItemAdded: vi.fn() };
+
+    await (activity as any).userTurnCompleted(endOfTurnInfo);
+
+    expect(onUserTurnCompleted).toHaveBeenCalledTimes(1);
+    expect(activity.createSpeechTask).not.toHaveBeenCalled();
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 });
 
 describe('cleanupReusableResources', () => {

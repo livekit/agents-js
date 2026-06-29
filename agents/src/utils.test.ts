@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../src/log.js';
 import {
   Event,
@@ -19,6 +19,10 @@ import {
 describe('utils', () => {
   // initialize logger
   initializeLogger({ pretty: true, level: 'debug' });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   describe('Queue', () => {
     it('aborts a pending get', async () => {
@@ -157,6 +161,8 @@ describe('utils', () => {
 
     it('should handle task that checks abort signal manually', async () => {
       const arr: number[] = [];
+      const readyToCancel = new Event();
+      const continueAfterCancel = new Event();
       const task = Task.from(async (controller) => {
         for (let i = 0; i < 10; i++) {
           if (controller.signal.aborted) {
@@ -164,14 +170,19 @@ describe('utils', () => {
           }
           await delay(10);
           arr.push(i);
+          if (i === 1) {
+            readyToCancel.set();
+            await continueAfterCancel.wait();
+          }
         }
         return 'completed';
       });
 
-      await delay(35);
+      await readyToCancel.wait();
       task.cancel();
+      continueAfterCancel.set();
 
-      expect(arr).toEqual([0, 1, 2]);
+      expect(arr).toEqual([0, 1]);
       try {
         await task.result;
       } catch (error: unknown) {
@@ -446,18 +457,16 @@ describe('utils', () => {
     });
 
     it('should timeout if task does not respond to cancellation', async () => {
+      vi.useFakeTimers();
       const task = Task.from(async () => {
         await delay(1000);
       });
 
       // This should timeout because the task ignores cancellation
-      try {
-        await task.cancelAndWait(200);
-        expect.fail('Task should have timed out');
-      } catch (error: unknown) {
-        expect(error).instanceof(Error);
-        expect((error as Error).message).toBe('Task cancellation timed out');
-      }
+      const result = task.cancelAndWait(200);
+      const rejection = expect(result).rejects.toThrow('Task cancellation timed out');
+      await vi.advanceTimersByTimeAsync(200);
+      await rejection;
     });
 
     it('should handle task that completes before timeout', async () => {
@@ -616,10 +625,11 @@ describe('utils', () => {
     });
 
     it('wait after 2 seconds is still pending before set', async () => {
+      vi.useFakeTimers();
       const event = new Event();
       const waiter = event.wait();
 
-      await delay(2000);
+      await vi.advanceTimersByTimeAsync(2000);
       expect(await isPending(waiter)).toBe(true);
 
       event.set();

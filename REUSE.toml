@@ -7,6 +7,12 @@ SPDX-PackageName = "agents-js"
 SPDX-PackageSupplier = "LiveKit, Inc. <https://livekit.io>"
 SPDX-PackageDownloadLocation = "https://github.com/livekit/agents-js"
 
+# model license
+[[annotations]]
+path = ["MODEL_LICENSE"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # trivial files
 [[annotations]]
 path = [".gitignore", "flake.lock", ".envrc", "packages/livekit-rtc/.gitignore", ".changeset/**", "**/CHANGELOG.md", "NOTICE", ".github/**"]
@@ -52,5 +58,11 @@ SPDX-License-Identifier = "Apache-2.0"
 # README files
 [[annotations]]
 path = ["**/README.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# API Extractor reports
+[[annotations]]
+path = ["**/etc/*.api.md"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"

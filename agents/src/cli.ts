@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
+import { runConsole } from './console.js';
 import { type PluginDownloadFailure, formatDownloadFailureMessage } from './download.js';
 import { initializeLogger, log } from './log.js';
 import { Plugin } from './plugin.js';
@@ -29,7 +30,7 @@ const runServer = async (args: CliArgs) => {
 
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const server = new AgentServer(new ServerOptions({ production: args.production, ...opts }));
+  const server = new AgentServer(new ServerOptions({ ...opts, production: args.production }));
 
   if (args.room) {
     server.event.once('worker_registered', () => {
@@ -135,6 +136,13 @@ export const runApp = (opts: ServerOptions) => {
     .command('start')
     .description('Start the worker in production mode')
     .addOption(logLevelOption('info'))
+    .addOption(
+      new Option(
+        '--simulation',
+        'Run under an agent simulation: the worker load limit is disabled so runs ' +
+          'can saturate the agent, and the worker HTTP server is not started. Set by `lk simulate`.',
+      ).hideHelp(),
+    )
     .action((...[, command]) => {
       const globalOptions = program.optsWithGlobals();
       const commandOptions = command.opts();
@@ -143,6 +151,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
+      opts.simulation = commandOptions.simulation || opts.simulation;
       runServer({
         opts,
         production: true,
@@ -195,6 +204,27 @@ export const runApp = (opts: ServerOptions) => {
     });
 
   program
+    .command('console')
+    .description('Run the agent in-process attached to a local broker over TCP')
+    .requiredOption('--connect-addr <addr>', 'host:port of the broker TCP socket')
+    .option('--record', 'save the session report locally', false)
+    .addOption(logLevelOption('debug'))
+    .action((...[, command]) => {
+      const commandOptions = command.opts();
+      opts.logLevel = commandOptions.logLevel;
+      initializeLogger({ pretty: true, level: opts.logLevel });
+      process.env.LIVEKIT_DEV_MODE = '1';
+      runConsole({
+        agentPath: opts.agent,
+        connectAddr: commandOptions.connectAddr,
+        record: commandOptions.record === true,
+      }).catch((error) => {
+        log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
+        process.exit(1);
+      });
+    });
+
+  program
     .command('download-files')
     .description('Download plugin dependency files')
     .addOption(logLevelOption('debug'))
@@ -204,9 +234,9 @@ export const runApp = (opts: ServerOptions) => {
       const logger = log();
 
       logger.warn(
-        '`download-files` via cli.runApp() is deprecated. ' +
-          'Use `npx livekit-agents download-files` instead — it discovers installed ' +
-          'plugins without loading your agent code, enabling better Docker layer caching.',
+        'Invoking the download-files command via cli.runApp() is deprecated as of 1.4.4. ' +
+          'Use the livekit-agents command included with the @livekit/agents package instead, e.g. ' +
+          '`npx livekit-agents download-files`.',
       );
 
       const downloadFiles = async () => {

@@ -4,6 +4,8 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
+  APIStatusError,
   APITimeoutError,
   AudioByteStream,
   Future,
@@ -36,6 +38,7 @@ import {
   isChunkMessage,
   isDoneMessage,
   isErrorMessage,
+  isFlushDoneMessage,
 } from './types.js';
 
 const AUTHORIZATION_HEADER = 'X-API-Key';
@@ -433,34 +436,24 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             continue;
           }
 
-          // Handle error messages
-          if (isErrorMessage(serverMsg)) {
-            this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
-            continue;
-          }
-
           const segmentId = serverMsg.context_id;
 
-          // Process word timestamps if present (typed via Zod schema)
-          if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
-            const wordTimestamps = serverMsg.word_timestamps;
-            for (let i = 0; i < wordTimestamps.words.length; i++) {
-              const word = wordTimestamps.words[i];
-              const startTime = wordTimestamps.start[i];
-              const endTime = wordTimestamps.end[i];
-              if (word !== undefined && startTime !== undefined && endTime !== undefined) {
-                pendingTimedTranscripts.push(
-                  createTimedString({
-                    text: word + ' ', // Add space after word for consistency
-                    startTime,
-                    endTime,
-                  }),
-                );
-              }
+          // Handle error frames first. 4xx (e.g. empty-transcript on
+          // function-call turns) is non-fatal — log and fall through so an
+          // accompanying done:true still triggers the unified close path
+          // below. 5xx bubbles up so the base SynthesizeStream can retry.
+          if (isErrorMessage(serverMsg)) {
+            if (serverMsg.status_code >= 400 && serverMsg.status_code < 500) {
+              this.#logger.debug({ error: serverMsg.error }, 'Cartesia sent a non-fatal error');
+            } else {
+              this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
+              throw new APIStatusError({
+                message: `Cartesia returned error: ${serverMsg.error}`,
+                options: { statusCode: serverMsg.status_code, retryable: true },
+              });
             }
           }
 
-          // Handle audio chunk messages
           if (isChunkMessage(serverMsg)) {
             const audioBuffer = Buffer.from(serverMsg.data, 'base64');
             // Extract ArrayBuffer from Buffer for AudioByteStream compatibility
@@ -484,7 +477,23 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               );
               ws.close();
             }, this.#opts.chunkTimeout);
-          } else if (isDoneMessage(serverMsg)) {
+          } else if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
+            const wordTimestamps = serverMsg.word_timestamps;
+            for (let i = 0; i < wordTimestamps.words.length; i++) {
+              const word = wordTimestamps.words[i];
+              const startTime = wordTimestamps.start[i];
+              const endTime = wordTimestamps.end[i];
+              if (word !== undefined && startTime !== undefined && endTime !== undefined) {
+                pendingTimedTranscripts.push(
+                  createTimedString({
+                    text: word + ' ', // Add space after word for consistency
+                    startTime,
+                    endTime,
+                  }),
+                );
+              }
+            }
+          } else if (isDoneMessage(serverMsg) || (isErrorMessage(serverMsg) && serverMsg.done)) {
             // This ensures all sentences have been sent before closing
             if (sentenceStreamClosed) {
               for (const frame of bstream.flush()) {
@@ -504,9 +513,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
             }
             // If sentenceStreamClosed is false, continue receiving - more done messages will come
+          } else if (!isFlushDoneMessage(serverMsg) && !isErrorMessage(serverMsg)) {
+            // flush_done is an ack with nothing to do; error frames without
+            // done:true were already logged above.
+            this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
           }
         }
       } catch (err) {
+        // Always propagate API errors so the base SynthesizeStream can retry
+        // and emit tts_error once retries are exhausted.
+        if (err instanceof APIError) throw err;
         // skip log error for normal websocket close
         if (err instanceof Error && !err.message.includes('WebSocket closed')) {
           if (
@@ -549,6 +565,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.abortSignal.aborted) {
         return;
       }
+      if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
     } finally {
       // Ensure we don't leak sockets/tasks across retry attempts.

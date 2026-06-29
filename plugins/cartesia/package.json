@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-cartesia",
-  "version": "1.4.3",
+  "version": "1.4.9",
   "description": "Cartesia plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -36,6 +36,7 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
+    "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",

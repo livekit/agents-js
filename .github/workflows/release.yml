@@ -9,6 +9,12 @@ on:
     branches:
       - main
       - 0.x
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: 'Publish a snapshot release'
+        type: boolean
+        default: false
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -56,9 +62,20 @@ jobs:
           echo "All packages exist on npm."
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
+        if: ${{ github.event.inputs.snapshot != 'true' }}
+        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
         with:
           publish: pnpm ci:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish pre-release
+        id: changeset-prerelease
+        if: ${{ github.event.inputs.snapshot == 'true' }}
+        run: |
+          pnpm changeset version --snapshot next
+          pnpm build
+          pnpm publish -r --tag next --no-git-checks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build docs

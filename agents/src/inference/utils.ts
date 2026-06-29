@@ -4,7 +4,7 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AccessToken } from 'livekit-server-sdk';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
 import { version } from '../version.js';
 
@@ -55,7 +55,8 @@ export async function createAccessToken(
 
 /**
  * Build metadata headers for inference requests.
- * Includes SDK version/platform, and optionally room/job IDs from the current job context.
+ * Includes SDK version/platform, and optionally room/job/agent IDs from the current job context.
+ * Includes X-LiveKit-Worker-Token when LIVEKIT_WORKER_TOKEN is set (hosted agents).
  */
 export function buildMetadataHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -71,6 +72,17 @@ export function buildMetadataHeaders(): Record<string, string> {
     if (ctx.job.id) {
       headers['X-LiveKit-Job-Id'] = ctx.job.id;
     }
+    // for hosted agents where job context is always present
+    const workerToken = process.env.LIVEKIT_WORKER_TOKEN;
+    if (workerToken) {
+      headers['X-LiveKit-Worker-Token'] = workerToken;
+    }
+    // Only emit the agent SID once the room is connected: before connection the
+    // local participant SID is unset/placeholder and would leak into requests.
+    const agentSid = ctx.agent?.sid;
+    if (ctx.room.isConnected && agentSid) {
+      headers['X-LiveKit-Agent-Id'] = agentSid;
+    }
   }
 
   return headers;
@@ -84,12 +96,16 @@ export async function connectWs(
   return new ThrowsPromise<WebSocket, APIConnectionError | APIStatusError>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { ...buildMetadataHeaders(), ...headers } });
 
+    let opened = false;
+
     const timeout = setTimeout(() => {
-      reject(new APIConnectionError({ message: 'Timeout connecting to LiveKit WebSocket' }));
+      socket.terminate();
+      reject(new APITimeoutError({ message: 'Timeout connecting to LiveKit WebSocket' }));
     }, timeoutMs);
 
     const onOpen = () => {
       clearTimeout(timeout);
+      opened = true;
       resolve(socket);
     };
 
@@ -107,9 +123,9 @@ export async function connectWs(
       }
     };
 
-    const onClose = (code: number) => {
+    const onClose = () => {
       clearTimeout(timeout);
-      if (code !== 1000) {
+      if (!opened) {
         reject(
           new APIConnectionError({
             message: 'Connection closed unexpectedly',

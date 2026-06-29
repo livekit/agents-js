@@ -10,6 +10,18 @@ export const OUT_FRAME_SIZE = 1200; // 50ms
 export const BASE_URL = 'wss://api.openai.com/v1';
 
 export type Model = 'gpt-4o-realtime-preview-2024-10-01' | string; // Open-ended, for future models
+
+/**
+ * Models that support the `reasoning` configuration on the Realtime API.
+ * Currently only the `gpt-realtime-2` family supports it.
+ *
+ * Ref: https://developers.openai.com/api/reference/resources/realtime/subresources/calls/methods/accept
+ */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface Reasoning {
+  effort?: ReasoningEffort;
+}
 export type Voice =
   | 'alloy'
   | 'shimmer'
@@ -58,6 +70,7 @@ export type ServerEventType =
   | 'input_audio_buffer.speech_stopped'
   | 'conversation.item.added' // GA: renamed from conversation.item.created
   | 'conversation.item.created' // Beta: kept for backward compatibility
+  | 'conversation.item.input_audio_transcription.delta'
   | 'conversation.item.input_audio_transcription.completed'
   | 'conversation.item.input_audio_transcription.failed'
   | 'conversation.item.truncated'
@@ -267,6 +280,7 @@ export interface ConversationResource {
 }
 
 export type ResponseStatusDetails =
+  | string
   | {
       type: 'incomplete';
       reason: 'max_output_tokens' | 'content_filter' | string;
@@ -328,6 +342,7 @@ export interface SessionUpdateEvent extends BaseClientEvent {
     audio?: RealtimeAudioConfig; // GA: nested audio config
     max_output_tokens?: number | 'inf'; // GA: renamed from max_response_output_tokens
     tracing?: TracingConfig | null; // GA: tracing config
+    reasoning?: Reasoning | null; // GA: reasoning config (gpt-realtime-2 only)
     // Common fields
     model: Model;
     instructions: string;
@@ -432,6 +447,7 @@ export interface ResponseCreateEvent extends BaseClientEvent {
 
 export interface ResponseCancelEvent extends BaseClientEvent {
   type: 'response.cancel';
+  response_id?: string;
 }
 
 export type ClientEvent =
@@ -507,6 +523,13 @@ export interface ConversationItemAddedEvent extends BaseServerEvent {
   type: 'conversation.item.added';
   previous_item_id: string;
   item: ItemResource;
+}
+
+export interface ConversationItemInputAudioTranscriptionDeltaEvent extends BaseServerEvent {
+  type: 'conversation.item.input_audio_transcription.delta';
+  item_id: string;
+  content_index?: number;
+  delta?: string;
 }
 
 export interface ConversationItemInputAudioTranscriptionCompletedEvent extends BaseServerEvent {
@@ -670,6 +693,7 @@ export type ServerEvent =
   | InputAudioBufferSpeechStoppedEvent
   | ConversationItemCreatedEvent
   | ConversationItemAddedEvent // GA: renamed from conversation.item.created
+  | ConversationItemInputAudioTranscriptionDeltaEvent
   | ConversationItemInputAudioTranscriptionCompletedEvent
   | ConversationItemInputAudioTranscriptionFailedEvent
   | ConversationItemTruncatedEvent

@@ -42,7 +42,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       model: DEFAULT_MODEL,
       voice: options.voice || DEFAULT_VOICE,
       apiKey: options.apiKey || process.env.XAI_API_KEY,
-      modalities: ['audio'],
+      modalities: ['audio', 'text'],
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });

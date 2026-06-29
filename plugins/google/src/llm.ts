@@ -2,13 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
@@ -17,6 +23,16 @@ import { toFunctionDeclarations } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
+}
+
+function isGemini3Model(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3');
+}
+
+function isGemini3FlashModel(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
@@ -38,6 +54,7 @@ export interface LLMOptions {
   httpOptions?: types.HttpOptions;
   seed?: number;
   serviceTier?: types.ServiceTier;
+  cachedContent?: string;
   mediaResolution?: types.MediaResolution;
 }
 
@@ -88,6 +105,7 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
+   * @param cachedContent - Resource name of an explicit context cache to attach to every request from this LLM instance, e.g. `cachedContents/abc123` for the Gemini API or `projects/<project>/locations/<location>/cachedContents/abc123` for VertexAI. The cache must already exist. When set, `systemInstruction`, `tools`, and `toolConfig` are omitted from outgoing requests because Gemini requires those fields to live inside the cached content resource.
    * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
   constructor(
@@ -110,6 +128,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
@@ -182,6 +201,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
       apiKey,
     };
@@ -205,6 +225,10 @@ export class LLM extends llm.LLM {
   }): LLMStream {
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
+    if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
+      extras.httpOptions = this.#opts.httpOptions;
+    }
+
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
 
     if (toolChoice) {
@@ -218,7 +242,7 @@ export class LLM extends llm.LLM {
           },
         };
       } else if (toolChoice === 'required') {
-        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
+        const toolNames = llm.sortedToolNames(toolCtx);
         geminiToolConfig = {
           functionCallingConfig: {
             mode: FunctionCallingConfigMode.ANY,
@@ -267,7 +291,38 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
-      extras.thinkingConfig = this.#opts.thinkingConfig;
+      const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
+
+      if (isGemini3Model(this.#opts.model)) {
+        // Gemini 3: only supports thinkingLevel
+        if (thinkingBudget !== undefined && thinkingLevel === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
+              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
+          );
+        }
+        extras.thinkingConfig = {
+          includeThoughts,
+          thinkingLevel:
+            thinkingLevel ??
+            (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
+        };
+      } else {
+        // Gemini 2.5 and earlier: only supports thinkingBudget
+        if (thinkingLevel !== undefined && thinkingBudget === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
+          );
+          extras.thinkingConfig = { includeThoughts };
+        } else if (thinkingBudget !== undefined) {
+          // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
+          extras.thinkingConfig = { thinkingBudget, includeThoughts };
+        } else {
+          extras.thinkingConfig = this.#opts.thinkingConfig;
+        }
+      }
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
@@ -276,6 +331,10 @@ export class LLM extends llm.LLM {
 
     if (this.#opts.serviceTier !== undefined) {
       extras.serviceTier = this.#opts.serviceTier;
+    }
+
+    if (this.#opts.cachedContent !== undefined) {
+      extras.cachedContent = this.#opts.cachedContent;
     }
 
     if (this.#opts.mediaResolution !== undefined) {
@@ -367,16 +426,50 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
+      // Gemini's API rejects `generateContent` requests that pass `cachedContent` together with
+      // `systemInstruction`, `tools`, or `toolConfig` — those fields must live INSIDE the
+      // CachedContent resource, not on the request. The application bakes them into the cache via
+      // `client.caches.create(...)`; here we just suppress the duplicates on the outgoing request
+      // whenever a cache is attached.
+      const cachedContent = this.#extraKwargs.cachedContent;
+      const usingCache = cachedContent !== undefined;
+      const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
+
+      if (!usingCache) {
+        requestConfig.systemInstruction = systemInstruction;
+        requestConfig.tools = tools;
+      } else {
+        const dropped = ['tools', 'toolConfig', 'systemInstruction'].filter(
+          (key) => key in requestConfig,
+        );
+        if (tools && !dropped.includes('tools')) {
+          dropped.push('tools');
+        }
+        if (systemInstruction && !dropped.includes('systemInstruction')) {
+          dropped.push('systemInstruction');
+        }
+        if (dropped.length > 0) {
+          this.logger.warn(
+            { dropped, cachedContent },
+            'dropping fields from Gemini request because cachedContent is set; these fields must be baked into the CachedContent resource',
+          );
+        }
+        delete requestConfig.tools;
+        delete requestConfig.toolConfig;
+        delete requestConfig.systemInstruction;
+      }
+
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(this.connOptions.timeoutMs),
+      };
+
       const response = await this.#client.models.generateContentStream({
         model: this.#model,
         contents,
         config: {
-          ...this.#extraKwargs,
-          systemInstruction,
-          httpOptions: this.#extraKwargs.httpOptions ?? {
-            timeout: Math.floor(this.connOptions.timeoutMs),
-          },
-          tools,
+          ...requestConfig,
+          httpOptions,
         },
       });
 

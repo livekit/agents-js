@@ -4,6 +4,8 @@
 
 export type {
   AgentMetrics,
+  AvatarMetrics,
+  EOTInferenceMetrics,
   EOUMetrics,
   InterruptionMetrics,
   LLMMetrics,
@@ -16,6 +18,7 @@ export type {
 export {
   filterZeroValues,
   ModelUsageCollector,
+  type EOTModelUsage,
   type InterruptionModelUsage,
   type LLMModelUsage,
   type ModelUsage,

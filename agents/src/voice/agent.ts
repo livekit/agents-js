@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { ReadableStream, type ReadableStreamDefaultReader } from 'node:stream/web';
+import { ReadableStream } from 'node:stream/web';
 import {
   LLM as InferenceLLM,
   STT as InferenceSTT,
@@ -28,11 +28,12 @@ import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
 import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
-import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
+import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -113,8 +114,6 @@ export interface ModelSettings {
   toolChoice?: ToolChoice;
 }
 
-export type TTSPronunciationMap = Record<string, string>;
-
 export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
@@ -127,8 +126,6 @@ export interface AgentOptions<UserData> {
   turnHandling?: TurnHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
-  /** Text replacements applied before TTS synthesis. */
-  ttsPronunciationMap?: TTSPronunciationMap;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
   /** @deprecated use turnHandling.interruption.enabled instead */
@@ -145,7 +142,6 @@ export class Agent<UserData = any> {
 
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
-  private _ttsPronunciationMap?: TTSPronunciationMap;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -173,7 +169,6 @@ export class Agent<UserData = any> {
     turnHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
-    ttsPronunciationMap,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -227,7 +222,6 @@ export class Agent<UserData = any> {
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
-    this._ttsPronunciationMap = ttsPronunciationMap;
 
     this._agentActivity = undefined;
   }
@@ -250,10 +244,6 @@ export class Agent<UserData = any> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
-  }
-
-  get ttsPronunciationMap(): TTSPronunciationMap | undefined {
-    return this._ttsPronunciationMap;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -297,6 +287,18 @@ export class Agent<UserData = any> {
 
   async onUserTurnCompleted(_chatCtx: ChatContext, _newMessage: ChatMessage): Promise<void> {}
 
+  async onUserTurnExceeded(ev: UserTurnExceededEvent): Promise<void> {
+    await this.session.generateReply({
+      userInput: ev.transcript,
+      instructions:
+        'The user has been speaking too long without giving a chance to reply. ' +
+        'Politely cut in with a short reply or notice. Keep it short since the user cannot interrupt it.',
+      allowInterruptions: false,
+      toolChoice: 'none',
+      inputModality: 'audio',
+    });
+  }
+
   async sttNode(
     audio: ReadableStream<AudioFrame>,
     modelSettings: ModelSettings,
@@ -308,7 +310,7 @@ export class Agent<UserData = any> {
     chatCtx: ChatContext,
     toolCtx: ToolContext,
     modelSettings: ModelSettings,
-  ): Promise<ReadableStream<ChatChunk | string> | null> {
+  ): Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null> {
     return Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
 
@@ -344,7 +346,7 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
-  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
+  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
   async updateTools(tools: ToolContext): Promise<void> {
     if (!this._agentActivity) {
       this._tools = { ...tools };
@@ -489,15 +491,14 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
-      const ttsInputStream = createTTSPronunciationMapStream(text, agent.ttsPronunciationMap);
-      stream.updateInputStream(ttsInputStream.stream);
+      stream.updateInputStream(text);
 
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
         stream.close();
-        await ttsInputStream.cancel('tts node cleanup').catch(() => {});
+        await text.cancel('tts node cleanup').catch(() => {});
         if (wrappedTts !== activity.tts) {
           await wrappedTts.close();
         }
@@ -542,109 +543,6 @@ export class Agent<UserData = any> {
     ): Promise<ReadableStream<AudioFrame> | null> {
       return audio;
     },
-  };
-}
-
-// Wrap the TTS input stream so pronunciation replacements are applied before synthesis,
-// while keeping a direct cancel hook for cleanup when TTS is interrupted.
-function createTTSPronunciationMapStream(
-  text: ReadableStream<string>,
-  pronunciationMap?: TTSPronunciationMap,
-): { stream: ReadableStream<string>; cancel: (reason?: unknown) => Promise<void> } {
-  if (!pronunciationMap || Object.keys(pronunciationMap).length === 0) {
-    return {
-      stream: text,
-      async cancel(reason?: unknown) {
-        await text.cancel(reason);
-      },
-    };
-  }
-
-  const entries = Object.entries(pronunciationMap);
-  let reader: ReadableStreamDefaultReader<string> | undefined;
-  let cancelled = false;
-
-  const cancel = async (reason?: unknown) => {
-    cancelled = true;
-    await reader?.cancel(reason);
-  };
-
-  const stream = new ReadableStream<string>({
-    async start(controller) {
-      reader = text.getReader();
-      let buffer = '';
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-          buffer += value;
-          const drained = drainTTSPronunciationBuffer(buffer, entries);
-          buffer = drained.buffer;
-          if (drained.output) {
-            controller.enqueue(drained.output);
-          }
-        }
-
-        if (buffer) {
-          const drained = drainTTSPronunciationBuffer(buffer, entries, true);
-          if (drained.output) {
-            controller.enqueue(drained.output);
-          }
-        }
-
-        if (!cancelled) {
-          controller.close();
-        }
-      } catch (error) {
-        if (!cancelled) {
-          controller.error(error);
-        }
-      } finally {
-        reader?.releaseLock();
-      }
-    },
-    cancel(reason) {
-      return cancel(reason);
-    },
-  });
-
-  return { stream, cancel };
-}
-
-// Emit only text that can no longer become a pronunciation-map key; the retained
-// buffer lets replacements match terms split across stream chunk boundaries.
-function drainTTSPronunciationBuffer(
-  initialBuffer: string,
-  entries: [string, string][],
-  final = false,
-): { output: string; buffer: string } {
-  let buffer = initialBuffer;
-  let output = '';
-
-  while (buffer.length > 0) {
-    const match = entries.find(([term]) => term.length > 0 && buffer.startsWith(term));
-    if (match) {
-      const [term, pronunciation] = match;
-      output += pronunciation;
-      buffer = buffer.slice(term.length);
-      continue;
-    }
-
-    const mayBecomeMatch =
-      !final && entries.some(([term]) => term.length > 0 && term.startsWith(buffer));
-    if (mayBecomeMatch) {
-      break;
-    }
-
-    output += buffer[0];
-    buffer = buffer.slice(1);
-  }
-
-  return {
-    output,
-    buffer,
   };
 }
 

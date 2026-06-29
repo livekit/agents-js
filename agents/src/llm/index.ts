@@ -5,6 +5,8 @@ export {
   handoff,
   isFunctionTool,
   tool,
+  sortedToolEntries,
+  sortedToolNames,
   ToolError,
   ToolFlag,
   type AgentHandoff,

@@ -1,5 +1,111 @@
 # @livekit/agents-plugin-openai
 
+## 1.4.9
+
+### Patch Changes
+
+- Updated dependencies [[`3c45ddaa6d7d6f3dbd52a4ed19462b59dced66a3`](https://github.com/livekit/agents-js/commit/3c45ddaa6d7d6f3dbd52a4ed19462b59dced66a3), [`bad0a7ffdade30a5c379d045201433e2afb32c8c`](https://github.com/livekit/agents-js/commit/bad0a7ffdade30a5c379d045201433e2afb32c8c), [`294782fbe47d185ac8adc1f58031a39084891a98`](https://github.com/livekit/agents-js/commit/294782fbe47d185ac8adc1f58031a39084891a98)]:
+  - @livekit/agents@1.4.9
+
+## 1.4.8
+
+### Patch Changes
+
+- Updated dependencies [[`d662ec6b2ff047a60e4f9215c99794748497b675`](https://github.com/livekit/agents-js/commit/d662ec6b2ff047a60e4f9215c99794748497b675)]:
+  - @livekit/agents@1.4.8
+
+## 1.4.7
+
+### Patch Changes
+
+- Fix DataStream avatars (Anam, Bey, D-ID, LemonSlice, Runway, Tavus, Trugen) stalling the - [#1795](https://github.com/livekit/agents-js/pull/1795) ([@smorimoto](https://github.com/smorimoto))
+  conversation on user interruption when paired with the OpenAI Realtime API.
+
+  `DataStreamAudioOutput` parsed the `lk.playback_finished` RPC payload with a compile-time-only
+  `as PlaybackFinishedEvent` cast. The LiveKit avatar protocol serializes that payload with
+  snake_case keys (`playback_position`, `synchronized_transcript`) — confirmed against Anam's
+  live engine, which emits `{"playback_position": 2.0, "interrupted": true, "synchronized_transcript": null}`
+  — so the camelCase `playbackPosition` read back `undefined`. That became
+  `Math.floor(undefined * 1000) === NaN`, which `JSON.stringify` serializes as `null` in
+  `conversation.item.truncate`; the OpenAI Realtime API then rejected the truncate with an
+  `invalid_type` error and the interrupted turn could not recover.
+
+  `DataStreamAudioOutput` now normalizes the wire payload (snake_case primary, camelCase
+  fallback), which also restores the previously-dropped `synchronizedTranscript` on interrupted
+  turns. As defense-in-depth, the realtime truncate path now clamps a non-finite `audioEndMs` to
+  a valid non-negative integer in both `AgentActivity` and the OpenAI plugin so a malformed or
+  absent playback position can never again serialize as `null`.
+
+- Fix `openai` realtime STT (transcription session) failing on every model - [#1767](https://github.com/livekit/agents-js/pull/1767) ([@tsushanth](https://github.com/tsushanth))
+  with `invalid_request_error.invalid_model` when connecting directly to
+  `wss://api.openai.com/.../realtime`.
+
+  OpenAI's native endpoint now treats a `?model=` query param on the
+  WebSocket upgrade URL as selecting a conversation session, so the
+  subsequent transcription-mode `session.update` is rejected — surfacing
+  as `invalid_model` and a `4000` close. Drop the `?model=` parameter
+  when the host is `api.openai.com` (the model is conveyed via
+  `session.update → audio.input.transcription.model` instead).
+
+  OpenAI-compatible proxies (LiteLLM, Cloudflare AI Gateway, etc.) still
+  receive the model on the upgrade URL so they can route by model before
+  the first frame, preserving the original intent of #1467.
+
+- Updated dependencies [[`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267`](https://github.com/livekit/agents-js/commit/9cc7215bc08c34f24b5d9f7f8fbe754d7e67c267), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c), [`27a6e829350c13fcdca533d68f864bebda70de89`](https://github.com/livekit/agents-js/commit/27a6e829350c13fcdca533d68f864bebda70de89), [`e64698c2e67048ff577d5024488929193d0b60e4`](https://github.com/livekit/agents-js/commit/e64698c2e67048ff577d5024488929193d0b60e4), [`ec4a2a48d7ba1f6c20a86303b264188fa47fae0d`](https://github.com/livekit/agents-js/commit/ec4a2a48d7ba1f6c20a86303b264188fa47fae0d), [`e1acca813568869fd345b5eee16be211e8595d9b`](https://github.com/livekit/agents-js/commit/e1acca813568869fd345b5eee16be211e8595d9b), [`bb8e6251354062714e39ae5a44244e1ef65b385b`](https://github.com/livekit/agents-js/commit/bb8e6251354062714e39ae5a44244e1ef65b385b), [`ed2364ad105d7fde9baccc463a7bdbffa6a1699c`](https://github.com/livekit/agents-js/commit/ed2364ad105d7fde9baccc463a7bdbffa6a1699c)]:
+  - @livekit/agents@1.4.7
+
+## 1.4.6
+
+### Patch Changes
+
+- Fix trailing whitespace formatting in realtime model options - [#1705](https://github.com/livekit/agents-js/pull/1705) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Add Reasoning param for gpt-realtime-2\* model family - [#1575](https://github.com/livekit/agents-js/pull/1575) ([@yaniv-peretz](https://github.com/yaniv-peretz))
+
+- Preserve OpenAI Responses assistant message phase metadata across follow-up requests. - [#1720](https://github.com/livekit/agents-js/pull/1720) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Skip empty OpenAI realtime chat messages when updating remote chat context. - [#1721](https://github.com/livekit/agents-js/pull/1721) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Handle string OpenAI realtime response status details. - [#1728](https://github.com/livekit/agents-js/pull/1728) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`2eeccad1136111152a461765a71271c03c339a3b`](https://github.com/livekit/agents-js/commit/2eeccad1136111152a461765a71271c03c339a3b), [`27de4099f0bd66aa02a5aa040f00767b855742e2`](https://github.com/livekit/agents-js/commit/27de4099f0bd66aa02a5aa040f00767b855742e2), [`84cec47eb2af21bfead10878b866e1b564226ac1`](https://github.com/livekit/agents-js/commit/84cec47eb2af21bfead10878b866e1b564226ac1), [`1a3ef4c9332f435f88fc716c791d6263164ecb2e`](https://github.com/livekit/agents-js/commit/1a3ef4c9332f435f88fc716c791d6263164ecb2e), [`ef27e91427a06d336e6343bdec55966b45ec5b69`](https://github.com/livekit/agents-js/commit/ef27e91427a06d336e6343bdec55966b45ec5b69), [`5267ce6a582191a607bd76f3db90123586636713`](https://github.com/livekit/agents-js/commit/5267ce6a582191a607bd76f3db90123586636713), [`b942b0d02ea44a86b887bcae36a5b4b0d417312d`](https://github.com/livekit/agents-js/commit/b942b0d02ea44a86b887bcae36a5b4b0d417312d), [`596285f50e7537b5faf3739765b6b7df827b0823`](https://github.com/livekit/agents-js/commit/596285f50e7537b5faf3739765b6b7df827b0823), [`1d27d25a5c26a178929c520f1cc58861239469ad`](https://github.com/livekit/agents-js/commit/1d27d25a5c26a178929c520f1cc58861239469ad), [`36b4f7538b6cfa85e28834b17600d18f851a76cc`](https://github.com/livekit/agents-js/commit/36b4f7538b6cfa85e28834b17600d18f851a76cc), [`3f3969223569e63eb98d57abfcb2b0d6345f9981`](https://github.com/livekit/agents-js/commit/3f3969223569e63eb98d57abfcb2b0d6345f9981), [`5154150131b0c62290b0ad84170927417b558765`](https://github.com/livekit/agents-js/commit/5154150131b0c62290b0ad84170927417b558765), [`7ed8af73c1a893d051f533642235107f52183efc`](https://github.com/livekit/agents-js/commit/7ed8af73c1a893d051f533642235107f52183efc), [`b55a41181bd377f90cd48388dacf653f2eb1a15f`](https://github.com/livekit/agents-js/commit/b55a41181bd377f90cd48388dacf653f2eb1a15f), [`ac49bfe7639a7772bf128e337d0dd2e371eb66d5`](https://github.com/livekit/agents-js/commit/ac49bfe7639a7772bf128e337d0dd2e371eb66d5), [`97e17e3c69834cef22c74bc3cc13c5a38b9115a8`](https://github.com/livekit/agents-js/commit/97e17e3c69834cef22c74bc3cc13c5a38b9115a8), [`c220cfd5a32a2eb5c0e9c0e896ea3510580a08ff`](https://github.com/livekit/agents-js/commit/c220cfd5a32a2eb5c0e9c0e896ea3510580a08ff), [`7d3b9b531c08286d4389bea9e231824bd6110f1b`](https://github.com/livekit/agents-js/commit/7d3b9b531c08286d4389bea9e231824bd6110f1b)]:
+  - @livekit/agents@1.4.6
+
+## 1.4.5
+
+### Patch Changes
+
+- fix(plugin-openai): honor OPENAI_BASE_URL for Realtime defaults. - [#1650](https://github.com/livekit/agents-js/pull/1650) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(plugin-openai): include OpenAI Realtime response status details in incomplete response logs. - [#1631](https://github.com/livekit/agents-js/pull/1631) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): sort function tools to keep tool order invariant. - [#1641](https://github.com/livekit/agents-js/pull/1641) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- feat(plugin-openai): stream `input_audio_transcription.delta` events on the OpenAI Realtime API as `UserInputTranscribed` partials (`isFinal: false`). Enables word-by-word user transcripts with `gpt-realtime-whisper` and any future delta-emitting transcription model. Accumulators are cleared on `.completed`, `.failed`, `conversation.item.deleted`, session close, and reconnect; `.failed` now emits a closing `isFinal: true` event when partials had streamed so consumers don't hang. - [#1581](https://github.com/livekit/agents-js/pull/1581) ([@jjsquillante](https://github.com/jjsquillante))
+
+- Updated dependencies [[`278af00740f8ade253485afc1d51a19382cb5a2c`](https://github.com/livekit/agents-js/commit/278af00740f8ade253485afc1d51a19382cb5a2c), [`7c1cfcb1237f4aa7d36669754fc388bbaa872a71`](https://github.com/livekit/agents-js/commit/7c1cfcb1237f4aa7d36669754fc388bbaa872a71), [`703cffbfda8a8b830b78f2c89e0b2284244dc120`](https://github.com/livekit/agents-js/commit/703cffbfda8a8b830b78f2c89e0b2284244dc120), [`22b24ae18ca4f3dd690a948e9f9ab3ac9cdad4b0`](https://github.com/livekit/agents-js/commit/22b24ae18ca4f3dd690a948e9f9ab3ac9cdad4b0), [`8524731b39097fe521952f83b210b999834bbeda`](https://github.com/livekit/agents-js/commit/8524731b39097fe521952f83b210b999834bbeda), [`aa8d427391a79ec8e2ccda103e1460c720b73acf`](https://github.com/livekit/agents-js/commit/aa8d427391a79ec8e2ccda103e1460c720b73acf), [`4207d54c037ad0206814ae5e246735e357bb4c3b`](https://github.com/livekit/agents-js/commit/4207d54c037ad0206814ae5e246735e357bb4c3b), [`106c2b6820751ce3802d77e1e1e74ece130efc89`](https://github.com/livekit/agents-js/commit/106c2b6820751ce3802d77e1e1e74ece130efc89), [`710d112f70ce1134f3098729cda6a950d1deb66c`](https://github.com/livekit/agents-js/commit/710d112f70ce1134f3098729cda6a950d1deb66c), [`7479bd4640d2d82a4f0263dc0745e72bab733127`](https://github.com/livekit/agents-js/commit/7479bd4640d2d82a4f0263dc0745e72bab733127), [`b157d241ffaf402c0a2b8dc05dbf7e9ed96d21ee`](https://github.com/livekit/agents-js/commit/b157d241ffaf402c0a2b8dc05dbf7e9ed96d21ee), [`181c868d75fe8828e5193fc530f454d52fc776e0`](https://github.com/livekit/agents-js/commit/181c868d75fe8828e5193fc530f454d52fc776e0), [`f470e5531da74d66484194125fc0f950b5a53431`](https://github.com/livekit/agents-js/commit/f470e5531da74d66484194125fc0f950b5a53431), [`453b69965e0075f634f79c323194ceb16ccfe1a6`](https://github.com/livekit/agents-js/commit/453b69965e0075f634f79c323194ceb16ccfe1a6), [`0a27a700dcef89e6202872024d73452b47025788`](https://github.com/livekit/agents-js/commit/0a27a700dcef89e6202872024d73452b47025788), [`0f29f6bd34559ba98544c2c9621936b44a0573b8`](https://github.com/livekit/agents-js/commit/0f29f6bd34559ba98544c2c9621936b44a0573b8), [`c5eaadd27748aa2a69a4cb1a72b3de652fa841ef`](https://github.com/livekit/agents-js/commit/c5eaadd27748aa2a69a4cb1a72b3de652fa841ef), [`154189e4af2149c580aeaba7dfe3a8c79f3d682d`](https://github.com/livekit/agents-js/commit/154189e4af2149c580aeaba7dfe3a8c79f3d682d), [`d85a30757405158fb3182be1c77aaec6acecdd67`](https://github.com/livekit/agents-js/commit/d85a30757405158fb3182be1c77aaec6acecdd67), [`ee078ec394e697a989bd0faf53aa043392fa7ae4`](https://github.com/livekit/agents-js/commit/ee078ec394e697a989bd0faf53aa043392fa7ae4), [`7af2f8ebafe86fae52854ddc73b253f2d29da286`](https://github.com/livekit/agents-js/commit/7af2f8ebafe86fae52854ddc73b253f2d29da286), [`33578844ba169f1485465ea96346567c449b7ea7`](https://github.com/livekit/agents-js/commit/33578844ba169f1485465ea96346567c449b7ea7), [`62c8278eb1294088cad66285a799e84e20799eaf`](https://github.com/livekit/agents-js/commit/62c8278eb1294088cad66285a799e84e20799eaf), [`35a33ff0f89a23b17ea3ad79c642188e66e31604`](https://github.com/livekit/agents-js/commit/35a33ff0f89a23b17ea3ad79c642188e66e31604), [`ee078ec394e697a989bd0faf53aa043392fa7ae4`](https://github.com/livekit/agents-js/commit/ee078ec394e697a989bd0faf53aa043392fa7ae4), [`dfb34c27b8cb075ed77e63ceb5286fc504122abd`](https://github.com/livekit/agents-js/commit/dfb34c27b8cb075ed77e63ceb5286fc504122abd), [`98a46dd366fa69f9270d3ae780e50740ffe72c8a`](https://github.com/livekit/agents-js/commit/98a46dd366fa69f9270d3ae780e50740ffe72c8a), [`278af00740f8ade253485afc1d51a19382cb5a2c`](https://github.com/livekit/agents-js/commit/278af00740f8ade253485afc1d51a19382cb5a2c)]:
+  - @livekit/agents@1.4.5
+
+## 1.4.4
+
+### Patch Changes
+
+- fix(openai): respect `baseURL` scheme when building WebSocket URLs - [#1540](https://github.com/livekit/agents-js/pull/1540) ([@enriqueespaillat-gyde](https://github.com/enriqueespaillat-gyde))
+
+  The Responses-API LLM (`ws/llm.ts`), realtime STT (`stt.ts`), and
+  conversational Realtime endpoint (`realtime/realtime_model.ts`) all
+  build their upgrade URL from `baseURL` but either force-mapped
+  `http://` to `wss://` (LLM) or left `http://` unchanged (STT, Realtime),
+  producing an invalid WebSocket URL or a spurious TLS handshake against
+  a plain-HTTP listener. The scheme of `baseURL` is now respected:
+  `http://` maps to `ws://` and `https://` maps to `wss://`. OpenAI's
+  native endpoint is HTTPS, so this is a no-op for direct connections.
+
+- fix(voice): cancel realtime generation when speech is interrupted - [#1503](https://github.com/livekit/agents-js/pull/1503) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`cb180deca230980b4e110ce41f7af8bfc15b4a26`](https://github.com/livekit/agents-js/commit/cb180deca230980b4e110ce41f7af8bfc15b4a26), [`8db7f95640ee7c81f30ed75b3b0ef48fc476a0eb`](https://github.com/livekit/agents-js/commit/8db7f95640ee7c81f30ed75b3b0ef48fc476a0eb), [`208c211a7ceeac9d6fa21c2c04326520e56a0609`](https://github.com/livekit/agents-js/commit/208c211a7ceeac9d6fa21c2c04326520e56a0609), [`ec592ce9276759e8df778ca37869b484044d929f`](https://github.com/livekit/agents-js/commit/ec592ce9276759e8df778ca37869b484044d929f), [`d05fe6331985bc994a74d79eeceaf46cb1e2fbe2`](https://github.com/livekit/agents-js/commit/d05fe6331985bc994a74d79eeceaf46cb1e2fbe2), [`33bda3eb9f6a33d637850657d2cf827bac309114`](https://github.com/livekit/agents-js/commit/33bda3eb9f6a33d637850657d2cf827bac309114), [`3546a497ab63de7d49afb100f33b4c4b426f62b6`](https://github.com/livekit/agents-js/commit/3546a497ab63de7d49afb100f33b4c4b426f62b6), [`3d589f909661ebdc2527b1f4713159bdf320f7ba`](https://github.com/livekit/agents-js/commit/3d589f909661ebdc2527b1f4713159bdf320f7ba), [`35856dc3ae00de7b8308ff6f0ab45d959274180c`](https://github.com/livekit/agents-js/commit/35856dc3ae00de7b8308ff6f0ab45d959274180c)]:
+  - @livekit/agents@1.4.4
+
 ## 1.4.3
 
 ### Patch Changes

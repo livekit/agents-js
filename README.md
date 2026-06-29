@@ -37,6 +37,7 @@ This README reflects the 1.0 release. See the [migration guide](https://docs.liv
 - **Extensive WebRTC clients**: Build client applications using LiveKit's open-source SDK ecosystem, supporting all major platforms.
 - **Exchange data with clients**: Use [RPCs](https://docs.livekit.io/home/client/data/rpc/) and other [Data APIs](https://docs.livekit.io/home/client/data/) to seamlessly exchange data with clients.
 - **Semantic turn detection**: Uses a transformer model to detect when a user is done with their turn, helps to reduce interruptions.
+- **MCP support**: Native support for MCP. Integrate tools provided by MCP servers with one line of code.
 - **Open-source**: Fully open-source, allowing you to run the entire stack on your own servers, including [LiveKit server](https://github.com/livekit/livekit), one of the most widely used WebRTC media servers.
 
 ## Installation
@@ -65,17 +66,18 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-google](https://www.npmjs.com/package/@livekit/agents-plugin-google)         | LLM, TTS      |
 | [@livekit/agents-plugin-deepgram](https://www.npmjs.com/package/@livekit/agents-plugin-deepgram)     | STT, TTS      |
 | [@livekit/agents-plugin-elevenlabs](https://www.npmjs.com/package/@livekit/agents-plugin-elevenlabs) | TTS           |
-| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | TTS           |
+| [@livekit/agents-plugin-cartesia](https://www.npmjs.com/package/@livekit/agents-plugin-cartesia)     | STT, TTS      |
 | [@livekit/agents-plugin-neuphonic](https://www.npmjs.com/package/@livekit/agents-plugin-neuphonic)   | TTS           |
 | [@livekit/agents-plugin-resemble](https://www.npmjs.com/package/@livekit/agents-plugin-resemble)     | TTS           |
 | [@livekit/agents-plugin-rime](https://www.npmjs.com/package/@livekit/agents-plugin-rime)             | TTS           |
-| [@livekit/agents-plugin-inworld](https://www.npmjs.com/package/@livekit/agents-plugin-inworld)       | TTS           |
+| [@livekit/agents-plugin-inworld](https://www.npmjs.com/package/@livekit/agents-plugin-inworld)       | STT, TTS      |
 | [@livekit/agents-plugin-silero](https://www.npmjs.com/package/@livekit/agents-plugin-silero)         | VAD           |
 | [@livekit/agents-plugin-livekit](https://www.npmjs.com/package/@livekit/agents-plugin-livekit)       | EOU           |
 | [@livekit/agents-plugin-anam](https://www.npmjs.com/package/@livekit/agents-plugin-anam)             | Avatar        |
 | [@livekit/agents-plugin-bey](https://www.npmjs.com/package/@livekit/agents-plugin-bey)               | Avatar        |
 | [@livekit/agents-plugin-lemonslice](https://www.npmjs.com/package/@livekit/agents-plugin-lemonslice) | Avatar        |
 | [@livekit/agents-plugin-liveavatar](https://www.npmjs.com/package/@livekit/agents-plugin-liveavatar) | Avatar        |
+| [@livekit/agents-plugin-did](https://www.npmjs.com/package/@livekit/agents-plugin-did)               | Avatar        |
 | [@livekit/agents-plugin-mistralai](https://www.npmjs.com/package/@livekit/agents-plugin-mistralai)   | LLM, STT, TTS |
 | [@livekit/agents-plugin-xai](https://www.npmjs.com/package/@livekit/agents-plugin-xai)               | LLM, TTS      |
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
@@ -366,6 +368,8 @@ To connect and talk to your agent:
 
 This project is licensed under `Apache-2.0`, and is [REUSE-3.2](https://reuse.software) compliant.
 Refer to [the license](LICENSES/Apache-2.0.txt) for details.
+
+The LiveKit turn detection models are licensed under the [LiveKit Model License](MODEL_LICENSE).
 
 <!--BEGIN_REPO_NAV-->
 <br/><table>

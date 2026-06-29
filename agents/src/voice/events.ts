@@ -30,9 +30,12 @@ export enum AgentSessionEventTypes {
   FunctionToolsExecuted = 'function_tools_executed',
   MetricsCollected = 'metrics_collected',
   SessionUsageUpdated = 'session_usage_updated',
+  DebugMessage = 'debug_message',
   SpeechCreated = 'speech_created',
   AgentFalseInterruption = 'agent_false_interruption',
   OverlappingSpeech = 'overlapping_speech',
+  /** Audio EOT detector emitted a per-turn prediction. */
+  EotPrediction = 'eot_prediction',
   Error = 'error',
   Close = 'close',
 }
@@ -91,6 +94,8 @@ export type UserInputTranscribedEvent = {
   type: 'user_input_transcribed';
   transcript: string;
   isFinal: boolean;
+  /** Provider-specific ID for the transcribed input item, when available. */
+  itemId: string | null;
   // TODO(AJS-106): add multi participant support
   /** Not supported yet. Always null by default. */
   speakerId: string | null;
@@ -101,12 +106,14 @@ export type UserInputTranscribedEvent = {
 export const createUserInputTranscribedEvent = ({
   transcript,
   isFinal,
+  itemId = null,
   speakerId = null,
   language = null,
   createdAt = Date.now(),
 }: {
   transcript: string;
   isFinal: boolean;
+  itemId?: string | null;
   speakerId?: string | null;
   language?: LanguageCode | null;
   createdAt?: number;
@@ -114,6 +121,7 @@ export const createUserInputTranscribedEvent = ({
   type: 'user_input_transcribed',
   transcript,
   isFinal,
+  itemId,
   speakerId,
   language,
   createdAt,
@@ -245,16 +253,138 @@ export const createSpeechCreatedEvent = ({
   createdAt,
 });
 
+/**
+ * Audio EOT prediction landed on the wire. Emitted once per turn boundary
+ * decision when a `TurnDetector` is wired into the session.
+ */
+export type EotPredictionEvent = {
+  type: 'eot_prediction';
+  /** End-of-turn probability in [0, 1] returned by the detector. */
+  probability: number;
+  /** Threshold below which the detector treats the prediction as unlikely. */
+  threshold: number;
+  /** Model-side inference time, in milliseconds. */
+  inferenceDurationMs: number;
+  /** End-of-speech → prediction receive time, in milliseconds. */
+  delayMs: number;
+  createdAt: number;
+};
+
+export const createEotPredictionEvent = ({
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
+  createdAt = Date.now(),
+}: {
+  probability: number;
+  threshold: number;
+  inferenceDurationMs: number;
+  delayMs: number;
+  createdAt?: number;
+}): EotPredictionEvent => ({
+  type: 'eot_prediction',
+  probability,
+  threshold,
+  inferenceDurationMs,
+  delayMs,
+  createdAt,
+});
+
+/**
+ * Internal: a window in which the agent could backchannel (a short acknowledgment
+ * such as "mm-hmm"), as predicted by the turn detector. Passed to `AgentActivity`
+ * only — not surfaced as a public `AgentSession` event (absent from `AgentEvent`,
+ * `AgentSessionEventTypes`, and the package exports).
+ *
+ * `AgentActivity` owns the decision of what to do with it. The end-of-turn margin
+ * (`endOfTurnThreshold - endOfTurnProbability`) gives a progressive risk axis: a
+ * large positive margin means the user is clearly still going, so riskier
+ * backchannels (yeah/okay/right) are safe; a small margin (or a negative one,
+ * where `endOfTurnProbability >= endOfTurnThreshold` and a reply is imminent)
+ * calls for safe, less ambiguous ones (hmm/uh-huh) that won't collide with the reply.
+ *
+ * @internal
+ */
+export type _AgentBackchannelOpportunityEvent = {
+  type: 'agent_backchannel_opportunity';
+  probability: number;
+  threshold: number;
+  endOfTurnProbability: number;
+  endOfTurnThreshold: number;
+  language?: string;
+  createdAt: number;
+};
+
+/** @internal */
+export const _createAgentBackchannelOpportunityEvent = ({
+  probability,
+  threshold,
+  endOfTurnProbability,
+  endOfTurnThreshold,
+  language,
+  createdAt = Date.now(),
+}: {
+  probability: number;
+  threshold: number;
+  endOfTurnProbability: number;
+  endOfTurnThreshold: number;
+  language?: string;
+  createdAt?: number;
+}): _AgentBackchannelOpportunityEvent => ({
+  type: 'agent_backchannel_opportunity',
+  probability,
+  threshold,
+  endOfTurnProbability,
+  endOfTurnThreshold,
+  language,
+  createdAt,
+});
+
+export type UserTurnExceededEvent = {
+  type: 'user_turn_exceeded';
+  /** Transcript from the current uncommitted user turn only. */
+  transcript: string;
+  /** Full transcript since the start of user speaking in the accumulation window. */
+  accumulatedTranscript: string;
+  /** Total word count since the start of user speaking in the accumulation window. */
+  accumulatedWordCount: number;
+  /** Duration of the user turn accumulation window in milliseconds. */
+  duration: number;
+  createdAt: number;
+};
+
+export const createUserTurnExceededEvent = ({
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
+  createdAt = Date.now(),
+}: {
+  transcript: string;
+  accumulatedTranscript: string;
+  accumulatedWordCount: number;
+  duration: number;
+  createdAt?: number;
+}): UserTurnExceededEvent => ({
+  type: 'user_turn_exceeded',
+  transcript,
+  accumulatedTranscript,
+  accumulatedWordCount,
+  duration,
+  createdAt,
+});
+
 export type ErrorEvent = {
   type: 'error';
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown;
-  source: LLM | STT | TTS | RealtimeModel | unknown;
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError;
+  source?: LLM | STT | TTS | RealtimeModel;
   createdAt: number;
 };
 
 export const createErrorEvent = (
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | unknown,
-  source: LLM | STT | TTS | RealtimeModel | unknown,
+  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
+  source?: LLM | STT | TTS | RealtimeModel,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({
   type: 'error',

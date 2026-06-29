@@ -18,6 +18,9 @@
     "CEREBRAS_API_KEY",
     "DEEPGRAM_API_KEY",
     "DEEPSEEK_API_KEY",
+    "DID_API_KEY",
+    "DID_API_URL",
+    "DID_AGENT_ID",
     "ELEVEN_API_KEY",
     "FIREWORKS_API_KEY",
     "FISH_API_KEY",
@@ -42,12 +45,18 @@
     "LLAMA_API_KEY",
     "LIVEKIT_AGENT_ID",
     "LIVEKIT_AGENT_NAME",
+    "LIVEKIT_WORKER_TOKEN",
+    "LIVEKIT_AGENT_NAME_OVERRIDE",
     "LOG_LEVEL",
     "OCTOAI_TOKEN",
     "OPENAI_API_KEY",
     "OPENAI_API_VERSION",
+    "OPENAI_BASE_URL",
     "PERPLEXITY_API_KEY",
     "TELNYX_API_KEY",
+    "TAVUS_API_KEY",
+    "TAVUS_PERSONA_ID",
+    "TAVUS_REPLICA_ID",
     "TOGETHER_API_KEY",
     "XAI_API_KEY",
     "NEUPHONIC_API_KEY",
@@ -55,6 +64,9 @@
     "PHONIC_API_KEY",
     "RESEMBLE_API_KEY",
     "LIVEKIT_REMOTE_EOT_URL",
+    "LIVEKIT_SIP_NUMBER",
+    "LIVEKIT_SIP_OUTBOUND_TRUNK",
+    "LIVEKIT_SUPERVISOR_PHONE_NUMBER",
     "GOOGLE_API_KEY",
     "GOOGLE_GENAI_API_KEY",
     "GOOGLE_GENAI_USE_VERTEXAI",
@@ -71,6 +83,7 @@
     "RUNWAY_AVATAR_ID",
     "RUNWAY_AVATAR_PRESET_ID",
     "SARVAM_API_KEY",
+    "SONIOX_API_KEY",
     "SIP_PARTICIPANT_IDENTITY",
     "SIP_PHONE_NUMBER",
     "LK_OPENAI_DEBUG",
@@ -86,14 +99,14 @@
     "MISTRAL_API_KEY",
     "VITEST"
   ],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
     "clean": {
       "dependsOn": ["^clean"],
-      "outputs": [""]
+      "outputs": []
     },
     "clean:build": {
       "dependsOn": ["^clean:build"],

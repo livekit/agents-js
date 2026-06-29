@@ -6,6 +6,7 @@ import {
   VADEventType,
   VADStream as baseStream,
   VAD as baseVAD,
+  inference,
   log,
   mergeFrames,
 } from '@livekit/agents';
@@ -97,10 +98,39 @@ export class VAD extends baseVAD {
    * @param options -
    * @returns Promise\<{@link VAD}\>: An instance of the VAD class ready for streaming.
    */
-  static async load(opts: Partial<VADOptions> = {}): Promise<VAD> {
+  static async load(opts: Partial<VADOptions> = {}): Promise<baseVAD> {
     const mergedOpts: VADOptions = { ...defaultVADOptions, ...opts };
+
+    // When the requested settings are compatible with the bundled native
+    // implementation in `@livekit/local-inference`, delegate to
+    // `inference.VAD({ model: 'silero' })` so existing call sites transparently
+    // get the faster, COW-shared native path as part of the silero deprecation.
+    // The native lib only ships the 16 kHz model, so any other sample rate
+    // falls back to the legacy onnxruntime path below.
+    if (mergedOpts.sampleRate === 16000) {
+      if (!mergedOpts.forceCPU) {
+        log().warn(
+          'forceCPU=false is ignored when using the bundled native VAD; the ' +
+            'model runs CPU-only. Use a non-16kHz sampleRate to keep the legacy ' +
+            'onnxruntime path that honors forceCPU.',
+        );
+      }
+      return new inference.VAD({
+        model: 'silero',
+        minSpeechDuration: mergedOpts.minSpeechDuration,
+        minSilenceDuration: mergedOpts.minSilenceDuration,
+        prefixPaddingDuration: mergedOpts.prefixPaddingDuration,
+        maxBufferedSpeech: mergedOpts.maxBufferedSpeech,
+        activationThreshold: mergedOpts.activationThreshold,
+      });
+    }
+
     const session = await newInferenceSession(mergedOpts.forceCPU);
     return new VAD(session, mergedOpts);
+  }
+
+  override get minSilenceDuration(): number {
+    return this.#opts.minSilenceDuration;
   }
 
   stream(): VADStream {
@@ -150,12 +180,45 @@ export class VADStream extends baseStream {
       let speechThresholdDuration = 0;
       let silenceThresholdDuration = 0;
 
-      let inputFrames = [];
+      let inputFrames: AudioFrame[] = [];
       let inferenceFrames: AudioFrame[] = [];
       let resampler: AudioResampler | null = null;
 
       // used to avoid drift when the sampleRate ratio is not an integer
       let inputCopyRemainingFrac = 0.0;
+
+      const resetState = () => {
+        this.#model.reset();
+        this.#expFilter = new ExpFilter(0.35);
+
+        speechBufferIndex = 0;
+        this.#speechBufferMaxReached = false;
+        this.#speechBuffer?.fill(0);
+
+        pubSpeaking = false;
+        pubSpeechDuration = 0;
+        pubSilenceDuration = 0;
+        pubCurrentSample = 0;
+        pubTimestamp = 0;
+        speechThresholdDuration = 0;
+        silenceThresholdDuration = 0;
+
+        inputFrames = [];
+        inferenceFrames = [];
+        inputCopyRemainingFrac = 0.0;
+        this.#extraInferenceTime = 0;
+
+        resampler?.close();
+        resampler =
+          this.#inputSampleRate && this.#opts.sampleRate !== this.#inputSampleRate
+            ? new AudioResampler(
+                this.#inputSampleRate,
+                this.#opts.sampleRate,
+                1,
+                AudioResamplerQuality.QUICK,
+              )
+            : null;
+      };
 
       while (!this.closed) {
         const { done, value: frame } = await this.inputReader.read();
@@ -164,7 +227,8 @@ export class VADStream extends baseStream {
         }
 
         if (typeof frame === 'symbol') {
-          continue; // ignore flush sentinel for now
+          resetState();
+          continue;
         }
 
         if (!this.#inputSampleRate || !this.#speechBuffer) {
@@ -303,7 +367,7 @@ export class VADStream extends baseStream {
           const copySpeechBuffer = (): AudioFrame => {
             if (!this.#speechBuffer) throw new Error('speechBuffer is empty');
             return new AudioFrame(
-              this.#speechBuffer.subarray(this.#prefixPaddingSamples, speechBufferIndex),
+              this.#speechBuffer.subarray(0, speechBufferIndex),
               this.#inputSampleRate,
               1,
               speechBufferIndex,

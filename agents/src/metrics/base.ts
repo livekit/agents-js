@@ -15,8 +15,10 @@ export type AgentMetrics =
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
+  | EOTInferenceMetrics
   | RealtimeModelMetrics
-  | InterruptionMetrics;
+  | InterruptionMetrics
+  | AvatarMetrics;
 
 export type LLMMetrics = {
   type: 'llm_metrics';
@@ -196,6 +198,25 @@ export type RealtimeModelMetrics = {
   metadata?: MetricsMetadata;
 };
 
+/**
+ * Per-prediction telemetry for the audio EOT (end-of-turn) detector. Emitted
+ * by transports on each cloud or local prediction so we can track detection
+ * latency and inference time per call.
+ */
+export type EOTInferenceMetrics = {
+  type: 'eot_inference_metrics';
+  timestamp: number;
+  /** Latest RTT time taken to perform inference, in milliseconds. */
+  totalDuration: number;
+  /** Latest time taken by the model side, in milliseconds. */
+  predictionDuration: number;
+  /** Latest total time from audio-frame creation to prediction receive, in milliseconds. */
+  detectionDelay: number;
+  /** Number of prediction requests served (incremental). */
+  numRequests: number;
+  metadata?: MetricsMetadata;
+};
+
 export type InterruptionMetrics = {
   type: 'interruption_metrics';
   timestamp: number;
@@ -211,5 +232,17 @@ export type InterruptionMetrics = {
   numBackchannels: number;
   /** Number of requests sent to the model (incremental). */
   numRequests: number;
+  metadata?: MetricsMetadata;
+};
+
+export type AvatarMetrics = {
+  type: 'avatar_metrics';
+  timestamp: number;
+  /** Delay between forwarding the first audio frame to the avatar and playback start. */
+  playbackLatencyMs?: number;
+  /** Time when the avatar session was started. */
+  sessionStartedAt?: number;
+  /** Time when the avatar participant joined and published a video track. */
+  avatarJoinedAt?: number;
   metadata?: MetricsMetadata;
 };
