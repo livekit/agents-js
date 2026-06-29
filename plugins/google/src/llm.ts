@@ -2,13 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
@@ -17,6 +23,16 @@ import { toToolsConfig } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
+}
+
+function isGemini3Model(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3');
+}
+
+function isGemini3FlashModel(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
@@ -276,7 +292,38 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
-      extras.thinkingConfig = this.#opts.thinkingConfig;
+      const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
+
+      if (isGemini3Model(this.#opts.model)) {
+        // Gemini 3: only supports thinkingLevel
+        if (thinkingBudget !== undefined && thinkingLevel === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
+              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
+          );
+        }
+        extras.thinkingConfig = {
+          includeThoughts,
+          thinkingLevel:
+            thinkingLevel ??
+            (isGemini3FlashModel(this.#opts.model) ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW),
+        };
+      } else {
+        // Gemini 2.5 and earlier: only supports thinkingBudget
+        if (thinkingLevel !== undefined && thinkingBudget === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
+          );
+          extras.thinkingConfig = { includeThoughts };
+        } else if (thinkingBudget !== undefined) {
+          // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
+          extras.thinkingConfig = { thinkingBudget, includeThoughts };
+        } else {
+          extras.thinkingConfig = this.#opts.thinkingConfig;
+        }
+      }
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {

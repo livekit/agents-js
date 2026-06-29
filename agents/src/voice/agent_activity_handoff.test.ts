@@ -21,9 +21,7 @@ initializeLogger({ pretty: false, level: 'silent' });
 
 type FakeActivity = {
   agent: Agent;
-  audioRecognition:
-    | { detachSttPipeline: ReturnType<typeof vi.fn>; inputStartedAt?: number }
-    | undefined;
+  audioRecognition: { detachSttPipeline: ReturnType<typeof vi.fn> } | undefined;
   stt: unknown;
   llm: unknown;
   tools: unknown;
@@ -31,12 +29,11 @@ type FakeActivity = {
 };
 
 function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number) {
-  const detachedPipeline = { id: Symbol('pipeline') };
+  const detachedPipeline = { id: Symbol('pipeline'), inputStartedAt };
   const activity = {
     agent,
     audioRecognition: {
       detachSttPipeline: vi.fn(async () => detachedPipeline),
-      inputStartedAt,
     },
     stt,
     llm: undefined,
@@ -85,7 +82,7 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
     expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
-    expect(resources.sttInputStartedAt).toBe(oldInputStartedAt);
+    expect(resources.sttPipeline?.inputStartedAt).toBe(oldInputStartedAt);
   });
 
   it('does not reuse when the STT instances differ', async () => {

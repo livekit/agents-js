@@ -36,7 +36,7 @@ const llm = new LLM({
 });
 ```
 
-To use the Gemini realtime model or TTS (Beta)
+To use the Gemini realtime model or TTS (TTS is Beta)
 
 ```typescript
 import * as google from '@livekit/agents-plugin-google';

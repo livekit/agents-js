@@ -82,10 +82,14 @@ interface ResponseGeneration {
   _firstTokenTimestamp?: number;
 }
 
+class DiscardedGeneration {
+  readonly discarded = true;
+}
+
 class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
-  // TODO(shubhra): add timeout
+  timeout?: ReturnType<typeof setTimeout>;
   constructor({ instructions }: { instructions?: string }) {
     this.instructions = instructions;
     this.doneFut = new Future();
@@ -435,8 +439,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
   private _options: RealtimeOptions;
-  private currentGeneration?: ResponseGeneration;
+  private currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
+  private discardedEventIds = new Set<string>();
 
   private textModeRecoveryRetries: number = 0;
 
@@ -861,7 +866,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       )?.[0];
       if (eventId) {
         delete this.responseCreatedFutures[eventId];
+        this.discardedEventIds.add(eventId);
       }
+      if (handle.timeout) clearTimeout(handle.timeout);
       if (!handle.doneFut.done) {
         handle.doneFut.reject(new Error('generateReply aborted'));
         this.sendEvent({
@@ -1053,8 +1060,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (!handle.doneFut.done) {
           handle.doneFut.reject(new Error('Session reconnected'));
         }
+        if (handle.timeout) clearTimeout(handle.timeout);
       }
       this.responseCreatedFutures = {};
+      this.discardedEventIds.clear();
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
@@ -1305,8 +1314,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       const result = await Promise.race([wsTask.result, sendTask.result, waitReconnectTask.result]);
 
-      if (waitReconnectTask.done && this.currentGeneration) {
-        await this.currentGeneration._doneFut.await;
+      const currentGeneration = this.currentGeneration;
+      if (waitReconnectTask.done && currentGeneration) {
+        if (currentGeneration instanceof DiscardedGeneration) {
+          this.currentGeneration = undefined;
+        } else {
+          await currentGeneration._doneFut.await;
+        }
       }
 
       if (result instanceof Error) {
@@ -1328,6 +1342,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (!handle.doneFut.done) {
         handle.doneFut.reject(new Error('Session closed'));
       }
+      if (handle.timeout) clearTimeout(handle.timeout);
     }
     this.responseCreatedFutures = {};
 
@@ -1348,7 +1363,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.inputTranscriptAccumulators.clear();
 
     // Clean up current generation if exists
-    if (this.currentGeneration) {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+    } else if (this.currentGeneration) {
       for (const gen of this.currentGeneration.messages.values()) {
         gen.textChannel.close();
         gen.audioChannel.close();
@@ -1388,28 +1405,41 @@ export class RealtimeSession extends llm.RealtimeSession {
       throw new Error('response.id is missing');
     }
 
-    this.currentGeneration = {
+    const clientEventId = event.response.metadata?.client_event_id;
+    if (clientEventId && this.discardedEventIds.has(clientEventId)) {
+      this.discardedEventIds.delete(clientEventId);
+      this.sendEvent({
+        type: 'response.cancel',
+        response_id: event.response.id,
+      } as api_proto.ResponseCancelEvent);
+      this.currentGeneration = new DiscardedGeneration();
+      this.#logger.warn('discarding response that arrived after it was timed out or interrupted');
+      return;
+    }
+
+    const currentGeneration: ResponseGeneration = {
       messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
       functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
       messages: new Map(),
       _doneFut: new Future(),
       _createdTimestamp: Date.now(),
     };
+    this.currentGeneration = currentGeneration;
 
     // Build generation event and resolve client future (if any) before emitting,
     // matching Python behavior.
     const generationEv = {
-      messageStream: this.currentGeneration.messageChannel.stream(),
-      functionStream: this.currentGeneration.functionChannel.stream(),
+      messageStream: currentGeneration.messageChannel.stream(),
+      functionStream: currentGeneration.functionChannel.stream(),
       userInitiated: false,
       responseId: event.response.id,
     } as llm.GenerationCreatedEvent;
 
-    const clientEventId = event.response.metadata?.client_event_id;
     if (clientEventId) {
       const handle = this.responseCreatedFutures[clientEventId];
       if (handle) {
         delete this.responseCreatedFutures[clientEventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
         generationEv.userInitiated = true;
         if (!handle.doneFut.done) {
           handle.doneFut.resolve(generationEv);
@@ -1421,6 +1451,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1593,6 +1625,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1627,6 +1661,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!event.part) {
       return;
     }
@@ -1642,6 +1678,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1663,6 +1701,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1671,6 +1711,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1693,6 +1735,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1730,18 +1774,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleResponseAudioTranscriptDone(
     _event: api_proto.ResponseAudioTranscriptDoneEvent,
   ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
   }
 
   private handleResponseAudioDone(_event: api_proto.ResponseAudioDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
   }
 
   private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
     if (!this.currentGeneration) {
       throw new Error('currentGeneration is not set');
     }
@@ -1777,6 +1827,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleResponseDone(_event: api_proto.ResponseDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+      return;
+    }
+
     if (!this.currentGeneration) {
       // OpenAI has a race condition where we could receive response.done without any
       // previous response.created (This happens generally during interruption)
@@ -1912,6 +1967,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const handle = this.responseCreatedFutures[eventId];
       if (handle) {
         delete this.responseCreatedFutures[eventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
         if (!handle.doneFut.done) {
           handle.doneFut.reject(new Error(event.error.message));
         }
@@ -1958,8 +2014,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const eventId = shortuuid('response_create_');
+    this.discardedEventIds ??= new Set<string>();
     if (userInitiated) {
       this.responseCreatedFutures[eventId] = handle;
+      handle.timeout = setTimeout(() => {
+        if (this.responseCreatedFutures[eventId] === handle) {
+          delete this.responseCreatedFutures[eventId];
+        }
+        if (!handle.doneFut.done) {
+          this.discardedEventIds.add(eventId);
+          handle.doneFut.reject(new Error('generateReply timed out.'));
+        }
+      }, 10000);
     }
 
     const response: api_proto.ResponseCreateEvent['response'] = {};

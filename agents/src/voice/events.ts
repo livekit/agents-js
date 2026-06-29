@@ -94,6 +94,8 @@ export type UserInputTranscribedEvent = {
   type: 'user_input_transcribed';
   transcript: string;
   isFinal: boolean;
+  /** Provider-specific ID for the transcribed input item, when available. */
+  itemId: string | null;
   // TODO(AJS-106): add multi participant support
   /** Not supported yet. Always null by default. */
   speakerId: string | null;
@@ -104,12 +106,14 @@ export type UserInputTranscribedEvent = {
 export const createUserInputTranscribedEvent = ({
   transcript,
   isFinal,
+  itemId = null,
   speakerId = null,
   language = null,
   createdAt = Date.now(),
 }: {
   transcript: string;
   isFinal: boolean;
+  itemId?: string | null;
   speakerId?: string | null;
   language?: LanguageCode | null;
   createdAt?: number;
@@ -117,6 +121,7 @@ export const createUserInputTranscribedEvent = ({
   type: 'user_input_transcribed',
   transcript,
   isFinal,
+  itemId,
   speakerId,
   language,
   createdAt,

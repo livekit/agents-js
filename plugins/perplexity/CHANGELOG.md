@@ -1,5 +1,21 @@
 # @livekit/agents-plugin-perplexity
 
+## 1.4.11
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.4.11
+  - @livekit/agents-plugin-openai@1.4.11
+
+## 1.4.10
+
+### Patch Changes
+
+- Updated dependencies [[`fafdeb68c59404adc3dfabaece10ea155a5b30c4`](https://github.com/livekit/agents-js/commit/fafdeb68c59404adc3dfabaece10ea155a5b30c4), [`8267bf37807276b012f5701fe072642ed4b03d87`](https://github.com/livekit/agents-js/commit/8267bf37807276b012f5701fe072642ed4b03d87), [`3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3`](https://github.com/livekit/agents-js/commit/3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3), [`7309e113bd98ba620e84cc216d12395e32662186`](https://github.com/livekit/agents-js/commit/7309e113bd98ba620e84cc216d12395e32662186), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f`](https://github.com/livekit/agents-js/commit/06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f), [`486669f46677c7a5870930f8323307e70fa9dcda`](https://github.com/livekit/agents-js/commit/486669f46677c7a5870930f8323307e70fa9dcda)]:
+  - @livekit/agents@1.4.10
+  - @livekit/agents-plugin-openai@1.4.10
+
 ## 1.4.9
 
 ### Patch Changes
