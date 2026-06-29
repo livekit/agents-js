@@ -35,6 +35,7 @@
     "@livekit/agents-plugin-google": "workspace:*",
     "@livekit/agents-plugin-hume": "workspace:*",
     "@livekit/agents-plugin-inworld": "workspace:*",
+    "@livekit/agents-plugin-krisp": "workspace:*",
     "@livekit/agents-plugin-lemonslice": "workspace:*",
     "@livekit/agents-plugin-liveavatar": "workspace:*",
     "@livekit/agents-plugin-livekit": "workspace:*",

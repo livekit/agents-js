@@ -5,7 +5,7 @@
 /**
  * Krisp VIVA noise reduction audio filter for LiveKit Agents.
  *
- * Exposes {@link KrispVivaFilterFrameProcessor}, a thin facade that forwards to
+ * Exposes {@link KrispVivaFilter}, a thin facade that forwards to
  * one of two underlying FrameProcessor implementations:
  *
  * - The closed-source `@livekit/plugins-krisp-viva-internal` backend (default;
@@ -40,7 +40,7 @@ interface KrispBackend extends FrameProcessor<AudioFrame> {
 }
 
 /**
- * Options for {@link KrispVivaFilterFrameProcessor}.
+ * Options for {@link KrispVivaFilter}.
  * @public
  */
 export interface KrispVivaFilterOptions {
@@ -118,7 +118,7 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
  *
  * @public
  */
-export class KrispVivaFilterFrameProcessor extends FrameProcessor<AudioFrame> {
+export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
   private readonly inner: KrispBackend;
 
   constructor(opts: Partial<KrispVivaFilterOptions> = {}) {

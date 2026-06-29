@@ -22,7 +22,7 @@ The default backend is bundled with the plugin and authenticates through LiveKit
 
 ## Quick start
 
-By default, `KrispVivaFilterFrameProcessor` uses **LiveKit Cloud** authentication: the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically.
+By default, `krisp.vivaFilter()` uses **LiveKit Cloud** authentication: the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically.
 
 Pass the processor as `noiseCancellation` in the session's input options:
 
@@ -34,7 +34,7 @@ import * as silero from '@livekit/agents-plugin-silero';
 
 export default async function entry(ctx: JobContext) {
   // Default: LiveKit Cloud auth + bundled model. No keys or model files.
-  const noiseCancellation = new krisp.KrispVivaFilterFrameProcessor({
+  const noiseCancellation = new krisp.vivaFilter({
     noiseSuppressionLevel: 100, // 0-100
   });
 
@@ -56,11 +56,11 @@ export default async function entry(ctx: JobContext) {
 }
 ```
 
-**Audio pipeline:** `Room → RoomIO (with KrispVivaFilterFrameProcessor) → VAD → STT → LLM`
+**Audio pipeline:** `Room → RoomIO (with vivaFilter) → VAD → STT → LLM`
 
 ## Configuration
 
-### `KrispVivaFilterFrameProcessor` options
+### `KrispVivaFilterOptions`
 
 | Option                  | Type           | Default                    | Description                                                                                                |
 | ----------------------- | -------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -104,7 +104,7 @@ Select the license backend by passing `authProvider`:
 ```ts
 import * as krisp from '@livekit/agents-plugin-krisp';
 
-const processor = new krisp.KrispVivaFilterFrameProcessor({
+const processor = new krisp.vivaFilter({
   authProvider: krisp.auth.krispLicense({
     licenseKey: '...', // or KRISP_VIVA_SDK_LICENSE_KEY
     modelPath: '/path/to/noise_model.kef', // or KRISP_VIVA_FILTER_MODEL_PATH

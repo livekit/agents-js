@@ -7,7 +7,7 @@
  *
  * This module is private to the plugin. It wraps the public
  * `krisp-audio-node-sdk` and exposes a {@link KrispLicenseFrameProcessor} that
- * {@link KrispVivaFilterFrameProcessor} instantiates when the user picks
+ * {@link krispVivaFilter} instantiates when the user picks
  * {@link KrispLicenseAuthProvider}.
  *
  * SCAFFOLD: the public Krisp Node SDK (`krisp-audio-node-sdk`) is not bundled
@@ -112,8 +112,8 @@ export interface KrispLicenseFrameProcessorOptions {
 /**
  * License-mode FrameProcessor wrapping `krisp-audio-node-sdk`.
  *
- * Internal implementation detail — users construct
- * {@link KrispVivaFilterFrameProcessor} and the facade selects this when the
+ * Internal implementation detail — users calls
+ * {@link vivaFilterProcessor} and the facade selects this when the
  * auth provider is {@link KrispLicenseAuthProvider}.
  *
  * The buffering strategy mirrors the Python plugin: Krisp processes fixed-size

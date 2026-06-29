@@ -5,7 +5,7 @@
 /**
  * Authentication providers for the Krisp plugin.
  *
- * These types are plain configuration holders — {@link KrispVivaFilterFrameProcessor}
+ * These types are plain configuration holders — {@link krispVivaFilter}
  * dispatches on the provider instance to pick the matching backend FrameProcessor
  * implementation.
  *
@@ -30,7 +30,7 @@ import { existsSync, statSync } from 'node:fs';
 
 /**
  * Discriminator symbols identifying each auth provider, registered in the global
- * symbol registry via `Symbol.for` so the {@link KrispVivaFilterFrameProcessor}
+ * symbol registry via `Symbol.for` so the {@link krispVivaFilter}
  * facade can dispatch reliably even when this module is loaded more than once
  * (e.g. duplicate copies through bundling or linked workspaces) — a case where
  * `instanceof` would silently fail. Not part of the public API surface.

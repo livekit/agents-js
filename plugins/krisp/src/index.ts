@@ -17,12 +17,15 @@
  * ```ts
  * import * as krisp from '@livekit/agents-plugin-krisp';
  *
- * const processor = new krisp.KrispVivaFilterFrameProcessor();
+ * const processor = new krisp.vivaFilter();
  * ```
  *
  * @packageDocumentation
  */
 import { Plugin } from '@livekit/agents';
+import { KrispVivaFilter, type KrispVivaFilterOptions } from './viva_filter.js';
+
+export { type KrispVivaFilter, type KrispVivaFilterOptions };
 
 export {
   type AuthProvider,
@@ -31,7 +34,10 @@ export {
   type KrispLicenseAuthProviderOptions,
   LiveKitCloudAuthProvider,
 } from './auth.js';
-export { KrispVivaFilterFrameProcessor, type KrispVivaFilterOptions } from './viva_filter.js';
+
+export function vivaFilter(options?: KrispVivaFilterOptions) {
+  return new KrispVivaFilter(options);
+}
 
 class KrispPlugin extends Plugin {
   constructor() {

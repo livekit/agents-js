@@ -278,6 +278,9 @@ importers:
       '@livekit/agents-plugin-inworld':
         specifier: workspace:*
         version: link:../plugins/inworld
+      '@livekit/agents-plugin-krisp':
+        specifier: workspace:*
+        version: link:../plugins/krisp
       '@livekit/agents-plugin-lemonslice':
         specifier: workspace:*
         version: link:../plugins/lemonslice
