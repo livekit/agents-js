@@ -956,12 +956,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       const audioEndMs = Number.isFinite(_options.audioEndMs)
         ? Math.max(0, Math.floor(_options.audioEndMs))
         : 0;
-      this.sendEvent({
-        type: 'conversation.item.truncate',
-        content_index: 0,
-        item_id: _options.messageId,
-        audio_end_ms: audioEndMs,
-      } as api_proto.ConversationItemTruncateEvent);
+      if (audioEndMs > 0) {
+        this.sendEvent({
+          type: 'conversation.item.truncate',
+          content_index: 0,
+          item_id: _options.messageId,
+          audio_end_ms: audioEndMs,
+        } as api_proto.ConversationItemTruncateEvent);
+      } else {
+        this.sendEvent({
+          type: 'conversation.item.delete',
+          item_id: _options.messageId,
+          event_id: shortuuid('chat_ctx_delete_'),
+        } as api_proto.ConversationItemDeleteEvent);
+      }
     } else if (_options.audioTranscript !== undefined) {
       // sync it to the remote chat context
       const chatCtx = this.chatCtx.copy();
