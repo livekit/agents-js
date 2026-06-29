@@ -80,25 +80,14 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(warnMock).not.toHaveBeenCalled();
   });
 
-  it('auto-creates a pal via /v2/pals (with default_face_id) when no pal is given', async () => {
-    const f = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ pal_id: 'pal_new' }) } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ conversation_id: 'c5' }),
-      } as Response);
-    global.fetch = f as unknown as typeof fetch;
-
+  it('with a face but no pal, uses the default stock pal and overrides its face', async () => {
+    const f = mockFetchOk({ conversation_id: 'c5' });
     await new TavusAPI({ apiKey: 'k' }).createConversation({ faceId: 'f1' });
-
-    const palUrl = String(f.mock.calls[0]![0]);
-    const palBody = JSON.parse(String((f.mock.calls[0]![1] as RequestInit).body));
-    const convBody = JSON.parse(String((f.mock.calls[1]![1] as RequestInit).body));
-    expect(palUrl).toContain('/pals');
-    expect(palBody.default_face_id).toBe('f1');
-    expect(convBody.face_id).toBe('f1');
-    expect(convBody.pal_id).toBe('pal_new');
+    expect(f).toHaveBeenCalledTimes(1); // no /v2/pals call
+    expect(String(f.mock.calls[0]![0])).toContain('/conversations');
+    const body = sentBody(f);
+    expect(body.pal_id).toBe('pb87e71797da');
+    expect(body.face_id).toBe('f1');
   });
 
   it('with only palId, skips pal creation and omits face_id (pal carries its own face)', async () => {
@@ -111,20 +100,12 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('falls back to the default face id when neither face nor pal is provided', async () => {
-    const f = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ pal_id: 'pal_new' }) } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ conversation_id: 'c5' }),
-      } as Response);
-    global.fetch = f as unknown as typeof fetch;
-
+  it('defaults to the stock pal when neither face nor pal is provided', async () => {
+    const f = mockFetchOk({ conversation_id: 'c5' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
-
-    expect(String(f.mock.calls[0]![0])).toContain('/pals');
-    const palBody = JSON.parse(String((f.mock.calls[0]![1] as RequestInit).body));
-    expect(palBody.default_face_id).toBe('r72f7f7f7c8b');
+    expect(f).toHaveBeenCalledTimes(1); // no /v2/pals call
+    const body = sentBody(f);
+    expect(body.pal_id).toBe('pb87e71797da');
+    expect(body).not.toHaveProperty('face_id');
   });
 });
