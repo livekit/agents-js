@@ -71,6 +71,17 @@ export interface STTOptions {
   /** Maximum silence (ms) before end-of-turn is forced regardless of confidence. */
   maxTurnSilence?: number;
   formatTurns?: boolean;
+  /**
+   * Whether to emit additional partial transcripts during long turns at a steady
+   * cadence. Only supported with the `u3-rt-pro` model. Defaults to true for
+   * `u3-rt-pro`.
+   */
+  continuousPartials?: boolean;
+  /**
+   * How soon the first early partial is emitted, in milliseconds. Only supported
+   * with the `u3-rt-pro` model.
+   */
+  interruptionDelay?: number;
   keytermsPrompt?: string[];
   /** Only supported with the `u3-rt-pro` model family. */
   prompt?: string;
@@ -154,6 +165,18 @@ export class STT extends stt.STT {
       }
     }
 
+    if (opts.continuousPartials !== undefined && opts.speechModel !== 'u3-rt-pro') {
+      throw new Error(
+        "The 'continuousPartials' parameter is only supported with the 'u3-rt-pro' model.",
+      );
+    }
+
+    if (opts.interruptionDelay !== undefined && opts.speechModel !== 'u3-rt-pro') {
+      throw new Error(
+        "The 'interruptionDelay' parameter is only supported with the 'u3-rt-pro' model.",
+      );
+    }
+
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
     if (!apiKey) {
       throw new Error(
@@ -163,12 +186,15 @@ export class STT extends stt.STT {
 
     // Minimize latency; matches LK's end-of-turn detector well.
     const minTurnSilence = opts.minTurnSilence ?? 100;
+    const continuousPartials =
+      opts.continuousPartials ?? (opts.speechModel === 'u3-rt-pro' ? true : undefined);
 
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
       apiKey,
       minTurnSilence,
+      continuousPartials,
     };
   }
 
@@ -244,6 +270,10 @@ export class SpeechStream extends stt.SpeechStream {
     if (opts.endOfTurnConfidenceThreshold !== undefined) {
       configMsg.end_of_turn_confidence_threshold = opts.endOfTurnConfidenceThreshold;
     }
+    if (opts.continuousPartials !== undefined) {
+      configMsg.continuous_partials = opts.continuousPartials;
+    }
+    if (opts.interruptionDelay !== undefined) configMsg.interruption_delay = opts.interruptionDelay;
     if (opts.vadThreshold !== undefined) configMsg.vad_threshold = opts.vadThreshold;
 
     // Only send if any actual fields (besides `type`) were specified.
@@ -314,6 +344,8 @@ export class SpeechStream extends stt.SpeechStream {
       encoding: this.#opts.encoding,
       speech_model: this.#opts.speechModel,
       format_turns: this.#opts.formatTurns,
+      continuous_partials: this.#opts.continuousPartials,
+      interruption_delay: this.#opts.interruptionDelay,
       end_of_turn_confidence_threshold: this.#opts.endOfTurnConfidenceThreshold,
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
