@@ -1,5 +1,22 @@
 # @livekit/agents-plugin-google
 
+## 1.4.10
+
+### Patch Changes
+
+- Add a Google LLM `cachedContent` option for explicit context caching. - [#1647](https://github.com/livekit/agents-js/pull/1647) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(plugin-google): default Gemini 3 Flash variants to minimal thinking. - [#1880](https://github.com/livekit/agents-js/pull/1880) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Update Gemini TTS to default to Gemini 3.1 Flash TTS preview and stream generated audio chunks. - [#1820](https://github.com/livekit/agents-js/pull/1820) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(plugin-google): warn when cached Gemini requests drop fields that must be in cached content. - [#1648](https://github.com/livekit/agents-js/pull/1648) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): log silent error from performLLMInference - [#1880](https://github.com/livekit/agents-js/pull/1880) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`fafdeb68c59404adc3dfabaece10ea155a5b30c4`](https://github.com/livekit/agents-js/commit/fafdeb68c59404adc3dfabaece10ea155a5b30c4), [`8267bf37807276b012f5701fe072642ed4b03d87`](https://github.com/livekit/agents-js/commit/8267bf37807276b012f5701fe072642ed4b03d87), [`3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3`](https://github.com/livekit/agents-js/commit/3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3), [`7309e113bd98ba620e84cc216d12395e32662186`](https://github.com/livekit/agents-js/commit/7309e113bd98ba620e84cc216d12395e32662186), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f`](https://github.com/livekit/agents-js/commit/06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f)]:
+  - @livekit/agents@1.4.10
+
 ## 1.4.9
 
 ### Patch Changes
