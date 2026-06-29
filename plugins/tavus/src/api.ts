@@ -45,7 +45,7 @@ export interface CreateConversationOptions {
   extraPayload?: Record<string, unknown>;
 }
 
-function resolveRenamedOption(
+function coalesceWithDeprecated(
   newValue: string | undefined,
   deprecatedValue: string | undefined,
   deprecatedName: string,
@@ -120,12 +120,12 @@ export class TavusAPI {
 
   async createConversation(options: CreateConversationOptions = {}): Promise<string> {
     const faceId =
-      resolveRenamedOption(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
+      coalesceWithDeprecated(options.faceId, options.replicaId, 'replicaId', 'faceId') ||
       process.env.TAVUS_FACE_ID ||
       deprecatedEnv('TAVUS_REPLICA_ID', 'TAVUS_FACE_ID');
 
     let palId =
-      resolveRenamedOption(options.palId, options.personaId, 'personaId', 'palId') ||
+      coalesceWithDeprecated(options.palId, options.personaId, 'personaId', 'palId') ||
       process.env.TAVUS_PAL_ID ||
       deprecatedEnv('TAVUS_PERSONA_ID', 'TAVUS_PAL_ID');
 
