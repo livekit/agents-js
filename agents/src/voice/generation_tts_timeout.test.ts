@@ -115,9 +115,6 @@ describe('TTS stream idle timeout', () => {
     const controller = new AbortController();
     const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
 
-    // Reject path is expected (no first frame ever captured).
-    audioOut.firstFrameFut.await.catch(() => {});
-
     vi.useFakeTimers();
 
     audioOutput.onPlaybackStarted(Date.now());
@@ -130,7 +127,10 @@ describe('TTS stream idle timeout', () => {
     vi.useRealTimers();
 
     expect(audioOutput.capturedFrames.length).toBe(0);
-    expect(audioOut.firstFrameFut.rejected).toBe(true);
+    // forwardAudio no longer rejects firstFrameFut on the no-first-frame path
+    // (#1909); the stray event was ignored, so the future is simply still pending.
+    // The caller settles it after playout finishes/interrupts.
+    expect(audioOut.firstFrameFut.done).toBe(false);
   });
 
   it('resamples a rate-mismatched frame even after a stray PLAYBACK_STARTED', async () => {

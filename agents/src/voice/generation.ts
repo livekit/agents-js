@@ -829,6 +829,13 @@ export interface _AudioOut {
    * metric.
    */
   startedForwardingAt?: number;
+  /**
+   * Whether this segment has captured at least one of its own frames. Read by the
+   * PLAYBACK_STARTED listener registered in `performAudioForwarding` to ignore a
+   * stray event emitted by another overlapping segment before this one has played.
+   * @internal
+   */
+  _hasCapturedOwnFrame?: boolean;
 }
 
 async function forwardAudio(
@@ -842,20 +849,7 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
-  // The audio output is shared across overlapping segments, so ignore a
-  // PLAYBACK_STARTED from another segment until we capture our own first frame.
-  // Resolving `firstFrameFut` early skips resampler creation and pushes an
-  // unresampled frame (`RtcError: sample_rate and num_channels don't match`).
-  let hasCapturedOwnFrame = false;
-
-  const onPlaybackStarted = (ev: { createdAt: number }) => {
-    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
-      out.firstFrameFut.resolve(ev.createdAt);
-    }
-  };
-
   try {
-    audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
     audioOutput.resume();
 
     while (true) {
@@ -876,8 +870,9 @@ async function forwardAudio(
       }
 
       // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
-      // the first captureFrame is attributed to this segment.
-      hasCapturedOwnFrame = true;
+      // the first captureFrame is attributed to this segment (see the listener in
+      // `performAudioForwarding`).
+      out._hasCapturedOwnFrame = true;
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
@@ -900,12 +895,15 @@ async function forwardAudio(
       throw e;
     }
   } finally {
-    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
-
-    if (!out.firstFrameFut.done) {
-      out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
-    }
-
+    // NOTE: `firstFrameFut` is intentionally NOT rejected here. The frames may have
+    // been captured into a paused output (agent interrupted in the thinking state
+    // before its first frame played); playback then starts only once the output is
+    // resumed — possibly after this forwarding task has already finished. The
+    // PLAYBACK_STARTED listener registered in `performAudioForwarding` outlives this
+    // task and resolves the future when that late first frame finally plays, so a
+    // false interruption resumes and plays instead of dropping the turn. The caller
+    // settles the future (and removes the listener) after playout finishes or is
+    // interrupted. See livekit/agents-js#1909 (port of livekit/agents#5039).
     reader?.releaseLock();
     audioOutput.flush();
     if (signal?.aborted) {
@@ -925,6 +923,27 @@ export function performAudioForwarding(
     audio: [],
     firstFrameFut: new Future<number>(),
   };
+
+  // Resolve `firstFrameFut` from the output's PLAYBACK_STARTED event. Registered here
+  // (rather than inside `forwardAudio`) so the listener outlives the forwarding task:
+  // when a not-yet-playing speech is paused in the thinking state its frames are
+  // buffered and the forwarding task may finish before playback ever starts. The late
+  // first frame — e.g. once a false interruption clears and the output resumes — must
+  // still resolve the future instead of being dropped (livekit/agents-js#1909).
+  const onPlaybackStarted = (ev: { createdAt: number }) => {
+    // Ignore a PLAYBACK_STARTED from another overlapping segment until this segment
+    // has captured its own first frame; resolving early would skip resampler creation.
+    if (out._hasCapturedOwnFrame && !out.firstFrameFut.done) {
+      out.firstFrameFut.resolve(ev.createdAt);
+    }
+  };
+  audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  // Remove the listener once the future settles — resolved by playback above, or
+  // rejected by the caller (via `firstFrameFut.reject`) after playout finishes or is
+  // interrupted without a frame ever playing.
+  const removeListener = () =>
+    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  out.firstFrameFut.await.then(removeListener).catch(removeListener);
 
   return [
     Task.from(

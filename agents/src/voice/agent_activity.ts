@@ -2394,6 +2394,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
+    let audioOut: _AudioOut | null = null;
     if (!audioOutput) {
       if (textOut) {
         textOut.firstTextFut.await
@@ -2401,7 +2402,6 @@ export class AgentActivity implements RecognitionHooks {
           .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
-      let audioOut: _AudioOut | null = null;
       if (!audio) {
         // generate audio using TTS
         const [ttsTask, ttsGenData] = performTTSInference(
@@ -2489,6 +2489,23 @@ export class AgentActivity implements RecognitionHooks {
         this.audioRecognition.onEndOfAgentSpeech(Date.now());
       }
       this.restoreInterruptionByAudioActivity();
+    }
+
+    // Settle firstFrameFut to remove its PLAYBACK_STARTED listener now that playout is
+    // done/interrupted. forwardAudio no longer rejects it (#1909).
+    this.settleFirstFrameFut(audioOut);
+  }
+
+  /**
+   * Reject `firstFrameFut` if it is still pending, to drop the PLAYBACK_STARTED listener
+   * registered in `performAudioForwarding`. Called by reply tasks once playout has
+   * finished or been interrupted. `forwardAudio` no longer rejects the future itself so
+   * that a frame which plays late (e.g. after a false-interruption resume) can still
+   * resolve it; see livekit/agents-js#1909 (port of livekit/agents#5039).
+   */
+  private settleFirstFrameFut(audioOut: _AudioOut | null | undefined): void {
+    if (audioOut && !audioOut.firstFrameFut.done) {
+      audioOut.firstFrameFut.reject(new Error('audio forwarding finished before first frame'));
     }
   }
 
@@ -2832,6 +2849,11 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        // Settle firstFrameFut once playout is done/interrupted so its PLAYBACK_STARTED
+        // listener is removed. forwardAudio no longer rejects it (#1909): a frame that
+        // played after a false-interruption resume must keep the synchronized transcript
+        // (gated on `firstFrameFut.done && !rejected` above) instead of being dropped.
+        this.settleFirstFrameFut(output.audioOut);
       }
     };
 
@@ -3389,6 +3411,9 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        // See note in the pipeline reply task: settle firstFrameFut to remove its
+        // PLAYBACK_STARTED listener now that playout is done/interrupted (#1909).
+        this.settleFirstFrameFut(output.audioOut);
       }
     };
 
