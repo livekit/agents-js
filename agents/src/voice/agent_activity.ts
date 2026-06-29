@@ -2492,10 +2492,8 @@ export class AgentActivity implements RecognitionHooks {
         this.restoreInterruptionByAudioActivity();
       }
     } finally {
-      // Settle firstFrameFut to remove its PLAYBACK_STARTED listener now that playout is
-      // done/interrupted. In a finally so the listener is dropped even if an await above
-      // throws — otherwise it would leak on the shared audioOutput. forwardAudio no
-      // longer rejects firstFrameFut itself (#1909).
+      // In a finally so the listener is dropped even if an await above throws —
+      // otherwise it would leak on the shared audioOutput.
       this.settleFirstFrameFut(audioOut);
     }
   }
@@ -2505,7 +2503,7 @@ export class AgentActivity implements RecognitionHooks {
    * registered in `performAudioForwarding`. Called by reply tasks once playout has
    * finished or been interrupted. `forwardAudio` no longer rejects the future itself so
    * that a frame which plays late (e.g. after a false-interruption resume) can still
-   * resolve it; see livekit/agents-js#1909 (port of livekit/agents#5039).
+   * resolve it (#1909).
    */
   private settleFirstFrameFut(audioOut: _AudioOut | null | undefined): void {
     if (audioOut && !audioOut.firstFrameFut.done) {
@@ -2853,10 +2851,9 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-        // Settle firstFrameFut once playout is done/interrupted so its PLAYBACK_STARTED
-        // listener is removed. forwardAudio no longer rejects it (#1909): a frame that
-        // played after a false-interruption resume must keep the synchronized transcript
-        // (gated on `firstFrameFut.done && !rejected` above) instead of being dropped.
+        // A frame that played after a false-interruption resume keeps the synchronized
+        // transcript (gated on `firstFrameFut.done && !rejected` above) instead of being
+        // dropped.
         this.settleFirstFrameFut(output.audioOut);
       }
     };
@@ -3415,8 +3412,6 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-        // See note in the pipeline reply task: settle firstFrameFut to remove its
-        // PLAYBACK_STARTED listener now that playout is done/interrupted (#1909).
         this.settleFirstFrameFut(output.audioOut);
       }
     };

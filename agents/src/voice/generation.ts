@@ -903,7 +903,7 @@ async function forwardAudio(
     // task and resolves the future when that late first frame finally plays, so a
     // false interruption resumes and plays instead of dropping the turn. The caller
     // settles the future (and removes the listener) after playout finishes or is
-    // interrupted. See livekit/agents-js#1909 (port of livekit/agents#5039).
+    // interrupted. See #1909.
     reader?.releaseLock();
     audioOutput.flush();
     if (signal?.aborted) {
@@ -929,7 +929,7 @@ export function performAudioForwarding(
   // when a not-yet-playing speech is paused in the thinking state its frames are
   // buffered and the forwarding task may finish before playback ever starts. The late
   // first frame — e.g. once a false interruption clears and the output resumes — must
-  // still resolve the future instead of being dropped (livekit/agents-js#1909).
+  // still resolve the future instead of being dropped (#1909).
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     // Ignore a PLAYBACK_STARTED from another overlapping segment until this segment
     // has captured its own first frame; resolving early would skip resampler creation.
