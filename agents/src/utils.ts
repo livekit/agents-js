@@ -942,6 +942,71 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   ]).finally(() => clearTimeout(timer)) as Promise<Throws<T, E>>;
 }
 
+/** Result of {@link waitUntilAborted}: either the settled value, or an abort marker. */
+export type Aborted<T> =
+  | {
+      result: T;
+      isAborted: false;
+    }
+  | {
+      result: undefined;
+      isAborted: true;
+    };
+
+/**
+ * Race a promise against an `AbortSignal`. Unlike a plain reject-on-abort race,
+ * this resolves with a tagged result so callers can branch on `isAborted`
+ * instead of catching. On abort it resolves `{ result: undefined, isAborted: true }`;
+ * otherwise it resolves `{ result, isAborted: false }`. A rejection of the
+ * underlying promise is propagated. The abort listener is always cleaned up.
+ *
+ * An already-aborted signal short-circuits immediately to the abort result.
+ *
+ * Note: the underlying promise is not cancelled — it keeps running; this only
+ * stops waiting for it. Because the promise is passed already-created, the
+ * caller's operation has already started, so a pre-aborted signal won't prevent
+ * that side effect (pass/await a factory yourself if you need to avoid starting it).
+ */
+export async function waitUntilAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<Aborted<T>> {
+  if (signal.aborted) {
+    // We're abandoning the promise, but it's already running: swallow any late
+    // rejection so it doesn't surface as an unhandled rejection (mirrors how the
+    // .catch below consumes a rejection that loses the race to an abort).
+    void promise.catch(() => {});
+    return { result: undefined, isAborted: true };
+  }
+
+  const abortFut = new Future<Aborted<T>>();
+
+  const resolveAbort = () => {
+    if (!abortFut.done) {
+      abortFut.resolve({ result: undefined, isAborted: true });
+    }
+  };
+
+  signal.addEventListener('abort', resolveAbort);
+
+  promise
+    .then((r) => {
+      if (!abortFut.done) {
+        abortFut.resolve({ result: r, isAborted: false });
+      }
+    })
+    .catch((e) => {
+      if (!abortFut.done) {
+        abortFut.reject(e);
+      }
+    })
+    .finally(() => {
+      signal.removeEventListener('abort', resolveAbort);
+    });
+
+  return await abortFut.await;
+}
+
 /**
  * Returns a participant that matches the given identity. If identity is None, the first
  * participant that joins the room will be returned.

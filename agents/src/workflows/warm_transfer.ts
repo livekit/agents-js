@@ -6,7 +6,7 @@ import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@l
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
-import { getJobContext } from '../job.js';
+import { type JobContext, getJobContext } from '../job.js';
 import type {
   ChatContext,
   Instructions,
@@ -14,10 +14,11 @@ import type {
   RealtimeModel,
   ToolContextEntry,
 } from '../llm/index.js';
-import { ToolContext, ToolError, ToolFlag, tool } from '../llm/index.js';
+import { ToolError, ToolFlag, tool } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
+import { Future, waitUntilAborted } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { Agent, AgentTask } from '../voice/agent.js';
 import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
@@ -65,7 +66,7 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
-   * Instructions for the human-agent briefing. Pass a full string to replace the built-in prompt
+   * Instructions for the human agent briefing. Pass a full string to replace the built-in prompt
    * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
    * keeping the built-in template and auto-formatted conversation history.
    */
@@ -80,249 +81,127 @@ export interface WarmTransferTaskOptions {
   allowInterruptions?: boolean;
 }
 
-export class WarmTransferTask extends AgentTask<WarmTransferResult> {
-  private _callerRoom: Room | null = null;
-  private _humanAgentRoom: Room | null = null;
-  private _humanAgentSession: AgentSession | null = null;
-  // Assigned in the constructor; a field initializer here would run after the
-  // resolver is captured and clobber it (ES2022 class-field semantics).
-  private _humanAgentFailed!: Promise<void>;
-  private _resolveHumanAgentFailed!: () => void;
-  private _humanAgentIdentity = 'human-agent-sip';
+type IoState = {
+  audioInput: boolean;
+  audioOutput: boolean;
+  transcriptionOutput: boolean;
+};
 
-  private _sipCallTo: string;
-  private _sipTrunkId: string | null;
-  private _sipConnection?: SIPOutboundConfig;
-  private _sipNumber: string;
-  private _sipHeaders: Record<string, string>;
-  private _dtmf: string | null;
-  private _ringingTimeout: number | null;
-
-  private _backgroundAudio = new BackgroundAudioPlayer();
-  private _holdAudioHandle: PlayHandle | null = null;
-  private _holdAudio: AudioSourceType | AudioConfig | AudioConfig[] | null;
-
-  private _originalIoState: Record<string, boolean> = {};
-  private _taskTurnDetection: TurnDetectionMode | undefined;
-  private _allowInterruptions: boolean | undefined;
-  private _logger = log();
-
-  constructor(options: WarmTransferTaskOptions = {}) {
-    const { sipCallTo, instructions } = options;
-    const {
-      sipTrunkId,
-      sipConnection,
-      sipNumber,
-      sipHeaders,
-      dtmf,
-      ringingTimeout,
-      holdAudio,
-      chatCtx,
-      turnDetection,
-      tools,
-      stt,
-      vad,
-      llm,
-      tts,
-      allowInterruptions,
-    } = options;
-
-    if (!sipCallTo) {
-      throw new Error('`sipCallTo` must be set');
-    }
-
-    const renderPart = (value: Instructions | string): string =>
-      typeof value === 'string' ? value : value.value;
-
-    let resolvedInstructions: string;
-    if (typeof instructions === 'string') {
-      // A full instruction string replaces the built-in prompt entirely.
-      resolvedInstructions = instructions;
-    } else {
-      // No instructions or an `InstructionParts` override: fill the built-in template.
-      const parts: InstructionParts = instructions ?? { persona: PERSONA };
-      // Single-pass replace via a callback: a chained `.replace(a, b)` would
-      // interpret `$`-patterns in the substituted text and let an earlier
-      // substitution swallow a later `{placeholder}`.
-      const replacements: Record<string, string> = {
-        // Unset preserves the built-in default; an explicit empty string removes the section.
-        persona: parts.persona !== undefined ? renderPart(parts.persona) : PERSONA,
-        _conversation_history: WarmTransferTask.formatConversationHistory(chatCtx),
-        extra: parts.extra !== undefined ? renderPart(parts.extra) : '',
-      };
-      resolvedInstructions = INSTRUCTIONS_TEMPLATE.replace(
-        /\{(persona|_conversation_history|extra)\}/g,
-        (_match, key: string) => replacements[key] ?? '',
-      );
-    }
-
-    super({
-      instructions: resolvedInstructions,
-      turnDetection: turnDetection ?? undefined,
-      tools,
-      stt: stt ?? undefined,
-      vad: vad ?? undefined,
-      llm: llm ?? undefined,
-      tts: tts ?? undefined,
-      allowInterruptions,
-    });
-
-    this._humanAgentFailed = new Promise<void>((resolve) => {
-      this._resolveHumanAgentFailed = resolve;
-    });
-
-    this._toolCtx = new ToolContext([
-      ...this._toolCtx.tools,
-      this.buildConnectToCallerTool(),
-      this.buildDeclineTransferTool(),
-      this.buildVoicemailDetectedTool(),
-    ]);
-    this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });
-
-    this._taskTurnDetection = turnDetection ?? undefined;
-    this._allowInterruptions = allowInterruptions;
-
-    this._sipCallTo = sipCallTo;
-    this._sipConnection = sipConnection;
-    if (sipTrunkId !== undefined) {
-      this._sipTrunkId = sipTrunkId;
-    } else if (this._sipConnection) {
-      this._sipTrunkId = null;
-    } else {
-      this._sipTrunkId = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
-    }
-    if (this._sipTrunkId === null && !this._sipConnection) {
-      throw new Error(
-        '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
-      );
-    }
-
-    this._sipNumber = sipNumber ?? process.env.LIVEKIT_SIP_NUMBER ?? '';
-    this._sipHeaders = sipHeaders ?? {};
-    this._dtmf = dtmf ?? null;
-    this._ringingTimeout = ringingTimeout ?? null;
-    this._holdAudio =
-      holdAudio === undefined ? { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 } : holdAudio;
+/**
+ * Build a warm-transfer {@link AgentTask} that dials a human agent over SIP, briefs them
+ * in a private room, and (on confirmation) merges them into the caller room.
+ *
+ * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
+ */
+export function createWarmTransferTask({
+  sipCallTo,
+  sipTrunkId: rawSipTrunkId,
+  sipConnection,
+  sipNumber = process.env.LIVEKIT_SIP_NUMBER ?? '',
+  sipHeaders = {},
+  dtmf,
+  ringingTimeout,
+  holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  instructions,
+  chatCtx,
+  turnDetection,
+  tools,
+  stt,
+  vad,
+  llm,
+  tts,
+  allowInterruptions,
+}: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
+  if (!sipCallTo) {
+    throw new Error('`sipCallTo` must be set');
   }
 
-  private static formatConversationHistory(chatCtx?: ChatContext): string {
-    if (!chatCtx) {
-      return '';
-    }
+  // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
+  // skips the env fallback so it isn't silently overridden), then the env var.
+  const sipTrunkId =
+    rawSipTrunkId !== undefined
+      ? rawSipTrunkId
+      : sipConnection
+        ? null
+        : process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
 
-    let previousConversation = '';
-    for (const item of chatCtx.items) {
-      if (item.type !== 'message' || (item.role !== 'user' && item.role !== 'assistant')) {
-        continue;
-      }
-
-      const content = item.textContent;
-      if (!content) {
-        continue;
-      }
-
-      const role = item.role === 'user' ? 'Caller' : 'Assistant';
-      previousConversation += `${role}: ${content}\n`;
-    }
-    return previousConversation;
+  if (sipTrunkId === null && !sipConnection) {
+    throw new Error(
+      '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
+    );
   }
 
-  async onEnter(): Promise<void> {
-    const jobCtx = getJobContext();
-    this._callerRoom = jobCtx.room;
+  const humanAgentIdentity = 'human-agent-sip';
+  const backgroundAudio = new BackgroundAudioPlayer();
+  const logger = log();
 
-    if (this._holdAudio !== null) {
-      await this._backgroundAudio.start({ room: this._callerRoom });
-      this._holdAudioHandle = this._backgroundAudio.play(this._holdAudio, true);
-    }
+  // Mutable state shared between the onEnter hook and the tools below. A closure
+  // keeps it private to this task instance without the field-initializer ordering
+  // pitfalls of a class.
+  let callerRoom: Room | null = null;
+  let humanAgentRoom: Room | null = null;
+  // Captured eagerly in onEnter while the live job context is available. The
+  // post-merge caller-room cleanup listener fires from a native rtc-node FFI
+  // callback whose AsyncLocalStorage context is pinned to FfiClient-singleton
+  // creation, so getJobContext() would read an empty/stale store there.
+  let jobCtx: JobContext | null = null;
+  let transferAgentSession: AgentSession | null = null;
+  let holdAudioHandle: PlayHandle | null = null;
+  let originalIoState: IoState | null = null;
 
-    this.setIoEnabled(false);
+  // Resolves when the human agent room/session fails, so onEnter stops waiting.
+  const humanAgentFailedFut = new Future<void>();
 
-    const dialAbortController = new AbortController();
-    const dialHumanAgent = this.dialHumanAgent(dialAbortController.signal);
-    try {
-      const result = await Promise.race([
-        dialHumanAgent.then((session) => ({ session })),
-        this._humanAgentFailed.then(() => ({ session: null })),
-      ]);
+  // `task` is created at the end of this function. The helpers and tools below
+  // only read it at runtime (inside their bodies), long after it's assigned, so
+  // the forward reference is safe.
+  const setIoEnabled = (enabled: boolean): void => {
+    const input = task.session.input;
+    const output = task.session.output;
 
-      if (!result.session) {
-        throw new Error('human agent room closed');
-      }
+    originalIoState ??= {
+      audioInput: input.audioEnabled,
+      audioOutput: output.audioEnabled,
+      transcriptionOutput: output.transcriptionEnabled,
+    };
 
-      this._humanAgentSession = result.session;
-    } catch (error) {
-      this._logger.error({ error }, 'could not dial human agent');
-      this.setResult(new ToolError('could not dial human agent'));
-    } finally {
-      dialAbortController.abort();
-      const session = await dialHumanAgent.catch(() => null);
-      if (session && this._humanAgentSession !== session) {
-        await this.cleanupHumanAgentDial(session, this._humanAgentRoom);
-        if (this._humanAgentRoom) {
-          this._humanAgentRoom = null;
-        }
-      }
-    }
-  }
-
-  private buildConnectToCallerTool() {
-    return tool({
-      name: 'connect_to_caller',
-      description: 'Called when the human agent wants to connect to the caller.',
-      flags: ToolFlag.IGNORE_ON_ENTER,
-      execute: async () => {
-        this._logger.debug('connecting to caller');
-        if (!this._callerRoom) {
-          throw new Error('caller room is not available');
-        }
-
-        await this.mergeCalls();
-        this.setResult({ humanAgentIdentity: this._humanAgentIdentity });
-        this._callerRoom.on(
-          RoomEvent.ParticipantDisconnected,
-          this.onCallerParticipantDisconnected,
-        );
-      },
-    });
-  }
-
-  private buildDeclineTransferTool() {
-    return tool({
-      name: 'decline_transfer',
-      description:
-        'Handles the case when the human agent explicitly declines to connect to the caller.',
-      parameters: z.object({
-        reason: z
-          .string()
-          .describe('A short explanation of why the human agent declined to connect to the caller'),
-      }),
-      flags: ToolFlag.IGNORE_ON_ENTER,
-      execute: async ({ reason }: { reason: string }) => {
-        this.setResult(new ToolError(`human agent declined to connect: ${reason}`));
-      },
-    });
-  }
-
-  private buildVoicemailDetectedTool() {
-    return tool({
-      name: 'voicemail_detected',
-      description:
-        'Called when the call reaches voicemail. Use this tool AFTER you hear the voicemail greeting',
-      flags: ToolFlag.IGNORE_ON_ENTER,
-      execute: async () => {
-        this.setResult(new ToolError('voicemail detected'));
-      },
-    });
-  }
-
-  private onHumanAgentRoomClose = (reason: DisconnectReason): void => {
-    this._logger.debug({ reason }, "human agent's room closed");
-    this._resolveHumanAgentFailed();
-    this.setResult(new ToolError(`room closed: ${reason}`));
+    if (input.audio) input.setAudioEnabled(enabled && originalIoState.audioInput);
+    if (output.audio) output.setAudioEnabled(enabled && originalIoState.audioOutput);
+    if (output.transcription)
+      output.setTranscriptionEnabled(enabled && originalIoState.transcriptionOutput);
   };
 
-  private onCallerParticipantDisconnected = (participant: {
+  const setResult = (result: WarmTransferResult | Error): void => {
+    if (task.done) return;
+
+    if (transferAgentSession) {
+      // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
+      // room and frees its WebSocket. The human agent is already moved out
+      // (mergeCalls) or torn down (failure) by now.
+      transferAgentSession.shutdown();
+      transferAgentSession = null;
+      humanAgentRoom = null;
+    }
+
+    if (holdAudioHandle) {
+      holdAudioHandle.stop();
+      holdAudioHandle = null;
+    }
+    void backgroundAudio.close().catch((error) => {
+      logger.warn({ error }, 'failed to close background audio');
+    });
+
+    setIoEnabled(true);
+    task.complete(result);
+  };
+
+  const onHumanAgentRoomClose = (reason: DisconnectReason): void => {
+    logger.debug({ reason }, 'human agent room closed');
+    humanAgentFailedFut.resolve();
+    setResult(new ToolError(`room closed: ${reason}`));
+  };
+
+  const onCallerParticipantDisconnected = (participant: {
     identity: string;
     kind: ParticipantKind;
   }): void => {
@@ -330,62 +209,90 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
       return;
     }
 
-    this._logger.info(
+    logger.info(
       { participantIdentity: participant.identity },
       'participant disconnected from caller room, closing',
     );
 
-    if (!this._callerRoom?.name) {
+    if (!callerRoom?.name) {
       return;
     }
 
-    this._callerRoom.off(RoomEvent.ParticipantDisconnected, this.onCallerParticipantDisconnected);
+    callerRoom.off(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
 
-    const rooms = new RoomServiceClient(getJobContext().info.url);
-    void rooms.deleteRoom(this._callerRoom.name).catch((error) => {
-      this._logger.warn({ error }, 'failed to delete caller room');
+    // Use the eagerly-captured job context: this callback runs from a native
+    // rtc-node FFI event, where getJobContext() reads an empty/stale
+    // AsyncLocalStorage store and would throw as an unhandled rejection.
+    if (!jobCtx) {
+      logger.warn('no job context captured, cannot delete caller room');
+      return;
+    }
+    const callerRoomName = callerRoom.name;
+    void jobCtx.deleteRoom(callerRoomName).catch((error) => {
+      logger.warn({ error }, 'failed to delete caller room');
     });
   };
 
-  private setResult(result: WarmTransferResult | Error): void {
-    if (this.done) {
-      return;
-    }
-
-    if (this._humanAgentSession) {
-      // shutdown() triggers deleteRoomOnClose, which disconnects the supervisor
-      // room and frees its WebSocket. The human agent is already moved out
-      // (mergeCalls) or torn down (failure) by now.
-      this._humanAgentSession.shutdown();
-      this._humanAgentSession = null;
-      this._humanAgentRoom = null;
-    }
-
-    if (this._holdAudioHandle) {
-      this._holdAudioHandle.stop();
-      this._holdAudioHandle = null;
-    }
-    void this._backgroundAudio.close().catch((error) => {
-      this._logger.warn({ error }, 'failed to close background audio');
+  const cleanupHumanAgentDial = async (
+    session?: AgentSession | null,
+    room?: Room | null,
+  ): Promise<void> => {
+    await room?.disconnect().catch((error) => {
+      logger.warn({ error }, 'failed to disconnect human agent room');
     });
+    await session?.close().catch((error) => {
+      logger.warn({ error }, 'failed to close transfer agent session');
+    });
+  };
 
-    this.setIoEnabled(true);
-    this.complete(result);
-  }
+  const mergeCalls = async (): Promise<void> => {
+    if (!callerRoom?.name || !humanAgentRoom?.name) {
+      throw new Error('calls are not ready to merge');
+    }
 
-  private async dialHumanAgent(signal: AbortSignal): Promise<AgentSession> {
-    if (!this._callerRoom?.name) {
+    humanAgentRoom.off(RoomEvent.Disconnected, onHumanAgentRoomClose);
+
+    logger.debug(
+      { humanAgentIdentity, callerRoom: callerRoom.name },
+      'moving human agent to caller room',
+    );
+
+    const info = (jobCtx ?? getJobContext()).info;
+    const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+    await rooms.moveParticipant(humanAgentRoom.name, humanAgentIdentity, callerRoom.name);
+  };
+
+  /**
+   * Dials the human agent into a fresh room and starts a copy of this
+   * task there. Every awaited step is raced against `signal`; on abort the
+   * `finally` block tears the half-built room/session down (the room/SIP SDK
+   * calls themselves aren't AbortSignal-aware).
+   */
+  const dialHumanAgent = async (signal: AbortSignal): Promise<AgentSession> => {
+    if (!callerRoom?.name) {
       throw new Error('caller room is not available');
     }
-    const localIdentity = this._callerRoom.localParticipant?.identity;
+    const localIdentity = callerRoom.localParticipant?.identity;
     if (!localIdentity) {
       throw new Error('caller room local participant is not available');
     }
 
-    const jobCtx = getJobContext();
-    const humanAgentRoomName = `${this._callerRoom.name}-human-agent`;
+    const ctx = jobCtx ?? getJobContext();
+    const humanAgentRoomName = `${callerRoom.name}-human-agent`;
     const room = new Room();
-    let humanAgentSession: AgentSession | null = null;
+    const transferAgent = new Agent({
+      instructions: task.instructions,
+      stt: task.stt,
+      vad: task.vad,
+      llm: task.llm,
+      tts: task.tts,
+      tools: task.toolCtx.tools,
+      chatCtx: task.chatCtx.copy(),
+      turnDetection: turnDetection ?? undefined,
+      allowInterruptions,
+    });
+
+    let session: AgentSession | undefined;
     let completed = false;
 
     try {
@@ -399,158 +306,240 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
         canSubscribe: true,
       } as VideoGrant);
 
-      this._logger.debug(
-        { wsUrl: jobCtx.info.url, humanAgentRoomName },
-        'connecting to human agent room',
-      );
+      logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
       const jwt = await token.toJwt();
-      await this.abortable(() => room.connect(jobCtx.info.url, jwt), signal);
-      room.on(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
 
-      humanAgentSession = new AgentSession({
-        vad: this.session.vad,
-        llm: this.session.llm,
-        stt: this.session.stt,
-        tts: this.session.tts,
-        turnDetection: this.session.turnDetection,
-      });
-      const session = humanAgentSession;
-      const humanAgent = new Agent({
-        instructions: this.instructions,
-        stt: this.stt,
-        vad: this.vad,
-        llm: this.llm,
-        tts: this.tts,
-        tools: this.toolCtx.tools,
-        chatCtx: this._chatCtx.copy(),
-        turnDetection: this._taskTurnDetection,
-        allowInterruptions: this._allowInterruptions,
+      room.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
+
+      const connected = await waitUntilAborted(room.connect(ctx.info.url, jwt), signal);
+      if (connected.isAborted) {
+        throw new Error('dial cancelled');
+      }
+
+      // The human agent session reuses the caller session's models.
+      session = new AgentSession({
+        vad: task.session.vad,
+        llm: task.session.llm,
+        stt: task.session.stt,
+        tts: task.session.tts,
+        turnDetection: task.session.turnDetection,
       });
 
-      await this.abortable(
-        () =>
-          session.start({
-            agent: humanAgent,
-            room,
-            inputOptions: {
-              closeOnDisconnect: true,
-              // Delete the supervisor room on shutdown so its WebSocket doesn't
-              // leak across transfers.
-              deleteRoomOnClose: true,
-              participantIdentity: this._humanAgentIdentity,
-            },
-            record: false,
-          }),
+      const started = await waitUntilAborted(
+        session.start({
+          agent: transferAgent,
+          room,
+          inputOptions: {
+            closeOnDisconnect: true,
+            // Delete the human agent room on shutdown so its WebSocket doesn't
+            // leak across transfers.
+            deleteRoomOnClose: true,
+            participantIdentity: humanAgentIdentity,
+          },
+          record: false,
+        }),
         signal,
       );
+      if (started.isAborted) {
+        throw new Error('dial cancelled');
+      }
 
-      const sip = new SipClient(jobCtx.info.url);
-      await this.abortable(
-        () =>
-          sip.createSipParticipant(
-            this._sipTrunkId ?? '',
-            this._sipCallTo,
-            humanAgentRoomName,
-            {
-              participantIdentity: this._humanAgentIdentity,
-              waitUntilAnswered: true,
-              fromNumber: this._sipNumber || undefined,
-              headers: this._sipHeaders,
-              dtmf: this._dtmf ?? undefined,
-              // SIP API takes whole seconds (BigInt coercion throws on fractional input).
-              ringingTimeout:
-                this._ringingTimeout !== null ? Math.round(this._ringingTimeout / 1000) : undefined,
-            },
-            this._sipConnection,
-          ),
+      const sip = new SipClient(ctx.info.url);
+      const dialed = await waitUntilAborted(
+        sip.createSipParticipant(
+          sipTrunkId ?? '',
+          sipCallTo,
+          humanAgentRoomName,
+          {
+            participantIdentity: humanAgentIdentity,
+            waitUntilAnswered: true,
+            fromNumber: sipNumber || undefined,
+            headers: sipHeaders,
+            dtmf: dtmf ?? undefined,
+            // SIP API takes whole seconds (BigInt coercion throws on fractional input).
+            ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
+          },
+          sipConnection,
+        ),
         signal,
       );
+      if (dialed.isAborted) {
+        throw new Error('dial cancelled');
+      }
 
-      this._humanAgentRoom = room;
+      humanAgentRoom = room;
       completed = true;
       return session;
     } finally {
       if (!completed) {
-        room.off(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
-        await this.cleanupHumanAgentDial(humanAgentSession, room);
+        room.off(RoomEvent.Disconnected, onHumanAgentRoomClose);
+        await cleanupHumanAgentDial(session, room);
       }
     }
+  };
+
+  const transferTools: ToolContextEntry[] = [
+    tool({
+      name: 'connect_to_caller',
+      description: 'Called when the human agent wants to connect to the caller.',
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async () => {
+        logger.debug('connecting to caller');
+        if (!callerRoom) {
+          throw new Error('caller room is not available');
+        }
+
+        await mergeCalls();
+        setResult({ humanAgentIdentity });
+        callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
+      },
+    }),
+    tool({
+      name: 'decline_transfer',
+      description:
+        'Handles the case when the human agent explicitly declines to connect to the caller.',
+      parameters: z.object({
+        reason: z
+          .string()
+          .describe('A short explanation of why the human agent declined to connect to the caller'),
+      }),
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async ({ reason }: { reason: string }) => {
+        setResult(new ToolError(`human agent declined to connect: ${reason}`));
+      },
+    }),
+    tool({
+      name: 'voicemail_detected',
+      description:
+        'Called when the call reaches voicemail. Use this tool AFTER you hear the voicemail greeting',
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async () => {
+        setResult(new ToolError('voicemail detected'));
+      },
+    }),
+  ];
+
+  const task = AgentTask.create<WarmTransferResult>({
+    instructions: resolveInstructions(instructions, chatCtx),
+    turnDetection: turnDetection ?? undefined,
+    tools: [...(tools ?? []), ...transferTools],
+    stt: stt ?? undefined,
+    vad: vad ?? undefined,
+    llm: llm ?? undefined,
+    tts: tts ?? undefined,
+    allowInterruptions,
+    onEnter: async () => {
+      jobCtx = getJobContext();
+      callerRoom = jobCtx.room;
+
+      if (holdAudio !== null) {
+        await backgroundAudio.start({ room: callerRoom });
+        holdAudioHandle = backgroundAudio.play(holdAudio, true);
+      }
+
+      setIoEnabled(false);
+
+      // Race the dial against a human-agent-room failure. AbortController lets
+      // the `finally` cancel a still-pending dial when the room dies first.
+      const abortController = new AbortController();
+      const dialPromise = dialHumanAgent(abortController.signal);
+      try {
+        const result = await Promise.race([
+          dialPromise.then((session) => ({ session })),
+          humanAgentFailedFut.await.then(() => ({ session: null })),
+        ]);
+
+        if (!result.session) {
+          throw new Error('human agent room closed');
+        }
+        transferAgentSession = result.session;
+      } catch (error) {
+        logger.error({ error }, 'could not dial human agent');
+        setResult(new ToolError('could not dial human agent'));
+      } finally {
+        abortController.abort();
+        // If the dial won the race we kept its session; otherwise discard it.
+        const session = await dialPromise.catch(() => null);
+        if (session && transferAgentSession !== session) {
+          await cleanupHumanAgentDial(session, humanAgentRoom);
+          humanAgentRoom = null;
+        }
+      }
+    },
+  });
+
+  return task;
+}
+
+/**
+ * Class wrapper around {@link createWarmTransferTask}, preserving the
+ * `new WarmTransferTask(options).run()` API. It composes the functional task and
+ * delegates `run()` to it.
+ */
+export class WarmTransferTask extends AgentTask<WarmTransferResult> {
+  readonly #task: AgentTask<WarmTransferResult>;
+
+  constructor(options: WarmTransferTaskOptions = {}) {
+    // The wrapper itself never runs as an agent; run() delegates to the
+    // composed task. Instructions are resolved inside createWarmTransferTask.
+    super({ instructions: '' });
+    this.#task = createWarmTransferTask(options);
   }
 
-  private async cleanupHumanAgentDial(
-    humanAgentSession: AgentSession | null,
-    room: Room | null,
-  ): Promise<void> {
-    await room?.disconnect().catch((error) => {
-      this._logger.warn({ error }, 'failed to disconnect human agent room');
-    });
-    await humanAgentSession?.close().catch((error) => {
-      this._logger.warn({ error }, 'failed to close human agent session');
-    });
+  override run(): Promise<WarmTransferResult> {
+    return this.#task.run();
+  }
+}
+
+const renderInstructionPart = (value: Instructions | string): string =>
+  typeof value === 'string' ? value : value.value;
+
+function resolveInstructions(
+  instructions: InstructionParts | string | undefined,
+  chatCtx: ChatContext | undefined,
+): string {
+  // A full instruction string replaces the built-in prompt entirely.
+  if (typeof instructions === 'string') {
+    return instructions;
   }
 
-  private async abortable<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
-    if (signal.aborted) {
-      throw new Error('dial cancelled');
-    }
+  // No instructions or an `InstructionParts` override: fill the built-in template.
+  const parts: InstructionParts = instructions ?? { persona: PERSONA };
+  // Single-pass replace via a callback: a chained `.replace(a, b)` would
+  // interpret `$`-patterns in the substituted text and let an earlier
+  // substitution swallow a later `{placeholder}`.
+  const replacements: Record<string, string> = {
+    // Unset preserves the built-in default; an explicit empty string removes the section.
+    persona: parts.persona !== undefined ? renderInstructionPart(parts.persona) : PERSONA,
+    _conversation_history: formatConversationHistory(chatCtx),
+    extra: parts.extra !== undefined ? renderInstructionPart(parts.extra) : '',
+  };
+  return INSTRUCTIONS_TEMPLATE.replace(
+    /\{(persona|_conversation_history|extra)\}/g,
+    (_match, key: string) => replacements[key] ?? '',
+  );
+}
 
-    // The room/SIP SDK calls aren't AbortSignal-aware, so the race only unblocks
-    // this task; cleanup then disconnects the room to settle a pending dial.
-    let onAbort!: () => void;
-    const abortPromise = new Promise<never>((_, reject) => {
-      onAbort = () => reject(new Error('dial cancelled'));
-      signal.addEventListener('abort', onAbort, { once: true });
-    });
-
-    try {
-      return await Promise.race([fn(), abortPromise]);
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-    }
+function formatConversationHistory(chatCtx?: ChatContext): string {
+  if (!chatCtx) {
+    return '';
   }
 
-  private async mergeCalls(): Promise<void> {
-    if (!this._callerRoom?.name || !this._humanAgentRoom?.name) {
-      throw new Error('calls are not ready to merge');
+  let previousConversation = '';
+  for (const item of chatCtx.items) {
+    if (item.type !== 'message' || (item.role !== 'user' && item.role !== 'assistant')) {
+      continue;
     }
 
-    this._humanAgentRoom.off(RoomEvent.Disconnected, this.onHumanAgentRoomClose);
+    const content = item.textContent;
+    if (!content) {
+      continue;
+    }
 
-    this._logger.debug(
-      { humanAgentIdentity: this._humanAgentIdentity, callerRoom: this._callerRoom.name },
-      'moving human agent to caller room',
-    );
-
-    const rooms = new RoomServiceClient(getJobContext().info.url);
-    await rooms.moveParticipant(
-      this._humanAgentRoom.name,
-      this._humanAgentIdentity,
-      this._callerRoom.name,
-    );
+    const role = item.role === 'user' ? 'Caller' : 'Assistant';
+    previousConversation += `${role}: ${content}\n`;
   }
-
-  private setIoEnabled(enabled: boolean): void {
-    const input = this.session.input;
-    const output = this.session.output;
-
-    if (Object.keys(this._originalIoState).length === 0) {
-      this._originalIoState = {
-        audioInput: input.audioEnabled,
-        audioOutput: output.audioEnabled,
-        transcriptionOutput: output.transcriptionEnabled,
-      };
-    }
-
-    if (input.audio) {
-      input.setAudioEnabled(enabled && this._originalIoState.audioInput!);
-    }
-    if (output.audio) {
-      output.setAudioEnabled(enabled && this._originalIoState.audioOutput!);
-    }
-    if (output.transcription) {
-      output.setTranscriptionEnabled(enabled && this._originalIoState.transcriptionOutput!);
-    }
-  }
+  return previousConversation;
 }
 
 const PERSONA = `# Identity
