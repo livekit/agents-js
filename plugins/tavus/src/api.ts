@@ -33,7 +33,7 @@ export class TavusException extends Error {
 export interface CreateConversationOptions {
   /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
   faceId?: string;
-  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; created automatically when omitted. */
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; defaults to a stock pal when omitted. */
   palId?: string;
   /** @deprecated Use {@link CreateConversationOptions.faceId | faceId} instead. */
   replicaId?: string;

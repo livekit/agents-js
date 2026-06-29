@@ -27,7 +27,7 @@ const AVATAR_AGENT_NAME = 'tavus-avatar-agent';
 export interface AvatarSessionOptions {
   /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
   faceId?: string;
-  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; created automatically when omitted. */
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; defaults to a stock pal when omitted. */
   palId?: string;
   /** @deprecated Use {@link AvatarSessionOptions.faceId | faceId} instead. */
   replicaId?: string;
