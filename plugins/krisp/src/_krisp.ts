@@ -10,11 +10,14 @@
  * {@link krispVivaFilter} instantiates when the user picks
  * {@link KrispLicenseAuthProvider}.
  *
- * SCAFFOLD: the public Krisp Node SDK (`krisp-audio-node-sdk`) is not bundled
- * with this plugin and its exact API is wired in below behind {@link KrispLicenseSdkManager}.
- * The frame buffering / reframing logic is fully ported from the Python plugin;
- * only the SDK-specific calls (init / session create / per-chunk process) are
- * marked with TODOs to confirm against the published SDK surface.
+ * Wires the documented `krisp-audio-node-sdk` surface (https://sdk-docs.krisp.ai):
+ * global init with a working-directory path, the `enums.SamplingRate` and
+ * `enums.FrameDuration` tables, `NcInt16.create(config)`, per-frame `process`,
+ * and the session/global destroy calls. The license key is supplied out-of-band
+ * via `KRISP_VIVA_SDK_LICENSE_KEY` (read by the native SDK); the documented
+ * `globalInit` takes only a working-directory path.
+ *
+ * The frame buffering / reframing logic is ported from the Python plugin.
  */
 import { AudioFrame, FrameProcessor } from '@livekit/rtc-node';
 import { createRequire } from 'node:module';
@@ -25,12 +28,39 @@ const require = createRequire(import.meta.url);
 const SUPPORTED_SAMPLE_RATES = [8000, 16000, 24000, 32000, 44100, 48000] as const;
 const SUPPORTED_FRAME_DURATIONS_MS = [10, 15, 20, 30, 32] as const;
 
+/** Map a sample rate (Hz) to the SDK's `enums.SamplingRate.Sr<rate>Hz` member. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function samplingRateEnum(mod: any, sampleRate: number): unknown {
+  const value = mod.enums?.SamplingRate?.[`Sr${sampleRate}Hz`];
+  if (value === undefined) {
+    throw new Error(
+      `Unsupported sample rate: ${sampleRate} Hz. ` +
+        `Supported rates: ${SUPPORTED_SAMPLE_RATES.join(', ')} Hz`,
+    );
+  }
+  return value;
+}
+
+/** Map a frame duration (ms) to the SDK's `enums.FrameDuration.Fd<ms>ms` member. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function frameDurationEnum(mod: any, frameDurationMs: number): unknown {
+  const value = mod.enums?.FrameDuration?.[`Fd${frameDurationMs}ms`];
+  if (value === undefined) {
+    throw new Error(
+      `Unsupported frame duration: ${frameDurationMs} ms. ` +
+        `Supported durations: ${SUPPORTED_FRAME_DURATIONS_MS.join(', ')} ms`,
+    );
+  }
+  return value;
+}
+
 /**
  * Process-singleton ref counter for the public `krisp-audio-node-sdk`.
  *
- * Krisp's global init / destroy are process-global, so this manager keeps a
- * single SDK alive across multiple license-mode frame processors. The module is
- * lazy-required on first acquire — never loaded in cloud-only deployments.
+ * Krisp's `globalInit` / `globalDestroy` are process-global, so this manager
+ * keeps a single SDK alive across multiple license-mode frame processors. The
+ * module is lazy-required on first acquire — never loaded in cloud-only
+ * deployments.
  */
 class KrispLicenseSdkManager {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,7 +69,7 @@ class KrispLicenseSdkManager {
 
   /** Acquire a reference, returning the loaded `krisp-audio-node-sdk` module. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static acquire(licenseKey: string): any {
+  static acquire(): any {
     if (this.referenceCount === 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let mod: any;
@@ -48,17 +78,14 @@ class KrispLicenseSdkManager {
       } catch {
         throw new Error(
           'krisp-audio-node-sdk is not installed. Install the public Krisp Node SDK ' +
-            'and provide a license key + .kef model, or use the default LiveKit Cloud ' +
-            'auth provider (auth.livekitCloud()).',
+            '(`pnpm add krisp-audio-node-sdk`) and provide a .kef model, or use the ' +
+            'default LiveKit Cloud auth provider (auth.livekitCloud()).',
         );
       }
 
-      // TODO(krisp-license): confirm the global-init entrypoint and signature
-      // against the published `krisp-audio-node-sdk` API. Python calls
-      // `krisp_audio.globalInit('', licenseKey, errCb, logCb, LogLevel.Off)`.
-      if (typeof mod.globalInit === 'function') {
-        mod.globalInit(licenseKey);
-      }
+      // The license key is read from KRISP_VIVA_SDK_LICENSE_KEY by the native SDK;
+      // the documented globalInit only takes a working-directory path.
+      mod.globalInit('');
 
       this.module = mod;
       log().debug('Krisp Audio SDK (license) initialized');
@@ -77,10 +104,7 @@ class KrispLicenseSdkManager {
     log().debug(`Krisp SDK (license) reference count: ${this.referenceCount}`);
     if (this.referenceCount === 0 && this.module !== null) {
       try {
-        // TODO(krisp-license): confirm the global-destroy entrypoint.
-        if (typeof this.module.globalDestroy === 'function') {
-          this.module.globalDestroy();
-        }
+        this.module.globalDestroy();
         log().debug('Krisp Audio SDK (license) destroyed');
       } catch (e) {
         log().error(`Error during Krisp SDK cleanup: ${e}`);
@@ -103,7 +127,6 @@ function clampLevel(value: number): number {
 }
 
 export interface KrispLicenseFrameProcessorOptions {
-  licenseKey: string;
   modelPath: string;
   noiseSuppressionLevel: number;
   frameDurationMs: number;
@@ -112,9 +135,8 @@ export interface KrispLicenseFrameProcessorOptions {
 /**
  * License-mode FrameProcessor wrapping `krisp-audio-node-sdk`.
  *
- * Internal implementation detail — users calls
- * {@link vivaFilterProcessor} and the facade selects this when the
- * auth provider is {@link KrispLicenseAuthProvider}.
+ * Internal implementation detail — users call `vivaFilter()` and the facade
+ * selects this when the auth provider is {@link KrispLicenseAuthProvider}.
  *
  * The buffering strategy mirrors the Python plugin: Krisp processes fixed-size
  * chunks (`frameDurationMs` worth of samples) but input frames may arrive at any
@@ -151,7 +173,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       );
     }
 
-    this.module = KrispLicenseSdkManager.acquire(opts.licenseKey);
+    this.module = KrispLicenseSdkManager.acquire();
     this.sdkAcquired = true;
 
     try {
@@ -179,14 +201,27 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
 
     log().info(`Creating Krisp session for sample rate: ${sampleRate}Hz`);
 
-    // TODO(krisp-license): confirm session-creation API against the published
-    // `krisp-audio-node-sdk`. Python builds an `NcSessionConfig` (input/output
-    // sample rate, frame duration, model path) and calls `NcInt16.create(cfg)`.
-    this.session = this.module.createNoiseCancellationSession({
-      sampleRate,
-      frameDurationMs: this.frameDurationMs,
-      modelPath: this.modelPath,
-    });
+    // Free the previous session (if any) before replacing it on a rate change.
+    if (this.session !== null) {
+      try {
+        this.session.destroy();
+      } catch (e) {
+        log().error(`Error destroying Krisp session: ${e}`);
+      }
+      this.session = null;
+    }
+
+    // Int16 noise-cancellation session. Our AudioFrame samples are int16 PCM, so
+    // NcInt16 avoids a float round-trip (the docs' Node example shows the NcFloat
+    // sibling). Output sample rate is pinned to the input rate — we only filter.
+    const inputSampleRate = samplingRateEnum(this.module, sampleRate);
+    const config = {
+      inputSampleRate,
+      inputFrameDuration: frameDurationEnum(this.module, this.frameDurationMs),
+      outputSampleRate: inputSampleRate,
+      modelInfo: { path: this.modelPath },
+    };
+    this.session = this.module.NcInt16.create(config);
     this.sampleRate = sampleRate;
     this.chunkSamples = Math.floor((sampleRate * this.frameDurationMs) / 1000);
     // The pending/processed buffers belong to the old rate; start fresh.
@@ -248,8 +283,6 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
         const chunkIn = pending.subarray(i * chunk, (i + 1) * chunk);
         let chunkOut: Int16Array;
         try {
-          // TODO(krisp-license): confirm per-chunk process signature. Python:
-          // `session.process(chunkIn, noiseSuppressionLevel)` returning Int16.
           chunkOut = this.session.process(chunkIn, this.level);
         } catch (e) {
           log().error(`Error processing frame: ${e}`);
@@ -281,7 +314,14 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
   }
 
   private teardown(): void {
-    this.session = null;
+    if (this.session !== null) {
+      try {
+        this.session.destroy();
+      } catch (e) {
+        log().error(`Error destroying Krisp session: ${e}`);
+      }
+      this.session = null;
+    }
     this.inBuf = new Int16Array(0);
     this.outBuf = new Int16Array(0);
     if (this.sdkAcquired) {

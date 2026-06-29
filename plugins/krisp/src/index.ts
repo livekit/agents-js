@@ -35,7 +35,16 @@ export {
   LiveKitCloudAuthProvider,
 } from './auth.js';
 
-export function vivaFilter(options?: KrispVivaFilterOptions) {
+/**
+ * Create a Krisp VIVA noise-reduction `FrameProcessor`.
+ *
+ * Pass the result as `noiseCancellation` in the session's input options. Uses
+ * LiveKit Cloud auth by default; pass `authProvider: auth.krispLicense(...)` to
+ * run the public Krisp SDK with your own license + `.kef` model.
+ *
+ * @public
+ */
+export function vivaFilter(options?: KrispVivaFilterOptions): KrispVivaFilter {
   return new KrispVivaFilter(options);
 }
 

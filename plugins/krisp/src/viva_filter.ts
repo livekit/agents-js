@@ -79,7 +79,6 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
 
   // KrispLicenseAuthProvider
   return new KrispLicenseFrameProcessor({
-    licenseKey: provider.licenseKey,
     modelPath: provider.modelPath,
     noiseSuppressionLevel,
     frameDurationMs: DEFAULT_FRAME_DURATION_MS,
@@ -95,18 +94,14 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
  *
  * @example
  * ```ts
- * import { voice } from '@livekit/agents';
  * import * as krisp from '@livekit/agents-plugin-krisp';
  *
  * // Default: LiveKit Cloud auth + bundled model. No keys or model files.
- * const processor = new krisp.KrispVivaFilterFrameProcessor();
+ * const processor = krisp.vivaFilter();
  *
  * // Or, explicit Krisp-direct auth with a license + model file.
- * const processor = new krisp.KrispVivaFilterFrameProcessor({
- *   authProvider: krisp.auth.krispLicense({
- *     licenseKey: '...',
- *     modelPath: '/path/to/model.kef',
- *   }),
+ * const processor = krisp.vivaFilter({
+ *   authProvider: krisp.auth.krispLicense({ modelPath: '/path/to/model.kef' }),
  * });
  *
  * await session.start({
