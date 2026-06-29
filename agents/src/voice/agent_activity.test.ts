@@ -22,6 +22,7 @@ import { Future, Task } from '../utils.js';
 import { _getActivityTaskInfo } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
+import type { AgentSessionEventTypes, UserInputTranscribedEvent } from './events.js';
 import { SpeechHandle } from './speech_handle.js';
 
 const agentMocks = vi.hoisted(() => ({
@@ -132,6 +133,29 @@ function buildMainTaskRunner() {
 }
 
 describe('AgentActivity - mainTask', () => {
+  it('preserves realtime user input transcription item IDs', () => {
+    const capturedEvents: UserInputTranscribedEvent[] = [];
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    Object.assign(activity, {
+      agentSession: {
+        emit: (_type: AgentSessionEventTypes, ev: UserInputTranscribedEvent) => {
+          capturedEvents.push(ev);
+        },
+      },
+    });
+
+    activity.onInputAudioTranscriptionCompleted({
+      itemId: 'item_123',
+      transcript: 'hello',
+      isFinal: false,
+    });
+
+    expect(capturedEvents).toHaveLength(1);
+    expect(capturedEvents[0]?.transcript).toBe('hello');
+    expect(capturedEvents[0]?.isFinal).toBe(false);
+    expect(capturedEvents[0]?.itemId).toBe('item_123');
+  });
+
   it('should recover when speech handle is interrupted after authorization', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
 

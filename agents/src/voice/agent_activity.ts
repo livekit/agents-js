@@ -1168,6 +1168,7 @@ export class AgentActivity implements RecognitionHooks {
       createUserInputTranscribedEvent({
         transcript: ev.transcript,
         isFinal: ev.isFinal,
+        itemId: ev.itemId,
       }),
     );
 
