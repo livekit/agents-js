@@ -265,12 +265,12 @@ export class SpeechStream extends stt.SpeechStream {
         keywords: this.#opts.keywords.map((x) => x.join(':')),
         keyterm: this.#opts.keyterm,
         profanity_filter: this.#opts.profanityFilter,
-        redact: this.#opts.redact,
         utterance_end_ms: this.#opts.utteranceEndMs,
         replace: this.#opts.replace,
         search: this.#opts.search,
         language: this.#opts.language,
         mip_opt_out: this.#opts.mipOptOut,
+        ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
       };
       appendSearchParams(streamURL, params);
 
