@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-tavus
 
+## 1.4.11
+
+### Patch Changes
+
+- Align the Tavus plugin with the new face/pal API: `faceId`/`palId` options and `TAVUS_FACE_ID`/`TAVUS_PAL_ID` env vars, sending `face_id`/`pal_id` on the wire and defaulting to a stock pal when none is supplied (use `createPal` to make your own). The old `replicaId`/`personaId` options, `TAVUS_REPLICA_ID`/`TAVUS_PERSONA_ID` env vars, and `createPersona()` keep working as deprecated aliases. - [#1886](https://github.com/livekit/agents-js/pull/1886) ([@carolin-tavus](https://github.com/carolin-tavus))
+
+- Updated dependencies []:
+  - @livekit/agents@1.4.11
+
 ## 1.4.10
 
 ### Patch Changes

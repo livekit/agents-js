@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-assemblyai
 
+## 1.4.11
+
+### Patch Changes
+
+- Respect AssemblyAI `mode` presets when defaulting turn silence and remap deprecated `u3-pro` to `universal-3-5-pro`. - [#1882](https://github.com/livekit/agents-js/pull/1882) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies []:
+  - @livekit/agents@1.4.11
+
 ## 1.4.10
 
 ### Patch Changes

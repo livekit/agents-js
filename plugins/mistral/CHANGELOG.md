@@ -1,5 +1,13 @@
 # @livekit/agents-plugin-mistral
 
+## 1.4.11
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.4.11
+  - @livekit/agents-plugin-mistralai@1.4.11
+
 ## 1.4.10
 
 ### Patch Changes
