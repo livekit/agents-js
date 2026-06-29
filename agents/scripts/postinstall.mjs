@@ -19,7 +19,9 @@ if (process.env.LIVEKIT_SKIP_FFMPEG_DOWNLOAD) {
 const require = createRequire(import.meta.url);
 
 try {
-  // Resolve the built module relative to this package; absent in an unbuilt source checkout.
+  // Resolve the built modules relative to this package; absent in an unbuilt source checkout.
+  const { initializeLogger } = await import(require.resolve('../dist/log.js'));
+  initializeLogger({ pretty: true, level: 'info' });
   const { downloadFfmpeg } = await import(require.resolve('../dist/ffmpeg.js'));
   await downloadFfmpeg();
 } catch (err) {
