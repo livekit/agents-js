@@ -1507,6 +1507,7 @@ export class AgentActivity implements RecognitionHooks {
       this.schedulingPaused ||
       this.newTurnsBlocked ||
       (this._currentSpeech !== undefined && !this._currentSpeech.interrupted) ||
+      this._backgroundSpeeches.size > 0 ||
       !(this.llm instanceof LLM)
     ) {
       return;
