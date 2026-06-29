@@ -16,6 +16,7 @@ import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
 const SESSION_CLOSE_TIMEOUT = 60 * 1000;
+const DISPOSE_TIMEOUT = 10 * 1000;
 
 const safeSend = (msg: IPCMessage): boolean => {
   try {
@@ -319,7 +320,20 @@ const startJob = (
     // still running, causing: "mutex lock failed: Invalid argument"
     // See: https://github.com/livekit/node-sdks/issues/564
     try {
-      await dispose();
+      // Bound the wait: if native disposal hangs on a handle that never drains,
+      // an unbounded await here leaves the job child alive forever. It never
+      // reaches process.exit() yet keeps answering supervisor pings, so it is
+      // never reclaimed. Fall through to process.exit() on timeout; a crash on
+      // exit is still preferable to a zombie holding the job's full RSS.
+      await Promise.race([
+        dispose(),
+        new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('native resource disposal timed out')),
+            DISPOSE_TIMEOUT,
+          ),
+        ),
+      ]);
       logger.debug('native resources disposed');
     } catch (error) {
       logger.warn({ error }, 'failed to dispose native resources');
