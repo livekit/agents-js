@@ -33,7 +33,6 @@ const SUPPORTED_TARGETS = new Set([
   'win32-x64',
 ]);
 
-/** `${process.platform}-${process.arch}`, or null on an unsupported platform. */
 const currentTarget = (): string | null => {
   const target = `${process.platform}-${process.arch}`;
   return SUPPORTED_TARGETS.has(target) ? target : null;
@@ -82,8 +81,7 @@ const fetchBuffer = async (url: string): Promise<Buffer> => {
   return Buffer.from(await res.arrayBuffer());
 };
 
-// Parse a `sha256sum`-style file ("<hex>  <filename>") into a filename→hash map.
-/** @internal */
+/** @internal Parse a `sha256sum`-style file into a filename→hash map. */
 export const parseChecksums = (text: string): Map<string, string> => {
   const map = new Map<string, string>();
   for (const line of text.split('\n')) {
@@ -162,8 +160,7 @@ export const ensureFfmpeg = (): Promise<string> => {
       if (downloaded) {
         return downloaded;
       }
-      // Last resort: rely on an `ffmpeg` on PATH. fluent-ffmpeg uses this when given a
-      // bare command name.
+      // Last resort: a bare command name makes fluent-ffmpeg resolve `ffmpeg` from PATH.
       log().warn(`using \`ffmpeg\` from PATH; set ${FFMPEG_PATH_ENV} to use a specific binary`);
       return 'ffmpeg';
     })();

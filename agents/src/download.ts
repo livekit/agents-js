@@ -133,9 +133,8 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
   }
   const logger = log();
 
-  // FFmpeg powers the core audio decode/encode paths, so fetch its bundled LGPL binary here
-  // too — this is what lets a Dockerfile cache it in the dependency layer (alongside plugin
-  // assets) without loading the agent's code.
+  // Fetch the bundled ffmpeg binary here too, so a Dockerfile can cache it in the dependency
+  // layer (alongside plugin assets) without loading the agent's code.
   let ffmpegFailed = false;
   try {
     logger.info('Downloading ffmpeg binary');

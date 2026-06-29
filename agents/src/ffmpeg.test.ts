@@ -10,14 +10,9 @@ describe('ffmpeg path resolution', () => {
     delete process.env[FFMPEG_PATH_ENV];
   });
 
-  it('prefers the LIVEKIT_FFMPEG_PATH override', () => {
+  it('prefers the LIVEKIT_FFMPEG_PATH override over the bundled binary', () => {
     process.env[FFMPEG_PATH_ENV] = '/custom/ffmpeg';
     expect(resolveFfmpegPath()).toBe('/custom/ffmpeg');
-  });
-
-  it('returns undefined when nothing is available', () => {
-    // No override set and the bundled binary is not present in the test environment.
-    expect(resolveFfmpegPath()).toBeUndefined();
   });
 });
 

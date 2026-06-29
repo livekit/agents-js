@@ -25,8 +25,8 @@
 #   OPUS_VERSION    e.g. 1.5.2
 #   OUTPUT_DIR      where the resulting `ffmpeg[.exe]` is copied
 #
-# The host runner must match TARGET's OS/arch, except win32-x64 which cross-compiles from
-# Linux using the mingw-w64 toolchain.
+# The host runner matches TARGET's OS/arch, except the cross-compiled targets: win32-x64
+# (mingw-w64 from Linux) and darwin-x64 (x86_64 from an arm64 macOS runner).
 set -euo pipefail
 
 : "${TARGET:?set TARGET}"

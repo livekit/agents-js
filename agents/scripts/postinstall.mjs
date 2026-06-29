@@ -1,15 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Postinstall hook: pre-fetch the bundled LGPL ffmpeg binary for the current platform so
-// agents work out of the box. This is best-effort — it must never fail the install:
-//
-//  - In a source checkout (monorepo dev) `dist/` may not exist yet; we skip silently and the
-//    binary is fetched later, on first use or via `npx livekit-agents download-files`.
-//  - With `--ignore-scripts`, or if the download fails (offline, locked-down CI), the runtime
-//    falls back to `LIVEKIT_FFMPEG_PATH` / `ffmpeg` on PATH, or downloads lazily on first use.
-//
-// Set LIVEKIT_SKIP_FFMPEG_DOWNLOAD=1 to opt out entirely.
+// Best-effort pre-fetch of the bundled LGPL ffmpeg binary. Must never fail the install: if
+// dist/ isn't built yet (source checkout), scripts are disabled, or the download fails, the
+// binary is fetched later on first use or via `livekit-agents download-files`. Set
+// LIVEKIT_SKIP_FFMPEG_DOWNLOAD=1 to opt out.
 import { createRequire } from 'node:module';
 
 if (process.env.LIVEKIT_SKIP_FFMPEG_DOWNLOAD) {

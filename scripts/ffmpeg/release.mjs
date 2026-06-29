@@ -25,20 +25,3 @@ export const BUILD_REVISION = 1;
 
 /** GitHub Release tag the binaries are published under. */
 export const RELEASE_TAG = `ffmpeg-bin/v${FFMPEG_VERSION}-${BUILD_REVISION}`;
-
-/**
- * Platforms we build for, keyed by `${process.platform}-${process.arch}`. Windows ships
- * `ffmpeg.exe`; everything else ships `ffmpeg`.
- */
-export const SUPPORTED_TARGETS = [
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-x64',
-  'linux-arm64',
-  'win32-x64',
-];
-
-/** Gzipped binary asset name for a target, e.g. `ffmpeg-darwin-arm64.gz`. */
-export function assetName(target) {
-  return `ffmpeg-${target}.gz`;
-}

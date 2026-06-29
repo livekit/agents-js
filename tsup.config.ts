@@ -1,8 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { Options } from 'tsup';
-// Single source of truth for the bundled LGPL FFmpeg release (see scripts/ffmpeg/release.mjs).
-// Resolved relative to this config file so it works regardless of which package's cwd tsup runs in.
+// Injected into the @livekit/agents bundle so the runtime knows which release to download.
 import { BUILD_REVISION, FFMPEG_VERSION } from './scripts/ffmpeg/release.mjs';
 
 const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8'));
