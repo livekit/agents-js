@@ -539,6 +539,7 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent extends B
   item_id: string;
   content_index: number;
   transcript: string;
+  status?: 'in_progress' | 'completed' | string;
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {
