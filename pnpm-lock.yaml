@@ -166,6 +166,9 @@ importers:
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
+      certifi:
+        specifier: ^14.5.15
+        version: 14.5.15
       commander:
         specifier: ^12.0.0
         version: 12.1.0
@@ -3219,6 +3222,10 @@ packages:
   camelcase@8.0.0:
     resolution: {integrity: sha512-8WB3Jcas3swSvjIeA2yvCJ+Miyz5l1ZmB6HFb9R1317dt9LCQoswg/BGrmAmkWVEszSrrg4RwmO46qIm2OEnSA==}
     engines: {node: '>=16'}
+
+  certifi@14.5.15:
+    resolution: {integrity: sha512-NeLXuKCqSzwQNjpJ+WaSp5m8ntdTKJ8HnBu+eA7DxHfgzU7F1sjwrJFang+4U38+vmWbiFUpPZMV3uwwnHAisQ==}
+    engines: {node: '>=0.10.0'}
 
   chai@6.2.2:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
@@ -7140,6 +7147,8 @@ snapshots:
       type-fest: 4.18.0
 
   camelcase@8.0.0: {}
+
+  certifi@14.5.15: {}
 
   chai@6.2.2: {}
 

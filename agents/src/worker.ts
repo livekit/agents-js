@@ -18,6 +18,7 @@ import { availableParallelism } from 'node:os';
 import { extname } from 'node:path';
 import { WebSocket } from 'ws';
 import { APIStatusError } from './_exceptions.js';
+import { setDefaultCertEnv } from './certificates.js';
 import { ATTRIBUTE_AGENT_NAME } from './constants.js';
 import { getCpuMonitor } from './cpu.js';
 import { HTTPServer } from './http_server.js';
@@ -428,6 +429,9 @@ export class AgentServer {
     if (!this.#closed) {
       throw new WorkerError('worker is already running');
     }
+
+    // Must run before child processes spawn so they inherit the SSL_CERT_FILE fallback.
+    setDefaultCertEnv();
 
     if (this.#inferenceExecutor) {
       await this.#inferenceExecutor.start();
