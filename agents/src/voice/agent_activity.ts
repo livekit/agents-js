@@ -2593,7 +2593,7 @@ export class AgentActivity implements RecognitionHooks {
     const forwardedTextFor = (output: SegmentOutput): string => {
       if (output.played === 'skipped') return '';
       if (output.played === 'partial' && output.audioOut) {
-        return output.synchronizedTranscript ?? '';
+        return output.synchronizedTranscript || output.textOut?.text || '';
       }
       return output.textOut?.text ?? '';
     };
@@ -3427,7 +3427,7 @@ export class AgentActivity implements RecognitionHooks {
         const interrupted = output.played === 'partial';
         let forwardedText = output.textOut?.text || '';
         if (interrupted && output.audioOut) {
-          forwardedText = output.synchronizedTranscript ?? '';
+          forwardedText = output.synchronizedTranscript || forwardedText;
         }
 
         if (interrupted && realtimeModel.capabilities.messageTruncation) {
