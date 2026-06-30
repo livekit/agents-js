@@ -7,12 +7,13 @@ import {
   Future,
   log,
   shortuuid,
+  stream,
   tokenize,
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
-import { WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import type { OutputFormat, Precision, ResembleModel } from './models.js';
 
 export const TTSDefaultVoiceId = '55592656';
@@ -238,8 +239,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#tokenizer.close();
     };
 
+    // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
     const recvTask = async (ws: WebSocket) => {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
+      const eventChannel = stream.createStreamChannel<RawData>();
 
       let lastFrame: AudioFrame | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
@@ -249,93 +252,99 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      // Use promise-based message handling similar to ElevenLabs
-      while ((!closing && activeRequests.size > 0) || !this.#tokenizer.closed) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            ws.removeAllListeners();
-            ws.on('message', (data) => {
-              try {
-                const json = JSON.parse(data.toString());
-                const segmentId = json.request_id;
+      const onMessage = (data: RawData) => {
+        void eventChannel.write(data).catch((error: unknown) => {
+          this.#logger.debug({ error }, 'Failed writing Resemble event to channel (likely closed)');
+        });
+      };
 
-                if ('audio_content' in json) {
-                  try {
-                    const audioData = Buffer.from(json.audio_content, 'base64');
-                    for (const frame of bstream.write(audioData)) {
-                      sendLastFrame(segmentId, false);
-                      lastFrame = frame;
-                    }
-                  } catch (audioError) {
-                    this.#logger.error(`Error processing audio content: ${audioError}`);
-                  }
-                } else if ('type' in json && json.type === 'audio_end') {
-                  for (const frame of bstream.flush()) {
-                    sendLastFrame(segmentId, false);
-                    lastFrame = frame;
-                  }
-                  sendLastFrame(segmentId, true);
+      const onClose = (code: number, reason: Buffer) => {
+        if (!closing) {
+          this.#logger.error(`WebSocket closed with code ${code}: ${reason.toString()}`);
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+        }
+        void eventChannel.close();
+      };
 
-                  activeRequests.delete(Number(segmentId));
+      const onError = (err: Error) => {
+        this.#logger.error({ err }, 'Resemble WebSocket error');
+        if (!closing) {
+          closing = true;
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          ws.close();
+        }
+        void eventChannel.close();
+      };
 
-                  // Only end the stream when all requests are complete and tokenizer is closed
-                  if (activeRequests.size === 0 && this.#tokenizer.closed) {
-                    this.queue.put(SynthesizeStream.END_OF_STREAM);
-                    closing = true;
-                    ws.close();
-                    resolve();
-                    return;
-                  }
-                } else if ('success' in json && json.success === false) {
-                  const errorName = json.error_name || 'Unknown';
-                  const explanation = json.error_params?.explanation || 'No details provided';
-                  this.#logger
-                    .child({ error: errorName })
-                    .error(`Resemble API error: ${explanation}`);
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
 
-                  closing = true;
-                  this.queue.put(SynthesizeStream.END_OF_STREAM);
-                  ws.close();
-                  reject(new Error(`Resemble API error: ${errorName}`));
-                  return;
-                }
-                resolve();
-              } catch (error) {
-                this.#logger.error(`Error parsing WebSocket message: ${error}`);
-                reject(error);
+      try {
+        const reader = eventChannel.stream().getReader();
+
+        while ((!closing && activeRequests.size > 0) || !this.#tokenizer.closed) {
+          const result = await reader.read();
+          if (result.done) break;
+
+          const json = JSON.parse(result.value.toString());
+          const segmentId = json.request_id;
+
+          if ('audio_content' in json) {
+            try {
+              const audioData = Buffer.from(json.audio_content, 'base64');
+              for (const frame of bstream.write(audioData)) {
+                sendLastFrame(segmentId, false);
+                lastFrame = frame;
               }
-            });
+            } catch (audioError) {
+              this.#logger.error(`Error processing audio content: ${audioError}`);
+            }
+          } else if ('type' in json && json.type === 'audio_end') {
+            for (const frame of bstream.flush()) {
+              sendLastFrame(segmentId, false);
+              lastFrame = frame;
+            }
+            sendLastFrame(segmentId, true);
 
-            ws.on('error', (error) => {
-              this.#logger.error(`WebSocket error: ${error}`);
-              if (!closing) {
-                closing = true;
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-                ws.close();
-              }
-              reject(error);
-            });
+            activeRequests.delete(Number(segmentId));
 
-            ws.on('close', (code, reason) => {
-              if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-              }
-              // Only reject if we haven't received all expected frames
-              if (activeRequests.size > 0 || !this.#tokenizer.closed) {
-                reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
-              } else {
-                resolve();
-              }
-            });
-          });
-        } catch (err) {
-          // Skip log error for normal websocket close
-          if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
+            // Only end the stream when all requests are complete and tokenizer is closed
+            if (activeRequests.size === 0 && this.#tokenizer.closed) {
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
+              closing = true;
+              ws.close();
+              break;
+            }
+          } else if ('success' in json && json.success === false) {
+            const errorName = json.error_name || 'Unknown';
+            const explanation = json.error_params?.explanation || 'No details provided';
+            this.#logger.child({ error: errorName }).error(`Resemble API error: ${explanation}`);
+
+            closing = true;
+            this.queue.put(SynthesizeStream.END_OF_STREAM);
+            ws.close();
+            throw new Error(`Resemble API error: ${errorName}`);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && !err.message.includes('WebSocket closed')) {
+          if (
+            err.message.includes('Queue is closed') ||
+            err.message.includes('Channel is closed')
+          ) {
+            this.#logger.warn(
+              { err },
+              'Channel closed during transcript processing (expected during disconnect)',
+            );
+          } else {
             this.#logger.error({ err }, 'Error in recvTask from Resemble WebSocket');
           }
-          break;
         }
+      } finally {
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
       }
     };
 
