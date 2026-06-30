@@ -38,6 +38,9 @@ if (TEST_FFMPEG) {
 
 const SAMPLE_RATE = 48000;
 
+const TINY_MP3_BASE64 =
+  'SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYyLjEyLjEwMgAAAAAAAAAAAAAA//OEwAAAAAAAAAAAAEluZm8AAAAPAAAADQAABaAAMzMzMzMzM0REREREREREVVVVVVVVVVVmZmZmZmZmd3d3d3d3d3eIiIiIiIiIiJmZmZmZmZmqqqqqqqqqqru7u7u7u7u7zMzMzMzMzN3d3d3d3d3d7u7u7u7u7u7/////////AAAAAExhdmM2Mi4yOAAAAAAAAAAAAAAAACQDkAAAAAAAAAWgDKcvNAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//NExAASOELIf0YYAiW5dttsBd3d3bEAGAwGFk07eCAIHKQfB8P8EOD5/KBiU5QP6wcOYgB/Lg4GMEAffLg4CFQIA+ficHAQwwD5+XAgIZAH35Q539AgCSDCDAABG4s9//NExAoUMTqY1ZtQALqaoTDVQ7wqGC08cGBJYeEWmShxbZ7evnwCUBkBX8QQNwNwq/4iREkQ+H3/kI9HpEPh9/+Qj0enD4fHfyoSBoSnf+DQlOh2GAIEBSmzEzAFACkw//NExAwUiFosUd8AAAaADTAKABkwJUF6MFkD6jAtgbMwT0I0NjBPMDHqgiswV8FmMDBAtDAzQGgwBwA7MAYAGTAGAAMGgAiGzbS1epf//7////fViawhcMwgoy6U32Aw//NExAwTyFoYANf4JCtBRTEZRsEwWAAvMFFEdToHs50xeEJrOYMwz2XzHQyMPhswgDjBIHLlqaP3eXW3/+3uv9X9tu3de+P9VNNFnZ3/V/QqkDBy+BiQJniRy3JgZgGY//NExA8TcFoYANf4JGKpCBBg9YGcKixhsYPtMYb8F/Gl4aYqQhgklgAVAEKgADIKKTey+usV/6f3f/6W27N9z4+rL1IyHsb7vX/Rtn6agpMWEDrwP4YFqAHmJ5gQhg9w//NExBQSCFocAM/4JCHmCOCoZg6PHqYDwFomN4EYaQJgkkAwTkIQL7r3XC915eF1//977v/2/3XY/ylFFnt93VRVAuSHdcZeqNQQqdpxgRgDqYg4HBmDbgjRgzIjkag5//NExB4SMFogSs/2JHlBhiYS4d1tmqthlB2YiOAQHX08rJoFtLq9Pb9vdd/R7f+/v5emiy3v/6kTlM5WGL+mCUbmpgNIG4YbaK7GDHAlJg/weab87OJmJjA/pxldGfi+//NExCgRGFogIM/4JGQxgYgCpgkAL1fZrsPXl1ej/+3//+z39/R///1qDVtdrcgFLKoi8SioqBhgEMZmxTpjWLhhmiAH8RScZI4PR9EZqxAKOl+l6wPNyrG2j396l/pp//NExDYQ+FY8fu+0QP93Gu/RR/v71ev/tu/VcJhKLg6LFEwh0hQFsMCdIHDAwgP8wl4EbO9TF8THFAHk8mNDWgZMwgQMNpMNwgEJUNHj2K61//+7f/+j++7Hein/+76l//NExEURIFocANf4JGCABiAMvuM8AwACb5gDgnmFyG+YVJP5i5kgmcoYcfTkLJpDmSmM2EyBgdzA2BWMDQAZXiYbW5RDF5df//7f///+r/////2KjgAgFuuGw2FotAgA//NExFMRmFpAP14YAAAE5TXEzVBBsvWifWF7gsH/Pgi8aSMk/2Cly2bmtCIhgM1W7iXzgJ1IgAUjXIJDyz3//rEnFLINftJ1A1G1DVN7///f+H+v3MSxnLMmhMCaczH///NExF8hwcLiX5jJIv//pLH2K+dumiM5EZ2VY/////3+4cw5/JVblV+l+lwpf/8BFhMVKiFMQU1FMy4xMDCqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExCsAAANIAcAAAKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+
 const makeWav = ({
   sampleRate = SAMPLE_RATE,
   numChannels = 1,
@@ -345,5 +348,22 @@ describe.skipIf(!TEST_FFMPEG)('AudioStreamDecoder — ffmpeg path', () => {
 
     const { samples } = await collectDecoder(decoder);
     expect(samples).toBeGreaterThan(SAMPLE_RATE * 0.8);
+  });
+
+  it('decodes an mp3 byte stream', async () => {
+    // mp3 has no encoder in the bundled binary, so decode a small embedded 24kHz mono fixture.
+    // Guards the `+nobuffer` regression that silently produced zero mp3 output.
+    const mp3 = Buffer.from(TINY_MP3_BASE64, 'base64');
+    const decoder = new AudioStreamDecoder({
+      mimeType: 'audio/mpeg',
+      sampleRate: 24000,
+      numChannels: 1,
+    });
+    feedInChunks(decoder, mp3, 256);
+
+    const { frames, samples, sampleRate } = await collectDecoder(decoder);
+    expect(frames).toBeGreaterThan(0);
+    expect(sampleRate).toBe(24000);
+    expect(samples).toBeGreaterThan(0);
   });
 });

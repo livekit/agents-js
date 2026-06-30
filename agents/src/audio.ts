@@ -415,7 +415,9 @@ export class AudioStreamDecoder {
         let command = ffmpeg(input);
         if (inputFormat) command = command.inputFormat(inputFormat);
         command = command
-          .inputOptions(['-fflags', '+nobuffer+flush_packets', '-flags', 'low_delay'])
+          // `low_delay`/`flush_packets` trim latency; `+nobuffer` is intentionally NOT set —
+          // it makes mp3 decode emit nothing (mp3 needs buffering to sync frames).
+          .inputOptions(['-fflags', '+flush_packets', '-flags', 'low_delay'])
           .format('s16le')
           .audioChannels(this.#numChannels)
           .audioFrequency(this.#sampleRate);
