@@ -39,7 +39,7 @@
     "throws:check": "throws-check src/**/*.ts"
   },
   "devDependencies": {
-    "@livekit/rtc-node": "catalog:",
+    "@livekit/rtc-node": "^0.13.30",
     "@microsoft/api-extractor": "^7.35.0",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/json-schema": "^7.0.15",
