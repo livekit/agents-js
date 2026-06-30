@@ -25,6 +25,7 @@ export {
 } from './remote_session.js';
 export * from './events.js';
 export {
+  AudioInput,
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,

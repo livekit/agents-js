@@ -41,9 +41,13 @@ describe('LemonSlice AvatarSession', () => {
 
     await (
       avatar as unknown as {
-        startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
+        startAgent(
+          livekitUrl: string,
+          livekitToken: string,
+          livekitSessionId: string,
+        ): Promise<void>;
       }
-    ).startAgent('wss://livekit.example.com', 'livekit-token');
+    ).startAgent('wss://livekit.example.com', 'livekit-token', 'room-session-id');
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
@@ -55,6 +59,7 @@ describe('LemonSlice AvatarSession', () => {
           properties: {
             livekit_url: 'wss://livekit.example.com',
             livekit_token: 'livekit-token',
+            livekit_session_id: 'room-session-id',
           },
           agent_image_url: 'https://example.com/avatar.png',
           aspect_ratio: '9x16',
@@ -77,9 +82,13 @@ describe('LemonSlice AvatarSession', () => {
 
     await (
       avatar as unknown as {
-        startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
+        startAgent(
+          livekitUrl: string,
+          livekitToken: string,
+          livekitSessionId: string,
+        ): Promise<void>;
       }
-    ).startAgent('wss://livekit.example.com', 'livekit-token');
+    ).startAgent('wss://livekit.example.com', 'livekit-token', 'room-session-id');
 
     const requestInit = mockFetch.mock.calls[0]?.[1];
     const body = JSON.parse(String(requestInit?.body));
@@ -89,6 +98,7 @@ describe('LemonSlice AvatarSession', () => {
       properties: {
         livekit_url: 'wss://livekit.example.com',
         livekit_token: 'livekit-token',
+        livekit_session_id: 'room-session-id',
       },
       agent_image_url: 'https://example.com/avatar.png',
     });
@@ -124,7 +134,11 @@ describe('LemonSlice AvatarSession', () => {
     });
     vi.spyOn(
       avatar as unknown as {
-        startAgent(livekitUrl: string, livekitToken: string): Promise<string>;
+        startAgent(
+          livekitUrl: string,
+          livekitToken: string,
+          livekitSessionId: string,
+        ): Promise<string>;
       },
       'startAgent',
     ).mockResolvedValue('test-session-id');
@@ -135,6 +149,7 @@ describe('LemonSlice AvatarSession', () => {
     };
     const room = {
       name: 'test-room',
+      sid: 'room-session-id',
       isConnected: true,
       localParticipant: {
         identity: 'local-agent',
