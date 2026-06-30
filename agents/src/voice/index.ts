@@ -31,6 +31,7 @@ export {
   type PlaybackStartedEvent,
   type TimedString,
 } from './io.js';
+export { type KeytermDetectionOptions, type KeytermsOptions } from './keyterm_detection.js';
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
