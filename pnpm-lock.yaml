@@ -7,7 +7,7 @@ settings:
 catalogs:
   default:
     '@livekit/rtc-node':
-      specifier: ^0.13.29
+      specifier: ^0.13.30
       version: 0.13.30
     '@types/ws':
       specifier: ^8.5.10
@@ -213,7 +213,7 @@ importers:
         version: 3.24.6(zod@3.25.76)
     devDependencies:
       '@livekit/rtc-node':
-        specifier: ^0.13.30
+        specifier: 'catalog:'
         version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
