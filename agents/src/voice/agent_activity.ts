@@ -3874,7 +3874,7 @@ export class AgentActivity implements RecognitionHooks {
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {
     if (this._schedulingPaused) return;
 
-    await this.agentSession._keytermDetector.close();
+    await this.agentSession?._keytermDetector.close();
     this._schedulingPaused = true;
     this._drainBlockedTasks = blockedTasks;
     this.wakeupMainTask();
@@ -4331,10 +4331,10 @@ export class AgentActivity implements RecognitionHooks {
       this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
 
-    this.agentSession._keytermDetector.off('metrics_collected', this.onMetricsCollected);
-    await this.agentSession._keytermDetector.close();
+    this.agentSession?._keytermDetector.off('metrics_collected', this.onMetricsCollected);
+    await this.agentSession?._keytermDetector.close();
 
-    if (this.sttConversationItemListener) {
+    if (this.agentSession && this.sttConversationItemListener) {
       this.agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
         this.sttConversationItemListener,
