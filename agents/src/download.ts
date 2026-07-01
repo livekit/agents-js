@@ -4,6 +4,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { downloadFfmpeg } from './ffmpeg.js';
 import { initializeLogger, log, loggerOptions } from './log.js';
 import { Plugin } from './plugin.js';
 
@@ -132,10 +133,22 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
   }
   const logger = log();
 
+  // Fetch the bundled ffmpeg binary here too, so a Dockerfile can cache it in the dependency
+  // layer (alongside plugin assets) without loading the agent's code.
+  let ffmpegFailed = false;
+  try {
+    logger.info('Downloading ffmpeg binary');
+    await downloadFfmpeg();
+    logger.info('Finished downloading ffmpeg binary');
+  } catch (error) {
+    ffmpegFailed = true;
+    logger.error(`Failed to download ffmpeg binary: ${formatErrorMessage(error)}`);
+  }
+
   const packages = discoverPluginPackages(cwd);
   if (packages.length === 0) {
-    logger.warn('no @livekit/agents-plugin-* packages found in node_modules — nothing to download');
-    return 0;
+    logger.warn('no @livekit/agents-plugin-* packages found in node_modules');
+    return ffmpegFailed ? 1 : 0;
   }
   logger.info(
     `discovered ${packages.length} plugin package(s): ${packages.map((p) => p.name).join(', ')}`,
@@ -167,5 +180,5 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
   if (failures.length > 0) {
     logger.fatal(formatDownloadFailureMessage(failures));
   }
-  return failures.length > 0 || importFailures > 0 ? 1 : 0;
+  return failures.length > 0 || importFailures > 0 || ffmpegFailed ? 1 : 0;
 };

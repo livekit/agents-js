@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { Options } from 'tsup';
+// Injected into the @livekit/agents bundle so the runtime knows which release to download.
+import { BUILD_REVISION, FFMPEG_VERSION } from './scripts/ffmpeg/release.mjs';
 
 const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8'));
 
@@ -18,6 +20,8 @@ const defaultOptions: Options = {
   define: {
     __PACKAGE_NAME__: JSON.stringify(pkg.name),
     __PACKAGE_VERSION__: JSON.stringify(pkg.version),
+    __FFMPEG_VERSION__: JSON.stringify(FFMPEG_VERSION),
+    __FFMPEG_BUILD_REVISION__: JSON.stringify(BUILD_REVISION),
   },
   esbuildOptions: (options, context) => {
     if (context.format === 'esm') {

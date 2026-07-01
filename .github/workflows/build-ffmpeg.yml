@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Builds the bundled LGPL FFmpeg binaries for every supported platform and publishes them to
+# a GitHub Release. Manually triggered: the FFmpeg version is pinned in
+# scripts/ffmpeg/release.mjs and bumped via a normal PR; once that PR is merged, run this
+# workflow (Actions tab → "Build FFmpeg binaries" → Run workflow) to build and release.
+name: Build FFmpeg binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release + upload assets
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      ffmpeg: ${{ steps.rel.outputs.ffmpeg }}
+      opus: ${{ steps.rel.outputs.opus }}
+      tag: ${{ steps.rel.outputs.tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+      - id: rel
+        name: Read pinned FFmpeg release config
+        run: |
+          node -e "import('./scripts/ffmpeg/release.mjs').then(m => { \
+            const fs = require('fs'); \
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, \
+              \`ffmpeg=\${m.FFMPEG_VERSION}\nopus=\${m.OPUS_VERSION}\ntag=\${m.RELEASE_TAG}\n\`); \
+          })"
+
+  build:
+    needs: config
+    strategy:
+      fail-fast: false # let every platform report its own result instead of cancelling siblings
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: darwin-x64
+            runner: macos-14 # cross-compiled x86_64 (Intel macos-13 runners are deprecated/scarce)
+          - target: linux-x64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+          - target: win32-x64
+            runner: ubuntu-22.04 # cross-compiled with mingw-w64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install build deps (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: brew install nasm pkg-config automake autoconf libtool
+
+      - name: Install build deps (Linux native)
+        if: startsWith(matrix.runner, 'ubuntu') && matrix.target != 'win32-x64'
+        run: sudo apt-get update && sudo apt-get install -y nasm yasm pkg-config build-essential
+
+      - name: Install build deps (Windows cross)
+        if: matrix.target == 'win32-x64'
+        run: sudo apt-get update && sudo apt-get install -y nasm yasm pkg-config build-essential mingw-w64
+
+      - name: Build ffmpeg
+        env:
+          TARGET: ${{ matrix.target }}
+          FFMPEG_VERSION: ${{ needs.config.outputs.ffmpeg }}
+          OPUS_VERSION: ${{ needs.config.outputs.opus }}
+          OUTPUT_DIR: ${{ github.workspace }}/out
+        run: bash scripts/ffmpeg/build-ffmpeg.sh
+
+      - name: Package (gzip single binary)
+        run: |
+          cd "${{ github.workspace }}/out"
+          bin="ffmpeg"; [ "${{ matrix.target }}" = "win32-x64" ] && bin="ffmpeg.exe"
+          gzip -9 -c "$bin" > "ffmpeg-${{ matrix.target }}.gz"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ffmpeg-${{ matrix.target }}
+          path: ${{ github.workspace }}/out/ffmpeg-${{ matrix.target }}.gz
+          if-no-files-found: error
+
+  # Publishes all platform binaries + checksums.sha256 to a single GitHub Release at the
+  # pinned tag (scripts/ffmpeg/release.mjs). This release is the stable, discoverable
+  # location that `@livekit/agents` downloads from at install time — the per-job
+  # upload-artifact steps above are just transport into this job. `needs: build` gates this
+  # on ALL platforms succeeding, so a release is never partial. Runs on push (branch tests)
+  # and workflow_dispatch alike; re-running updates the existing release in place.
+  release:
+    needs: [config, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Compute checksums
+        run: |
+          cd artifacts
+          sha256sum ffmpeg-*.gz > checksums.sha256
+          cat checksums.sha256
+      - name: Create / update release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        with:
+          tag_name: ${{ needs.config.outputs.tag }}
+          name: ${{ needs.config.outputs.tag }}
+          body: |
+            LGPL v2.1+ FFmpeg ${{ needs.config.outputs.ffmpeg }} binaries built by
+            `scripts/ffmpeg/build-ffmpeg.sh` (statically linked libopus ${{ needs.config.outputs.opus }}).
+            Consumed by `@livekit/agents` at install time. See NOTICE for license details.
+          files: |
+            artifacts/ffmpeg-*.gz
+            artifacts/checksums.sha256

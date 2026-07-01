@@ -1,0 +1,35 @@
+@livekit/agents
+Copyright LiveKit, Inc.
+
+This product is licensed under the Apache License, Version 2.0.
+
+------------------------------------------------------------------------------
+FFmpeg (bundled binary, downloaded at install time)
+------------------------------------------------------------------------------
+
+At install time this package downloads a prebuilt FFmpeg binary for your
+platform from the project's GitHub Releases. These binaries are built by
+LiveKit from unmodified upstream FFmpeg sources using the build recipe in
+`scripts/ffmpeg/build-ffmpeg.sh` and are licensed under the GNU Lesser General
+Public License, version 2.1 or later (LGPL-2.1-or-later).
+
+The binaries are configured WITHOUT `--enable-gpl` and WITHOUT
+`--enable-nonfree` (no GPL-only components such as libx264/libx265 are
+included). The only external codec library linked is libopus, which is
+distributed under the 3-clause BSD license.
+
+The build is further restricted to an explicit allowlist of royalty-free audio
+codecs (PCM, MP3, FLAC, Vorbis, Opus, ALAC). Patent-encumbered codecs such as
+AAC, AC-3, E-AC-3 and DTS are intentionally excluded, as are all video codecs.
+
+Written offer / corresponding source (LGPL §6):
+  - FFmpeg source:  https://ffmpeg.org/releases/  (the exact `ffmpeg-<version>`
+    tarball pinned in `scripts/ffmpeg/release.mjs`)
+  - libopus source: https://downloads.xiph.org/releases/opus/
+  - Build scripts:  `scripts/ffmpeg/build-ffmpeg.sh` in this repository
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+See https://www.ffmpeg.org/legal.html for FFmpeg's license and legal notes.
+
+To use your own FFmpeg binary instead of the bundled one, set the
+`LIVEKIT_FFMPEG_PATH` environment variable to its path.

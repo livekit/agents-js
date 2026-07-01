@@ -120,6 +120,9 @@ out
 .nuxt
 dist
 
+# downloaded LGPL ffmpeg binary (fetched per-platform at install time)
+.ffmpeg/
+
 # Gatsby files
 
 # Comment in the public line in if your project uses Gatsby and not Next.js
