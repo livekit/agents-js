@@ -302,7 +302,7 @@ const startJob = (
           if (!job) {
             join.resolve();
           }
-          closeEvent.emit('close', 'shutdownRequest');
+          closeEvent.emit('close', false, msg.value.reason || 'parent process shutdown');
           clearTimeout(orphanedTimeout);
           process.off('message', messageHandler);
         }
