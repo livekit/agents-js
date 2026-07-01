@@ -38,7 +38,7 @@
     "@livekit/agents-plugin-openai": "workspace:^",
     "@livekit/agents-plugins-test": "workspace:^",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.9",
     "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"

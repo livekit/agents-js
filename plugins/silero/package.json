@@ -36,7 +36,7 @@
   "devDependencies": {
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.9",
     "@types/ws": "catalog:",
     "onnxruntime-common": "1.24.3",
     "tsup": "^8.3.5",

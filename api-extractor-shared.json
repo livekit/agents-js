@@ -60,7 +60,11 @@
    * This would direct API Extractor to embed those types directly in the .d.ts rollup, as if they had been
    * local files for library1.
    */
-  "bundledPackages": [],
+  // Workspace packages are bundled so API Extractor can resolve the namespace
+  // re-exports (e.g. `voice`, `llm`) that plugins consume from `@livekit/agents`.
+  // Without this, API Extractor errors with "ts.SyntaxKind.SourceFile declaration
+  // which is not (yet?) supported" when a plugin references those namespaces.
+  "bundledPackages": ["@livekit/agents", "@livekit/agents-plugin-*"],
 
   /**
    * Specifies what type of newlines API Extractor should use when writing output files.  By default, the output files
@@ -134,8 +138,12 @@
   "apiReport": {
     /**
      * (REQUIRED) Whether to generate an API report.
+     *
+     * Disabled: this repo gitignores `*.md` and does not track per-package
+     * `etc/*.api.md` reports, so `api:check` is used purely to validate that the
+     * public API type-checks and rolls up cleanly (not to diff a committed report).
      */
-    "enabled": true
+    "enabled": false
 
     /**
      * The filename for the API report files.  It will be combined with "reportFolder" or "reportTempFolder" to produce
@@ -390,17 +398,28 @@
      * DEFAULT VALUE: See api-extractor-defaults.json for the complete table of extractorMessageReporting mappings
      */
     "extractorMessageReporting": {
+      // `api:check` is used as a structural gate: it fails on hard errors
+      // (unresolvable types, the SourceFile-namespace error, a missing entry
+      // point) but not on lint-style advice. This repo does not adopt API
+      // Extractor's conventions (release tags, doc-comment placement, forgotten
+      // exports, @internal underscores), so those messages are silenced here.
+      // Each message id is set explicitly because API Extractor's built-in
+      // per-message defaults take precedence over the "default" entry.
       "default": {
-        "logLevel": "warning"
-        // "addToApiReportFile": false
-      }
-
-      // "ae-extra-release-tag": {
-      //   "logLevel": "warning",
-      //   "addToApiReportFile": true
-      // },
-      //
-      // . . .
+        "logLevel": "none"
+      },
+      "ae-forgotten-export": { "logLevel": "none" },
+      "ae-internal-missing-underscore": { "logLevel": "none" },
+      "ae-missing-release-tag": { "logLevel": "none" },
+      "ae-incompatible-release-tags": { "logLevel": "none" },
+      "ae-different-release-tags": { "logLevel": "none" },
+      "ae-extra-release-tag": { "logLevel": "none" },
+      "ae-misplaced-package-tag": { "logLevel": "none" },
+      "ae-missing-getter": { "logLevel": "none" },
+      "ae-setter-with-docs": { "logLevel": "none" },
+      "ae-unresolved-link": { "logLevel": "none" },
+      "ae-unresolved-inheritdoc-base": { "logLevel": "none" },
+      "ae-unresolved-inheritdoc-reference": { "logLevel": "none" }
     },
 
     /**
@@ -412,8 +431,7 @@
      */
     "tsdocMessageReporting": {
       "default": {
-        "logLevel": "warning"
-        // "addToApiReportFile": false
+        "logLevel": "none"
       }
 
       // "tsdoc-link-tag-unescaped-text": {

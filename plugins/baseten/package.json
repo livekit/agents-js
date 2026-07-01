@@ -50,7 +50,7 @@
     "@livekit/agents-plugin-silero": "workspace:*",
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
-    "@microsoft/api-extractor": "^7.35.0",
+    "@microsoft/api-extractor": "^7.58.9",
     "@types/node": "^22.18.11",
     "@types/ws": "catalog:",
     "tsx": "^4.7.0",
