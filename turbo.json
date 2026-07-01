@@ -99,6 +99,7 @@
     "MINIMAX_API_KEY",
     "MINIMAX_BASE_URL",
     "MISTRAL_API_KEY",
+    "SPEECHBASE_API_KEY",
     "VITEST"
   ],
   "tasks": {
