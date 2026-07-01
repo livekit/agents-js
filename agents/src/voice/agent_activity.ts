@@ -242,6 +242,7 @@ export class AgentActivity implements RecognitionHooks {
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
+  private userSpeaking = false;
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
@@ -1014,6 +1015,10 @@ export class AgentActivity implements RecognitionHooks {
     this.realtimeSession?.clearAudio();
   }
 
+  get isUserSpeaking(): boolean {
+    return this.userSpeaking;
+  }
+
   say(
     text: string | ReadableStream<string>,
     options?: {
@@ -1123,6 +1128,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onInputSpeechStarted(_ev: InputSpeechStartedEvent): void {
     this.logger.info('onInputSpeechStarted');
+    this.userSpeaking = true;
 
     // Bundled-default VAD is treated as absent here so the realtime
     // session's own server-side turn detection drives the user-state /
@@ -1153,6 +1159,7 @@ export class AgentActivity implements RecognitionHooks {
 
   onInputSpeechStopped(ev: InputSpeechStoppedEvent): void {
     this.logger.info(ev, 'onInputSpeechStopped');
+    this.userSpeaking = false;
 
     if (!this.vad || this.usingDefaultVad) {
       if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
@@ -1244,6 +1251,7 @@ export class AgentActivity implements RecognitionHooks {
 
   // recognition hooks
   onStartOfSpeech(ev: VADEvent): void {
+    this.userSpeaking = true;
     let speechStartTime = Date.now();
     if (ev) {
       // Subtract both speechDuration and inferenceDuration to correct for VAD model latency.
@@ -1288,6 +1296,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onEndOfSpeech(ev: VADEvent): void {
+    this.userSpeaking = false;
     let speechEndTime = Date.now();
     let silenceDurationMs = 0;
     if (ev) {
@@ -1819,6 +1828,16 @@ export class AgentActivity implements RecognitionHooks {
         if (userActive) {
           await delay(0, { signal });
         }
+      }
+
+      if (this.agentSession._userTurnClaims > 0) {
+        await this.waitForOrAbort(
+          this.agentSession._userTurnReleased.wait().then(() => undefined),
+          signal,
+          'error waiting for user turn claim release',
+        );
+        agentActive = waitForAgent;
+        userActive = waitForUser;
       }
     }
   }
