@@ -39,6 +39,7 @@ import {
   shortuuid,
   toError,
   waitForAbort,
+  waitUntilAborted,
   waitUntilTimeout,
 } from '../utils.js';
 import {
@@ -1230,45 +1231,6 @@ export function performToolExecutions({
   };
 
   return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
-}
-
-type Aborted<T> =
-  | {
-      result: T;
-      isAborted: false;
-    }
-  | {
-      result: undefined;
-      isAborted: true;
-    };
-
-async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>> {
-  const abortFut = new Future<Aborted<T>>();
-
-  const resolveAbort = () => {
-    if (!abortFut.done) {
-      abortFut.resolve({ result: undefined, isAborted: true });
-    }
-  };
-
-  signal.addEventListener('abort', resolveAbort);
-
-  promise
-    .then((r) => {
-      if (!abortFut.done) {
-        abortFut.resolve({ result: r, isAborted: false });
-      }
-    })
-    .catch((e) => {
-      if (!abortFut.done) {
-        abortFut.reject(e);
-      }
-    })
-    .finally(() => {
-      signal.removeEventListener('abort', resolveAbort);
-    });
-
-  return await abortFut.await;
 }
 
 export function removeInstructions(chatCtx: ChatContext) {
