@@ -20,7 +20,9 @@ import {
   LLM,
   RealtimeModel,
   type ToolChoice,
-  type ToolContext,
+  ToolContext,
+  type ToolContextLike,
+  toToolContext,
 } from '../llm/index.js';
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
@@ -29,15 +31,31 @@ import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/i
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Future, Task } from '../utils.js';
+import { Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
 import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentCreateOptions,
+  type AgentTaskCreateOptions,
+  createAgentTaskV2,
+  createAgentV2,
+} from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
+import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
 import { migrateTurnHandling } from './turn_config/utils.js';
+
+export type {
+  AgentContext,
+  AgentCreateOptions,
+  AgentHookNodeResult,
+  AgentHooks,
+  AgentTaskContext,
+  AgentTaskCreateOptions,
+} from './agent_v2.js';
 
 // speechHandle identifies which SpeechHandle owns the current tool call, enabling
 // SpeechHandle.waitForPlayout() to distinguish self-wait (deadlock) from waiting
@@ -118,12 +136,13 @@ export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
   chatCtx?: ChatContext;
-  tools?: ToolContext<UserData>;
+  tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString;
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
   turnHandling?: TurnHandlingOptions;
+  toolHandling?: ToolHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
   /** @deprecated use turnHandling.turnDetection instead */
@@ -153,7 +172,14 @@ export class Agent<UserData = any> {
   _instructions: string | Instructions;
 
   /** @internal */
-  _tools?: ToolContext<UserData>;
+  _toolCtx: ToolContext<UserData>;
+
+  /** @internal */
+  _asyncToolOptions?: ToolHandlingOptions['asyncOptions'];
+
+  static create<UserData = unknown>(options: AgentCreateOptions<UserData>): Agent<UserData> {
+    return createAgentV2(Agent, options);
+  }
 
   constructor({
     id,
@@ -167,6 +193,7 @@ export class Agent<UserData = any> {
     tts,
     allowInterruptions,
     turnHandling,
+    toolHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
   }: AgentOptions<UserData>) {
@@ -185,10 +212,10 @@ export class Agent<UserData = any> {
     }
 
     this._instructions = instructions;
-    this._tools = { ...tools };
+    this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
     this._chatCtx = chatCtx
       ? chatCtx.copy({
-          toolCtx: this._tools,
+          toolCtx: this._toolCtx,
         })
       : ChatContext.empty();
 
@@ -199,6 +226,7 @@ export class Agent<UserData = any> {
     });
     this._turnHandling =
       Object.keys(resolvedTurnHandling).length > 0 ? resolvedTurnHandling : undefined;
+    this._asyncToolOptions = toolHandling?.asyncOptions;
 
     this._vad = vad;
 
@@ -259,7 +287,7 @@ export class Agent<UserData = any> {
   }
 
   get toolCtx(): ToolContext<UserData> {
-    return { ...this._tools };
+    return this._toolCtx.copy();
   }
 
   get session(): AgentSession<UserData> {
@@ -279,7 +307,7 @@ export class Agent<UserData = any> {
   async onExit(): Promise<void> {}
 
   async transcriptionNode(
-    text: ReadableStream<string | TimedString>,
+    text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<string | TimedString> | null> {
     return Agent.default.transcriptionNode(this, text, modelSettings);
@@ -300,7 +328,7 @@ export class Agent<UserData = any> {
   }
 
   async sttNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<SpeechEvent | string> | null> {
     return Agent.default.sttNode(this, audio, modelSettings);
@@ -315,14 +343,14 @@ export class Agent<UserData = any> {
   }
 
   async ttsNode(
-    text: ReadableStream<string>,
+    text: ReadableStream<string> | AsyncIterable<string>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.ttsNode(this, text, modelSettings);
   }
 
   async realtimeAudioOutputNode(
-    audio: ReadableStream<AudioFrame>,
+    audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
   ): Promise<ReadableStream<AudioFrame> | null> {
     return Agent.default.realtimeAudioOutputNode(this, audio, modelSettings);
@@ -346,11 +374,20 @@ export class Agent<UserData = any> {
     this._agentActivity.updateChatCtx(chatCtx);
   }
 
-  // TODO: Add when AgentConfigUpdate is ported to ChatContext.
-  async updateTools(tools: ToolContext): Promise<void> {
+  async updateInstructions(instructions: string | Instructions): Promise<void> {
     if (!this._agentActivity) {
-      this._tools = { ...tools };
-      this._chatCtx = this._chatCtx.copy({ toolCtx: this._tools });
+      this._instructions = instructions;
+      return;
+    }
+
+    await this._agentActivity.updateInstructions(instructions);
+  }
+
+  // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
+  async updateTools(tools: ToolContextLike<UserData>): Promise<void> {
+    if (!this._agentActivity) {
+      this._toolCtx = toToolContext(tools);
+      this._chatCtx = this._chatCtx.copy({ toolCtx: this._toolCtx });
       return;
     }
 
@@ -360,9 +397,10 @@ export class Agent<UserData = any> {
   static default = {
     async sttNode(
       agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<SpeechEvent | string> | null> {
+      const input = audio instanceof ReadableStream ? audio : toStream(audio);
       const activity = agent.getActivityOrThrow();
       if (!activity.stt) {
         throw new Error('sttNode called but no STT node is available');
@@ -392,7 +430,7 @@ export class Agent<UserData = any> {
 
       stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
 
-      stream.updateInputStream(audio);
+      stream.updateInputStream(input);
 
       let cleaned = false;
       const cleanup = () => {
@@ -475,9 +513,10 @@ export class Agent<UserData = any> {
 
     async ttsNode(
       agent: Agent,
-      text: ReadableStream<string>,
+      text: ReadableStream<string> | AsyncIterable<string>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
+      const input = text instanceof ReadableStream ? text : toStream(text);
       const activity = agent.getActivityOrThrow();
       if (!activity.tts) {
         throw new Error('ttsNode called but no TTS node is available');
@@ -491,14 +530,14 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(text);
+      stream.updateInputStream(input);
 
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
         stream.close();
-        await text.cancel('tts node cleanup').catch(() => {});
+        await input.cancel('tts node cleanup').catch(() => {});
         if (wrappedTts !== activity.tts) {
           await wrappedTts.close();
         }
@@ -530,18 +569,18 @@ export class Agent<UserData = any> {
 
     async transcriptionNode(
       agent: Agent,
-      text: ReadableStream<string | TimedString>,
+      text: ReadableStream<string | TimedString> | AsyncIterable<string | TimedString>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<string | TimedString> | null> {
-      return text;
+      return text instanceof ReadableStream ? text : toStream(text);
     },
 
     async realtimeAudioOutputNode(
       _agent: Agent,
-      audio: ReadableStream<AudioFrame>,
+      audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
       _modelSettings: ModelSettings,
     ): Promise<ReadableStream<AudioFrame> | null> {
-      return audio;
+      return audio instanceof ReadableStream ? audio : toStream(audio);
     },
   };
 }
@@ -556,6 +595,12 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
   private _preserveFunctionCallHistory: boolean;
 
   #logger = log();
+
+  static create<ResultT = unknown, UserData = unknown>(
+    options: AgentTaskCreateOptions<ResultT, UserData>,
+  ): AgentTask<ResultT, UserData> {
+    return createAgentTaskV2<ResultT, UserData>(AgentTask, options);
+  }
 
   constructor(options: AgentTaskOptions<UserData>) {
     const { preserveFunctionCallHistory = false, ...rest } = options;
@@ -610,13 +655,24 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       throw new Error(`${this.constructor.name} must be executed inside an AgentActivity context`);
     }
 
-    currentTask.addDoneCallback(() => {
-      if (this.future.done) return;
+    // A non-blocking tool (one that called ctx.update) detaches from its speech
+    // task, so that task completes before a later ctx.foreground/AgentTask does.
+    // Binding the guard below to the already-finished task would fire it
+    // immediately and tear the AgentTask down; the tool's still-running promise
+    // and the foreground hold keep it alive instead.
+    const ownerIsNonBlocking =
+      taskInfo.functionCall?.extra.__livekit_agents_tool_non_blocking === true;
+    if (!ownerIsNonBlocking) {
+      currentTask.addDoneCallback(() => {
+        if (this.future.done) return;
 
-      // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
-      this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
-      this.complete(new Error(`The Task finished before ${this.constructor.name} was completed.`));
-    });
+        // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
+        this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
+        this.complete(
+          new Error(`The Task finished before ${this.constructor.name} was completed.`),
+        );
+      });
+    }
 
     const oldAgent = oldActivity.agent;
     const session = oldActivity.agentSession;

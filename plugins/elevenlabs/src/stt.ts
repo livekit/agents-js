@@ -333,17 +333,16 @@ export class STT extends stt.STT {
     language?: string,
     abortSignal?: AbortSignal,
   ): Promise<stt.SpeechEvent> {
-    if (language !== undefined) {
-      this.#opts.languageCode = normalizeLanguage(language);
-    }
+    const languageCode =
+      language !== undefined ? normalizeLanguage(language) : this.#opts.languageCode;
 
     const wavBytes = createWav(mergeFrames(buffer));
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(wavBytes)], { type: 'audio/x-wav' }), 'audio.wav');
     form.append('model_id', this.#opts.modelId);
     form.append('tag_audio_events', String(this.#opts.tagAudioEvents));
-    if (this.#opts.languageCode) {
-      form.append('language_code', this.#opts.languageCode);
+    if (languageCode) {
+      form.append('language_code', languageCode);
     }
     if (this.#opts.keyterms !== undefined) {
       for (const keyterm of this.#opts.keyterms) {
@@ -375,7 +374,7 @@ export class STT extends stt.STT {
       const startTime = words.length > 0 ? Math.min(...words.map((word) => word.start ?? 0)) : 0;
       const endTime = words.length > 0 ? Math.max(...words.map((word) => word.end ?? 0)) : 0;
       const normalizedLanguage = normalizeLanguage(
-        responseJson.language_code ?? this.#opts.languageCode ?? '',
+        responseJson.language_code ?? languageCode ?? '',
       );
 
       return this.#transcriptionToSpeechEvent(
@@ -667,7 +666,8 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #connectWs(): Promise<WebSocket> {
-    const commitStrategy = this.#opts.serverVad === null ? 'manual' : 'vad';
+    const serverVad = this.#opts.serverVad;
+    const commitStrategy = serverVad === undefined || serverVad === null ? 'manual' : 'vad';
     const params = [
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
@@ -678,30 +678,21 @@ export class SpeechStream extends stt.SpeechStream {
       params.push('include_language_detection=true');
     }
 
-    if (this.#opts.serverVad) {
+    if (serverVad !== undefined && serverVad !== null) {
       if (
-        this.#opts.serverVad.vadSilenceThresholdSecs !== undefined &&
-        this.#opts.serverVad.vadSilenceThresholdSecs !== null
+        serverVad.vadSilenceThresholdSecs !== undefined &&
+        serverVad.vadSilenceThresholdSecs !== null
       ) {
-        params.push(`vad_silence_threshold_secs=${this.#opts.serverVad.vadSilenceThresholdSecs}`);
+        params.push(`vad_silence_threshold_secs=${serverVad.vadSilenceThresholdSecs}`);
       }
-      if (
-        this.#opts.serverVad.vadThreshold !== undefined &&
-        this.#opts.serverVad.vadThreshold !== null
-      ) {
-        params.push(`vad_threshold=${this.#opts.serverVad.vadThreshold}`);
+      if (serverVad.vadThreshold !== undefined && serverVad.vadThreshold !== null) {
+        params.push(`vad_threshold=${serverVad.vadThreshold}`);
       }
-      if (
-        this.#opts.serverVad.minSpeechDurationMs !== undefined &&
-        this.#opts.serverVad.minSpeechDurationMs !== null
-      ) {
-        params.push(`min_speech_duration_ms=${this.#opts.serverVad.minSpeechDurationMs}`);
+      if (serverVad.minSpeechDurationMs !== undefined && serverVad.minSpeechDurationMs !== null) {
+        params.push(`min_speech_duration_ms=${serverVad.minSpeechDurationMs}`);
       }
-      if (
-        this.#opts.serverVad.minSilenceDurationMs !== undefined &&
-        this.#opts.serverVad.minSilenceDurationMs !== null
-      ) {
-        params.push(`min_silence_duration_ms=${this.#opts.serverVad.minSilenceDurationMs}`);
+      if (serverVad.minSilenceDurationMs !== undefined && serverVad.minSilenceDurationMs !== null) {
+        params.push(`min_silence_duration_ms=${serverVad.minSilenceDurationMs}`);
       }
     }
 
@@ -825,6 +816,10 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
+        if (this.#opts.serverVad !== undefined && this.#opts.serverVad !== null) {
+          this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          this.#speaking = false;
+        }
       } else if (this.#speaking) {
         this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
         this.#speaking = false;

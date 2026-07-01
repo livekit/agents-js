@@ -14,7 +14,12 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import type { ToolContext, ToolInputSchema, ToolOptions } from './tool_context.js';
+import {
+  type ToolContext,
+  type ToolInputSchema,
+  type ToolOptions,
+  sortedToolNames,
+} from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
 export interface SerializedImage {
@@ -176,7 +181,7 @@ export const oaiBuildFunctionInfo = (
   toolName: string,
   rawArgs: string,
 ): FunctionCall => {
-  const tool = toolCtx[toolName];
+  const tool = toolCtx.getFunctionTool(toolName);
   if (!tool) {
     throw new Error(`AI tool ${toolName} not found`);
   }
@@ -263,8 +268,18 @@ export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
 ): Promise<FunctionCallOutput> {
-  const tool = toolCtx[toolCall.name]!;
-  let args: Record<string, unknown> | undefined;
+  const tool = toolCtx.getFunctionTool(toolCall.name);
+  if (!tool) {
+    const availableTools = sortedToolNames(toolCtx).join(', ');
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      name: toolCall.name,
+      output: `Unknown function: ${toolCall.name} - available tools: ${availableTools}`,
+      isError: true,
+    });
+  }
+
+  let args: object | undefined;
   let params: object | undefined;
 
   // Ensure valid JSON

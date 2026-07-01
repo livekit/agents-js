@@ -33,7 +33,7 @@ import {
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, type VideoFrame } from '@livekit/rtc-node';
 import { type LLMTools } from '../tools.js';
-import { toFunctionDeclarations } from '../utils.js';
+import { toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
 
@@ -68,13 +68,6 @@ export const DEFAULT_IMAGE_ENCODE_OPTIONS = {
 export interface InputTranscription {
   itemId: string;
   transcript: string;
-}
-
-/**
- * Helper function to check if two sets are equal
- */
-function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
-  return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
 /**
@@ -451,11 +444,10 @@ export class RealtimeModel extends llm.RealtimeModel {
  * supporting both text and audio modalities with function calling capabilities.
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeOptions;
-  private geminiDeclarations: types.FunctionDeclaration[] = [];
   private messageChannel = new Queue<api_proto.ClientEvents>();
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
@@ -764,15 +756,12 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
-    const newDeclarations = toFunctionDeclarations(tools);
-    const currentToolNames = new Set(this.geminiDeclarations.map((f) => f.name));
-    const newToolNames = new Set(newDeclarations.map((f) => f.name));
-
-    if (!setsEqual(currentToolNames, newToolNames)) {
-      this.geminiDeclarations = newDeclarations;
-      this._tools = tools;
-      this.markRestartNeeded();
+    if (this._tools.equals(tools)) {
+      return;
     }
+
+    this._tools = tools;
+    this.markRestartNeeded();
   }
 
   get chatCtx(): llm.ChatContext {
@@ -780,7 +769,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   get manualActivityDetection(): boolean {
@@ -1452,21 +1441,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      tools:
-        this.geminiDeclarations.length > 0 || this.options.geminiTools
-          ? [
-              {
-                functionDeclarations:
-                  this.options.toolBehavior !== undefined
-                    ? this.geminiDeclarations.map((d) => ({
-                        ...d,
-                        behavior: this.options.toolBehavior,
-                      }))
-                    : this.geminiDeclarations,
-                ...this.options.geminiTools,
-              },
-            ]
-          : undefined,
+      tools: toToolsConfig({
+        toolCtx: this._tools,
+        geminiTools: this.options.geminiTools,
+        toolBehavior: this.options.toolBehavior,
+      }),
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
       sessionResumption: this.sessionResumptionHandle

@@ -13,7 +13,7 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import { tool } from './tool_context.js';
+import { ToolContext, tool } from './tool_context.js';
 import {
   computeChatCtxDiff,
   executeToolCall,
@@ -182,6 +182,7 @@ describe('parseFunctionArguments', () => {
 describe('executeToolCall', () => {
   it('should canonicalize repaired arguments before returning', async () => {
     const removeOrderItem = tool({
+      name: 'removeOrderItem',
       description: 'remove order item',
       parameters: z.object({ orderId: z.array(z.string()) }),
       execute: async ({ orderId }) => orderId.join(','),
@@ -194,7 +195,7 @@ describe('executeToolCall', () => {
       args: rawArgs,
     });
 
-    const result = await executeToolCall(toolCall, { removeOrderItem });
+    const result = await executeToolCall(toolCall, new ToolContext([removeOrderItem]));
 
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.output)).toBe('O_WAAB70');
@@ -204,6 +205,7 @@ describe('executeToolCall', () => {
 
   it('should preserve valid argument structure during execution', async () => {
     const echo = tool({
+      name: 'echo',
       description: 'echo',
       parameters: z.object({ arg1: z.string(), optArg2: z.string().optional() }),
       execute: async ({ arg1, optArg2 }) => ({ arg1, optArg2 }),
@@ -216,7 +218,7 @@ describe('executeToolCall', () => {
       args: originalArgs,
     });
 
-    const result = await executeToolCall(toolCall, { echo });
+    const result = await executeToolCall(toolCall, new ToolContext([echo]));
 
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });

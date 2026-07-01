@@ -12,10 +12,12 @@ import type {
   MetaChatModels,
   OctoChatModels,
   PerplexityChatModels,
+  ReasoningEffort,
   TelnyxChatModels,
   TogetherChatModels,
   XAIChatModels,
 } from './models.js';
+import { defaultReasoningEffort } from './models.js';
 
 export interface LLMOptions {
   model: string | ChatModels;
@@ -31,6 +33,7 @@ export interface LLMOptions {
   maxCompletionTokens?: number;
   serviceTier?: string;
   store?: boolean;
+  reasoningEffort?: ReasoningEffort;
   strictToolSchema?: boolean;
 }
 
@@ -66,6 +69,7 @@ export class LLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    this.#opts.reasoningEffort ??= defaultReasoningEffort(this.#opts.model);
     this.#providerFmt = providerFmt;
     if (this.#opts.apiKey === undefined && !this.#opts.client) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
@@ -469,19 +473,20 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: Record<string, unknown> = { ...extraKwargs };
 
     if (this.#opts.metadata) {
@@ -512,9 +517,17 @@ export class LLM extends llm.LLM {
       extras.store = this.#opts.store;
     }
 
+    if (this.#opts.reasoningEffort !== undefined) {
+      extras.reasoning_effort = this.#opts.reasoningEffort;
+    }
+
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 
