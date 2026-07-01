@@ -854,7 +854,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.realtimeSession) {
       removeInstructions(chatCtx);
-      this.realtimeSession.updateChatCtx(chatCtx);
+      await this.realtimeSession.updateChatCtx(chatCtx);
     } else {
       updateInstructions({
         chatCtx,

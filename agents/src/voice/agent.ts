@@ -343,7 +343,7 @@ export class Agent<UserData = any> {
       return;
     }
 
-    this._agentActivity.updateChatCtx(chatCtx);
+    await this._agentActivity.updateChatCtx(chatCtx);
   }
 
   // TODO: Add when AgentConfigUpdate is ported to ChatContext.
