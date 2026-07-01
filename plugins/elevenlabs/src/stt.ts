@@ -393,7 +393,7 @@ export class STT extends stt.STT {
       if (error instanceof APIStatusError) {
         throw new APIConnectionError({ message: error.message });
       }
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         throw new APITimeoutError({});
       }
       throw new APIConnectionError({});
