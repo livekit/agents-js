@@ -61,6 +61,12 @@ path = ["**/README.md"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
+# Hotel receptionist scenario assets ported from livekit/agents
+[[annotations]]
+path = ["examples/src/hotel_receptionist/scenarios.yaml", "examples/src/hotel_receptionist/policies/*.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # API Extractor reports
 [[annotations]]
 path = ["**/etc/*.api.md"]
