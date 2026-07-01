@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { FunctionCall } from '../llm/chat_context.js';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, createToolExecutionUpdatedEvent } from './events.js';
 import type { SpeechHandle } from './speech_handle.js';
 
 export type UnknownUserData = unknown;
 
 export class RunContext<UserData = UnknownUserData> {
   private readonly initialStepIdx: number;
+  private updateCount = 0;
   constructor(
     public readonly session: AgentSession<UserData>,
     public readonly speechHandle: SpeechHandle,
@@ -30,5 +32,21 @@ export class RunContext<UserData = UnknownUserData> {
    */
   async waitForPlayout() {
     return this.speechHandle._waitForGeneration(this.initialStepIdx);
+  }
+
+  update(message: unknown): void {
+    if (typeof this.session.emit !== 'function') return;
+    const rawMessage = typeof message === 'string' ? message : String(message);
+    const id = `${this.functionCall.callId}_update_${this.updateCount}`;
+    this.updateCount += 1;
+    this.session.emit(
+      AgentSessionEventTypes.ToolExecutionUpdated,
+      createToolExecutionUpdatedEvent({
+        type: 'tool_call_updated',
+        id,
+        callId: this.functionCall.callId,
+        message: rawMessage,
+      }),
+    );
   }
 }

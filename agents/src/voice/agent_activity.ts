@@ -108,6 +108,7 @@ import {
   createMetricsCollectedEvent,
   createSessionUsageUpdatedEvent,
   createSpeechCreatedEvent,
+  createToolExecutionUpdatedEvent,
   createUserInputTranscribedEvent,
 } from './events.js';
 import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
@@ -3069,6 +3070,11 @@ export class AgentActivity implements RecognitionHooks {
       const respondToolChoice =
         schedulingPaused || modelSettings.toolChoice === 'none' ? 'none' : 'auto';
 
+      const updateIds = functionToolsExecutedEvent.functionCallOutputs.map(
+        (output) => output.callId,
+      );
+      const initialChatItemCount = speechHandle.chatItems.length;
+
       // Reuse the same speechHandle for the tool response.
       const toolResponseTask = this.createSpeechTask({
         taskFn: () =>
@@ -3087,7 +3093,33 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity.pipelineReply',
       });
 
-      toolResponseTask.result.finally(() => this.onPipelineReplyDone());
+      this.agentSession.emit(
+        AgentSessionEventTypes.ToolExecutionUpdated,
+        createToolExecutionUpdatedEvent({
+          type: 'tool_reply_updated',
+          updateIds,
+          status: 'scheduled',
+          speechId: speechHandle.id,
+        }),
+      );
+
+      toolResponseTask.result.finally(() => {
+        const status = speechHandle.interrupted
+          ? 'interrupted'
+          : speechHandle.chatItems.length > initialChatItemCount
+            ? 'completed'
+            : 'skipped';
+        this.agentSession.emit(
+          AgentSessionEventTypes.ToolExecutionUpdated,
+          createToolExecutionUpdatedEvent({
+            type: 'tool_reply_updated',
+            updateIds,
+            status,
+            speechId: speechHandle.id,
+          }),
+        );
+        this.onPipelineReplyDone();
+      });
 
       this.scheduleSpeech(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
     } else if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {

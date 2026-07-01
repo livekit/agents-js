@@ -74,6 +74,7 @@ import {
   type SessionUsageUpdatedEvent,
   type ShutdownReason,
   type SpeechCreatedEvent,
+  type ToolExecutionUpdatedEvent,
   type UserInputTranscribedEvent,
   type UserState,
   type UserStateChangedEvent,
@@ -213,6 +214,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.UserStateChanged]: (ev: UserStateChangedEvent) => void;
   [AgentSessionEventTypes.ConversationItemAdded]: (ev: ConversationItemAddedEvent) => void;
   [AgentSessionEventTypes.FunctionToolsExecuted]: (ev: FunctionToolsExecutedEvent) => void;
+  [AgentSessionEventTypes.ToolExecutionUpdated]: (ev: ToolExecutionUpdatedEvent) => void;
   [AgentSessionEventTypes.MetricsCollected]: (ev: MetricsCollectedEvent) => void;
   [AgentSessionEventTypes.SessionUsageUpdated]: (ev: SessionUsageUpdatedEvent) => void;
   [AgentSessionEventTypes.DebugMessage]: (ev: pb.DebugMessage) => void;

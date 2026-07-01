@@ -39,11 +39,14 @@ import {
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
+  type ToolExecutionUpdatedEvent,
   type UserInputTranscribedEvent,
   type UserState,
   type UserStateChangedEvent,
 } from './events.js';
 import type { RoomIO } from './room_io/room_io.js';
+
+type ProtoMessageConstructor = new (params: Record<string, unknown>) => unknown;
 
 // ===========================================================================
 // Shared types (TextInput, Client event types, wire format aliases)
@@ -64,6 +67,7 @@ export type RemoteSessionEventTypes =
   | 'conversation_item_added'
   | 'user_input_transcribed'
   | 'function_tools_executed'
+  | 'tool_execution_updated'
   | 'overlapping_speech'
   | 'amd_prediction'
   | 'eot_prediction'
@@ -78,6 +82,7 @@ export type RemoteSessionCallbacks = {
   conversation_item_added: (ev: pb.AgentSessionEvent_ConversationItemAdded) => void;
   user_input_transcribed: (ev: pb.AgentSessionEvent_UserInputTranscribed) => void;
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
+  tool_execution_updated: (ev: unknown) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
   eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
@@ -666,6 +671,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
       session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+      session.on(AgentSessionEventTypes.ToolExecutionUpdated, this.onToolExecutionUpdated);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
@@ -692,6 +698,7 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
       this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+      this.session.off(AgentSessionEventTypes.ToolExecutionUpdated, this.onToolExecutionUpdated);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
       this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
@@ -830,6 +837,112 @@ export class SessionHost {
         }),
       },
       event.createdAt,
+    );
+  };
+
+  private onToolExecutionUpdated = (event: ToolExecutionUpdatedEvent): void => {
+    const protocol = pb as unknown as Record<string, unknown>;
+    const ToolExecutionUpdated = protocol.AgentSessionEvent_ToolExecutionUpdated as
+      | ProtoMessageConstructor
+      | undefined;
+    if (!ToolExecutionUpdated) return;
+
+    const update = event.update;
+    let value: unknown;
+    switch (update.type) {
+      case 'tool_call_started': {
+        const Started = protocol.AgentSessionEvent_ToolExecutionUpdated_Started as
+          | ProtoMessageConstructor
+          | undefined;
+        if (!Started) return;
+        value = new ToolExecutionUpdated({
+          update: {
+            case: 'started',
+            value: new Started({
+              functionCall: new pb.FunctionCall({
+                id: update.functionCall.id,
+                callId: update.functionCall.callId,
+                name: update.functionCall.name,
+                arguments: update.functionCall.args,
+              }),
+            }),
+          },
+        });
+        break;
+      }
+      case 'tool_call_updated': {
+        const CallUpdated = protocol.AgentSessionEvent_ToolExecutionUpdated_CallUpdated as
+          | ProtoMessageConstructor
+          | undefined;
+        if (!CallUpdated) return;
+        value = new ToolExecutionUpdated({
+          update: {
+            case: 'callUpdated',
+            value: new CallUpdated({
+              id: update.id,
+              callId: update.callId,
+              message: update.message,
+            }),
+          },
+        });
+        break;
+      }
+      case 'tool_call_ended': {
+        const Ended = protocol.AgentSessionEvent_ToolExecutionUpdated_Ended as
+          | ProtoMessageConstructor
+          | undefined;
+        const ToolCallStatus = protocol.ToolCallStatus as Record<string, unknown> | undefined;
+        if (!Ended || !ToolCallStatus) return;
+        value = new ToolExecutionUpdated({
+          update: {
+            case: 'ended',
+            value: new Ended({
+              id: update.id,
+              callId: update.callId,
+              message: update.message ?? undefined,
+              status:
+                update.status === 'done'
+                  ? ToolCallStatus.TC_DONE
+                  : update.status === 'error'
+                    ? ToolCallStatus.TC_ERROR
+                    : ToolCallStatus.TC_CANCELLED,
+            }),
+          },
+        });
+        break;
+      }
+      case 'tool_reply_updated': {
+        const ReplyUpdated = protocol.AgentSessionEvent_ToolExecutionUpdated_ReplyUpdated as
+          | ProtoMessageConstructor
+          | undefined;
+        const ToolReplyStatus = protocol.ToolReplyStatus as Record<string, unknown> | undefined;
+        if (!ReplyUpdated || !ToolReplyStatus) return;
+        value = new ToolExecutionUpdated({
+          update: {
+            case: 'replyUpdated',
+            value: new ReplyUpdated({
+              updateIds: update.updateIds,
+              speechId: update.speechId,
+              status:
+                update.status === 'scheduled'
+                  ? ToolReplyStatus.TR_SCHEDULED
+                  : update.status === 'completed'
+                    ? ToolReplyStatus.TR_COMPLETED
+                    : update.status === 'interrupted'
+                      ? ToolReplyStatus.TR_INTERRUPTED
+                      : ToolReplyStatus.TR_SKIPPED,
+            }),
+          },
+        });
+        break;
+      }
+    }
+
+    this.sendEvent(
+      new pb.AgentSessionEvent({
+        createdAt: msToTimestamp(event.createdAt),
+        event: { case: 'toolExecutionUpdated' as never, value } as never,
+      }),
     );
   };
 
@@ -1192,6 +1305,11 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
 
   private dispatchEvent(event: pb.AgentSessionEvent): void {
     const ev = event.event;
+    if ((ev as unknown as { case?: string }).case === 'toolExecutionUpdated') {
+      this.emit('tool_execution_updated', (ev as unknown as { value: unknown }).value);
+      return;
+    }
+
     switch (ev.case) {
       case 'agentStateChanged':
         this.emit('agent_state_changed', ev.value);
