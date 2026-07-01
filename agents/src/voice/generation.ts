@@ -49,6 +49,7 @@ import {
 } from './agent.js';
 import type { ForwardOutput } from './agent_activity.ts';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, createToolExecutionUpdatedEvent } from './events.js';
 import {
   AudioOutput,
   type LLMNode,
@@ -978,9 +979,34 @@ export function performToolExecutions({
     firstToolStartedFuture: new Future(),
   };
 
+  const emitToolExecutionUpdate = (
+    update: Parameters<typeof createToolExecutionUpdatedEvent>[0],
+  ) => {
+    if (typeof session.emit !== 'function') return;
+    session.emit(
+      AgentSessionEventTypes.ToolExecutionUpdated,
+      createToolExecutionUpdatedEvent(update),
+    );
+  };
+
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
+
+    const status =
+      out.rawException?.message === 'tool call was aborted'
+        ? 'cancelled'
+        : out.rawException && !isStopResponse(out.rawException)
+          ? 'error'
+          : 'done';
+    const message = status === 'cancelled' ? null : out.toolCallOutput?.output ?? null;
+    emitToolExecutionUpdate({
+      type: 'tool_call_ended',
+      id: out.toolCall.callId,
+      callId: out.toolCall.callId,
+      message,
+      status,
+    });
   };
 
   const executeToolsTask = async (controller: AbortController) => {
@@ -1028,6 +1054,8 @@ export function performToolExecutions({
         );
         continue;
       }
+
+      emitToolExecutionUpdate({ type: 'tool_call_started', functionCall: toolCall });
 
       let parsedArgs: object | undefined;
 

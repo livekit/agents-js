@@ -28,6 +28,7 @@ export enum AgentSessionEventTypes {
   UserStateChanged = 'user_state_changed',
   ConversationItemAdded = 'conversation_item_added',
   FunctionToolsExecuted = 'function_tools_executed',
+  ToolExecutionUpdated = 'tool_execution_updated',
   MetricsCollected = 'metrics_collected',
   SessionUsageUpdated = 'session_usage_updated',
   DebugMessage = 'debug_message',
@@ -213,6 +214,59 @@ export const zipFunctionCallsAndOutputs = (
   // Pair calls with outputs by list position.
   return event.functionCalls.map((call, index) => [call, event.functionCallOutputs[index]!]);
 };
+
+export type ToolCallStarted = {
+  type: 'tool_call_started';
+  functionCall: FunctionCall;
+};
+
+export type ToolCallUpdated = {
+  type: 'tool_call_updated';
+  /** Entry id: `callId` inline, `${callId}_update_N` when deferred. */
+  id: string;
+  callId: string;
+  message: string;
+};
+
+export type ToolCallEnded = {
+  type: 'tool_call_ended';
+  /** Entry id: `callId` inline, `${callId}_final` when deferred. */
+  id: string;
+  callId: string;
+  /** Result or error text; null when there is nothing to voice. */
+  message: string | null;
+  status: 'done' | 'error' | 'cancelled';
+};
+
+export type ToolReplyUpdated = {
+  type: 'tool_reply_updated';
+  /** `ToolCallUpdated.id` / `ToolCallEnded.id` values this reply covers. */
+  updateIds: string[];
+  status: 'scheduled' | 'completed' | 'interrupted' | 'skipped';
+  /** Id of the reply speech; `speech_created` carries its handle. */
+  speechId: string;
+};
+
+export type ToolExecutionUpdate =
+  | ToolCallStarted
+  | ToolCallUpdated
+  | ToolCallEnded
+  | ToolReplyUpdated;
+
+export type ToolExecutionUpdatedEvent = {
+  type: 'tool_execution_updated';
+  update: ToolExecutionUpdate;
+  createdAt: number;
+};
+
+export const createToolExecutionUpdatedEvent = (
+  update: ToolExecutionUpdate,
+  createdAt: number = Date.now(),
+): ToolExecutionUpdatedEvent => ({
+  type: 'tool_execution_updated',
+  update,
+  createdAt,
+});
 
 export type SpeechCreatedEvent = {
   type: 'speech_created';
@@ -444,6 +498,7 @@ export type AgentEvent =
   | SessionUsageUpdatedEvent
   | ConversationItemAddedEvent
   | FunctionToolsExecutedEvent
+  | ToolExecutionUpdatedEvent
   | SpeechCreatedEvent
   | AgentFalseInterruptionEvent
   | OverlappingSpeechEvent
