@@ -79,6 +79,11 @@ export interface STTOptions {
   encoding: STTEncoding;
   speechModel: STTModels;
   languageDetection?: boolean;
+  /**
+   * Session inactivity timeout in seconds. AssemblyAI accepts integer values
+   * from 5 to 3600; when unset, no inactivity timeout is applied.
+   */
+  inactivityTimeout?: number;
   endOfTurnConfidenceThreshold?: number;
   /** Minimum silence (ms) before a confident end-of-turn is finalized. */
   minTurnSilence?: number;
@@ -338,6 +343,7 @@ export class SpeechStream extends stt.SpeechStream {
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,
+      inactivity_timeout: this.#opts.inactivityTimeout,
       prompt: this.#opts.prompt,
       agent_context: this.#opts.agentContext,
       previous_context_n_turns: this.#opts.previousContextNTurns,
