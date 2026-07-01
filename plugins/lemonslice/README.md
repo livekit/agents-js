@@ -43,30 +43,48 @@ Find a complete working example [here](../../examples/src/lemonslice_realtime_av
 
 Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
+## Third-party video meeting platforms
+
+Use [the meeting example](../../examples/src/lemonslice_meeting_avatar.ts) to send the avatar
+into Zoom, Google Meet, Microsoft Teams, or Webex. The avatar joins the call, listens to meeting
+audio, and can optionally respond to meeting chat.
+
+Set the meeting URL via job metadata when dispatching the agent:
+
+```json
+{
+  "meeting_url": "https://zoom.us/j/123456789?pwd=abcdef",
+  "bot_name": "LemonSlice Avatar",
+  "listen_to_meeting_chat": true
+}
+```
+
+For local testing, set `MEETING_URL` instead. `LISTEN_TO_MEETING_CHAT` accepts `true`/`false` or
+`1`/`0`.
 
 ## Configuration Options
 
 ### AvatarSessionOptions
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `agentId` | `string` | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided. |
-| `agentImageUrl` | `AvatarImage` | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided. |
-| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. |
-| `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
-| `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
-| `avatarParticipantIdentity` | `string` | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |
-| `avatarParticipantName` | `string` | The name of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |
-| `connOptions` | `APIConnectOptions` | Connection options for API requests (retry count, timeout, etc.). |
+| Option                      | Type                      | Description                                                                                              |
+| --------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `agentId`                   | `string`                  | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided.                    |
+| `agentImageUrl`             | `AvatarImage`             | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided.    |
+| `extraPayload`              | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice.                                   |
+| `apiUrl`                    | `string`                  | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
+| `apiKey`                    | `string`                  | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var.                                        |
+| `avatarParticipantIdentity` | `string`                  | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`.             |
+| `avatarParticipantName`     | `string`                  | The name of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`.                 |
+| `connOptions`               | `APIConnectOptions`       | Connection options for API requests (retry count, timeout, etc.).                                        |
 
 Use `extraPayload` for LemonSlice API fields that are not yet modeled directly by the SDK.
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `LEMONSLICE_API_KEY` | Your LemonSlice API key |
+| Variable             | Description                          |
+| -------------------- | ------------------------------------ |
+| `LEMONSLICE_API_KEY` | Your LemonSlice API key              |
 | `LEMONSLICE_API_URL` | Custom LemonSlice API URL (optional) |
-| `LIVEKIT_URL` | Your LiveKit server URL |
-| `LIVEKIT_API_KEY` | Your LiveKit API key |
-| `LIVEKIT_API_SECRET` | Your LiveKit API secret |
+| `LIVEKIT_URL`        | Your LiveKit server URL              |
+| `LIVEKIT_API_KEY`    | Your LiveKit API key                 |
+| `LIVEKIT_API_SECRET` | Your LiveKit API secret              |
