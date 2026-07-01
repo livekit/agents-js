@@ -2404,6 +2404,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
+    let audioOut: _AudioOut | null = null;
     if (!audioOutput) {
       if (textOut) {
         textOut.firstTextFut.await
@@ -2411,7 +2412,6 @@ export class AgentActivity implements RecognitionHooks {
           .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
       }
     } else {
-      let audioOut: _AudioOut | null = null;
       if (!audio) {
         // generate audio using TTS
         const [ttsTask, ttsGenData] = performTTSInference(
@@ -2452,53 +2452,72 @@ export class AgentActivity implements RecognitionHooks {
         .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
-    await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+    try {
+      await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
-    if (audioOutput) {
-      await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
-    }
-
-    if (speechHandle.interrupted) {
-      replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       if (audioOutput) {
-        audioOutput.clearBuffer();
-        await audioOutput.waitForPlayout();
+        await speechHandle.waitIfNotInterrupted([audioOutput.waitForPlayout()]);
       }
-    }
 
-    if (addToChatCtx) {
-      const replyStoppedSpeakingAt = Date.now();
-      const replyAssistantMetrics: MetricsReport = {};
-      if (replyTtsGenData?.ttfb !== undefined) {
-        replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
-      }
-      if (replyStartedSpeakingAt !== undefined) {
-        replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
-        replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
-
-        if (replyStartedForwardingAt !== undefined) {
-          replyAssistantMetrics.playbackLatency =
-            (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+      if (speechHandle.interrupted) {
+        replyAbortController.abort();
+        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        if (audioOutput) {
+          audioOutput.clearBuffer();
+          await audioOutput.waitForPlayout();
         }
       }
 
-      const message = ChatMessage.create({
-        role: 'assistant',
-        content: textOut?.text || '',
-        interrupted: speechHandle.interrupted,
-        metrics: replyAssistantMetrics,
-      });
-      this.agent._chatCtx.insert(message);
-      this.agentSession._conversationItemAdded(message);
-    }
+      if (addToChatCtx) {
+        const replyStoppedSpeakingAt = Date.now();
+        const replyAssistantMetrics: MetricsReport = {};
+        if (replyTtsGenData?.ttfb !== undefined) {
+          replyAssistantMetrics.ttsNodeTtfb = replyTtsGenData.ttfb;
+        }
+        if (replyStartedSpeakingAt !== undefined) {
+          replyAssistantMetrics.startedSpeakingAt = replyStartedSpeakingAt / 1000; // ms -> seconds
+          replyAssistantMetrics.stoppedSpeakingAt = replyStoppedSpeakingAt / 1000; // ms -> seconds
 
-    if (this.agentSession.agentState === 'speaking') {
-      this.agentSession._updateAgentState('listening');
-      if (this.audioRecognition) {
-        this.audioRecognition.onEndOfAgentSpeech(Date.now());
+          if (replyStartedForwardingAt !== undefined) {
+            replyAssistantMetrics.playbackLatency =
+              (replyStartedSpeakingAt - replyStartedForwardingAt) / 1000; // ms -> seconds
+          }
+        }
+
+        const message = ChatMessage.create({
+          role: 'assistant',
+          content: textOut?.text || '',
+          interrupted: speechHandle.interrupted,
+          metrics: replyAssistantMetrics,
+        });
+        this.agent._chatCtx.insert(message);
+        this.agentSession._conversationItemAdded(message);
       }
-      this.restoreInterruptionByAudioActivity();
+
+      if (this.agentSession.agentState === 'speaking') {
+        this.agentSession._updateAgentState('listening');
+        if (this.audioRecognition) {
+          this.audioRecognition.onEndOfAgentSpeech(Date.now());
+        }
+        this.restoreInterruptionByAudioActivity();
+      }
+    } finally {
+      // In a finally so the listener is dropped even if an await above throws —
+      // otherwise it would leak on the shared audioOutput.
+      this.settleFirstFrameFut(audioOut);
+    }
+  }
+
+  /**
+   * Reject `firstFrameFut` if it is still pending, to drop the PLAYBACK_STARTED listener
+   * registered in `performAudioForwarding`. Called by reply tasks once playout has
+   * finished or been interrupted. `forwardAudio` no longer rejects the future itself so
+   * that a frame which plays late (e.g. after a false-interruption resume) can still
+   * resolve it (#1909).
+   */
+  private settleFirstFrameFut(audioOut: _AudioOut | null | undefined): void {
+    if (audioOut && !audioOut.firstFrameFut.done) {
+      audioOut.firstFrameFut.reject(new Error('audio forwarding finished before first frame'));
     }
   }
 
@@ -2828,6 +2847,10 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        // A frame that played after a false-interruption resume keeps the synchronized
+        // transcript (gated on `firstFrameFut.done && !rejected` above) instead of being
+        // dropped.
+        this.settleFirstFrameFut(output.audioOut);
       }
     };
 
@@ -3380,6 +3403,7 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        this.settleFirstFrameFut(output.audioOut);
       }
     };
 
