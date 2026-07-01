@@ -47,6 +47,9 @@ const OUTPUT_AUDIO_CHANNELS = 1;
 
 const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
+// Stop rejecting tool calls after this many in a row to avoid a loop (toolChoice="none").
+const MAX_TOOL_CALL_REJECTIONS = 3;
+
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
 /**
@@ -105,6 +108,7 @@ interface RealtimeOptions {
   thinkingConfig?: types.ThinkingConfig;
   toolBehavior?: types.Behavior;
   toolResponseScheduling?: types.FunctionResponseScheduling;
+  toolChoice?: llm.ToolChoice | null;
 }
 
 /**
@@ -472,6 +476,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
+  private rejectedToolCalls = 0;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -565,21 +570,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
-        const response: types.FunctionResponse = {
-          name: item.name,
-          response: { output: item.output },
-        };
-
-        if (this.options.toolResponseScheduling !== undefined) {
-          // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
-          // it's the user's responsibility to avoid this parameter when using vertexai
-          response.scheduling = this.options.toolResponseScheduling;
-        }
-
-        if (!vertexai) {
-          // vertexai does not support id in FunctionResponse
-          response.id = item.callId;
-        }
+        const response = this.createFunctionResponse(item, vertexai);
         this.toolResponseCallIds.set(response, item.callId);
 
         const status = this.toolCallStatuses.get(item.callId);
@@ -594,6 +585,29 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     return toolResponses.length > 0 ? { functionResponses: toolResponses } : undefined;
+  }
+
+  private createFunctionResponse(
+    output: llm.FunctionCallOutput,
+    vertexai: boolean,
+  ): types.FunctionResponse {
+    const response: types.FunctionResponse = {
+      name: output.name,
+      response: output.isError ? { error: output.output } : { output: output.output },
+    };
+
+    if (this.options.toolResponseScheduling !== undefined) {
+      // vertexai currently doesn't support the scheduling parameter, gemini api defaults to idle
+      // it's the user's responsibility to avoid this parameter when using vertexai
+      response.scheduling = this.options.toolResponseScheduling;
+    }
+
+    if (!vertexai) {
+      // vertexai does not support id in FunctionResponse
+      response.id = output.callId;
+    }
+
+    return response;
   }
 
   updateOptions(options: {
@@ -629,7 +643,18 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (options.toolChoice !== undefined) {
-      this.#logger.warn('toolChoice is not supported by the Google Realtime API.');
+      // Gemini has no per-response toolChoice; "none" is emulated by rejecting any tool
+      // call emitted during the turn.
+      this.options.toolChoice = options.toolChoice;
+      if (options.toolChoice === 'none') {
+        this.#logger.warn(
+          "the Google Realtime API has no toolChoice='none'; tool calls emitted this turn will be rejected so the model replies directly.",
+        );
+      } else if (options.toolChoice !== null && options.toolChoice !== 'auto') {
+        this.#logger.warn(
+          `toolChoice='${options.toolChoice}' is not supported by the Google Realtime API, falling back to 'auto'.`,
+        );
+      }
     }
 
     if (shouldRestart) {
@@ -1217,6 +1242,13 @@ export class RealtimeSession extends llm.RealtimeSession {
       unlock();
     }
 
+    if (response.toolCall && this.options.toolChoice === 'none') {
+      // Reject without opening a generation, so a pending generateReply stays bound to the
+      // model's eventual reply and tools stay suppressed for the whole turn.
+      this.rejectToolCalls(response.toolCall.functionCalls ?? []);
+      return;
+    }
+
     const shouldStartNewGeneration =
       !this.currentGeneration || this.currentGeneration._done || !!this.pendingGenerationFut;
     if (shouldStartNewGeneration) {
@@ -1490,6 +1522,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    this.rejectedToolCalls = 0;
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -1569,8 +1602,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleServerContent(serverContent: types.LiveServerContent): void {
-    if (!this.currentGeneration) {
-      this.#logger.warn('received server content but no active generation.');
+    if (!this.currentGeneration || (this.currentGeneration._done && this.rejectedToolCalls > 0)) {
+      if (this.rejectedToolCalls > 0) {
+        this.#logger.debug(
+          { serverContent },
+          'ignoring server content from a rejected tool call turn',
+        );
+      } else {
+        this.#logger.warn('received server content but no active generation.');
+      }
       return;
     }
 
@@ -1677,6 +1717,43 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  private rejectToolCalls(functionCalls: types.FunctionCall[]): void {
+    if (functionCalls.length === 0) {
+      return;
+    }
+
+    this.rejectedToolCalls += 1;
+    const functions = functionCalls.map((fncCall) => fncCall.name);
+    if (this.rejectedToolCalls > MAX_TOOL_CALL_REJECTIONS) {
+      // Stop responding to break the loop; the user can still interrupt by voice.
+      if (this.rejectedToolCalls === MAX_TOOL_CALL_REJECTIONS + 1) {
+        this.#logger.error(
+          { functions },
+          `model keeps calling tools despite toolChoice='none'; stopping after ${MAX_TOOL_CALL_REJECTIONS} rejections to avoid a loop`,
+        );
+      }
+      return;
+    }
+
+    this.#logger.warn({ functions }, "rejecting tool call requested while toolChoice='none'");
+    const functionResponses = functionCalls.map((fncCall) =>
+      this.createFunctionResponse(
+        new llm.FunctionCallOutput({
+          name: fncCall.name ?? '',
+          callId: fncCall.id ?? '',
+          output: 'Tool calls are disabled for this turn, respond to the user directly.',
+          isError: true,
+        }),
+        this.options.vertexai,
+      ),
+    );
+
+    this.sendClientEvent({
+      type: 'tool_response',
+      value: { functionResponses },
+    });
+  }
+
   private handleToolCall(toolCall: types.LiveServerToolCall): void {
     if (!this.currentGeneration) {
       this.#logger.warn('received tool call but no active generation.');
@@ -1768,8 +1845,12 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleUsageMetadata(usage: types.UsageMetadata): void {
-    if (!this.currentGeneration) {
-      this.#logger.debug('Received usage metadata but no active generation');
+    if (!this.currentGeneration || (this.currentGeneration._done && this.rejectedToolCalls > 0)) {
+      if (this.rejectedToolCalls > 0) {
+        this.#logger.debug('ignoring usage metadata from a rejected tool call turn');
+      } else {
+        this.#logger.debug('Received usage metadata but no active generation');
+      }
       return;
     }
 
@@ -1883,6 +1964,16 @@ export class RealtimeSession extends llm.RealtimeSession {
   private isNewGeneration(response: types.LiveServerMessage) {
     if (this.earlyCompletionPending) {
       return false;
+    }
+    if (this.rejectedToolCalls > 0 && response.serverContent) {
+      const serverContent = response.serverContent;
+      const hasModelOutput =
+        !!serverContent.modelTurn ||
+        serverContent.outputTranscription != null ||
+        serverContent.inputTranscription != null;
+      if (!hasModelOutput) {
+        return false;
+      }
     }
     if (response.toolCall) {
       return true;
