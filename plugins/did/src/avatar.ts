@@ -159,11 +159,13 @@ export class AvatarSession extends voice.AvatarSession {
       audioConfig: { sample_rate: sampleRate },
     });
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      sampleRate,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        sampleRate,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+      }),
+    );
   }
 }

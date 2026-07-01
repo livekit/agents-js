@@ -160,11 +160,13 @@ export class AvatarSession extends voice.AvatarSession {
       properties: { livekit_ws_url: livekitUrl, livekit_room_token: livekitToken },
     });
 
-    agentSession.output.audio = new voice.DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarIdentity,
-      sampleRate: SAMPLE_RATE,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-    });
+    agentSession.output.replaceAudioTail(
+      new voice.DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarIdentity,
+        sampleRate: SAMPLE_RATE,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+      }),
+    );
   }
 }
