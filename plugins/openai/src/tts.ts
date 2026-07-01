@@ -147,7 +147,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       this.queue.close();
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         return;
       }
       throw error;
