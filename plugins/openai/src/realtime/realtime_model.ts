@@ -377,9 +377,7 @@ export function processBaseURL({
   azureDeployment?: string;
   apiVersion?: string;
 }): string {
-  // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime
-  const realtimePath = isAzure && !apiVersion ? 'v1/realtime' : 'realtime';
-  const url = new URL([baseURL, realtimePath].join('/'));
+  const url = new URL(baseURL);
 
   if (url.protocol === 'https:') {
     url.protocol = 'wss:';
@@ -387,28 +385,40 @@ export function processBaseURL({
     url.protocol = 'ws:';
   }
 
-  // ensure "/realtime" is added if the path is empty OR "/v1"
-  if (!url.pathname || ['', '/v1', '/openai'].includes(url.pathname.replace(/\/$/, ''))) {
-    url.pathname = url.pathname.replace(/\/$/, '') + '/realtime';
+  const pathStripped = url.pathname.replace(/\/$/, '');
+  if (isAzure) {
+    if (['', '/openai'].includes(pathStripped)) {
+      // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime.
+      url.pathname = pathStripped + (apiVersion ? '/realtime' : '/v1/realtime');
+    } else if (pathStripped === '/openai/v1') {
+      url.pathname = '/openai/v1/realtime';
+    } else {
+      url.pathname = pathStripped;
+    }
+  } else if (!url.pathname || ['', '/v1', '/openai', '/openai/v1'].includes(pathStripped)) {
+    url.pathname = pathStripped + '/realtime';
   } else {
-    url.pathname = url.pathname.replace(/\/$/, '');
+    url.pathname = pathStripped;
   }
 
   const queryParams: Record<string, string> = {};
   if (isAzure && apiVersion) {
     // Legacy Azure preview: /realtime?api-version=<v>&deployment=<d>
+    url.searchParams.delete('api-version');
     queryParams['api-version'] = apiVersion;
     if (azureDeployment) {
       queryParams['deployment'] = azureDeployment;
     }
   } else if (isAzure) {
     // GA Azure: /v1/realtime?model=<deployment>
-    if (azureDeployment) {
+    if (!url.searchParams.has('model') && azureDeployment) {
       queryParams['model'] = azureDeployment;
     }
   } else {
     // Standard OpenAI: /realtime?model=<model>
-    queryParams['model'] = model;
+    if (!url.searchParams.has('model')) {
+      queryParams['model'] = model;
+    }
   }
 
   for (const [key, value] of Object.entries(queryParams)) {
