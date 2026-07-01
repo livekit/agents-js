@@ -18,6 +18,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
+import { ATTRIBUTE_SIMULATOR } from './constants.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
@@ -284,6 +285,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     await this.#room.connect(this.#info.url, this.#info.token, opts);
     this.#onConnect();
 
+    if (this.isSimulationJob()) {
+      this.#room.on(RoomEvent.ParticipantDisconnected, this.onSimulatorDisconnected);
+    }
+
     this.#room.remoteParticipants.forEach(this.onParticipantConnected);
 
     if ([AutoSubscribe.AUDIO_ONLY, AutoSubscribe.VIDEO_ONLY].includes(autoSubscribe)) {
@@ -457,6 +462,34 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
         }
       });
       this.#participantTasks[p.identity!] = { callback, result };
+    }
+  }
+
+  private onSimulatorDisconnected = (p: RemoteParticipant) => {
+    if (!(ATTRIBUTE_SIMULATOR in p.attributes)) {
+      return;
+    }
+
+    this.#logger.debug('simulator disconnected, shutting down the job');
+    this.shutdown('simulation completed');
+  };
+
+  private isSimulationJob(): boolean {
+    const room = this.#room as Room & { metadata?: string };
+    const metadata = this.#info.job.metadata || room.metadata;
+    if (!metadata) {
+      return false;
+    }
+
+    try {
+      const dispatch = JSON.parse(metadata) as {
+        simulationRunId?: unknown;
+        simulation_run_id?: unknown;
+      };
+      const simulationRunId = dispatch.simulationRunId || dispatch.simulation_run_id;
+      return typeof simulationRunId === 'string' && simulationRunId.length > 0;
+    } catch {
+      return false;
     }
   }
 
