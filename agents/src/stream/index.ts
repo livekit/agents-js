@@ -6,3 +6,4 @@ export { IdentityTransform } from './identity_transform.js';
 export { mergeReadableStreams } from './merge_readable_streams.js';
 export { MultiInputStream } from './multi_input_stream.js';
 export { createStreamChannel, type StreamChannel } from './stream_channel.js';
+export { readStream, toStream } from '../utils.js';

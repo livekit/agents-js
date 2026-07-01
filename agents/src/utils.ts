@@ -1376,8 +1376,35 @@ export async function waitForTrackPublication({
 }
 
 /**
- * Yields values from a ReadableStream until the stream ends or the signal is aborted.
- * Handles reader cleanup and stream-release errors internally.
+ * Consume a {@link ReadableStream} as an async generator, yielding each chunk in
+ * order until the stream ends or the optional {@link AbortSignal} is aborted.
+ *
+ * This is a convenience wrapper around the Web Streams reader API that handles the
+ * boilerplate of acquiring a reader, looping over `reader.read()`, and releasing the
+ * reader lock when iteration finishes.
+ *
+ * Key behaviors:
+ * - Acquires a reader for the lifetime of the iteration and always releases the lock
+ *   when the generator completes, throws, or is returned early (e.g. `break`).
+ * - If a `signal` is provided, each read races against the abort signal; once aborted
+ *   the generator stops yielding and returns cleanly without throwing. If the signal is
+ *   already aborted before the first read, no values are yielded.
+ * - Errors raised by the underlying stream propagate to the caller; errors thrown while
+ *   releasing the reader lock during cleanup are swallowed (the source may already be
+ *   closed).
+ *
+ * @typeParam T - The type of the chunks emitted by the stream.
+ * @param stream - The readable stream to consume. The stream must not already be locked
+ *   to another reader.
+ * @param signal - Optional abort signal used to stop iteration early.
+ * @returns An async generator that yields each chunk read from the stream.
+ *
+ * @example
+ * ```ts
+ * for await (const chunk of readStream(response.body, controller.signal)) {
+ *   process(chunk);
+ * }
+ * ```
  */
 export async function* readStream<T>(
   stream: ReadableStream<T>,
@@ -1417,6 +1444,36 @@ export async function* readStream<T>(
   }
 }
 
+/**
+ * Adapt an {@link AsyncIterable} into a {@link ReadableStream}, enqueuing each value the
+ * iterable produces and closing the stream when the iterable is exhausted.
+ *
+ * This is the inverse of {@link readStream}: it lets an async generator or any other
+ * async-iterable source be consumed anywhere a Web {@link ReadableStream} is expected
+ * (piping, teeing, `Response` bodies, etc.).
+ *
+ * Key behaviors:
+ * - Pulls from the iterable eagerly in the stream's `start` callback and enqueues every
+ *   value until the iterable completes, at which point the stream is closed.
+ * - If the iterable throws, the error is forwarded to the stream's consumer via
+ *   `controller.error()`.
+ * - When the consumer cancels the stream, the underlying iterator's `return()` is invoked
+ *   (with the cancel reason) so the source can release resources, and no further values
+ *   are enqueued.
+ *
+ * @typeParam T - The type of the values produced by the iterable and emitted by the stream.
+ * @param iterable - The async iterable to adapt.
+ * @returns A readable stream that emits the values produced by `iterable`.
+ *
+ * @example
+ * ```ts
+ * async function* numbers() {
+ *   yield 1;
+ *   yield 2;
+ * }
+ * const stream = toStream(numbers());
+ * ```
+ */
 export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
   let iterator: AsyncIterator<T> | undefined;
   let cancelled = false;
