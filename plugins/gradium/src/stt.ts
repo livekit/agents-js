@@ -322,5 +322,21 @@ export class SpeechStream extends stt.SpeechStream {
       ws.once('error', reject);
       this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
     });
+
+    if (speaking && bufferedText.length > 0) {
+      this.queue.put({
+        type: stt.SpeechEventType.FINAL_TRANSCRIPT,
+        alternatives: [
+          {
+            text: bufferedText.join(' '),
+            language: this.#opts.language,
+            startTime: 0,
+            endTime: 0,
+            confidence: 0,
+          },
+        ],
+      });
+      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+    }
   }
 }

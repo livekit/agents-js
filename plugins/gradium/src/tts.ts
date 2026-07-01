@@ -3,10 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APITimeoutError,
   AsyncIterableQueue,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
+  asError,
   log,
   shortuuid,
   tokenize,
@@ -88,6 +92,16 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength,
   ) as ArrayBuffer;
+}
+
+function toRetryableConnectionError(e: unknown): APIError {
+  const err = asError(e);
+  const code = (e as { code?: string } | null)?.code;
+  const isTimeout = code === 'ETIMEDOUT' || err.message.includes('ETIMEDOUT');
+  const message = isTimeout
+    ? 'Gradium connection timed out'
+    : `Gradium connection failed: ${err.message || 'unknown error'}`;
+  return isTimeout ? new APITimeoutError({ message }) : new APIConnectionError({ message });
 }
 
 function setupMessage(opts: ResolvedTTSOptions): string {
@@ -172,6 +186,16 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run(): Promise<void> {
+    try {
+      await this.#runImpl();
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      if (e instanceof APIError) throw e;
+      throw toRetryableConnectionError(e);
+    }
+  }
+
+  async #runImpl(): Promise<void> {
     const ws = await connect(this.#opts);
     const requestId = shortuuid();
     const segmentId = requestId;
@@ -280,7 +304,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    await Promise.all([inputTask(), segmentTask()]);
+    try {
+      await Promise.all([inputTask(), segmentTask()]);
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      if (e instanceof APIError) throw e;
+      throw toRetryableConnectionError(e);
+    }
   }
 
   async #runSegment(wordStream: tokenize.WordStream): Promise<void> {
