@@ -13,6 +13,7 @@ import {
   Future,
   Task,
   calculateAudioDurationSeconds,
+  combineAbortSignals,
   createTimedString,
   delay,
   intervalForRetry,
@@ -553,18 +554,12 @@ export class SpeechStream extends stt.SpeechStream {
         const sendTask = Task.from(async (controller) => {
           const samples50Ms = Math.floor(this.#opts.sampleRate / 20);
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samples50Ms);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
+          const inputSignal = combineAbortSignals([controller.signal, this.abortSignal]);
           let hasEnded = false;
 
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              const result = await this.input.next({ signal: inputSignal });
               if (result.done) break;
 
               const data = result.value;

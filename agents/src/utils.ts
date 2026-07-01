@@ -336,11 +336,19 @@ export class AsyncIterableQueue<T> implements AsyncIterableIterator<T> {
     this.#queue.put(AsyncIterableQueue.CLOSE_SENTINEL);
   }
 
-  async next(): Promise<IteratorResult<T>> {
+  async next(options: { signal?: AbortSignal } = {}): Promise<IteratorResult<T>> {
     if (this.#closed && this.#queue.items.length === 0) {
       return { value: undefined, done: true };
     }
-    const item = await this.#queue.get();
+    let item: T | typeof AsyncIterableQueue.CLOSE_SENTINEL;
+    try {
+      item = await this.#queue.get(options);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { value: undefined, done: true };
+      }
+      throw error;
+    }
     if (item === AsyncIterableQueue.CLOSE_SENTINEL && this.#closed) {
       return { value: undefined, done: true };
     }
@@ -1465,6 +1473,35 @@ export async function waitForAbort(signal: AbortSignal) {
   }
   signal.addEventListener('abort', handler, { once: true });
   return await abortFuture.await;
+}
+
+/** @internal */
+export function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  const cleanupCallbacks: (() => void)[] = [];
+
+  const abort = () => {
+    for (const cleanup of cleanupCallbacks) {
+      cleanup();
+    }
+    cleanupCallbacks.length = 0;
+
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+
+  for (const signal of signals) {
+    if (signal.aborted) {
+      abort();
+      break;
+    }
+
+    signal.addEventListener('abort', abort, { once: true });
+    cleanupCallbacks.push(() => signal.removeEventListener('abort', abort));
+  }
+
+  return controller.signal;
 }
 
 export async function rejectOnAbort(signal: AbortSignal): Promise<never> {

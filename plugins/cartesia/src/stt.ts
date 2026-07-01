@@ -376,12 +376,9 @@ export class SpeechStream extends stt.SpeechStream {
 
     let hasEnded = false;
     const iterator = this.input[Symbol.asyncIterator]();
-    const abortPromise = waitForAbort(abortSignal);
 
     while (true) {
-      const result = await Promise.race([iterator.next(), abortPromise]);
-
-      if (result === undefined) return; // aborted
+      const result = await iterator.next({ signal: abortSignal });
 
       if (result.done) {
         hasEnded = true;
