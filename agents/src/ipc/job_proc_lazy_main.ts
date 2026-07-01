@@ -35,7 +35,6 @@ import type { IPCMessage } from './message.js';
 const ORPHANED_TIMEOUT = 15 * 1000;
 const EXIT_REASON = {
   roomDisconnected: 'room disconnected',
-  shutdownRequest: 'shutdown request',
   jobCrashed: 'job crashed',
 } as const;
 
@@ -141,7 +140,7 @@ const startJob = (
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
-    closeEvent.emit('close', reason);
+    closeEvent.emit('close', reason || 'user requested');
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
@@ -325,7 +324,7 @@ const startJob = (
             safeSend({ case: 'shuttingDown', value: undefined });
             join.resolve();
           }
-          closeEvent.emit('close', msg.value?.reason ?? EXIT_REASON.shutdownRequest);
+          closeEvent.emit('close', msg.value?.reason || 'parent process shutdown');
         }
       }
     };
