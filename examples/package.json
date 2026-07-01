@@ -41,6 +41,7 @@
     "@livekit/agents-plugin-neuphonic": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-phonic": "workspace:*",
+    "@livekit/agents-plugin-protoface": "workspace:*",
     "@livekit/agents-plugin-resemble": "workspace:*",
     "@livekit/agents-plugin-rime": "workspace:*",
     "@livekit/agents-plugin-runway": "workspace:*",
