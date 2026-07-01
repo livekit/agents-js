@@ -49,6 +49,7 @@ import {
   functionCallStorage,
   isStopResponse,
 } from './agent.js';
+import type { ForwardOutput } from './agent_activity.ts';
 import type { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
@@ -833,6 +834,22 @@ export interface _AudioOut {
    * metric.
    */
   startedForwardingAt?: number;
+}
+
+/**
+ * The text that actually reached the user, accounting for interruptions.
+ *
+ * On a mid-playout interruption (`played === 'partial'`) we prefer the
+ * playback-aligned `synchronizedTranscript`, but fall back to the full generated
+ * text when no synchronized transcript is available (e.g. avatar outputs) so the
+ * heard reply is still committed to chat ctx rather than dropped.
+ */
+export function forwardedTextFor(output: ForwardOutput): string {
+  if (output.played === 'skipped') return '';
+  if (output.played === 'partial' && output.synchronizedTranscript) {
+    return output.synchronizedTranscript;
+  }
+  return output.textOut?.text ?? '';
 }
 
 async function forwardAudio(

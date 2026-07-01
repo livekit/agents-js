@@ -119,6 +119,7 @@ import {
   type _AudioOut,
   type _TextOut,
   applyInstructionsModality,
+  forwardedTextFor,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -210,6 +211,15 @@ interface PausedSpeechInfo {
   handle: SpeechHandle;
   agentState: AgentState;
   timeout: number;
+}
+
+/// Analog to Python's _ForwardOutput
+export interface ForwardOutput {
+  played: 'full' | 'partial' | 'skipped';
+  textOut: _TextOut | null;
+  synchronizedTranscript?: string;
+  audioOut: _AudioOut | null;
+  playbackPositionInS: number;
 }
 
 export class AgentActivity implements RecognitionHooks {
@@ -2666,21 +2676,7 @@ export class AgentActivity implements RecognitionHooks {
       ttsGenData?: _TTSGenerationData;
     }
 
-    interface SegmentOutput {
-      textOut: _TextOut | null;
-      audioOut: _AudioOut | null;
-      played: 'full' | 'partial' | 'skipped';
-      playbackPositionInS: number;
-      synchronizedTranscript?: string;
-    }
-
-    const forwardedTextFor = (output: SegmentOutput): string => {
-      if (output.played === 'skipped') return '';
-      if (output.played === 'partial' && output.audioOut) {
-        return output.synchronizedTranscript ?? '';
-      }
-      return output.textOut?.text ?? '';
-    };
+    type SegmentOutput = ForwardOutput;
 
     const segmentQueue = new AsyncIterableQueue<SpeechSegment>();
     let synthesizeTask: Task<void> | null = null;
@@ -3325,14 +3321,9 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    interface MessageOutput {
+    interface MessageOutput extends ForwardOutput {
       message: MessageGeneration;
-      textOut: _TextOut | null;
-      audioOut: _AudioOut | null;
       modalities?: ('text' | 'audio')[];
-      played: 'full' | 'partial' | 'skipped';
-      playbackPositionInS: number;
-      synchronizedTranscript?: string;
     }
 
     const tasks: Array<Task<void>> = [];
@@ -3511,10 +3502,7 @@ export class AgentActivity implements RecognitionHooks {
         if (output.played === 'skipped') continue;
 
         const interrupted = output.played === 'partial';
-        let forwardedText = output.textOut?.text || '';
-        if (interrupted && output.audioOut) {
-          forwardedText = output.synchronizedTranscript ?? '';
-        }
+        const forwardedText = forwardedTextFor(output);
 
         if (interrupted && realtimeModel.capabilities.messageTruncation) {
           // Defense-in-depth: playbackPositionInS can be non-finite when the avatar

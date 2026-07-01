@@ -1422,9 +1422,8 @@ export class AudioRecognition {
       if (!this.turnDetectorLatePredictionWarned) {
         this.turnDetectorLatePredictionWarned = true;
         this.logger.warn(
-          'eou detection ran after the audio eot turn was already flushed ' +
-            '(likely a late stt final). consider raising `minDelay` in the ' +
-            'endpointing options to accommodate slow stt. subsequent ' +
+          'transcript arrives after turn has been committed. consider raising `minDelay` in the ' +
+            'endpointing options to accommodate a slow stt. subsequent ' +
             'occurrences will log at debug level.',
         );
       } else {
@@ -1518,7 +1517,9 @@ export class AudioRecognition {
                 if (turnDetector instanceof BaseStreamingTurnDetectorStream) {
                   const fut = this.turnDetectorPredictionFut;
                   if (fut === undefined) {
-                    this.onMissingEotPrediction();
+                    if (trigger === 'stt') {
+                      this.onMissingEotPrediction();
+                    }
                   } else {
                     fromCache = fut.done;
                     // Await the held future against the model prediction timeout.
