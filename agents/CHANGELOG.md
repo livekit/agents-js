@@ -1,5 +1,13 @@
 # @livekit/agents
 
+## 1.4.12
+
+### Patch Changes
+
+- Fix interrupted assistant speech being dropped from chat history when the audio output provides no playback-aligned transcript. On a mid-playout interruption, `forwardedTextFor` (and the realtime reply path) returned `synchronizedTranscript ?? ''`, so an interrupted-but-heard reply produced no `conversation_item_added` and was missing from `chatCtx` — common with avatar outputs that don't emit a synchronized transcript. The commit now falls back to the forwarded generation text (`textOut.text`), matching the Python SDK's `_ForwardOutput.forwarded_text` behavior. - [#1916](https://github.com/livekit/agents-js/pull/1916) ([@ShayneP](https://github.com/ShayneP))
+
+- Increase the default worker drain timeout to one hour. - [#1930](https://github.com/livekit/agents-js/pull/1930) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.11
 
 ## 1.4.10

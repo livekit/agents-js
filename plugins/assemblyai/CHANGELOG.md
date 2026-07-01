@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-assemblyai
 
+## 1.4.12
+
+### Patch Changes
+
+- Surface AssemblyAI language confidence on speech event metadata. - [#1543](https://github.com/livekit/agents-js/pull/1543) ([@chasef07](https://github.com/chasef07))
+
+- Updated dependencies [[`49f7567600e88f4b5479afab3d629983dca74f69`](https://github.com/livekit/agents-js/commit/49f7567600e88f4b5479afab3d629983dca74f69), [`bfad336904ccb5b22acb489cd01d4bae2f393fb9`](https://github.com/livekit/agents-js/commit/bfad336904ccb5b22acb489cd01d4bae2f393fb9)]:
+  - @livekit/agents@1.4.12
+
 ## 1.4.11
 
 ### Patch Changes
