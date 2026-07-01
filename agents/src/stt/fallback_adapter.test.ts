@@ -276,6 +276,31 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect((await fallback.streamCh.next()).done).toBe(false);
   });
 
+  it('stream fallback propagates startTimeOffset to child streams', async () => {
+    const primary = new FakeSTT({
+      label: 'primary',
+      fakeException: new APIConnectionError({ message: 'primary down' }),
+    });
+    const fallback = new FakeSTT({ label: 'fallback', fakeTranscript: 'hello world' });
+    const adapter = new FallbackAdapter({
+      sttInstances: [primary, fallback],
+      maxRetryPerSTT: 0,
+    });
+
+    const stream = adapter.stream();
+    stream.startTimeOffset = 30;
+    stream.endInput();
+
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    const primaryStream = (await primary.streamCh.next()).value;
+    const fallbackStream = (await fallback.streamCh.next()).value;
+    expect(primaryStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+    expect(fallbackStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
+  });
+
   it('stream marks every instance unavailable when all children fail', async () => {
     const err = new APIError('down');
     const a = new FakeSTT({ label: 'a', fakeException: err });
