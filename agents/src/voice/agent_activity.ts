@@ -44,9 +44,11 @@ import {
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
+  type ToolContextLike,
   ToolFlag,
   isFunctionTool,
   isToolset,
+  toToolContext,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { isSameToolChoice } from '../llm/tool_context.js';
@@ -775,7 +777,10 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tools(): ToolContext {
-    const tools: ToolContextEntry[] = [...this.agentSession.tools, ...this.agent.toolCtx.tools];
+    const tools: ToolContextEntry[] = [
+      ...this.agentSession.toolCtx.tools,
+      ...this.agent.toolCtx.tools,
+    ];
     if (hasCancellableTool(tools)) {
       tools.push(cancelTaskTool, getRunningTasksTool);
     }
@@ -910,11 +915,11 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  async updateTools(tools: readonly ToolContextEntry<any>[]): Promise<void> {
+  async updateTools(tools: ToolContextLike<any>): Promise<void> {
     const oldToolCtx = this.agent._toolCtx;
     const oldToolNames = new Set(Object.keys(oldToolCtx.functionTools));
     const oldToolsets = oldToolCtx.toolsets;
-    const newToolCtx = new ToolContext(tools);
+    const newToolCtx = toToolContext(tools);
     const newToolsets = newToolCtx.toolsets;
     const addedToolsets = newToolsets.filter((ts) => !oldToolsets.includes(ts));
     const removedToolsets = oldToolsets.filter((ts) => !newToolsets.includes(ts));
@@ -4408,7 +4413,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this._toolsetsSetup) return;
     this._toolsetsSetup = true;
 
-    const sessionToolsets = new ToolContext(this.agentSession.tools).toolsets;
+    const sessionToolsets = this.agentSession.toolCtx.toolsets;
     const agentToolsets = this.agent.toolCtx.toolsets;
 
     for (const toolset of sessionToolsets) {

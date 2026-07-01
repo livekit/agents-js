@@ -39,9 +39,9 @@ import type {
   RealtimeModelError,
   ToolChoice,
   ToolContextEntry,
-  ToolContextInit,
+  ToolContextLike,
 } from '../llm/index.js';
-import { isToolset, normalizeToolContextInit } from '../llm/index.js';
+import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -253,7 +253,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
-  tools?: ToolContextInit<UserData>;
+  tools?: ToolContextLike<UserData>;
   toolHandling?: ToolHandlingOptions;
 
   /** @deprecated use turnHandling.turnDetection instead */
@@ -369,7 +369,7 @@ export class AgentSession<
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
-  private _tools: readonly ToolContextEntry<UserData>[] = [];
+  private _toolCtx: ToolContext<UserData>;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
 
@@ -541,7 +541,7 @@ export class AgentSession<
         : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
-    this._tools = normalizeToolContextInit(tools ?? []);
+    this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
     this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
@@ -1296,8 +1296,12 @@ export class AgentSession<
     return this.agent;
   }
 
+  get toolCtx(): ToolContext<UserData> {
+    return this._toolCtx.copy();
+  }
+
   get tools(): readonly ToolContextEntry<UserData>[] {
-    return [...this._tools];
+    return this._toolCtx.tools;
   }
 
   async waitForIdle(): Promise<AgentActivity> {
@@ -1652,7 +1656,7 @@ export class AgentSession<
     await this.activity?.close();
     this.activity = undefined;
 
-    const sessionToolsets = this._tools.filter(isToolset);
+    const sessionToolsets = this._toolCtx.toolsets;
     await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
 
     if (this.sessionSpan) {

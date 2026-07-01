@@ -683,7 +683,11 @@ describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
  */
 describe('AgentActivity - session toolset setup lifecycle (#3378550188)', () => {
   function buildSetupActivity(
-    agentSession: { tools: Toolset[]; _sessionToolsetsSetup: boolean },
+    agentSession: {
+      tools: Toolset[];
+      toolCtx: ToolContext;
+      _sessionToolsetsSetup: boolean;
+    },
     agentToolset: Toolset,
   ) {
     const fakeActivity = {
@@ -708,7 +712,11 @@ describe('AgentActivity - session toolset setup lifecycle (#3378550188)', () => 
     const agentSetupB = vi.fn(async () => {});
     const agentToolsetB = Toolset.create({ id: 'agent_b', tools: [], setup: agentSetupB });
 
-    const agentSession = { tools: [sessionToolset], _sessionToolsetsSetup: false };
+    const agentSession = {
+      tools: [sessionToolset],
+      toolCtx: new ToolContext([sessionToolset]),
+      _sessionToolsetsSetup: false,
+    };
 
     const setupToolsets = (AgentActivity.prototype as Record<string, unknown>).setupToolsets as (
       this: unknown,
@@ -748,12 +756,12 @@ describe('AgentActivity - preemptive generation tool snapshot (#3407098507)', ()
       newTurnsBlocked: false,
       llm: new FakePreemptiveLLM(),
       toolChoice: null,
-      // `get tools()` (real prototype getter) reads agentSession.tools + agent.toolCtx and
+      // `get tools()` (real prototype getter) reads agentSession.toolCtx + agent.toolCtx and
       // injects the management tools when a cancellable tool exists. We intentionally do NOT set
       // an own `tools` property so the real getter runs.
       agent: { chatCtx: new ChatContext(), toolCtx: agentToolCtx, _toolCtx: agentToolCtx },
       agentSession: {
-        tools: [] as never[],
+        toolCtx: ToolContext.empty(),
         sessionOptions: {
           turnHandling: {
             preemptiveGeneration: {
