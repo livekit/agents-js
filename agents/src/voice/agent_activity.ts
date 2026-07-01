@@ -96,6 +96,7 @@ import {
 import type {
   AgentState,
   AgentStateChangedEvent,
+  ConversationItemAddedEvent,
   EotPredictionEvent,
   UserTurnExceededEvent,
   _AgentBackchannelOpportunityEvent,
@@ -242,6 +243,7 @@ export class AgentActivity implements RecognitionHooks {
   private lock = new Mutex();
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
+  private sttConversationItemListener?: (ev: ConversationItemAddedEvent) => void;
 
   // default to null as None, which maps to the default provider tool choice value
   private toolChoice: ToolChoice | null = null;
@@ -558,6 +560,8 @@ export class AgentActivity implements RecognitionHooks {
       this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
     }
 
+    this.agentSession._keytermDetector.on('metrics_collected', this.onMetricsCollected);
+
     // Bundled-default VAD is treated as absent when the RealtimeModel does
     // its own server-side turn detection — the realtime session is already
     // canonical and an extra audio pipeline would just pay the native model
@@ -604,6 +608,18 @@ export class AgentActivity implements RecognitionHooks {
       // ownership transferred to the new AudioRecognition
       reuseResources.sttPipeline = undefined;
       reuseResources.turnDetectorStream = undefined;
+    }
+
+    const activeStt = this.stt;
+    if (activeStt instanceof STT) {
+      this.agentSession._keytermDetector.start(this.agentSession, activeStt);
+      if (activeStt.capabilities.chatContext) {
+        this.sttConversationItemListener = (ev) => activeStt._pushConversationItem(ev);
+        this.agentSession.on(
+          AgentSessionEventTypes.ConversationItemAdded,
+          this.sttConversationItemListener,
+        );
+      }
     }
 
     this.started = true;
@@ -3846,6 +3862,7 @@ export class AgentActivity implements RecognitionHooks {
   private async _pauseSchedulingTask(blockedTasks: Task<any>[]): Promise<void> {
     if (this._schedulingPaused) return;
 
+    await this.agentSession?._keytermDetector.close();
     this._schedulingPaused = true;
     this._drainBlockedTasks = blockedTasks;
     this.wakeupMainTask();
@@ -4300,6 +4317,17 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
       this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
+    }
+
+    this.agentSession?._keytermDetector.off('metrics_collected', this.onMetricsCollected);
+    await this.agentSession?._keytermDetector.close();
+
+    if (this.agentSession && this.sttConversationItemListener) {
+      this.agentSession.off(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.sttConversationItemListener,
+      );
+      this.sttConversationItemListener = undefined;
     }
 
     this.detachAudioInput();

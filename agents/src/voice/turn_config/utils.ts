@@ -26,6 +26,7 @@ const defaultSessionOptions = {
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
+  keytermsOptions: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;

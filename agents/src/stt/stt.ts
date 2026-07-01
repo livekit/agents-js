@@ -14,7 +14,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
-import type { TimedString } from '../voice/index.js';
+import type { ConversationItemAddedEvent, TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -136,6 +136,10 @@ export interface STTCapabilities {
   alignedTranscript?: 'word' | 'chunk' | false;
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
+  /** Whether this STT supports keyterm prompting. */
+  keyterms?: boolean;
+  /** Whether this STT can natively consume conversation context. */
+  chatContext?: boolean;
 }
 
 export interface STTError {
@@ -161,6 +165,8 @@ export type STTCallbacks = {
 export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCallbacks>) {
   abstract label: string;
   #capabilities: STTCapabilities;
+  private keytermsUnsupportedWarned = false;
+  private chatContextUnsupportedWarned = false;
 
   constructor(capabilities: STTCapabilities) {
     super();
@@ -233,6 +239,34 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    * @param options - Optional configuration including connection options
    */
   abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
+
+  /** @internal */
+  _updateSessionKeyterms(keyterms: string[]): void {
+    if (!this.#capabilities.keyterms) {
+      if (!this.keytermsUnsupportedWarned) {
+        this.keytermsUnsupportedWarned = true;
+        log().warn(
+          { stt: this.label, keyterms },
+          'keyterms are not supported by this STT, ignoring keyterms update',
+        );
+      }
+      return;
+    }
+  }
+
+  /** @internal */
+  _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.#capabilities.chatContext) {
+      if (!this.chatContextUnsupportedWarned) {
+        this.chatContextUnsupportedWarned = true;
+        log().warn(
+          { stt: this.label, itemType: ev.item.type },
+          'chat context is not supported by this STT, ignoring chat context update',
+        );
+      }
+      return;
+    }
+  }
 
   async close(): Promise<void> {
     return;
