@@ -7,6 +7,7 @@ import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   type LanguageCode,
+  getBaseLanguage,
   log,
   normalizeLanguage,
   stt,
@@ -93,7 +94,9 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     temperature: opts.temperature,
     language: normalizeLanguage(opts.language ?? 'en'),
     vadThreshold: opts.vadThreshold ?? 0.9,
-    vadBucket: opts.vadBucket ?? 2,
+    // Distinguish `undefined` (not provided → default bucket) from an explicit
+    // `null`, which disables VAD-based finalization. `??` would coalesce both.
+    vadBucket: opts.vadBucket !== undefined ? opts.vadBucket : 2,
     vadFlush: opts.vadFlush ?? true,
   };
 }
@@ -184,14 +187,18 @@ export class SpeechStream extends stt.SpeechStream {
       ws.once('error', reject);
     });
 
+    const jsonConfig: Record<string, unknown> = {
+      language: getBaseLanguage(this.#opts.language),
+    };
+    if (this.#opts.temperature != null) {
+      jsonConfig.temp = this.#opts.temperature;
+    }
     const setup: Record<string, unknown> = {
       type: 'setup',
       model_name: this.#opts.modelName,
       input_format: 'pcm',
+      json_config: jsonConfig,
     };
-    if (this.#opts.temperature != null) {
-      setup.json_config = { temp: this.#opts.temperature };
-    }
     ws.send(JSON.stringify(setup));
     return ws;
   }

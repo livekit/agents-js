@@ -6,6 +6,7 @@ import {
   AsyncIterableQueue,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
+  Future,
   log,
   shortuuid,
   tokenize,
@@ -103,7 +104,9 @@ function setupMessage(opts: ResolvedTTSOptions): string {
 }
 
 async function connect(opts: ResolvedTTSOptions): Promise<WebSocket> {
-  const ws = new WebSocket(opts.modelEndpoint, { headers: { 'x-api-key': opts.apiKey } });
+  const ws = new WebSocket(opts.modelEndpoint, {
+    headers: { 'x-api-key': opts.apiKey, 'x-api-source': 'livekit' },
+  });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', resolve);
     ws.once('error', reject);
@@ -181,6 +184,13 @@ export class ChunkedStream extends tts.ChunkedStream {
       lastFrame = undefined;
     };
 
+    const onAbort = () => ws.close();
+    if (this.abortSignal.aborted) {
+      ws.close();
+    } else {
+      this.abortSignal.addEventListener('abort', onAbort, { once: true });
+    }
+
     try {
       ws.send(setupMessage(this.#opts));
       ws.send(JSON.stringify({ type: 'text', text: this.inputText }));
@@ -221,6 +231,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
       });
     } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
       ws.close();
     }
   }
@@ -285,13 +296,36 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       lastFrame = undefined;
     };
 
+    // Signals the send/receive loops to unwind on abort. Without this the send
+    // loop would keep awaiting `wordStream` (and pushing to a dead socket) after
+    // an interruption, leaving `Promise.all` — and the `ws.close()` in the
+    // `finally` — permanently pending. Mirrors the Python plugin's
+    // `gracefully_cancel` of the send/receive tasks.
+    const abortFuture = new Future();
+    const onAbort = () => {
+      if (!abortFuture.done) abortFuture.resolve();
+    };
+    if (this.abortSignal.aborted) {
+      abortFuture.resolve();
+    } else {
+      this.abortSignal.addEventListener('abort', onAbort, { once: true });
+    }
+
     const sendTask = async () => {
       ws.send(setupMessage(this.#opts));
-      for await (const word of wordStream) {
-        if (this.abortSignal.aborted) break;
-        ws.send(JSON.stringify({ type: 'text', text: `${word.token} ` }));
+      while (!this.abortSignal.aborted) {
+        const result = await Promise.race([
+          wordStream.next(),
+          abortFuture.await.then(
+            () => ({ done: true, value: undefined }) as IteratorResult<tokenize.TokenData>,
+          ),
+        ]);
+        if (result.done || this.abortSignal.aborted) break;
+        ws.send(JSON.stringify({ type: 'text', text: `${result.value.token} ` }));
       }
-      ws.send(JSON.stringify({ type: 'end_of_stream' }));
+      if (!this.abortSignal.aborted) {
+        ws.send(JSON.stringify({ type: 'end_of_stream' }));
+      }
     };
 
     const receiveTask = async () => {
@@ -327,13 +361,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           resolve();
         });
         ws.once('error', reject);
-        this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+        void abortFuture.await.then(() => resolve());
       });
     };
 
     try {
       await Promise.all([sendTask(), receiveTask()]);
     } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
       ws.close();
     }
   }

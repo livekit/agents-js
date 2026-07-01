@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-gradium",
-  "version": "1.4.0",
+  "version": "1.4.11",
   "description": "Gradium plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
