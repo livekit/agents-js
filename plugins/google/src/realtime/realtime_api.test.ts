@@ -180,3 +180,63 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
   });
 });
+
+type SendTextSession = RealtimeSessionInternals & {
+  inUserActivity: boolean;
+  options: RealtimeSessionInternals['options'] & {
+    realtimeInputConfig?: { automaticActivityDetection?: { disabled?: boolean } };
+  };
+  sendText(text: string): void;
+};
+
+function createSendTextSession(): SendTextSession {
+  const session = createSessionForTest(
+    FunctionResponseScheduling.WHEN_IDLE,
+  ) as unknown as SendTextSession;
+  session.inUserActivity = false;
+  return session;
+}
+
+describe('Google Realtime sendText', () => {
+  it('sends text as a single realtime_input turn', () => {
+    const session = createSendTextSession();
+
+    session.sendText('are you still there?');
+
+    expect(session.sendClientEvent).toHaveBeenCalledTimes(1);
+    expect(session.sendClientEvent).toHaveBeenCalledWith({
+      type: 'realtime_input',
+      value: { text: 'are you still there?' },
+    });
+  });
+
+  it('does not send while blocking tools are pending', () => {
+    const session = createSendTextSession();
+    session.options.toolBehavior = Behavior.BLOCKING;
+    session.pendingToolCallIds.add('call_123');
+
+    session.sendText('are you still there?');
+
+    expect(session.sendClientEvent).not.toHaveBeenCalled();
+  });
+
+  it('wraps the text in activity markers under manual activity detection', () => {
+    const session = createSendTextSession();
+    session.options.realtimeInputConfig = { automaticActivityDetection: { disabled: true } };
+
+    session.sendText('are you still there?');
+
+    expect(session.sendClientEvent).toHaveBeenNthCalledWith(1, {
+      type: 'realtime_input',
+      value: { activityStart: {} },
+    });
+    expect(session.sendClientEvent).toHaveBeenNthCalledWith(2, {
+      type: 'realtime_input',
+      value: { text: 'are you still there?' },
+    });
+    expect(session.sendClientEvent).toHaveBeenNthCalledWith(3, {
+      type: 'realtime_input',
+      value: { activityEnd: {} },
+    });
+  });
+});
