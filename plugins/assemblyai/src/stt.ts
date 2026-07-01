@@ -10,6 +10,7 @@ import {
   Task,
   createTimedString,
   delay,
+  getBaseLanguage,
   log,
   normalizeLanguage,
   stt,
@@ -66,6 +67,8 @@ export interface STTOptions {
   encoding: STTEncoding;
   speechModel: STTModels;
   languageDetection?: boolean;
+  /** Only supported with the Universal-3 Pro model family. Set at connection time only. */
+  languageCode?: string;
   endOfTurnConfidenceThreshold?: number;
   /** Minimum silence (ms) before a confident end-of-turn is finalized. */
   minTurnSilence?: number;
@@ -146,6 +149,7 @@ export class STT extends stt.STT {
         'voiceFocus',
         'voiceFocusThreshold',
         'mode',
+        'languageCode',
       ] as const) {
         if (opts[param] !== undefined) {
           throw new Error(
@@ -164,12 +168,15 @@ export class STT extends stt.STT {
 
     // Minimize latency by default, but let AssemblyAI's mode preset control silence tuning.
     const minTurnSilence = opts.minTurnSilence ?? (opts.mode === undefined ? 100 : undefined);
+    const languageCode =
+      opts.languageCode !== undefined ? getBaseLanguage(opts.languageCode) : undefined;
 
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
       apiKey,
       minTurnSilence,
+      languageCode,
     };
   }
 
@@ -325,6 +332,7 @@ export class SpeechStream extends stt.SpeechStream {
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,
+      language_code: this.#opts.languageCode,
       prompt: this.#opts.prompt,
       agent_context: this.#opts.agentContext,
       previous_context_n_turns: this.#opts.previousContextNTurns,
