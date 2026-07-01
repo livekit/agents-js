@@ -578,12 +578,14 @@ export class AgentSession<
     room,
     inputOptions,
     outputOptions,
+    isPrimary,
     span,
   }: {
     agent: Agent;
     room?: Room;
     inputOptions?: Partial<RoomInputOptions>;
     outputOptions?: Partial<RoomOutputOptions>;
+    isPrimary: boolean;
     span: Span;
   }): Promise<void> {
     span.setAttribute(traceTypes.ATTR_AGENT_LABEL, agent.id);
@@ -640,9 +642,15 @@ export class AgentSession<
 
       this._roomIO.start();
 
-      const transport = new RoomSessionTransport(room, this._roomIO);
-      this.sessionHost = new SessionHost(transport);
-      this.sessionHost.registerSession(this);
+      if (isPrimary) {
+        // Only the primary session can have a session host: its transport
+        // registers the room-wide `lk.agent.session` byte stream handler, and
+        // a room allows a single handler per topic. Mirrors Python's
+        // `is_primary` gate so multiple sessions can share one room.
+        const transport = new RoomSessionTransport(room, this._roomIO);
+        this.sessionHost = new SessionHost(transport);
+        this.sessionHost.registerSession(this);
+      }
     }
 
     const ctx = getJobContext(false);
@@ -735,6 +743,7 @@ export class AgentSession<
 
     const ctx = getJobContext(false);
 
+    let isPrimary = true;
     if (ctx) {
       const recordIsGiven = record !== undefined;
       if (record === undefined) {
@@ -749,14 +758,17 @@ export class AgentSession<
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
-        if (recordIsGiven) {
-          throw new Error(
-            'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
-          );
+      } else {
+        isPrimary = false;
+        if (this._enableRecording) {
+          if (recordIsGiven) {
+            throw new Error(
+              'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
+            );
+          }
+          // record was not given: silently disable recording for the secondary session
+          this._recordingOptions = resolveRecordingOptions(false);
         }
-        // record was not given: silently disable recording for the secondary session
-        this._recordingOptions = resolveRecordingOptions(false);
       }
 
       if (this._enableRecording) {
@@ -775,6 +787,7 @@ export class AgentSession<
       room,
       inputOptions,
       outputOptions,
+      isPrimary,
       span: this.sessionSpan,
     });
   }
