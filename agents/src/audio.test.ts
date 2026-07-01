@@ -288,6 +288,29 @@ describe('AudioStreamDecoder — WAV fast path (no subprocess)', () => {
     expect(numChannels).toBe(1);
     expect(samples).toBe(numSamples);
   });
+
+  it('emits stereo frames with a consistent per-channel sample count', async () => {
+    // Stereo in/out at the same rate: frames pass straight from AudioByteStream without the
+    // resampler reconstructing them, so each must satisfy data.length === channels *
+    // samplesPerChannel. Guards the AudioByteStream samplesPerChannel fix (pre-fix, stereo
+    // frames reported double the per-channel count).
+    const { buf } = makeWav({ sampleRate: SAMPLE_RATE, numChannels: 2, durationMs: 500 });
+    const decoder = new AudioStreamDecoder({
+      format: 'wav',
+      sampleRate: SAMPLE_RATE,
+      numChannels: 2,
+    });
+    decoder.pushChunk(buf);
+    decoder.endInput();
+
+    let frames = 0;
+    for await (const frame of decoder as AsyncIterable<AudioFrame>) {
+      frames++;
+      expect(frame.channels).toBe(2);
+      expect(frame.data.length).toBe(frame.channels * frame.samplesPerChannel);
+    }
+    expect(frames).toBeGreaterThan(0);
+  });
 });
 
 describe.skipIf(!TEST_FFMPEG)('AudioStreamDecoder — ffmpeg path', () => {

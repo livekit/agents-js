@@ -64,7 +64,8 @@ export class AudioByteStream {
           new Int16Array(frameData.buffer),
           this.#sampleRate,
           this.#numChannels,
-          frameData.length / 2,
+          // Int16 samples per channel: total int16s (bytes/2) divided across channels.
+          frameData.length / 2 / this.#numChannels,
         ),
       );
     }
@@ -83,7 +84,7 @@ export class AudioByteStream {
         new Int16Array(this.#buf.buffer),
         this.#sampleRate,
         this.#numChannels,
-        this.#buf.length / 2,
+        this.#buf.length / 2 / this.#numChannels,
       ),
     ];
 
@@ -585,8 +586,6 @@ class WavInlineDecoder {
 /** Convert a 16-bit PCM frame between mono and stereo (only 1↔2 channels). */
 const downOrUpMix = (frame: AudioFrame, targetChannels: number): AudioFrame => {
   const src = frame.data;
-  // Derive per-channel sample count from the interleaved data rather than trusting
-  // frame.samplesPerChannel (AudioByteStream reports total samples there for multi-channel).
   const spc = Math.floor(src.length / frame.channels);
   if (frame.channels === 2 && targetChannels === 1) {
     const out = new Int16Array(spc);
