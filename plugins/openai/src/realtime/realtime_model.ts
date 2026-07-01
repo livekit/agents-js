@@ -1574,6 +1574,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleConversationItemInputAudioTranscriptionCompleted(
     event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
   ): void {
+    if (event.status === 'in_progress') {
+      this.emit('input_audio_transcription_completed', {
+        itemId: event.item_id,
+        transcript: event.transcript,
+        isFinal: false,
+      });
+      return;
+    }
+
     this.clearAccumulator(event.item_id, event.content_index ?? 0);
 
     const remoteItem = this.remoteChatCtx.get(event.item_id);
