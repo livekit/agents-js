@@ -9,6 +9,7 @@ import type { Logger } from 'pino';
 import { type Agent, isAgent } from '../generator.js';
 import { JobContext, JobProcess, type RunningJobInfo, runWithJobContextAsync } from '../job.js';
 import { initializeLogger, log } from '../log.js';
+import type { SimulationContext } from '../simulation.js';
 import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
@@ -98,6 +99,7 @@ const startJob = (
   closeEvent: EventEmitter,
   logger: Logger,
   joinFuture: Future,
+  onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
   let connect = false;
   let shutdown = false;
@@ -118,6 +120,7 @@ const startJob = (
   };
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
+  ctx._simulationEndFunc = onSimulationEnd;
 
   const task = (async () => {
     const unconnectedTimeout = setTimeout(() => {
@@ -294,7 +297,15 @@ const startJob = (
 
           logger = logger.child({ jobID: msg.value.runningJob.job.id });
 
-          job = startJob(proc, agent.entry, msg.value.runningJob, closeEvent, logger, join);
+          job = startJob(
+            proc,
+            agent.entry,
+            msg.value.runningJob,
+            closeEvent,
+            logger,
+            join,
+            agent.onSimulationEnd,
+          );
           logger.debug('job started');
           break;
         }

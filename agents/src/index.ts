@@ -24,6 +24,7 @@ export * as llm from './llm/index.js';
 export * from './log.js';
 export * as metrics from './metrics/index.js';
 export * from './plugin.js';
+export * from './simulation.js';
 export * as stream from './stream/index.js';
 export * as stt from './stt/index.js';
 export * as telemetry from './telemetry/index.js';
