@@ -59,6 +59,9 @@ export interface TTSOptions {
   useWebsocket?: boolean;
   segment?: string;
   tokenizer?: tokenize.SentenceTokenizer;
+  /** Rime TTS language code. Prefer this over the deprecated `lang` option. */
+  language?: DefaultLanguages | string;
+  /** @deprecated Use `language` instead. */
   lang?: DefaultLanguages | string;
   repetition_penalty?: number;
   temperature?: number;
@@ -88,7 +91,8 @@ const defaultTTSOptions: TTSOptions = {
 
 function modelParams(opts: TTSOptions): Record<string, string | number | boolean> {
   const params: Record<string, string | number | boolean> = {};
-  if (opts.lang !== undefined) params.lang = opts.lang;
+  const language = opts.language ?? opts.lang;
+  if (language !== undefined) params.language = language;
 
   if (opts.modelId === 'arcana') {
     if (opts.repetition_penalty !== undefined) params.repetition_penalty = opts.repetition_penalty;
@@ -139,6 +143,7 @@ function fetchPayload(opts: TTSOptions, text: string): Record<string, unknown> {
         'tokenizer',
         'speaker',
         'modelId',
+        'language',
         'lang',
         'repetition_penalty',
         'temperature',
