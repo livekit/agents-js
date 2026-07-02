@@ -214,6 +214,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
   #opts: STTv2Options & { apiKey: string };
   #logger = log();
   #ws: WebSocket | null = null;
+  #reconfigurePromise: Promise<void> | null = null;
 
   #audioDurationCollector: PeriodicCollector<number>;
   #requestId = '';
@@ -246,8 +247,84 @@ class SpeechStreamv2 extends stt.SpeechStream {
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
 
-    // Trigger reconnection loop
-    this.#reconnectEvent.set();
+    const needsReconnect =
+      'model' in opts ||
+      'sampleRate' in opts ||
+      'mipOptOut' in opts ||
+      'tags' in opts ||
+      'endpointUrl' in opts;
+    if (needsReconnect) {
+      // These options only take effect on a fresh Flux connection.
+      this.#reconnectEvent.set();
+      return;
+    }
+
+    const thresholds: Record<string, number> = {};
+    if (opts.eagerEotThreshold !== undefined) {
+      thresholds.eager_eot_threshold = opts.eagerEotThreshold;
+    }
+    if (opts.eotThreshold !== undefined) {
+      thresholds.eot_threshold = opts.eotThreshold;
+    }
+    if (opts.eotTimeoutMs !== undefined) {
+      thresholds.eot_timeout_ms = opts.eotTimeoutMs;
+    }
+
+    const changedOptions: Record<string, unknown> = {};
+    if (Object.keys(thresholds).length > 0) {
+      changedOptions.thresholds = thresholds;
+    }
+    if ('keyterms' in opts) {
+      // Deepgram replaces the full keyterm list, so send the effective value.
+      changedOptions.keyterms = this.#opts.keyterms;
+    }
+    if ('languageHint' in opts) {
+      changedOptions.language_hints = this.#opts.languageHint;
+    }
+
+    if (Object.keys(changedOptions).length > 0) {
+      this.#reconfigurePromise = this.#sendConfigure(changedOptions, this.#reconfigurePromise);
+    }
+  }
+
+  async #sendConfigure(
+    options: Record<string, unknown>,
+    previous: Promise<void> | null,
+  ): Promise<void> {
+    await previous?.catch(() => undefined);
+
+    const ws = this.#ws;
+    if (!ws) {
+      // No active connection; the next connection carries the latest options.
+      return;
+    }
+
+    if (ws.readyState === WebSocket.CONNECTING) {
+      await new Promise<void>((resolve) => {
+        ws.once('open', resolve);
+        ws.once('close', resolve);
+        ws.once('error', resolve);
+      });
+    }
+
+    if (ws.readyState !== WebSocket.OPEN) {
+      // No active connection; the next connection carries the latest options.
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      try {
+        ws.send(JSON.stringify({ type: 'Configure', ...options }), (error) => {
+          if (error) {
+            this.#logger.debug('failed to send Configure to Deepgram', { error });
+          }
+          resolve();
+        });
+      } catch (error) {
+        this.#logger.debug('failed to send Configure to Deepgram', { error });
+        resolve();
+      }
+    });
   }
 
   protected async run() {
@@ -306,6 +383,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (this.#ws?.readyState === WebSocket.OPEN) {
           this.#ws.close();
         }
+        this.#ws = null;
       }
     }
     this.close();
@@ -445,6 +523,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
           requestId: this.#requestId,
         });
       }
+    } else if (data.type === 'ConfigureSuccess') {
+      this.#logger.debug('deepgram applied Configure update', { data });
+    } else if (data.type === 'ConfigureFailure') {
+      this.#logger.warn('deepgram rejected Configure update', { data });
     } else if (data.type === 'Error') {
       this.#logger.warn('deepgram sent an error', { data });
       const desc = (data.description as string) || 'unknown error from deepgram';
