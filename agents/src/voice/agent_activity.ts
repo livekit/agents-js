@@ -45,6 +45,7 @@ import {
   ToolFlag,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
+import { FallbackRealtimeSession } from '../llm/realtime_fallback_adapter.js';
 import { isSameToolChoice, isSameToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
@@ -473,6 +474,10 @@ export class AgentActivity implements RecognitionHooks {
         await this.realtimeSession!.clearAudio();
       } else {
         this.realtimeSession = this.llm.session();
+        this.logger.debug(
+          { id: this.realtimeSession },
+          'created new realtime session for activity',
+        );
       }
 
       this.realtimeSpans = new Map<string, Span>();
@@ -485,12 +490,15 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession!.on('metrics_collected', this.onMetricsCollected);
       this.realtimeSession!.on('error', this.onModelError);
+      if (this.realtimeSession instanceof FallbackRealtimeSession) {
+        this.realtimeSession._bindAgentSession(this.agentSession);
+      }
 
       removeInstructions(this.agent._chatCtx);
 
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session
-      const capabilities = this.llm.capabilities;
+      const capabilities = this.realtimeSession!.capabilities;
       try {
         const realtimeInstructions =
           !rtReused || capabilities.midSessionInstructionsUpdate
@@ -695,6 +703,9 @@ export class AgentActivity implements RecognitionHooks {
           );
           this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
           this.realtimeSession.off('error', this.onModelError);
+          if (this.realtimeSession instanceof FallbackRealtimeSession) {
+            this.realtimeSession._bindAgentSession(undefined);
+          }
           resources.rtSession = this.realtimeSession;
           this.realtimeSession = undefined; // prevent _closeSessionResources from closing it
         }
@@ -3621,7 +3632,7 @@ export class AgentActivity implements RecognitionHooks {
       // placeholder so the active RunResult waits for that reply.
       let fut: Future<void, never> | undefined;
       if (
-        realtimeModel.capabilities.autoToolReplyGeneration &&
+        realtimeSession.capabilities.autoToolReplyGeneration &&
         shouldGenerateToolReply &&
         this.pendingAutoToolReplyFut === undefined
       ) {
@@ -3673,7 +3684,7 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     // skip realtime reply if not required or auto-generated
-    if (!shouldGenerateToolReply || realtimeModel.capabilities.autoToolReplyGeneration) {
+    if (!shouldGenerateToolReply || realtimeSession.capabilities.autoToolReplyGeneration) {
       return;
     }
 
@@ -4282,6 +4293,9 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
       this.realtimeSession.off('error', this.onModelError);
+      if (this.realtimeSession instanceof FallbackRealtimeSession) {
+        this.realtimeSession._bindAgentSession(undefined);
+      }
     }
 
     if (this.stt instanceof STT) {

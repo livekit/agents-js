@@ -120,6 +120,10 @@ export abstract class RealtimeSession extends EventEmitter {
     return this._realtimeModel;
   }
 
+  get capabilities(): RealtimeCapabilities {
+    return this._realtimeModel.capabilities;
+  }
+
   abstract get chatCtx(): ChatContext;
 
   abstract get tools(): ToolContext;
