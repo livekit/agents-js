@@ -13,9 +13,15 @@ import {
 
 type RealtimeSessionInternals = {
   generateReply: RealtimeSession['generateReply'];
+  updateInstructions: RealtimeSession['updateInstructions'];
   responseCreatedFutures: Record<string, unknown>;
   sendEvent: ReturnType<typeof vi.fn>;
   textModeRecoveryRetries: number;
+  instructions?: string;
+  _options: {
+    isAzure?: boolean;
+    apiVersion?: string;
+  };
 };
 
 type ResponseDoneSessionInternals = {
@@ -36,6 +42,7 @@ function createSessionForTest(): RealtimeSessionInternals {
   session.responseCreatedFutures = {};
   session.sendEvent = vi.fn();
   session.textModeRecoveryRetries = 0;
+  session._options = {};
   return session;
 }
 
@@ -49,6 +56,37 @@ function stubTaskRuntime(): void {
 }
 
 describe('RealtimeSession.generateReply', () => {
+  it('preserves session instructions when generating with per-response instructions', async () => {
+    const session = createSessionForTest();
+    await session.updateInstructions('Your name is Kelly. Always respond in English.');
+
+    const abortController = new AbortController();
+    const promise = session.generateReply('Tell the user what your name is.', {
+      signal: abortController.signal,
+    });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    expect(session.instructions).toBe('Your name is Kelly. Always respond in English.');
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.update',
+        session: expect.objectContaining({
+          instructions: 'Your name is Kelly. Always respond in English.',
+        }),
+      }),
+    );
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'response.create',
+        response: expect.objectContaining({
+          instructions:
+            'Your name is Kelly. Always respond in English.\nTell the user what your name is.',
+        }),
+      }),
+    );
+  });
+
   it('cancels an in-flight response when aborted before response.created', async () => {
     const session = createSessionForTest();
     const abortController = new AbortController();

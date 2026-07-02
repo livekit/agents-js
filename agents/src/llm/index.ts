@@ -2,22 +2,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  CONFIRM_DUPLICATE_PARAM,
   handoff,
   isFunctionTool,
-  tool,
+  isProviderTool,
+  isTool,
+  isToolset,
+  ProviderTool,
   sortedToolEntries,
   sortedToolNames,
+  tool,
+  ToolContext,
   ToolError,
   ToolFlag,
+  Toolset,
+  toToolContext,
   type AgentHandoff,
+  type DuplicateMode,
   type FunctionTool,
-  type ProviderDefinedTool,
   type Tool,
+  type ToolCalledEvent,
   type ToolChoice,
-  type ToolContext,
+  type ToolCompletedEvent,
+  type ToolContextEntry,
+  type ToolContextLike,
   type ToolOptions,
+  type ToolsetContext,
+  type ToolsetCreateOptions,
   type ToolType,
 } from './tool_context.js';
+
+export { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
+export type {
+  AsyncToolOptions,
+  DuplicatePromptArgs,
+  ReplyPromptArgs,
+  ToolHandlingOptions,
+} from '../voice/tool_executor.js';
 
 export {
   AgentHandoffItem,
@@ -45,6 +66,7 @@ export {
   LLMStream,
   type ChatChunk,
   type ChoiceDelta,
+  type CollectedResponse,
   type CompletionUsage,
   type LLMCallbacks,
 } from './llm.js';

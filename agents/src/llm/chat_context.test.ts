@@ -19,6 +19,7 @@ import {
   isInstructions,
   renderInstructions,
 } from './chat_context.js';
+import { ProviderTool, ToolContext, tool } from './tool_context.js';
 
 initializeLogger({ pretty: false, level: 'error' });
 
@@ -1477,5 +1478,34 @@ extra`;
 
     // base context content is untouched (was the original instr)
     expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
+  });
+});
+
+describe('ChatContext.copy with toolCtx filter', () => {
+  it('drops function calls / outputs whose tool is not in the supplied ToolContext', () => {
+    const known = tool({ name: 'known', description: 'k', execute: async () => 'ok' });
+    const ctx = new ChatContext([
+      ChatMessage.create({ role: 'user', content: ['hello'] }),
+      FunctionCall.create({ callId: 'c1', name: 'known', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c1', name: 'known', output: 'done', isError: false }),
+      FunctionCall.create({ callId: 'c2', name: 'removed', args: '{}' }),
+      FunctionCallOutput.create({ callId: 'c2', name: 'removed', output: 'x', isError: false }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([known]) });
+    const types = filtered.items.map((i) => `${i.type}:${'name' in i ? i.name : ''}`);
+    expect(types).toEqual(['message:', 'function_call:known', 'function_call_output:known']);
+  });
+
+  it('keeps provider-tool calls when the ToolContext holds a matching provider tool id', () => {
+    class CodeRunner extends ProviderTool {}
+    const provider = new CodeRunner({ id: 'code_runner' });
+    const ctx = new ChatContext([
+      FunctionCall.create({ callId: 'p1', name: 'code_runner', args: '{}' }),
+      FunctionCall.create({ callId: 'p2', name: 'other', args: '{}' }),
+    ]);
+
+    const filtered = ctx.copy({ toolCtx: new ToolContext([provider]) });
+    expect(filtered.items.map((i) => ('name' in i ? i.name : ''))).toEqual(['code_runner']);
   });
 });

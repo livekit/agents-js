@@ -14,8 +14,11 @@ import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
-import { TransformStream, type TransformStreamDefaultController } from 'node:stream/web';
+import {
+  ReadableStream,
+  TransformStream,
+  type TransformStreamDefaultController,
+} from 'node:stream/web';
 import { log } from './log.js';
 
 /**
@@ -939,6 +942,71 @@ export function waitUntilTimeout<T, E extends Error = IdleTimeoutError>(
   ]).finally(() => clearTimeout(timer)) as Promise<Throws<T, E>>;
 }
 
+/** Result of {@link waitUntilAborted}: either the settled value, or an abort marker. */
+export type Aborted<T> =
+  | {
+      result: T;
+      isAborted: false;
+    }
+  | {
+      result: undefined;
+      isAborted: true;
+    };
+
+/**
+ * Race a promise against an `AbortSignal`. Unlike a plain reject-on-abort race,
+ * this resolves with a tagged result so callers can branch on `isAborted`
+ * instead of catching. On abort it resolves `{ result: undefined, isAborted: true }`;
+ * otherwise it resolves `{ result, isAborted: false }`. A rejection of the
+ * underlying promise is propagated. The abort listener is always cleaned up.
+ *
+ * An already-aborted signal short-circuits immediately to the abort result.
+ *
+ * Note: the underlying promise is not cancelled — it keeps running; this only
+ * stops waiting for it. Because the promise is passed already-created, the
+ * caller's operation has already started, so a pre-aborted signal won't prevent
+ * that side effect (pass/await a factory yourself if you need to avoid starting it).
+ */
+export async function waitUntilAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<Aborted<T>> {
+  if (signal.aborted) {
+    // We're abandoning the promise, but it's already running: swallow any late
+    // rejection so it doesn't surface as an unhandled rejection (mirrors how the
+    // .catch below consumes a rejection that loses the race to an abort).
+    void promise.catch(() => {});
+    return { result: undefined, isAborted: true };
+  }
+
+  const abortFut = new Future<Aborted<T>>();
+
+  const resolveAbort = () => {
+    if (!abortFut.done) {
+      abortFut.resolve({ result: undefined, isAborted: true });
+    }
+  };
+
+  signal.addEventListener('abort', resolveAbort);
+
+  promise
+    .then((r) => {
+      if (!abortFut.done) {
+        abortFut.resolve({ result: r, isAborted: false });
+      }
+    })
+    .catch((e) => {
+      if (!abortFut.done) {
+        abortFut.reject(e);
+      }
+    })
+    .finally(() => {
+      signal.removeEventListener('abort', resolveAbort);
+    });
+
+  return await abortFut.await;
+}
+
 /**
  * Returns a participant that matches the given identity. If identity is None, the first
  * participant that joins the room will be returned.
@@ -1322,15 +1390,21 @@ export async function* readStream<T>(
       const abortPromise = waitForAbort(signal);
       while (true) {
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
-        if (!result) break;
+        if (!result) {
+          break;
+        }
         const { done, value } = result;
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     } else {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          break;
+        }
         yield value;
       }
     }
@@ -1341,6 +1415,39 @@ export async function* readStream<T>(
       // stream cleanup errors are expected (releasing reader, controller closed, etc.)
     }
   }
+}
+
+export function toStream<T>(iterable: AsyncIterable<T>): ReadableStream<T> {
+  let iterator: AsyncIterator<T> | undefined;
+  let cancelled = false;
+
+  return new ReadableStream<T>({
+    async start(controller) {
+      iterator = iterable[Symbol.asyncIterator]();
+
+      try {
+        while (true) {
+          const { done, value } = await iterator.next();
+          if (done || cancelled) {
+            break;
+          }
+          controller.enqueue(value);
+        }
+
+        if (!cancelled) {
+          controller.close();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          controller.error(error);
+        }
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      void iterator?.return?.(reason).catch(() => {});
+    },
+  });
 }
 
 export async function waitForAbort(signal: AbortSignal) {

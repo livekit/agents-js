@@ -16,6 +16,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # LiveKit Agents for Node.js
 
+> For details on the new JavaScript-idiomatic agent API and the breaking changes in agents-js 1.5.0, see the [agents-js 1.5.0 migration guide](https://docs.livekit.io/reference/migration-guides/agents-v1.5).
+
 <!--BEGIN_DESCRIPTION-->
 
 The Agent Framework is designed for building realtime, programmable participants that run on

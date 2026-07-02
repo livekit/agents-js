@@ -34,6 +34,7 @@
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "api:check": "api-extractor run --typescript-compiler-folder ../node_modules/typescript",
     "api:update": "api-extractor run --local --typescript-compiler-folder ../node_modules/typescript --verbose",
     "throws:check": "throws-check src/**/*.ts"
@@ -54,7 +55,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@livekit/local-inference": "^0.2.6",
     "@livekit/mutex": "^1.1.1",
-    "@livekit/protocol": "^1.46.8",
+    "@livekit/protocol": "^1.48.0",
     "@livekit/throws-transformer": "0.1.8",
     "@livekit/typed-emitter": "^3.0.0",
     "@opentelemetry/api": "^1.9.0",
