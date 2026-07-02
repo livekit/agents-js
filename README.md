@@ -15,7 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 <!--END_BANNER_IMAGE-->
 
 > [!TIP]
-> See the ✨ new JavaScript-idiomatic agent API ✨ and breaking changes in the [agents-js 1.5.0 migration guide](https://docs.livekit.io/reference/migration-guides/agents-v1.5).
+> We just released livekit-agents 1.5.0. Check the release note and [migration guide here](https://docs.livekit.io/reference/migration-guides/agents-v1.5).
 
 # LiveKit Agents for Node.js
 
