@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  dedent,
+  defineAgent,
+  inference,
+  llm,
+  voice,
+} from '@livekit/agents';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+
+// Shared data that's used by the storyteller agent.
+// This structure is passed as a parameter to function calls.
+type StoryData = {
+  name?: string;
+  location?: string;
+};
+
+// Use inheritance to create agent with custom hooks
+class IntroAgent extends voice.Agent<StoryData> {
+  async onEnter() {
+    this.session.generateReply({
+      instructions: '"greet the user and gather information"',
+    });
+  }
+
+  static createIntroAgent() {
+    return new IntroAgent({
+      instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
+      tools: [
+        llm.tool({
+          name: 'informationGathered',
+          description:
+            'Called when the user has provided the information needed to make the story personalized and engaging.',
+          parameters: z.object({
+            name: z.string().describe('The name of the user'),
+            location: z.string().describe('The location of the user'),
+          }),
+          execute: async ({ name, location }, { ctx }: llm.ToolOptions<StoryData>) => {
+            ctx.userData.name = name;
+            ctx.userData.location = location;
+
+            const storyAgent = StoryAgent.createStoryAgent(name, location);
+            return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
+          },
+        }),
+      ],
+    });
+  }
+}
+
+class StoryAgent extends voice.Agent<StoryData> {
+  async onEnter() {
+    this.session.generateReply();
+  }
+
+  static createStoryAgent(name: string, location: string) {
+    return new StoryAgent({
+      instructions: dedent`
+        You are a storyteller. Use the user's information in order to make the story personalized.
+        The user's name is ${name}, from ${location}
+      `,
+    });
+  }
+}
+
+export default defineAgent({
+  entry: async (ctx: JobContext) => {
+    const userdata: StoryData = {};
+
+    const session = new voice.AgentSession({
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel(),
+      userData: userdata,
+    });
+
+    await session.start({
+      agent: IntroAgent.createIntroAgent(),
+      room: ctx.room,
+    });
+
+    const participant = await ctx.waitForParticipant();
+    console.log('participant joined: ', participant.identity);
+  },
+});
+
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));

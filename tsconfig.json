@@ -1,0 +1,39 @@
+{
+  "files": ["globals.d.ts"],
+  "compilerOptions": {
+    "rootDir": ".",
+    "baseUrl": ".",
+    "target": "es2022",
+    "types": ["node"],
+    "module": "node16",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "moduleResolution": "node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@livekit/agents": ["agents/src"],
+      "@livekit/agents-plugin-*": ["plugins/*/src"]
+    }
+  },
+
+  "typedocOptions": {
+    "entryPoints": ["agents", "plugins/*"],
+    "entryPointStrategy": "packages",
+    "name": "LiveKit Agents",
+    "exclude": ["plugins/test"],
+    "excludeInternal": true,
+    "excludePrivate": true,
+    "excludeProtected": true,
+    "excludeExternals": true,
+    "includeVersion": true,
+    "out": "docs",
+    "theme": "default"
+  }
+}

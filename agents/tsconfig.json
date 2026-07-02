@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.json",
+
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "dist",
+    "outDir": "dist"
+  },
+  "typedocOptions": {
+    "name": "agents",
+    "entryPointStrategy": "resolve",
+    "readme": "none",
+    "entryPoints": ["src/index.ts"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

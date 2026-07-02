@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+SPDX-PackageName = "agents-js"
+SPDX-PackageSupplier = "LiveKit, Inc. <https://livekit.io>"
+SPDX-PackageDownloadLocation = "https://github.com/livekit/agents-js"
+
+# model license
+[[annotations]]
+path = ["MODEL_LICENSE"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# trivial files
+[[annotations]]
+path = [".gitignore", "flake.lock", ".envrc", "packages/livekit-rtc/.gitignore", ".changeset/**", "**/CHANGELOG.md", "NOTICE", ".github/**"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# pnpm files
+[[annotations]]
+path = ["pnpm-workspace.yaml", "pnpm-lock.yaml", "patches/**"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# project configuration files
+[[annotations]]
+path = [".prettierrc", ".prettierignore", ".eslintrc", "**.json", "**/tsup.config.ts"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# silero onnx file
+[[annotations]]
+path = ["**/silero_vad.onnx"]
+SPDX-FileCopyrightText = "2024 Silero Team"
+SPDX-License-Identifier = "CC-BY-NC-SA-4.0"
+
+# testing files
+[[annotations]]
+path = ["**/.gitattributes", "**.wav", "**/__snapshots__/**"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# audio resources
+[[annotations]]
+path = ["agents/resources/*.ogg", "agents/resources/NOTICE"]
+SPDX-FileCopyrightText = "2024 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# image assets
+[[annotations]]
+path = ["**/*.png", "**/*.jpg", "**/*.jpeg"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# README files
+[[annotations]]
+path = ["**/README.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+# API Extractor reports
+[[annotations]]
+path = ["**/etc/*.api.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"

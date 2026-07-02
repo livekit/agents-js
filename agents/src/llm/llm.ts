@@ -1,0 +1,405 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
+import type { Span } from '@opentelemetry/api';
+import { EventEmitter } from 'node:events';
+import { APIConnectionError, APIError } from '../_exceptions.js';
+import { log } from '../log.js';
+import type { LLMMetrics } from '../metrics/base.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
+import { type APIConnectOptions, intervalForRetry } from '../types.js';
+import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
+import {
+  type ToolChoice,
+  type ToolContext,
+  type ToolContextLike,
+  toToolContext,
+} from './tool_context.js';
+
+export interface ChoiceDelta {
+  role: ChatRole;
+  content?: string;
+  toolCalls?: FunctionCall[];
+  extra?: Record<string, unknown>;
+}
+
+export interface CompletionUsage {
+  completionTokens: number;
+  promptTokens: number;
+  promptCachedTokens: number;
+  totalTokens: number;
+  /** The service tier used for processing (e.g. 'default', 'priority', 'flex'). */
+  serviceTier?: string;
+}
+
+export interface ChatChunk {
+  id: string;
+  delta?: ChoiceDelta;
+  usage?: CompletionUsage;
+}
+
+export interface CollectedResponse {
+  text: string;
+  toolCalls: FunctionCall[];
+  usage?: CompletionUsage;
+  /**
+   * Provider-specific extra data accumulated across chunks
+   * (e.g., xAI encrypted reasoning, Google thought signatures).
+   */
+  extra: Record<string, unknown>;
+}
+
+export interface LLMError {
+  type: 'llm_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
+export type LLMCallbacks = {
+  ['metrics_collected']: (metrics: LLMMetrics) => void;
+  ['error']: (error: LLMError) => void;
+};
+
+export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
+  constructor() {
+    super();
+  }
+
+  abstract label(): string;
+
+  /**
+   * Get the model name/identifier for this LLM instance.
+   *
+   * @returns The model name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their model information.
+   */
+  get model(): string {
+    return 'unknown';
+  }
+
+  /**
+   * Get the provider name for this LLM instance.
+   *
+   * @returns The provider name if available, "unknown" otherwise.
+   *
+   * @remarks
+   * Plugins should override this property to provide their provider information.
+   */
+  get provider(): string {
+    return 'unknown';
+  }
+
+  /**
+   * Returns a {@link LLMStream} that can be used to push text and receive LLM responses.
+   */
+  abstract chat({
+    chatCtx,
+    toolCtx,
+    connOptions,
+    parallelToolCalls,
+    toolChoice,
+    extraKwargs,
+  }: {
+    chatCtx: ChatContext;
+    /**
+     * Tools to advertise to the LLM. Accepts either a `ToolContext` instance or a raw
+     * `(FunctionTool | ProviderTool)[]` array — the array form is normalized into a
+     * `ToolContext` internally so callers don't have to construct one themselves.
+     */
+    toolCtx?: ToolContextLike;
+    connOptions?: APIConnectOptions;
+    parallelToolCalls?: boolean;
+    toolChoice?: ToolChoice;
+    extraKwargs?: Record<string, unknown>;
+  }): LLMStream;
+
+  /**
+   * Pre-warm connection to the LLM service
+   */
+  prewarm(): void {
+    // Default implementation - subclasses can override
+  }
+
+  async aclose(): Promise<void> {
+    // Default implementation - subclasses can override
+  }
+}
+
+export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
+  protected output = new AsyncIterableQueue<ChatChunk>();
+  protected queue = new AsyncIterableQueue<ChatChunk>();
+  protected closed = false;
+  protected abortController = new AbortController();
+  protected _connOptions: APIConnectOptions;
+  protected logger = log();
+
+  #llm: LLM;
+  #chatCtx: ChatContext;
+  #toolCtx?: ToolContext;
+  #llmRequestSpan?: Span;
+  // Provider-known response ids collected from ChatChunks during the current
+  // attempt; reset before each retry and written to the `llm_request_run` span.
+  #providerRequestIds: string[] = [];
+
+  constructor(
+    llm: LLM,
+    {
+      chatCtx,
+      toolCtx,
+      connOptions,
+    }: {
+      chatCtx: ChatContext;
+      toolCtx?: ToolContextLike;
+      connOptions: APIConnectOptions;
+    },
+  ) {
+    this.#llm = llm;
+    this.#chatCtx = chatCtx;
+    this.#toolCtx = toToolContext(toolCtx);
+    this._connOptions = connOptions;
+    this.monitorMetrics();
+    this.abortController.signal.addEventListener('abort', () => {
+      // TODO (AJS-37) clean this up when we refactor with streams
+      this.output.close();
+      this.closed = true;
+    });
+
+    // this is a hack to immitate asyncio.create_task so that mainTask
+    // is run **after** the constructor has finished. Otherwise we get
+    // runtime error when trying to access class variables in the
+    // `run` method.
+    startSoon(() => this.mainTask().finally(() => this.queue.close()));
+  }
+
+  private _mainTaskImpl = async (span: Span) => {
+    this.#llmRequestSpan = span;
+    span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
+
+    for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      try {
+        return await tracer.startActiveSpan(
+          async (attemptSpan) => {
+            attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
+            // Reset per-attempt response ids; the metrics monitor populates this
+            // as ChatChunks arrive.
+            this.#providerRequestIds = [];
+            try {
+              return await this.run();
+            } catch (error) {
+              recordException(attemptSpan, toError(error));
+              throw error;
+            } finally {
+              if (this.#providerRequestIds.length) {
+                attemptSpan.setAttribute(
+                  traceTypes.ATTR_PROVIDER_REQUEST_IDS,
+                  this.#providerRequestIds,
+                );
+              }
+            }
+          },
+          { name: 'llm_request_run' },
+        );
+      } catch (error) {
+        if (error instanceof APIError) {
+          const retryInterval = intervalForRetry(this._connOptions, i);
+
+          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+            this.emitError({ error, recoverable: false });
+            throw error;
+          } else if (i === this._connOptions.maxRetry) {
+            this.emitError({ error, recoverable: false });
+            throw new APIConnectionError({
+              message: `failed to generate LLM completion after ${this._connOptions.maxRetry + 1} attempts`,
+              options: { retryable: false },
+            });
+          } else {
+            this.emitError({ error, recoverable: true });
+            this.logger.warn(
+              { llm: this.#llm.label(), attempt: i + 1, error },
+              `failed to generate LLM completion, retrying in ${retryInterval}ms`,
+            );
+          }
+
+          if (retryInterval > 0) {
+            await delay(retryInterval);
+          }
+        } else {
+          this.emitError({ error: toError(error), recoverable: false });
+          throw error;
+        }
+      }
+    }
+  };
+
+  private mainTask = async () =>
+    tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
+      name: 'llm_request',
+      endOnExit: false,
+    });
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    this.#llm.emit('error', {
+      type: 'llm_error',
+      timestamp: Date.now(),
+      label: this.#llm.label(),
+      error,
+      recoverable,
+    });
+  }
+
+  protected async monitorMetrics() {
+    const startTime = process.hrtime.bigint();
+    let ttft: bigint = BigInt(-1);
+    let requestId = '';
+    let usage: CompletionUsage | undefined;
+    let completionStartTime: string | undefined;
+
+    for await (const ev of this.queue) {
+      if (this.abortController.signal.aborted) {
+        break;
+      }
+      this.output.put(ev);
+      requestId = ev.id;
+      if (requestId && !this.#providerRequestIds.includes(requestId)) {
+        this.#providerRequestIds.push(requestId);
+      }
+      if (ttft === BigInt(-1)) {
+        ttft = process.hrtime.bigint() - startTime;
+        completionStartTime = new Date().toISOString();
+      }
+      if (ev.usage) {
+        usage = ev.usage;
+      }
+    }
+    this.output.close();
+
+    const duration = process.hrtime.bigint() - startTime;
+    const durationMs = Math.trunc(Number(duration / BigInt(1000000)));
+    const metrics: LLMMetrics = {
+      type: 'llm_metrics',
+      timestamp: Date.now(),
+      requestId,
+      ttftMs: ttft === BigInt(-1) ? -1 : Math.trunc(Number(ttft / BigInt(1000000))),
+      durationMs,
+      cancelled: this.abortController.signal.aborted,
+      label: this.#llm.label(),
+      completionTokens: usage?.completionTokens || 0,
+      promptTokens: usage?.promptTokens || 0,
+      promptCachedTokens: usage?.promptCachedTokens || 0,
+      totalTokens: usage?.totalTokens || 0,
+      tokensPerSecond: (() => {
+        if (durationMs <= 0) {
+          return 0;
+        }
+        return (usage?.completionTokens || 0) / (durationMs / 1000);
+      })(),
+      metadata: {
+        modelProvider: this.#llm.provider,
+        modelName: this.#llm.model,
+      },
+    };
+
+    if (this.#llmRequestSpan) {
+      this.#llmRequestSpan.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(metrics));
+
+      this.#llmRequestSpan.setAttributes({
+        [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: metrics.promptTokens,
+        [traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS]: metrics.completionTokens,
+      });
+
+      if (completionStartTime) {
+        this.#llmRequestSpan.setAttribute(
+          traceTypes.ATTR_LANGFUSE_COMPLETION_START_TIME,
+          completionStartTime,
+        );
+      }
+
+      // End the span now that metrics are collected
+      this.#llmRequestSpan.end();
+    }
+
+    this.#llm.emit('metrics_collected', metrics);
+  }
+
+  protected abstract run(): Promise<void>;
+
+  /** The function context of this stream. */
+  get toolCtx(): ToolContext | undefined {
+    return this.#toolCtx;
+  }
+
+  /** The initial chat context of this stream. */
+  get chatCtx(): ChatContext {
+    return this.#chatCtx;
+  }
+
+  /** The connection options for this stream. */
+  get connOptions(): APIConnectOptions {
+    return this._connOptions;
+  }
+
+  next(): Promise<IteratorResult<ChatChunk>> {
+    return this.output.next();
+  }
+
+  close() {
+    this.abortController.abort();
+  }
+
+  /**
+   * Collect the entire stream into a single response.
+   *
+   * @example
+   * ```ts
+   * const response = await myLlm.chat({ chatCtx, toolCtx }).collect();
+   *
+   * for (const tc of response.toolCalls) {
+   *   // execute the tool call...
+   * }
+   * ```
+   */
+  async collect(): Promise<CollectedResponse> {
+    const textParts: string[] = [];
+    const toolCalls: FunctionCall[] = [];
+    let usage: CompletionUsage | undefined;
+    const extra: Record<string, unknown> = {};
+
+    try {
+      for await (const chunk of this) {
+        if (chunk.delta) {
+          if (chunk.delta.content) {
+            textParts.push(chunk.delta.content);
+          }
+          if (chunk.delta.toolCalls) {
+            toolCalls.push(...chunk.delta.toolCalls);
+          }
+          if (chunk.delta.extra) {
+            Object.assign(extra, chunk.delta.extra);
+          }
+        }
+        if (chunk.usage !== undefined) {
+          usage = chunk.usage;
+        }
+      }
+    } finally {
+      this.close();
+    }
+
+    return {
+      text: textParts.join('').trim(),
+      toolCalls,
+      usage,
+      extra,
+    };
+  }
+
+  [Symbol.asyncIterator](): LLMStream {
+    return this;
+  }
+}

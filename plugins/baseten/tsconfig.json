@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./src"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-baseten",
+    "entryPointStrategy": "resolve",
+    "entryPoints": ["src/index.ts"]
+  }
+}

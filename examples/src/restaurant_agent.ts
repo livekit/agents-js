@@ -1,0 +1,418 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  dedent,
+  defineAgent,
+  inference,
+  llm,
+  voice,
+} from '@livekit/agents';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+
+const voices = {
+  greeter: 'e07c00bc-4134-4eae-9ea4-1a55fb45746b',
+  reservation: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+  takeaway: '5ee9feff-1265-424a-9d7f-8e4d431a12c7',
+  checkout: 'a167e0f3-df7e-4d52-a9c3-f949145efdab',
+};
+
+type UserData = {
+  customer: Partial<{
+    name: string;
+    phone: string;
+  }>;
+  creditCard: Partial<{
+    number: string;
+    expiry: string;
+    cvv: string;
+  }>;
+  reservationTime?: string;
+  order?: string[];
+  expense?: number;
+  checkedOut?: boolean;
+  agents: Record<string, voice.Agent<UserData>>;
+  prevAgent?: voice.Agent<UserData>;
+};
+
+function createUserData(agents: Record<string, voice.Agent<UserData>>) {
+  return {
+    customer: {},
+    creditCard: {},
+    agents,
+  };
+}
+
+function summarize({
+  customer,
+  reservationTime,
+  order,
+  creditCard,
+  expense,
+  checkedOut,
+}: UserData) {
+  return JSON.stringify(
+    {
+      customer: customer.name ?? 'unknown',
+      customerPhone: customer.phone ?? 'unknown',
+      reservationTime: reservationTime ?? 'unknown',
+      order: order ?? 'unknown',
+      creditCard: creditCard
+        ? {
+            number: creditCard.number ?? 'unknown',
+            expiry: creditCard.expiry ?? 'unknown',
+            cvv: creditCard.cvv ?? 'unknown',
+          }
+        : undefined,
+      expense: expense ?? 'unknown',
+      checkedOut: checkedOut ?? false,
+    },
+    null,
+    2,
+  );
+}
+
+const updateName = llm.tool({
+  name: 'updateName',
+  description:
+    'Called when the user provides their name. Confirm the spelling with the user before calling the function.',
+  parameters: z.object({
+    name: z.string().describe('The customer name'),
+  }),
+  execute: async ({ name }, { ctx }: llm.ToolOptions<UserData>) => {
+    ctx.userData.customer.name = name;
+    return `The name is updated to ${name}`;
+  },
+});
+
+const updatePhone = llm.tool({
+  name: 'updatePhone',
+  description:
+    'Called when the user provides their phone number. Confirm the spelling with the user before calling the function.',
+  parameters: z.object({
+    phone: z.string().describe('The customer phone number'),
+  }),
+  execute: async ({ phone }, { ctx }: llm.ToolOptions<UserData>) => {
+    ctx.userData.customer.phone = phone;
+    return `The phone number is updated to ${phone}`;
+  },
+});
+
+const toGreeter = llm.tool({
+  name: 'toGreeter',
+  description:
+    'Called when user asks any unrelated questions or requests any other services not in your job description.',
+  execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
+    const currAgent = ctx.session.currentAgent as BaseAgent;
+    return await currAgent.transferToAgent({
+      name: 'greeter',
+      ctx,
+    });
+  },
+});
+
+class BaseAgent extends voice.Agent<UserData> {
+  name: string;
+
+  constructor(options: voice.AgentOptions<UserData> & { name: string }) {
+    const { name, ...opts } = options;
+    super(opts);
+    this.name = name;
+  }
+
+  async onEnter(): Promise<void> {
+    const userdata = this.session.userData;
+    const chatCtx = this.chatCtx.copy();
+
+    // add the previous agent's chat history to the current agent
+    if (userdata.prevAgent) {
+      const truncatedChatCtx = userdata.prevAgent.chatCtx
+        .copy({
+          excludeInstructions: true,
+          excludeFunctionCall: false,
+        })
+        .truncate(6);
+      const existingIds = new Set(chatCtx.items.map((item) => item.id));
+      const newItems = truncatedChatCtx.items.filter((item) => !existingIds.has(item.id));
+      chatCtx.items.push(...newItems);
+    }
+
+    // add an instructions including the user data as system message
+    chatCtx.addMessage({
+      role: 'system',
+      content: `You are ${this.name} agent. Current user data is ${summarize(userdata)}`,
+    });
+
+    await this.updateChatCtx(chatCtx);
+    this.session.generateReply({ toolChoice: 'none' });
+  }
+
+  async transferToAgent(options: { name: string; ctx: voice.RunContext<UserData> }) {
+    const { name, ctx } = options;
+    const userdata = ctx.userData;
+    const currentAgent = ctx.session.currentAgent;
+    const nextAgent = userdata.agents[name];
+    if (!nextAgent) {
+      throw new Error(`Agent ${name} not found`);
+    }
+    userdata.prevAgent = currentAgent;
+
+    return llm.handoff({
+      agent: nextAgent,
+      returns: `Transferring to ${name}`,
+    });
+  }
+}
+
+function createGreeterAgent(menu: string) {
+  const greeter = new BaseAgent({
+    name: 'greeter',
+    instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
+    llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.greeter }),
+    tools: [
+      llm.tool({
+        name: 'toReservation',
+        description: dedent`
+          Called when user wants to make or update a reservation.
+          This function handles transitioning to the reservation agent
+          who will collect the necessary details like reservation time,
+          customer name and phone number.
+        `,
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
+          return await greeter.transferToAgent({
+            name: 'reservation',
+            ctx,
+          });
+        },
+      }),
+      llm.tool({
+        name: 'toTakeaway',
+        description: dedent`
+          Called when the user wants to place a takeaway order.
+          This includes handling orders for pickup, delivery, or when the user wants to
+          proceed to checkout with their existing order.
+        `,
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
+          return await greeter.transferToAgent({
+            name: 'takeaway',
+            ctx,
+          });
+        },
+      }),
+    ],
+  });
+
+  return greeter;
+}
+
+function createReservationAgent() {
+  const reservation = new BaseAgent({
+    name: 'reservation',
+    instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.reservation }),
+    tools: [
+      updateName,
+      updatePhone,
+      toGreeter,
+      llm.tool({
+        name: 'updateReservationTime',
+        description: dedent`
+          Called when the user provides their reservation time.
+          Confirm the time with the user before calling the function.
+        `,
+        parameters: z.object({
+          time: z.string().describe('The reservation time'),
+        }),
+        execute: async ({ time }, { ctx }: llm.ToolOptions<UserData>) => {
+          ctx.userData.reservationTime = time;
+          return `The reservation time is updated to ${time}`;
+        },
+      }),
+      llm.tool({
+        name: 'confirmReservation',
+        description: `Called when the user confirms the reservation.`,
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.customer.name || !userdata.customer.phone) {
+            return 'Please provide your name and phone number first.';
+          }
+          if (!userdata.reservationTime) {
+            return 'Please provide reservation time first.';
+          }
+          return await reservation.transferToAgent({
+            name: 'greeter',
+            ctx,
+          });
+        },
+      }),
+    ],
+  });
+
+  return reservation;
+}
+
+function createTakeawayAgent(menu: string) {
+  const takeaway = new BaseAgent({
+    name: 'takeaway',
+    instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.takeaway }),
+    tools: [
+      toGreeter,
+      llm.tool({
+        name: 'updateOrder',
+        description: `Called when the user provides their order.`,
+        parameters: z.object({
+          items: z.array(z.string()).describe('The items of the full order'),
+        }),
+        execute: async ({ items }, { ctx }: llm.ToolOptions<UserData>) => {
+          ctx.userData.order = items;
+          return `The order is updated to ${items}`;
+        },
+      }),
+      llm.tool({
+        name: 'toCheckout',
+        description: `Called when the user confirms the order.`,
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.order) {
+            return 'No takeaway order found. Please make an order first.';
+          }
+          return await takeaway.transferToAgent({
+            name: 'checkout',
+            ctx,
+          });
+        },
+      }),
+    ],
+  });
+
+  return takeaway;
+}
+
+function createCheckoutAgent(menu: string) {
+  const checkout = new BaseAgent({
+    name: 'checkout',
+    instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
+    tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.checkout }),
+    tools: [
+      updateName,
+      updatePhone,
+      toGreeter,
+      llm.tool({
+        name: 'confirmExpense',
+        description: `Called when the user confirms the expense.`,
+        parameters: z.object({
+          expense: z.number().describe('The expense of the order'),
+        }),
+        execute: async ({ expense }, { ctx }: llm.ToolOptions<UserData>) => {
+          ctx.userData.expense = expense;
+          return `The expense is confirmed to be ${expense}`;
+        },
+      }),
+      llm.tool({
+        name: 'updateCreditCard',
+        description: dedent`
+          Called when the user provides their credit card number, expiry date, and CVV.
+          Confirm the spelling with the user before calling the function.
+        `,
+        parameters: z.object({
+          number: z.string().describe('The credit card number'),
+          expiry: z.string().describe('The expiry date of the credit card'),
+          cvv: z.string().describe('The CVV of the credit card'),
+        }),
+        execute: async ({ number, expiry, cvv }, { ctx }: llm.ToolOptions<UserData>) => {
+          ctx.userData.creditCard = { number, expiry, cvv };
+          return `The credit card number is updated to ${number}`;
+        },
+      }),
+      llm.tool({
+        name: 'confirmCheckout',
+        description: `Called when the user confirms the checkout.`,
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
+          const userdata = ctx.userData;
+          if (!userdata.expense) {
+            return 'Please confirm the expense first.';
+          }
+          if (
+            !userdata.creditCard.number ||
+            !userdata.creditCard.expiry ||
+            !userdata.creditCard.cvv
+          ) {
+            return 'Please provide the credit card information first.';
+          }
+          userdata.checkedOut = true;
+          return await checkout.transferToAgent({
+            name: 'greeter',
+            ctx,
+          });
+        },
+      }),
+      llm.tool({
+        name: 'toTakeaway',
+        description: `Called when the user wants to update their order.`,
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
+          return await checkout.transferToAgent({
+            name: 'takeaway',
+            ctx,
+          });
+        },
+      }),
+    ],
+  });
+
+  return checkout;
+}
+
+export default defineAgent({
+  entry: async (ctx: JobContext) => {
+    const menu = 'Pizza: $10, Salad: $5, Ice Cream: $3, Coffee: $2';
+    const userData = createUserData({
+      greeter: createGreeterAgent(menu),
+      reservation: createReservationAgent(),
+      takeaway: createTakeawayAgent(menu),
+      checkout: createCheckoutAgent(menu),
+    });
+
+    const session = new voice.AgentSession({
+      // VAD is auto-provisioned by AgentSession (bundled silero via
+      // @livekit/local-inference). Pass `vad: null` to opt out, or pass
+      // your own `new inference.VAD({ ... })` to customise.
+      stt: new inference.STT({ model: 'deepgram/nova-3' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      tts: new inference.TTS({ model: 'cartesia/sonic-3' }),
+      // to use realtime model, replace the stt, llm, tts and vad with the following
+      // llm: new openai.realtime.RealtimeModel({ voice: 'alloy' }),
+      userData,
+      maxToolSteps: 5,
+      turnHandling: {
+        // Preemptive generation speculatively starts LLM inference while the user is still
+        // speaking to reduce time-to-first-token. See PreemptiveGenerationOptions for all
+        // tunables (enabled, preemptiveTts, maxSpeechDuration, maxRetries).
+        preemptiveGeneration: {
+          enabled: true,
+        },
+      },
+    });
+
+    await session.start({
+      agent: userData.agents.greeter!,
+      room: ctx.room,
+    });
+  },
+});
+
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));

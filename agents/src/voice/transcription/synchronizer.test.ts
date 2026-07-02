@@ -1,0 +1,397 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as logModule from '../../log.js';
+import { AudioOutput, TextOutput } from '../io.js';
+import { SpeakingRateData, TranscriptionSynchronizer } from './synchronizer.js';
+
+describe('SpeakingRateData', () => {
+  describe('constructor', () => {
+    it('should initialize with empty arrays', () => {
+      const data = new SpeakingRateData();
+      expect(data.timestamps).toEqual([]);
+      expect(data.speakingRate).toEqual([]);
+      expect(data.speakIntegrals).toEqual([]);
+      expect(data.pushedDuration).toBe(0);
+    });
+  });
+
+  describe('addByRate', () => {
+    it('should add a single rate entry', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 5.0);
+
+      expect(data.timestamps).toEqual([1.0]);
+      expect(data.speakingRate).toEqual([5.0]);
+      // integral = 0 + 5.0 * (1.0 - 0) = 5.0
+      expect(data.speakIntegrals).toEqual([5.0]);
+      expect(data.pushedDuration).toBe(1.0);
+    });
+
+    it('should accumulate integrals across multiple entries', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 4.0); // integral = 0 + 4.0 * 1.0 = 4.0
+      data.addByRate(2.0, 6.0); // integral = 4.0 + 6.0 * 1.0 = 10.0
+      data.addByRate(3.5, 2.0); // integral = 10.0 + 2.0 * 1.5 = 13.0
+
+      expect(data.timestamps).toEqual([1.0, 2.0, 3.5]);
+      expect(data.speakingRate).toEqual([4.0, 6.0, 2.0]);
+      expect(data.speakIntegrals).toEqual([4.0, 10.0, 13.0]);
+      expect(data.pushedDuration).toBe(3.5);
+    });
+
+    it('should handle zero rate', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 0.0);
+
+      expect(data.timestamps).toEqual([1.0]);
+      expect(data.speakingRate).toEqual([0.0]);
+      expect(data.speakIntegrals).toEqual([0.0]);
+    });
+  });
+
+  describe('addByAnnotation', () => {
+    it('should buffer text without startTime', () => {
+      const data = new SpeakingRateData();
+      data.addByAnnotation('hello', undefined, undefined);
+
+      // Text is buffered, no timestamp entry yet
+      expect(data.timestamps).toEqual([]);
+      expect(data.pushedDuration).toBe(0);
+    });
+
+    it('should add entry when startTime is provided', () => {
+      const data = new SpeakingRateData();
+      data.addByAnnotation('hello', undefined, undefined); // buffer "hello"
+      data.addByAnnotation('world', 1.0, undefined); // flush with startTime
+
+      expect(data.timestamps).toEqual([1.0]);
+      // textLen = 5 (hello), dt = 1.0, rate = 5/1 = 5.0
+      expect(data.speakingRate).toEqual([5.0]);
+      expect(data.speakIntegrals).toEqual([5.0]);
+    });
+
+    it('should handle startTime and endTime together', () => {
+      const data = new SpeakingRateData();
+      data.addByAnnotation('hello ', 0.0, 0.5);
+      data.addByAnnotation('world', 0.5, 1.0);
+
+      // First annotation: startTime=0.0, text="hello ", then recursively calls with endTime=0.5
+      // Second annotation: startTime=0.5, text="world", then recursively calls with endTime=1.0
+      expect(data.timestamps.length).toBeGreaterThanOrEqual(2);
+      expect(data.pushedDuration).toBe(1.0);
+    });
+
+    it('should calculate rate based on buffered text length', () => {
+      const data = new SpeakingRateData();
+      data.addByAnnotation('ab', undefined, undefined); // buffer 2 chars
+      data.addByAnnotation('cde', undefined, undefined); // buffer 3 more chars
+      data.addByAnnotation('', 2.0, undefined); // flush: textLen=5, dt=2.0, rate=2.5
+
+      expect(data.timestamps).toEqual([2.0]);
+      expect(data.speakingRate).toEqual([2.5]);
+      expect(data.speakIntegrals).toEqual([5.0]);
+    });
+
+    it('should handle zero time delta gracefully', () => {
+      const data = new SpeakingRateData();
+      data.addByAnnotation('hello', 0.0, undefined); // dt=0, rate should be 0
+
+      expect(data.timestamps).toEqual([0.0]);
+      expect(data.speakingRate).toEqual([0.0]);
+      expect(data.speakIntegrals).toEqual([0.0]);
+    });
+  });
+
+  describe('accumulateTo', () => {
+    it('should return 0 for empty data', () => {
+      const data = new SpeakingRateData();
+      expect(data.accumulateTo(1.0)).toBe(0);
+    });
+
+    it('should return 0 for timestamp before first entry', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 5.0);
+      expect(data.accumulateTo(0.5)).toBe(0);
+    });
+
+    it('should return exact integral at timestamp', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 4.0); // integral = 4.0
+      data.addByRate(2.0, 6.0); // integral = 10.0
+
+      expect(data.accumulateTo(1.0)).toBe(4.0);
+      expect(data.accumulateTo(2.0)).toBe(10.0);
+    });
+
+    it('should interpolate between timestamps', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 4.0); // integral = 4.0
+      data.addByRate(2.0, 6.0); // integral = 10.0
+
+      // At 1.5: integral = 4.0 + 6.0 * 0.5 = 7.0
+      expect(data.accumulateTo(1.5)).toBe(7.0);
+    });
+
+    it('should extrapolate beyond last timestamp', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 4.0); // integral = 4.0
+      data.addByRate(2.0, 6.0); // integral = 10.0
+
+      // At 3.0: integral = 10.0 + 6.0 * 1.0 = 16.0
+      expect(data.accumulateTo(3.0)).toBe(16.0);
+    });
+
+    it('should not exceed next integral when interpolating', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 100.0); // integral = 100.0 (very high rate)
+      data.addByRate(2.0, 1.0); // integral = 101.0
+
+      // At 1.5 with rate 1.0: would be 100.0 + 1.0 * 0.5 = 100.5
+      // But capped at next integral 101.0, so result is min(100.5, 101.0) = 100.5
+      expect(data.accumulateTo(1.5)).toBe(100.5);
+    });
+  });
+
+  describe('pushedDuration', () => {
+    it('should return 0 when empty', () => {
+      const data = new SpeakingRateData();
+      expect(data.pushedDuration).toBe(0);
+    });
+
+    it('should return last timestamp', () => {
+      const data = new SpeakingRateData();
+      data.addByRate(1.0, 5.0);
+      data.addByRate(2.5, 3.0);
+      data.addByRate(4.0, 7.0);
+
+      expect(data.pushedDuration).toBe(4.0);
+    });
+  });
+
+  describe('integration scenarios', () => {
+    it('should handle typical TTS word timing scenario', () => {
+      const data = new SpeakingRateData();
+
+      // Simulating words with timing: "Hello " at 0-0.3s, "world" at 0.3-0.6s
+      data.addByAnnotation('Hello ', 0.0, 0.3);
+      data.addByAnnotation('world', 0.3, 0.6);
+
+      // Should have accumulated text lengths at each timestamp
+      expect(data.pushedDuration).toBe(0.6);
+
+      // At 0.15s (middle of first word), should be partway through
+      const mid1 = data.accumulateTo(0.15);
+      expect(mid1).toBeGreaterThan(0);
+      expect(mid1).toBeLessThan(6); // "Hello " is 6 chars
+
+      // At 0.45s (middle of second word), should be past first word
+      const mid2 = data.accumulateTo(0.45);
+      expect(mid2).toBeGreaterThan(6);
+    });
+
+    it('should handle mixed rate and annotation data', () => {
+      const data = new SpeakingRateData();
+
+      // Start with rate-based data
+      data.addByRate(0.5, 4.0); // integral = 2.0
+
+      // Then add annotation
+      data.addByAnnotation('test', undefined, undefined);
+      data.addByAnnotation('', 1.0, undefined); // textLen=4, dt=0.5, rate=8.0, integral = 2.0 + 4.0 = 6.0
+
+      expect(data.timestamps).toEqual([0.5, 1.0]);
+      expect(data.speakIntegrals).toEqual([2.0, 6.0]);
+    });
+  });
+});
+
+class MockAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+  }
+
+  clearBuffer(): void {}
+}
+
+class MockTextOutput extends TextOutput {
+  captured: string[] = [];
+
+  async captureText(text: string): Promise<void> {
+    this.captured.push(text);
+  }
+
+  flush(): void {}
+}
+
+describe('TranscriptionSynchronizer attachment warnings', () => {
+  const textDetachedWarning =
+    'TranscriptSynchronizer text output was detached while audio output is still active; ' +
+    'transcription sync is disabled. This usually means session.output.transcription was ' +
+    'replaced after AgentSession.start().';
+  const audioDetachedWarning =
+    'TranscriptSynchronizer audio output was detached while text output is still active; ' +
+    'transcription sync is disabled. This usually means session.output.audio was replaced after ' +
+    'AgentSession.start().';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('warns once per enabled cycle when text output is detached while audio is still attached', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    synchronizer.textOutput.onDetached();
+    await synchronizer.audioOutput.captureFrame(frame);
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    expect(warn.mock.calls.filter((c) => c[0] === textDetachedWarning)).toHaveLength(1);
+
+    synchronizer.textOutput.onAttached();
+    synchronizer.textOutput.onDetached();
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    expect(warn.mock.calls.filter((c) => c[0] === textDetachedWarning)).toHaveLength(2);
+    await synchronizer.close();
+  });
+
+  it('warns once per enabled cycle when audio output is detached while text is still attached', async () => {
+    const warn = vi.fn();
+    vi.spyOn(logModule, 'log').mockReturnValue({
+      warn,
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+    } as unknown as ReturnType<typeof logModule.log>);
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), new MockTextOutput());
+
+    synchronizer.audioOutput.onDetached();
+    await synchronizer.textOutput.captureText('hello');
+    await synchronizer.textOutput.captureText('again');
+
+    expect(warn.mock.calls.filter((c) => c[0] === audioDetachedWarning)).toHaveLength(1);
+
+    synchronizer.audioOutput.onAttached();
+    synchronizer.audioOutput.onDetached();
+    await synchronizer.textOutput.captureText('third');
+
+    expect(warn.mock.calls.filter((c) => c[0] === audioDetachedWarning)).toHaveLength(2);
+    await synchronizer.close();
+  });
+});
+
+class DroppingAudioOutput extends AudioOutput {
+  constructor() {
+    super(8000);
+  }
+
+  async captureFrame(_frame: AudioFrame): Promise<void> {
+    // dropped: no super.captureFrame(), no playback-finished event
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', () => {
+  it('does not strand waitForPlayout() when the downstream sink drops a captured frame', async () => {
+    const synchronizer = new TranscriptionSynchronizer(
+      new DroppingAudioOutput(),
+      new MockTextOutput(),
+    );
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    await synchronizer.audioOutput.captureFrame(frame);
+
+    const result = await Promise.race([
+      synchronizer.audioOutput.waitForPlayout().then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
+    ]);
+
+    expect(result).toBe('resolved');
+    await synchronizer.close();
+  });
+
+  it('does not let a synthetic drift finish consume a rotated segment awaiting its real finish', async () => {
+    // downstream that accepts segment A, then drops segment B at its
+    // pause/interrupt gate (bails before counting it)
+    class GateDroppingAudioOutput extends AudioOutput {
+      dropping = false;
+      constructor() {
+        super(8000);
+      }
+      async captureFrame(frame: AudioFrame): Promise<void> {
+        if (this.dropping) return;
+        await super.captureFrame(frame);
+      }
+      clearBuffer(): void {}
+    }
+
+    const downstream = new GateDroppingAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    // segment A: text + audio accepted downstream; its real finish stays in flight
+    await synchronizer.textOutput.captureText('alpha');
+    synchronizer.textOutput.flush();
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // the next reply's text arrives before A's playback_finished -> A is rotated out and queued
+    await synchronizer.textOutput.captureText('bravo');
+    await synchronizer.barrier();
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+    // segment B: dropped at the downstream gate -> drift of 1
+    downstream.dropping = true;
+    await synchronizer.audioOutput.captureFrame(frame);
+    synchronizer.audioOutput.flush();
+
+    // drift reconciliation must settle B (never accepted downstream) and leave
+    // A's queue entry for the real finish that is still coming
+    const playout = synchronizer.audioOutput.waitForPlayout();
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(1);
+
+    // A's real finish arrives and settles A's queued segment
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted: true });
+    await playout;
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+
+    await synchronizer.close();
+  });
+
+  it('routes the synthetic finish through the synchronizer like a real playback finish', async () => {
+    const synchronizer = new TranscriptionSynchronizer(
+      new DroppingAudioOutput(),
+      new MockTextOutput(),
+    );
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+    const implBefore = (synchronizer as unknown as { _impl: unknown })._impl;
+
+    await synchronizer.audioOutput.captureFrame(frame);
+    const ev = await synchronizer.audioOutput.waitForPlayout();
+
+    // the reconciled segment was captured through the synchronizer, so its
+    // synthetic finish must also mark the segment finished there: the event
+    // carries a synchronized transcript and the segment is rotated
+    expect(ev.interrupted).toBe(true);
+    expect(typeof ev.synchronizedTranscript).toBe('string');
+    await synchronizer.barrier();
+    expect((synchronizer as unknown as { _impl: unknown })._impl).not.toBe(implBefore);
+
+    await synchronizer.close();
+  });
+});

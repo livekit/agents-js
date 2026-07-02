@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - 0.x
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: 'Publish a snapshot release'
+        type: boolean
+        default: false
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: write # Required to create GH releases
+  pull-requests: write # Required to interact with PRs
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          lfs: true
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - name: Use Node.js 20
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # npm trusted publishing cannot publish a package for the first time. New packages must be
+      # created on npm before release CI can publish subsequent versions with OIDC.
+      - name: Verify all packages exist on npm
+        run: |
+          MISSING=()
+          for pkg in $(pnpm -r --silent exec -- node -e "
+            const p = require('./package.json');
+            if (!p.private) process.stdout.write(p.name + '\n');
+          "); do
+            if ! npm view "$pkg" > /dev/null 2>&1; then
+              MISSING+=("$pkg")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::The following packages are not yet published on npm:"
+            for pkg in "${MISSING[@]}"; do
+              echo "::error::  - $pkg"
+            done
+            exit 1
+          fi
+          echo "All packages exist on npm."
+      - name: Create Release Pull Request or Publish to npm
+        id: changesets
+        if: ${{ github.event.inputs.snapshot != 'true' }}
+        uses: changesets/action@63a615b9cd06ba9a3e6d13796c7fbcb080a60a0b # v1.8.0
+        with:
+          publish: pnpm ci:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish pre-release
+        id: changeset-prerelease
+        if: ${{ github.event.inputs.snapshot == 'true' }}
+        run: |
+          pnpm changeset version --snapshot next
+          pnpm build
+          pnpm publish -r --tag next --no-git-checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build docs
+        if: steps.changesets.outputs.published == 'true'
+        run: pnpm doc
+      - name: S3 upload
+        if: steps.changesets.outputs.published == 'true'
+        run: aws s3 cp docs/ s3://livekit-docs/agents-js --recursive
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_DEPLOY_AWS_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_DEPLOY_AWS_API_SECRET }}
+          AWS_DEFAULT_REGION: 'us-east-1'
