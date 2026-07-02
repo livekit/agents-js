@@ -166,6 +166,9 @@ importers:
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
+      blingfire:
+        specifier: 0.1.1
+        version: 0.1.1
       commander:
         specifier: ^12.0.0
         version: 12.1.0
@@ -3022,6 +3025,10 @@ packages:
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
 
+  blingfire@0.1.1:
+    resolution: {integrity: sha512-HHXJ/xXHhni/Igv1To417VJ9JKHMjYgQy89NGqq1hKlZ9B24mUPhS3LZyR21/AecMS+aa86QT7elsiCZ8jHb+A==}
+    engines: {node: '>=16.0.0'}
+
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
@@ -4237,6 +4244,9 @@ packages:
 
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
+
+  node-addon-api@7.1.1:
+    resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
 
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
@@ -6821,6 +6831,11 @@ snapshots:
 
   bignumber.js@9.3.1: {}
 
+  blingfire@0.1.1:
+    dependencies:
+      node-addon-api: 7.1.1
+      node-gyp-build: 4.8.4
+
   boolean@3.2.0: {}
 
   brace-expansion@1.1.11:
@@ -8176,6 +8191,8 @@ snapshots:
   nanoid@3.3.11: {}
 
   natural-compare@1.4.0: {}
+
+  node-addon-api@7.1.1: {}
 
   node-domexception@1.0.0: {}
 
