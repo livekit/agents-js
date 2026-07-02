@@ -369,6 +369,41 @@ describe('WSLLM parallel-generation guard', () => {
     expect(server.requests).toHaveLength(3);
     expect(server.requests[2]!.previous_response_id).toBeUndefined();
   });
+
+  it('reserves synchronously so two chats in the same tick do not both continue', async () => {
+    server = await FakeResponsesServer.start();
+    wsllm = new WSLLM({
+      apiKey: 'test',
+      model: 'gpt-4.1',
+      baseURL: `http://localhost:${server.port}`,
+      responseTimeoutMs: 0,
+    });
+
+    let n = 0;
+    server.onRequest((conn) => {
+      const id = `resp_${++n}`;
+      sendCreated(conn, id);
+      sendCompleted(conn, id);
+    });
+
+    // Establish a stored continuation chain (resp_1).
+    const ctx1 = userCtx([], 'hello');
+    await drain(wsllm.chat({ chatCtx: ctx1 }));
+
+    // Issue two turns in the SAME tick (no await between the chat() calls). The
+    // reservation must be synchronous: the first may chain off resp_1, but the
+    // second must observe the first as in-flight and re-send full context.
+    // (If _onStreamStarted only ran inside the deferred run(), both would read
+    // #activeStreams === 0 and both would continue off resp_1.)
+    const s2a = wsllm.chat({ chatCtx: userCtx(ctx1.items, 'a') });
+    const s2b = wsllm.chat({ chatCtx: userCtx(ctx1.items, 'b') });
+    await Promise.all([drain(s2a), drain(s2b)]);
+
+    const overlapping = [server.requests[1]!, server.requests[2]!];
+    // Exactly one of the two same-tick turns continued off resp_1.
+    expect(overlapping.filter((r) => r.previous_response_id === 'resp_1')).toHaveLength(1);
+    expect(overlapping.filter((r) => !r.previous_response_id)).toHaveLength(1);
+  });
 });
 
 if (hasOpenAIApiKey) {

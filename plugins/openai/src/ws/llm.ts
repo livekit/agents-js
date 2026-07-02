@@ -497,6 +497,10 @@ export class WSLLMStream extends llm.LLMStream {
   #pendingToolCalls = new Set<string>();
   #responseTimeoutMs: number;
   #responseCompleted = false;
+  // Balances the _onStreamStarted() reservation made in the constructor. run()
+  // may be invoked multiple times (once per retry attempt), so the release must
+  // fire exactly once for the stream's whole lifetime — not per attempt.
+  #streamReleased = false;
 
   constructor(
     llm: WSLLM,
@@ -533,12 +537,23 @@ export class WSLLMStream extends llm.LLMStream {
     this.#prevResponseId = prevResponseId;
     this.#fullChatCtx = fullChatCtx;
     this.#responseTimeoutMs = responseTimeoutMs;
+    // Reserve synchronously here (the constructor runs inside WSLLM.chat(), after
+    // its continuation decision) so a second chat() issued in the same tick
+    // observes this generation as in-flight and can't also take the
+    // previous_response_id shortcut. Doing this in run() would be too late — run
+    // is deferred to a later tick by the LLMStream base constructor.
+    this.#llm._onStreamStarted();
+  }
+
+  #releaseStream(): void {
+    if (this.#streamReleased) return;
+    this.#streamReleased = true;
+    this.#llm._onStreamFinished();
   }
 
   protected async run(): Promise<void> {
     let retryable = true;
 
-    this.#llm._onStreamStarted();
     try {
       await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
         const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
@@ -576,7 +591,7 @@ export class WSLLMStream extends llm.LLMStream {
         options: { retryable },
       });
     } finally {
-      this.#llm._onStreamFinished();
+      this.#releaseStream();
     }
   }
 
