@@ -42,7 +42,7 @@ type KeytermDetectorCallbacks = { metrics_collected: (metrics: LLMMetrics) => vo
 const DETECTION_TIMEOUT = 10_000;
 const PENDING_TTL = 3;
 const MAX_TRANSCRIPT_MESSAGES = 12;
-const DEFAULT_DETECTION_MODEL = 'google/gemini-3.5-flash';
+const DEFAULT_DETECTION_MODEL = 'google/gemma-4-31b-it';
 
 const DEFAULT_KEYTERM_INSTRUCTIONS = `You maintain STT keyterms that bias a recognizer toward the correct spelling of distinctive words (names, places, companies, products, technical terms). Each turn, adjust them with one \`record_keyterms\` call.
 
