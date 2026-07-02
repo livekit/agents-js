@@ -87,3 +87,9 @@ export {
   type AvailabilityChangedEvent,
   type FallbackAdapterOptions,
 } from './fallback_adapter.js';
+
+export {
+  RealtimeModelFallbackAdapter,
+  type RealtimeAvailabilityChangedEvent,
+  type RealtimeModelFallbackAdapterOptions,
+} from './realtime_fallback_adapter.js';

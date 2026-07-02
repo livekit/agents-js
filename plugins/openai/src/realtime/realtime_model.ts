@@ -24,6 +24,7 @@ import {
 import { Mutex } from '@livekit/mutex';
 import type { AudioResampler } from '@livekit/rtc-node';
 import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
+import { createHash } from 'node:crypto';
 import { type MessageEvent, WebSocket } from 'ws';
 import * as api_proto from './api_proto.js';
 
@@ -1198,6 +1199,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     wsConn.onmessage = (message: MessageEvent) => {
+      if (this.#closed) {
+        return;
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const event: any = JSON.parse(message.data as string);
 
@@ -2032,6 +2037,15 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 }
 
+const MAX_CALL_ID_LENGTH = 32;
+
+function shortenCallId(callId: string): string {
+  if (callId.length <= MAX_CALL_ID_LENGTH) {
+    return callId;
+  }
+  return createHash('sha256').update(callId).digest('hex').slice(0, MAX_CALL_ID_LENGTH);
+}
+
 /** @internal Exported for testing purposes */
 export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_proto.ItemResource> {
   switch (item.type) {
@@ -2039,7 +2053,7 @@ export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_p
       return {
         id: item.id,
         type: 'function_call',
-        call_id: item.callId,
+        call_id: shortenCallId(item.callId),
         name: item.name,
         arguments: item.args,
       } as api_proto.FunctionCallItem;
@@ -2047,7 +2061,7 @@ export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_p
       return {
         id: item.id,
         type: 'function_call_output',
-        call_id: item.callId,
+        call_id: shortenCallId(item.callId),
         output: item.output,
       } as api_proto.FunctionCallOutputItem;
     case 'message':
