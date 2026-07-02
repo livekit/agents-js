@@ -1,0 +1,67 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  defineAgent,
+  inference,
+  voice,
+} from '@livekit/agents';
+import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import { fileURLToPath } from 'node:url';
+
+const customTextInputHandler = (session: voice.AgentSession, event: voice.TextInputEvent): void => {
+  const message = event.text;
+
+  if (message.startsWith('/')) {
+    if (message === '/help') {
+      session.say('Available commands: /help, /status');
+      return;
+    }
+    if (message === '/status') {
+      session.say('Agent is running normally');
+      return;
+    }
+  }
+
+  if (['spam', 'inappropriate'].some((word) => message.toLowerCase().includes(word))) {
+    session.say("I can't respond to that type of message.");
+    return;
+  }
+
+  session.interrupt();
+  session.generateReply({ userInput: message });
+};
+
+export default defineAgent({
+  entry: async (ctx: JobContext) => {
+    const agent = new voice.Agent({
+      instructions:
+        "You are a helpful assistant, you can hear the user's message and respond to it.",
+    });
+
+    const session = new voice.AgentSession({
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
+      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
+    });
+
+    await session.start({
+      agent,
+      room: ctx.room,
+      inputOptions: {
+        noiseCancellation: BackgroundVoiceCancellation(),
+        textInputCallback: customTextInputHandler,
+      },
+    });
+
+    session.say('Hello, how can I help you today?');
+  },
+});
+
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));

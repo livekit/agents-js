@@ -1,0 +1,751 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
+import type { JSONSchema7 } from 'json-schema';
+import { jsonrepair } from 'jsonrepair';
+import sharp from 'sharp';
+import type { UnknownUserData } from '../voice/run_context.js';
+import type { ChatContext } from './chat_context.js';
+import {
+  type ChatContent,
+  type ChatItem,
+  FunctionCall,
+  FunctionCallOutput,
+  type ImageContent,
+} from './chat_context.js';
+import {
+  type ToolContext,
+  type ToolInputSchema,
+  type ToolOptions,
+  sortedToolNames,
+} from './tool_context.js';
+import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
+
+export interface SerializedImage {
+  inferenceDetail: 'auto' | 'high' | 'low';
+  mimeType?: string;
+  base64Data?: string;
+  externalUrl?: string;
+}
+
+function getChannelsFromVideoBufferType(type: VideoBufferType): 3 | 4 {
+  switch (type) {
+    case VideoBufferType.RGBA:
+    case VideoBufferType.ABGR:
+    case VideoBufferType.ARGB:
+    case VideoBufferType.BGRA:
+      return 4;
+    case VideoBufferType.RGB24:
+      return 3;
+    default:
+      // YUV formats (I420, I420A, I422, I444, I010, NV12) need conversion
+      throw new Error(`Unsupported VideoBufferType: ${type}. Only RGB/RGBA formats are supported.`);
+  }
+}
+
+function ensureRGBCompatible(frame: VideoFrame): VideoFrame {
+  // If the frame is already in an RGB/RGBA-compatible format, return it directly
+  if (
+    frame.type === VideoBufferType.RGBA ||
+    frame.type === VideoBufferType.BGRA ||
+    frame.type === VideoBufferType.ARGB ||
+    frame.type === VideoBufferType.ABGR ||
+    frame.type === VideoBufferType.RGB24
+  ) {
+    return frame;
+  }
+
+  // Otherwise, attempt conversion for other formats (like YUV)
+  try {
+    return frame.convert(VideoBufferType.RGBA);
+  } catch (error) {
+    throw new Error(
+      `Failed to convert format ${frame.type} to RGB: ${error}. ` +
+        `Consider using RGB/RGBA formats or converting on the client side.`,
+    );
+  }
+}
+
+export async function serializeImage(image: ImageContent): Promise<SerializedImage> {
+  if (typeof image.image === 'string') {
+    if (image.image.startsWith('data:')) {
+      const [header, base64Data] = image.image.split(',', 2) as [string, string];
+      const headerParts = header.split(';');
+      const mimeParts = headerParts[0]?.split(':');
+      const headerMime = mimeParts?.[1];
+
+      if (!headerMime) {
+        throw new Error('Invalid data URL format');
+      }
+
+      let mimeType: string;
+      if (image.mimeType && image.mimeType !== headerMime) {
+        console.warn(
+          `Provided mimeType '${image.mimeType}' does not match data URL mime type '${headerMime}'. Using provided mimeType.`,
+        );
+        mimeType = image.mimeType;
+      } else {
+        mimeType = headerMime;
+      }
+
+      const supportedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+      if (!supportedTypes.has(mimeType)) {
+        throw new Error(`Unsupported mimeType ${mimeType}. Must be jpeg, png, webp, or gif`);
+      }
+
+      return {
+        base64Data,
+        mimeType: mimeType,
+        inferenceDetail: image.inferenceDetail,
+      };
+    }
+
+    // External URL
+    return {
+      mimeType: image.mimeType,
+      inferenceDetail: image.inferenceDetail,
+      externalUrl: image.image,
+    };
+  } else if (image.image instanceof VideoFrame) {
+    const frame = ensureRGBCompatible(image.image);
+    const channels = getChannelsFromVideoBufferType(frame.type);
+
+    // Sharp needs to know the format of raw pixel data
+    let encoded = sharp(frame.data, {
+      raw: {
+        width: frame.width,
+        height: frame.height,
+        channels,
+      },
+    });
+
+    if (image.inferenceWidth && image.inferenceHeight) {
+      encoded = encoded.resize(image.inferenceWidth, image.inferenceHeight);
+    }
+
+    const base64Data = await encoded
+      .png()
+      .toBuffer()
+      .then((buffer) => buffer.toString('base64'));
+
+    return {
+      base64Data,
+      mimeType: 'image/png',
+      inferenceDetail: image.inferenceDetail,
+    };
+  } else {
+    throw new Error('Unsupported image type');
+  }
+}
+
+/** Raw OpenAI-adherent function parameters. */
+export type OpenAIFunctionParameters = {
+  type: 'object';
+  properties: { [id: string]: any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  required: string[];
+  additionalProperties?: boolean;
+};
+
+// TODO(brian): remove this helper once we have the real RunContext user data
+export const createToolOptions = <UserData extends UnknownUserData>(
+  toolCallId: string,
+  userData: UserData = {} as UserData,
+): ToolOptions<UserData> => {
+  return {
+    ctx: { userData },
+    toolCallId,
+    abortSignal: new AbortController().signal,
+  } as unknown as ToolOptions<UserData>;
+};
+
+/** @internal */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunctionParameters => {
+  // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
+  const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai);
+  const { properties, required, additionalProperties } = jsonSchema as OpenAIFunctionParameters;
+
+  return {
+    type: 'object',
+    properties,
+    required,
+    additionalProperties,
+  };
+};
+
+/** @internal */
+export const oaiBuildFunctionInfo = (
+  toolCtx: ToolContext,
+  toolCallId: string,
+  toolName: string,
+  rawArgs: string,
+): FunctionCall => {
+  const tool = toolCtx.getFunctionTool(toolName);
+  if (!tool) {
+    throw new Error(`AI tool ${toolName} not found`);
+  }
+
+  return FunctionCall.create({
+    callId: toolCallId,
+    name: toolName,
+    args: rawArgs,
+  });
+};
+
+const templateTokenPatterns = [
+  /<\|[^<>|]{0,40}\|>/g,
+  /<\|[^<>a-zA-Z0-9_]{0,10}/g,
+  /[^<>a-zA-Z0-9_]{0,10}\|>/g,
+  /<(?:start|end)_of_turn>/g,
+];
+
+function stripTemplateTokens(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return templateTokenPatterns.reduce((out, pattern) => out.replace(pattern, ''), value).trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(stripTemplateTokens).filter((item) => item !== '' && item !== null);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, stripTemplateTokens(nestedValue)]),
+    );
+  }
+
+  return value;
+}
+
+export function parseFunctionArguments(
+  rawArgs: string | Record<string, unknown>,
+): Record<string, unknown> {
+  let args: unknown;
+  const rawForError = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
+
+  if (typeof rawArgs === 'string') {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch (strictError) {
+      let repaired: unknown;
+      try {
+        repaired = JSON.parse(jsonrepair(rawArgs));
+      } catch {
+        throw new Error(
+          `could not parse function arguments as JSON: ${strictError}: ${rawForError.slice(0, 200)}`,
+        );
+      }
+
+      args = stripTemplateTokens(repaired);
+    }
+  } else {
+    args = rawArgs;
+  }
+
+  while (typeof args === 'string') {
+    const stringArgs = args;
+    try {
+      args = JSON.parse(stringArgs);
+    } catch {
+      throw new Error(
+        `function arguments decoded to a non-JSON string: ${stringArgs.slice(0, 200)}`,
+      );
+    }
+  }
+
+  if (args === null) {
+    return {};
+  }
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error(`expected object from function arguments: ${rawForError.slice(0, 200)}`);
+  }
+
+  return args as Record<string, unknown>;
+}
+
+export async function executeToolCall(
+  toolCall: FunctionCall,
+  toolCtx: ToolContext,
+): Promise<FunctionCallOutput> {
+  const tool = toolCtx.getFunctionTool(toolCall.name);
+  if (!tool) {
+    const availableTools = sortedToolNames(toolCtx).join(', ');
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      name: toolCall.name,
+      output: `Unknown function: ${toolCall.name} - available tools: ${availableTools}`,
+      isError: true,
+    });
+  }
+
+  let args: object | undefined;
+  let params: object | undefined;
+
+  // Ensure valid JSON
+  try {
+    const rawArgs = toolCall.args || '{}';
+    args = parseFunctionArguments(rawArgs);
+    const canonicalArgs = JSON.stringify(args);
+    if (canonicalArgs !== rawArgs) {
+      toolCall.args = canonicalArgs;
+    }
+  } catch (error) {
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      output: `Invalid JSON: ${error}`,
+      isError: true,
+    });
+  }
+
+  // Ensure valid arguments schema
+  try {
+    if (isZodSchema(tool.parameters)) {
+      const result = await parseZodSchema<object>(tool.parameters, args);
+      if (result.success) {
+        params = result.data;
+      } else {
+        return FunctionCallOutput.create({
+          callId: toolCall.callId,
+          output: `Arguments parsing failed: ${result.error}`,
+          isError: true,
+        });
+      }
+    } else {
+      params = args;
+    }
+  } catch (error) {
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      output: `Arguments parsing failed: ${error}`,
+      isError: true,
+    });
+  }
+
+  try {
+    const result = await tool.execute(params, createToolOptions(toolCall.callId));
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      output: JSON.stringify(result),
+      isError: false,
+    });
+  } catch (error) {
+    return FunctionCallOutput.create({
+      callId: toolCall.callId,
+      output: `Tool execution failed: ${error}`,
+      isError: true,
+    });
+  }
+}
+
+export interface FormatChatHistoryOptions {
+  includeIds?: boolean;
+  includeTimestamps?: boolean;
+}
+
+export type ChatContextValidationSeverity = 'error' | 'warning';
+
+export interface ChatContextValidationIssue {
+  severity: ChatContextValidationSeverity;
+  code:
+    | 'duplicate_id'
+    | 'timestamp_order'
+    | 'empty_message_content'
+    | 'empty_text_term'
+    | 'missing_image_term'
+    | 'invalid_audio_term'
+    | 'invalid_function_call'
+    | 'invalid_function_call_args'
+    | 'invalid_function_call_output'
+    | 'orphan_function_call_output';
+  index: number;
+  itemId: string;
+  message: string;
+}
+
+export interface ChatContextValidationResult {
+  valid: boolean;
+  errors: number;
+  warnings: number;
+  issues: ChatContextValidationIssue[];
+}
+
+/**
+ * Render a chat context into a readable multiline string for debugging and logging.
+ */
+export function formatChatHistory(
+  chatCtx: ChatContext,
+  options: FormatChatHistoryOptions = {},
+): string {
+  const { includeIds = false, includeTimestamps = false } = options;
+
+  if (chatCtx.items.length === 0) {
+    return 'Chat history (0 items)';
+  }
+
+  const formattedItems = chatCtx.items.map((item, index) =>
+    formatChatHistoryItem(item, index, {
+      includeIds,
+      includeTimestamps,
+    }),
+  );
+
+  return [
+    `Chat history (${chatCtx.items.length} items)`,
+    ...formattedItems.flatMap((item) => ['', item]),
+  ].join('\n');
+}
+
+/**
+ * Validate structural integrity of chat context items/terms for realtime usage.
+ */
+export function validateChatContextStructure(chatCtx: ChatContext): ChatContextValidationResult {
+  const issues: ChatContextValidationIssue[] = [];
+  const ids = new Set<string>();
+  const seenFunctionCallIds = new Set<string>();
+  let previousCreatedAt = -Infinity;
+
+  const pushIssue = (issue: ChatContextValidationIssue) => {
+    issues.push(issue);
+  };
+
+  for (let index = 0; index < chatCtx.items.length; index += 1) {
+    const item = chatCtx.items[index]!;
+
+    if (ids.has(item.id)) {
+      pushIssue({
+        severity: 'error',
+        code: 'duplicate_id',
+        index,
+        itemId: item.id,
+        message: `Duplicate item id '${item.id}'`,
+      });
+    } else {
+      ids.add(item.id);
+    }
+
+    if (item.createdAt < previousCreatedAt) {
+      pushIssue({
+        severity: 'error',
+        code: 'timestamp_order',
+        index,
+        itemId: item.id,
+        message: `Item createdAt (${item.createdAt}) is older than previous item (${previousCreatedAt})`,
+      });
+    }
+    previousCreatedAt = item.createdAt;
+
+    if (item.type === 'message') {
+      if (item.content.length === 0) {
+        pushIssue({
+          severity: 'warning',
+          code: 'empty_message_content',
+          index,
+          itemId: item.id,
+          message: 'Message has empty content array',
+        });
+      }
+
+      item.content.forEach((term, termIndex) => {
+        if (typeof term === 'string') {
+          if (term.trim().length === 0) {
+            pushIssue({
+              severity: 'warning',
+              code: 'empty_text_term',
+              index,
+              itemId: item.id,
+              message: `Message term[${termIndex}] is empty text`,
+            });
+          }
+          return;
+        }
+
+        if (term.type === 'instructions') {
+          return;
+        }
+
+        if (term.type === 'image_content') {
+          if (!term.id || term.image === undefined || term.image === null) {
+            pushIssue({
+              severity: 'error',
+              code: 'missing_image_term',
+              index,
+              itemId: item.id,
+              message: `Message term[${termIndex}] has invalid image content`,
+            });
+          }
+          return;
+        }
+
+        if (!Array.isArray(term.frame)) {
+          pushIssue({
+            severity: 'error',
+            code: 'invalid_audio_term',
+            index,
+            itemId: item.id,
+            message: `Message term[${termIndex}] has invalid audio content`,
+          });
+        }
+      });
+    } else if (item.type === 'function_call') {
+      if (!item.name || !item.callId) {
+        pushIssue({
+          severity: 'error',
+          code: 'invalid_function_call',
+          index,
+          itemId: item.id,
+          message: 'Function call is missing name or callId',
+        });
+      } else {
+        seenFunctionCallIds.add(item.callId);
+      }
+
+      try {
+        JSON.parse(item.args);
+      } catch {
+        pushIssue({
+          severity: 'warning',
+          code: 'invalid_function_call_args',
+          index,
+          itemId: item.id,
+          message: 'Function call args are not valid JSON',
+        });
+      }
+    } else if (item.type === 'function_call_output') {
+      if (!item.callId) {
+        pushIssue({
+          severity: 'error',
+          code: 'invalid_function_call_output',
+          index,
+          itemId: item.id,
+          message: 'Function call output is missing callId',
+        });
+      } else if (!seenFunctionCallIds.has(item.callId)) {
+        pushIssue({
+          severity: 'warning',
+          code: 'orphan_function_call_output',
+          index,
+          itemId: item.id,
+          message: `Function call output references unknown callId '${item.callId}'`,
+        });
+      }
+    }
+  }
+
+  const errors = issues.filter((issue) => issue.severity === 'error').length;
+  const warnings = issues.length - errors;
+  return {
+    valid: errors === 0,
+    errors,
+    warnings,
+    issues,
+  };
+}
+
+function formatChatHistoryItem(
+  item: ChatItem,
+  index: number,
+  options: Required<FormatChatHistoryOptions>,
+): string {
+  const headerParts = [`[${index}]`];
+
+  if (item.type === 'message') {
+    headerParts.push('message', item.role);
+  } else if (item.type === 'function_call') {
+    headerParts.push('function_call', item.name, `call_id=${item.callId}`);
+  } else if (item.type === 'function_call_output') {
+    headerParts.push('function_call_output', item.name || '(unnamed)', `call_id=${item.callId}`);
+    if (item.isError) {
+      headerParts.push('error=true');
+    }
+  } else if (item.type === 'agent_handoff') {
+    headerParts.push('agent_handoff');
+  } else {
+    headerParts.push('agent_config_update');
+  }
+
+  if (options.includeIds) {
+    headerParts.push(`id=${item.id}`);
+  }
+
+  if (options.includeTimestamps) {
+    headerParts.push(`created_at=${item.createdAt.toFixed(3)}`);
+  }
+
+  const body = formatChatHistoryItemBody(item);
+  if (!body) {
+    return headerParts.join(' ');
+  }
+
+  return `${headerParts.join(' ')}\n${indentBlock(body, '  ')}`;
+}
+
+function formatChatHistoryItemBody(item: ChatItem): string {
+  if (item.type === 'message') {
+    const content = item.content.map((part) => formatMessageContentPart(part)).join('\n');
+    return content.trim() ? content : '(empty)';
+  }
+
+  if (item.type === 'function_call') {
+    return prettyJsonText(item.args);
+  }
+
+  if (item.type === 'function_call_output') {
+    return prettyJsonText(item.output);
+  }
+
+  if (item.type === 'agent_handoff') {
+    return `${item.oldAgentId ?? '(none)'} -> ${item.newAgentId}`;
+  }
+
+  return JSON.stringify(
+    {
+      instructions: item.instructions,
+      toolsAdded: item.toolsAdded,
+      toolsRemoved: item.toolsRemoved,
+    },
+    null,
+    2,
+  );
+}
+
+function formatMessageContentPart(part: ChatContent): string {
+  if (typeof part === 'string') {
+    return part;
+  }
+
+  if (part.type === 'instructions') {
+    return part.value;
+  }
+
+  if (part.type === 'image_content') {
+    if (typeof part.image === 'string') {
+      return `[image url=${truncateText(part.image, 120)}]`;
+    }
+
+    return `[image frame=${part.image.width}x${part.image.height}]`;
+  }
+
+  if (part.transcript) {
+    return `[audio transcript=${JSON.stringify(truncateText(part.transcript, 120))}]`;
+  }
+
+  return `[audio frames=${part.frame.length}]`;
+}
+
+function prettyJsonText(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function indentBlock(text: string, indent: string): string {
+  return text
+    .split('\n')
+    .map((line) => `${indent}${line}`)
+    .join('\n');
+}
+
+/**
+ * Standard dynamic-programming LCS to get the common subsequence
+ * of IDs (in order) that appear in both old_ids and new_ids.
+ *
+ * @param oldIds - The old list of IDs.
+ * @param newIds - The new list of IDs.
+ * @returns The longest common subsequence of the two lists of IDs.
+ */
+function computeLCS(oldIds: string[], newIds: string[]): string[] {
+  const n = oldIds.length;
+  const m = newIds.length;
+  const dp: number[][] = Array(n + 1)
+    .fill(null)
+    .map(() => Array(m + 1).fill(0));
+
+  // Fill DP table
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (oldIds[i - 1] === newIds[j - 1]) {
+        dp[i]![j] = dp[i - 1]![j - 1]! + 1;
+      } else {
+        dp[i]![j] = Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+      }
+    }
+  }
+
+  // Backtrack to find the actual LCS sequence
+  const lcsIds: string[] = [];
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    if (oldIds[i - 1] === newIds[j - 1]) {
+      lcsIds.push(oldIds[i - 1]!);
+      i--;
+      j--;
+    } else if (dp[i - 1]![j]! > dp[i]![j - 1]!) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+
+  return lcsIds.reverse();
+}
+
+interface DiffOps {
+  toRemove: string[];
+  toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
+}
+
+/**
+ * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
+ *
+ * @param oldCtx - The old chat context.
+ * @param newCtx - The new chat context.
+ * @returns The minimal list of create/remove operations to transform oldCtx into newCtx.
+ */
+export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps {
+  const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
+  const newIds = newCtx.items.map((item: ChatItem) => item.id);
+  const lcsIds = new Set(computeLCS(oldIds, newIds));
+
+  const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
+  const toCreate: Array<[string | null, string]> = [];
+
+  let lastIdInSequence: string | null = null;
+  for (const newItem of newCtx.items) {
+    if (lcsIds.has(newItem.id)) {
+      lastIdInSequence = newItem.id;
+    } else {
+      const prevId = lastIdInSequence; // null if root
+      toCreate.push([prevId, newItem.id]);
+      lastIdInSequence = newItem.id;
+    }
+  }
+
+  return {
+    toRemove,
+    toCreate,
+  };
+}
+
+export function toJsonSchema(
+  schema: ToolInputSchema<any>,
+  isOpenai: boolean = true,
+  strict: boolean = false,
+): JSONSchema7 {
+  if (isZodSchema(schema)) {
+    return zodSchemaToJsonSchema(schema, isOpenai, strict);
+  }
+
+  return schema as JSONSchema7;
+}

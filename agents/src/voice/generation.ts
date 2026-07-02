@@ -1,0 +1,1263 @@
+// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import type { Span } from '@opentelemetry/api';
+import { context as otelContext } from '@opentelemetry/api';
+import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import type { Instructions } from '../llm/chat_context.js';
+import {
+  type ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+  isInstructions,
+} from '../llm/chat_context.js';
+import type { ChatChunk } from '../llm/llm.js';
+import {
+  type JSONObject,
+  type ToolChoice,
+  type ToolContext,
+  ToolError,
+  isAgentHandoff,
+  isFunctionTool,
+  isToolError,
+  sortedToolNames,
+} from '../llm/tool_context.js';
+import { parseFunctionArguments } from '../llm/utils.js';
+import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
+import { log } from '../log.js';
+import { IdentityTransform } from '../stream/identity_transform.js';
+import { traceTypes, tracer } from '../telemetry/index.js';
+import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT, isFlushSentinel } from '../types.js';
+import {
+  Future,
+  IdleTimeoutError,
+  Task,
+  shortuuid,
+  toError,
+  waitForAbort,
+  waitUntilAborted,
+  waitUntilTimeout,
+} from '../utils.js';
+import {
+  type Agent,
+  type ModelSettings,
+  _setActivityTaskInfo,
+  functionCallStorage,
+  isStopResponse,
+} from './agent.js';
+import type { ForwardOutput } from './agent_activity.ts';
+import type { AgentSession } from './agent_session.js';
+import {
+  AudioOutput,
+  type LLMNode,
+  type TTSNode,
+  type TextOutput,
+  type TimedString,
+  isTimedString,
+} from './io.js';
+import { toSnakeCaseDeep } from './report.js';
+import { RunContext } from './run_context.js';
+import type { SpeechHandle } from './speech_handle.js';
+import { getMockTool } from './testing/run_result.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
+import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
+
+export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
+export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
+
+/** @internal */
+export class _LLMGenerationData {
+  generatedText: string = '';
+  generatedToolCalls: FunctionCall[];
+  generatedExtra: Record<string, unknown> = {};
+  id: string;
+  ttft?: number;
+
+  constructor(
+    public readonly textStream: ReadableStream<string | FlushSentinel>,
+    public readonly toolCallStream: ReadableStream<FunctionCall>,
+  ) {
+    this.id = shortuuid('item_');
+    this.generatedToolCalls = [];
+  }
+}
+
+/**
+ * TTS generation data containing audio stream and optional timed transcripts.
+ * @internal
+ */
+export interface _TTSGenerationData {
+  /** Audio frame stream from TTS */
+  audioStream: ReadableStream<AudioFrame>;
+  /**
+   * Future that resolves to a stream of timed transcripts, or null if TTS doesn't support it.
+   */
+  timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
+  /** Time to first byte (set when first audio frame is received) */
+  ttfb?: number;
+}
+
+// TODO(brian): remove this class in favor of ToolOutput
+export class _ToolOutput {
+  output: _JsOutput[];
+  firstToolFut: Future;
+
+  constructor() {
+    this.output = [];
+    this.firstToolFut = new Future();
+  }
+}
+
+// TODO(brian): remove this class in favor of ToolExecutionOutput
+export class _SanitizedOutput {
+  toolCall: FunctionCall;
+  toolCallOutput?: FunctionCallOutput;
+  replyRequired: boolean;
+  agentTask?: Agent;
+
+  constructor(
+    toolCall: FunctionCall,
+    toolCallOutput: FunctionCallOutput | undefined,
+    replyRequired: boolean,
+    agentTask: Agent | undefined,
+  ) {
+    this.toolCall = toolCall;
+    this.toolCallOutput = toolCallOutput;
+    this.replyRequired = replyRequired;
+    this.agentTask = agentTask;
+  }
+
+  static create(params: {
+    toolCall: FunctionCall;
+    toolCallOutput?: FunctionCallOutput;
+    replyRequired?: boolean;
+    agentTask?: Agent;
+  }) {
+    const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
+  }
+}
+
+function isValidToolOutput(toolOutput: unknown): boolean {
+  const validTypes = ['string', 'number', 'boolean'];
+
+  if (validTypes.includes(typeof toolOutput)) {
+    return true;
+  }
+
+  if (toolOutput === undefined || toolOutput === null) {
+    return true;
+  }
+
+  if (Array.isArray(toolOutput)) {
+    return toolOutput.every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Set) {
+    return Array.from(toolOutput).every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Map) {
+    return Array.from(toolOutput.values()).every(isValidToolOutput);
+  }
+
+  if (toolOutput instanceof Object) {
+    return Object.entries(toolOutput).every(
+      ([key, value]) => validTypes.includes(typeof key) && isValidToolOutput(value),
+    );
+  }
+
+  return false;
+}
+
+export class ToolExecutionOutput {
+  constructor(
+    public readonly toolCall: FunctionCall,
+    public readonly toolCallOutput: FunctionCallOutput | undefined,
+    public readonly agentTask: Agent | undefined,
+    public readonly rawOutput: unknown,
+    public readonly rawException: Error | undefined,
+    public readonly replyRequired: boolean,
+  ) {}
+
+  static create(params: {
+    toolCall: FunctionCall;
+    toolCallOutput?: FunctionCallOutput;
+    agentTask?: Agent;
+    rawOutput: unknown;
+    rawException?: Error;
+    replyRequired?: boolean;
+  }) {
+    const {
+      toolCall,
+      toolCallOutput,
+      agentTask,
+      rawOutput,
+      rawException,
+      replyRequired = true,
+    } = params;
+    return new ToolExecutionOutput(
+      toolCall,
+      toolCallOutput,
+      agentTask,
+      rawOutput,
+      rawException,
+      replyRequired,
+    );
+  }
+}
+
+export interface ToolOutput {
+  output: ToolExecutionOutput[];
+  firstToolStartedFuture: Future<void>;
+}
+
+// TODO(brian): remove this class in favor of ToolExecutionOutput
+export class _JsOutput {
+  toolCall: FunctionCall;
+  output: unknown;
+  exception?: Error;
+
+  #logger = log();
+
+  constructor(toolCall: FunctionCall, output: unknown, exception: Error | undefined) {
+    this.toolCall = toolCall;
+    this.output = output;
+    this.exception = exception;
+  }
+
+  static create(params: { toolCall: FunctionCall; output?: unknown; exception?: Error }) {
+    const { toolCall, output = undefined, exception = undefined } = params;
+    return new _JsOutput(toolCall, output, exception);
+  }
+
+  sanitize(): _SanitizedOutput {
+    if (isToolError(this.exception)) {
+      return _SanitizedOutput.create({
+        toolCall: FunctionCall.create({ ...this.toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: this.exception.message,
+          isError: true,
+        }),
+      });
+    }
+
+    if (isStopResponse(this.exception)) {
+      return _SanitizedOutput.create({
+        toolCall: FunctionCall.create({ ...this.toolCall }),
+      });
+    }
+
+    if (this.exception !== undefined) {
+      return _SanitizedOutput.create({
+        toolCall: FunctionCall.create({ ...this.toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: 'An internal error occurred while executing the tool.', // Don't send the actual error message, as it may contain sensitive information
+          isError: true,
+        }),
+      });
+    }
+
+    let agentTask: Agent | undefined = undefined;
+    let toolOutput: unknown = this.output;
+    if (isAgentHandoff(this.output)) {
+      agentTask = this.output.agent;
+      toolOutput = this.output.returns;
+    }
+
+    if (!isValidToolOutput(toolOutput)) {
+      this.#logger.error(
+        {
+          callId: this.toolCall.callId,
+          function: this.toolCall.name,
+        },
+        `AI function ${this.toolCall.name} returned an invalid output`,
+      );
+      return _SanitizedOutput.create({
+        toolCall: FunctionCall.create({ ...this.toolCall }),
+        toolCallOutput: undefined,
+      });
+    }
+
+    return _SanitizedOutput.create({
+      toolCall: FunctionCall.create({ ...this.toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: this.toolCall.name,
+        callId: this.toolCall.callId,
+        output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
+        isError: false,
+      }),
+      replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
+      agentTask,
+    });
+  }
+}
+
+export function createToolOutput(params: {
+  toolCall: FunctionCall;
+  output?: unknown;
+  exception?: Error;
+}): ToolExecutionOutput {
+  const { toolCall, output, exception } = params;
+  const logger = log();
+
+  // support returning Exception instead of raising them (for devex purposes inside evals)
+  let finalOutput = output;
+  let finalException = exception;
+  if (output instanceof Error) {
+    finalException = output;
+    finalOutput = undefined;
+  }
+
+  if (isToolError(finalException)) {
+    return ToolExecutionOutput.create({
+      toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: finalException.message,
+        isError: true,
+      }),
+      rawOutput: finalOutput,
+      rawException: finalException,
+    });
+  }
+
+  if (isStopResponse(finalException)) {
+    return ToolExecutionOutput.create({
+      toolCall: FunctionCall.create({ ...toolCall }),
+      rawOutput: finalOutput,
+      rawException: finalException,
+    });
+  }
+
+  if (finalException !== undefined) {
+    return ToolExecutionOutput.create({
+      toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: 'An internal error occurred', // Don't send the actual error message, as it may contain sensitive information
+        isError: true,
+      }),
+      rawOutput: finalOutput,
+      rawException: finalException,
+    });
+  }
+
+  let agentTask: Agent | undefined = undefined;
+  let toolOutput: unknown = finalOutput;
+  if (isAgentHandoff(finalOutput)) {
+    agentTask = finalOutput.agent;
+    toolOutput = finalOutput.returns;
+  }
+
+  if (!isValidToolOutput(toolOutput)) {
+    logger.error(
+      {
+        callId: toolCall.callId,
+        output: finalOutput,
+      },
+      `AI function ${toolCall.name} returned an invalid output`,
+    );
+    return ToolExecutionOutput.create({
+      toolCall: FunctionCall.create({ ...toolCall }),
+      rawOutput: finalOutput,
+      rawException: finalException,
+    });
+  }
+
+  return ToolExecutionOutput.create({
+    toolCall: FunctionCall.create({ ...toolCall }),
+    toolCallOutput: FunctionCallOutput.create({
+      name: toolCall.name,
+      callId: toolCall.callId,
+      output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
+      isError: false,
+    }),
+    replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
+    agentTask,
+    rawOutput: finalOutput,
+    rawException: finalException,
+  });
+}
+
+export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
+
+/**
+ * Update the instruction message in the chat context or insert a new one if missing.
+ *
+ * This function looks for an existing instruction message in the chat context using the identifier
+ * 'INSTRUCTIONS_MESSAGE_ID'.
+ *
+ * @param options - The options for updating the instructions.
+ * @param options.chatCtx - The chat context to update.
+ * @param options.instructions - The instructions to add.
+ * @param options.addIfMissing - Whether to add the instructions if they are missing.
+ */
+export function updateInstructions(options: {
+  chatCtx: ChatContext;
+  instructions: string | Instructions;
+  addIfMissing: boolean;
+}) {
+  const { chatCtx, instructions, addIfMissing } = options;
+
+  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+  if (idx !== undefined) {
+    if (chatCtx.items[idx]!.type === 'message') {
+      // create a new instance to avoid mutating the original
+      chatCtx.items[idx] = ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instructions],
+        createdAt: chatCtx.items[idx]!.createdAt,
+      });
+    } else {
+      throw new Error('expected the instructions inside the chatCtx to be of type "message"');
+    }
+  } else if (addIfMissing) {
+    // insert the instructions at the beginning of the chat context
+    chatCtx.items.unshift(
+      ChatMessage.create({
+        id: INSTRUCTIONS_MESSAGE_ID,
+        role: 'system',
+        content: [instructions],
+      }),
+    );
+  }
+}
+
+/**
+ * Apply the correct {@link Instructions} variant for the turn's input modality.
+ *
+ * Locates the instructions message (by {@link INSTRUCTIONS_MESSAGE_ID}) and,
+ * if its content contains any {@link Instructions} entries, rebuilds the
+ * message so each Instructions renders as the chosen variant. No-op when no
+ * modality-aware instructions are present.
+ */
+export function applyInstructionsModality(
+  chatCtx: ChatContext,
+  options: { modality: 'audio' | 'text' },
+) {
+  const { modality } = options;
+  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+  if (idx === undefined) return;
+
+  const item = chatCtx.items[idx]!;
+  if (item.type !== 'message') return;
+
+  const hasModalitySpecific = item.content.some((c) => isInstructions(c));
+  if (!hasModalitySpecific) return;
+
+  // ChatContext.copy shadows the original item; create a new instance so the
+  // base context's content isn't mutated when the same Instructions is reused
+  // across turns.
+  chatCtx.items[idx] = ChatMessage.create({
+    id: item.id,
+    role: item.role,
+    content: item.content.map((c) => (isInstructions(c) ? c.asModality(modality) : c)),
+    interrupted: item.interrupted,
+    createdAt: item.createdAt,
+    transcriptConfidence: item.transcriptConfidence,
+    metrics: item.metrics,
+    extra: item.extra,
+  });
+}
+
+export function performLLMInference(
+  node: LLMNode,
+  chatCtx: ChatContext,
+  toolCtx: ToolContext,
+  modelSettings: ModelSettings,
+  controller: AbortController,
+  model?: string,
+  provider?: string,
+): [Task<void>, _LLMGenerationData] {
+  const logger = log();
+  const textStream = new IdentityTransform<string | FlushSentinel>();
+  const toolCallStream = new IdentityTransform<FunctionCall>();
+
+  const textWriter = textStream.writable.getWriter();
+  const toolCallWriter = toolCallStream.writable.getWriter();
+  const data = new _LLMGenerationData(textStream.readable, toolCallStream.readable);
+
+  const _performLLMInferenceImpl = async (signal: AbortSignal, span: Span) => {
+    span.setAttribute(
+      traceTypes.ATTR_CHAT_CTX,
+      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+      JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+    );
+    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+
+    if (model) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    }
+    if (provider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
+    }
+
+    let llmStreamReader: ReadableStreamDefaultReader<string | ChatChunk | FlushSentinel> | null =
+      null;
+    let llmStream: ReadableStream<string | ChatChunk | FlushSentinel> | null = null;
+    const startTime = performance.now() / 1000; // Convert to seconds
+    let firstTokenReceived = false;
+
+    try {
+      llmStream = await node(chatCtx, toolCtx, modelSettings);
+      if (llmStream === null) {
+        await textWriter.close();
+        return;
+      }
+
+      const abortPromise = waitForAbort(signal);
+
+      // TODO(brian): add support for dynamic tools
+
+      llmStreamReader = llmStream.getReader();
+      while (true) {
+        if (signal.aborted) break;
+
+        const result = await ThrowsPromise.race([llmStreamReader.read(), abortPromise]);
+        if (result === undefined) break;
+
+        const { done, value: chunk } = result;
+        if (done) break;
+
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          data.ttft = performance.now() / 1000 - startTime;
+        }
+
+        if (isFlushSentinel(chunk)) {
+          await textWriter.write(chunk);
+        } else if (typeof chunk === 'string') {
+          data.generatedText += chunk;
+          await textWriter.write(chunk);
+          // TODO(shubhra): better way to check??
+        } else {
+          if (chunk.delta === undefined) {
+            continue;
+          }
+
+          if (chunk.delta.toolCalls) {
+            for (const tool of chunk.delta.toolCalls) {
+              if (tool.type !== 'function_call') continue;
+
+              const toolCall = FunctionCall.create({
+                id: `${data.id}/fnc_${data.generatedToolCalls.length}`,
+                callId: tool.callId,
+                name: tool.name,
+                args: tool.args,
+                // Preserve thought signature for Gemini 3+ thinking mode
+                thoughtSignature: tool.thoughtSignature,
+                extra: tool.extra || {},
+              });
+
+              data.generatedToolCalls.push(toolCall);
+              await toolCallWriter.write(toolCall);
+            }
+          }
+
+          if (chunk.delta.extra) {
+            Object.assign(data.generatedExtra, chunk.delta.extra);
+          }
+
+          if (chunk.delta.content) {
+            data.generatedText += chunk.delta.content;
+            await textWriter.write(chunk.delta.content);
+          }
+        }
+
+        // No need to check if chunk is of type other than ChatChunk or string like in
+        // Python since chunk is defined in the type ChatChunk | string in TypeScript
+      }
+
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      if (data.ttft !== undefined) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Abort signal was triggered, handle gracefully
+        return;
+      }
+      // surface inference silent errors even when this task's rejection is never awaited
+      logger.error({ error }, 'error in llm node');
+      throw error;
+    } finally {
+      llmStreamReader?.releaseLock();
+      await llmStream?.cancel();
+      await textWriter.close();
+      await toolCallWriter.close();
+    }
+  };
+
+  // Capture the current context (agent_turn) to ensure llm_node is properly parented
+  const currentContext = otelContext.active();
+
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async (span) => _performLLMInferenceImpl(signal, span), {
+      name: 'llm_node',
+      context: currentContext,
+    });
+
+  return [
+    Task.from((controller) => inferenceTask(controller.signal), controller, 'performLLMInference'),
+    data,
+  ];
+}
+
+export function performTTSInference(
+  node: TTSNode,
+  text: ReadableStream<string | TimedString>,
+  modelSettings: ModelSettings,
+  controller: AbortController,
+  model?: string,
+  provider?: string,
+  readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
+  textTransforms?: readonly TextTransform[] | null,
+): [Task<void>, _TTSGenerationData] {
+  const logger = log();
+  const audioStream = new IdentityTransform<AudioFrame>();
+  const outputWriter = audioStream.writable.getWriter();
+  const audioOutputStream = audioStream.readable;
+
+  const timedTextsFut = new Future<ReadableStream<TimedString> | null, never>();
+  const timedTextsStream = new IdentityTransform<TimedString>();
+  const timedTextsWriter = timedTextsStream.writable.getWriter();
+
+  // Transform stream to extract text from TimedString objects
+  const textOnlyStream = new IdentityTransform<string>();
+  const textOnlyWriter = textOnlyStream.writable.getWriter();
+  (async () => {
+    const reader = text.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        const textValue = typeof value === 'string' ? value : value.text;
+        await textOnlyWriter.write(textValue);
+      }
+      await textOnlyWriter.close();
+    } catch (e) {
+      await textOnlyWriter.abort(e as Error);
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+
+  let ttfb: number | undefined;
+
+  const genData: _TTSGenerationData = {
+    audioStream: audioOutputStream,
+    timedTextsFut,
+    ttfb: undefined,
+  };
+
+  const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
+    if (model) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, model);
+    }
+    if (provider) {
+      span.setAttribute(traceTypes.ATTR_GEN_AI_PROVIDER_NAME, provider);
+    }
+
+    let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
+    let ttsStream: ReadableStream<AudioFrame> | null = null;
+    const startTime = performance.now() / 1000; // Convert to seconds
+    let firstByteReceived = false;
+
+    try {
+      const ttsInput = textTransforms
+        ? applyTextTransforms(textOnlyStream.readable, textTransforms)
+        : textOnlyStream.readable;
+      ttsStream = await node(ttsInput, modelSettings);
+      if (ttsStream === null) {
+        timedTextsFut.resolve(null);
+        await outputWriter.close();
+        await timedTextsWriter.close();
+        return;
+      }
+
+      // This is critical: the future must be resolved with the channel/stream before the loop
+      // so that agent_activity can start reading while we write
+      if (!timedTextsFut.done) {
+        timedTextsFut.resolve(timedTextsStream.readable);
+      }
+
+      ttsStreamReader = ttsStream.getReader();
+
+      while (true) {
+        if (signal.aborted) {
+          break;
+        }
+
+        const { done, value: frame } = await waitUntilTimeout(
+          ttsStreamReader.read(),
+          readIdleTimeout,
+        );
+        if (done) {
+          break;
+        }
+
+        if (!firstByteReceived) {
+          firstByteReceived = true;
+          ttfb = performance.now() / 1000 - startTime;
+          genData.ttfb = ttfb;
+          span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+        }
+
+        // Write the audio frame to the output stream
+        await outputWriter.write(frame);
+
+        const timedTranscripts = frame.userdata[USERDATA_TIMED_TRANSCRIPT] as
+          | TimedString[]
+          | undefined;
+        if (timedTranscripts && timedTranscripts.length > 0) {
+          for (const timedText of timedTranscripts) {
+            await timedTextsWriter.write(timedText);
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof IdleTimeoutError) {
+        logger.warn('TTS stream stalled after producing audio, forcing close');
+      } else if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      } else {
+        throw error;
+      }
+    } finally {
+      if (!timedTextsFut.done) {
+        timedTextsFut.resolve(null);
+      }
+      ttsStreamReader?.releaseLock();
+      await ttsStream?.cancel();
+      await outputWriter.close();
+      await timedTextsWriter.close();
+    }
+  };
+
+  // Capture the current context (agent_turn) to ensure tts_node is properly parented
+  const currentContext = otelContext.active();
+
+  const inferenceTask = async (signal: AbortSignal) =>
+    tracer.startActiveSpan(async (span) => _performTTSInferenceImpl(signal, span), {
+      name: 'tts_node',
+      context: currentContext,
+    });
+
+  return [
+    Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
+    genData,
+  ];
+}
+
+export interface _TextOut {
+  text: string;
+  firstTextFut: Future;
+}
+
+async function forwardText(
+  source: ReadableStream<string | TimedString>,
+  out: _TextOut,
+  signal: AbortSignal,
+  textOutput: TextOutput | null,
+): Promise<void> {
+  const reader = source.getReader();
+  try {
+    while (true) {
+      if (signal.aborted) {
+        break;
+      }
+      const { done, value: delta } = await reader.read();
+      if (done) break;
+
+      const deltaIsTimedString = isTimedString(delta);
+      const textDelta = deltaIsTimedString ? delta.text : delta;
+
+      out.text += textDelta;
+      if (textOutput !== null) {
+        // Pass TimedString to textOutput for synchronized transcription
+        await textOutput.captureText(delta);
+      }
+      if (!out.firstTextFut.done) {
+        out.firstTextFut.resolve();
+      }
+    }
+  } finally {
+    if (textOutput !== null) {
+      textOutput.flush();
+    }
+    reader?.releaseLock();
+  }
+}
+
+export function performTextForwarding(
+  source: ReadableStream<string | TimedString>,
+  controller: AbortController,
+  textOutput: TextOutput | null,
+): [Task<void>, _TextOut] {
+  const out = {
+    text: '',
+    firstTextFut: new Future(),
+  };
+  return [
+    Task.from(
+      (controller) => forwardText(source, out, controller.signal, textOutput),
+      controller,
+      'performTextForwarding',
+    ),
+    out,
+  ];
+}
+
+export interface _AudioOut {
+  audio: Array<AudioFrame>;
+  firstFrameFut: Future<number>;
+  /**
+   * Timestamp (ms, `Date.now()`) when the first audio frame was forwarded to the
+   * `AudioOutput`. Set by `forwardAudio` as soon as the first TTS frame is
+   * appended; remains `undefined` until then. Used together with the playback-started
+   * timestamp from `firstFrameFut` to derive the assistant's `playbackLatency`
+   * metric.
+   */
+  startedForwardingAt?: number;
+}
+
+/**
+ * The text that actually reached the user, accounting for interruptions.
+ *
+ * On a mid-playout interruption (`played === 'partial'`) we prefer the
+ * playback-aligned `synchronizedTranscript`, but fall back to the full generated
+ * text when no synchronized transcript is available (e.g. avatar outputs) so the
+ * heard reply is still committed to chat ctx rather than dropped.
+ */
+export function forwardedTextFor(output: ForwardOutput): string {
+  if (output.played === 'skipped') return '';
+  if (output.played === 'partial' && output.synchronizedTranscript) {
+    return output.synchronizedTranscript;
+  }
+  return output.textOut?.text ?? '';
+}
+
+async function forwardAudio(
+  ttsStream: ReadableStream<AudioFrame>,
+  audioOutput: AudioOutput,
+  out: _AudioOut,
+  idleTimeout: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const logger = log();
+  const reader = ttsStream.getReader();
+  let resampler: AudioResampler | null = null;
+
+  // The audio output is shared across overlapping segments. When a speech is
+  // interrupted, the main loop immediately authorizes the next speech, so this
+  // forwarder can register its listener while the interrupted segment's teardown
+  // is still emitting PLAYBACK_STARTED on the same output. Only honor the event
+  // once this loop has captured its own first frame, so a stray event from
+  // another segment can't resolve our `firstFrameFut` prematurely. A premature
+  // resolution skips resampler creation (gated on `!firstFrameFut.done`) and
+  // pushes an unresampled frame to the AudioSource, raising
+  // `RtcError: sample_rate and num_channels don't match`.
+  let hasCapturedOwnFrame = false;
+
+  const onPlaybackStarted = (ev: { createdAt: number }) => {
+    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
+      out.firstFrameFut.resolve(ev.createdAt);
+    }
+  };
+
+  try {
+    audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+    audioOutput.resume();
+
+    while (true) {
+      if (signal?.aborted) {
+        break;
+      }
+
+      const { done, value: frame } = await waitUntilTimeout(reader.read(), idleTimeout);
+      if (done) break;
+
+      out.audio.push(frame);
+      if (out.startedForwardingAt === undefined) {
+        out.startedForwardingAt = Date.now();
+      }
+
+      if (audioOutput.sampleRate && audioOutput.sampleRate !== frame.sampleRate && !resampler) {
+        resampler = new AudioResampler(frame.sampleRate, audioOutput.sampleRate, frame.channels);
+      }
+
+      // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
+      // the first captureFrame is attributed to this segment.
+      hasCapturedOwnFrame = true;
+
+      if (resampler) {
+        for (const f of resampler.push(frame)) {
+          await audioOutput.captureFrame(f);
+        }
+      } else {
+        await audioOutput.captureFrame(frame);
+      }
+    }
+
+    if (resampler) {
+      for (const f of resampler.flush()) {
+        await audioOutput.captureFrame(f);
+      }
+    }
+  } catch (e) {
+    if (e instanceof IdleTimeoutError) {
+      logger.warn('audio forwarding stalled waiting for TTS frames, forcing close');
+    } else {
+      throw e;
+    }
+  } finally {
+    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+
+    if (!out.firstFrameFut.done) {
+      out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
+    }
+
+    reader?.releaseLock();
+    audioOutput.flush();
+    if (signal?.aborted) {
+      audioOutput.clearBuffer();
+    }
+    resampler?.close();
+  }
+}
+
+export function performAudioForwarding(
+  ttsStream: ReadableStream<AudioFrame>,
+  audioOutput: AudioOutput,
+  controller: AbortController,
+  idleTimeout: number = DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS,
+): [Task<void>, _AudioOut] {
+  const out: _AudioOut = {
+    audio: [],
+    firstFrameFut: new Future<number>(),
+  };
+
+  return [
+    Task.from(
+      (controller) => forwardAudio(ttsStream, audioOutput, out, idleTimeout, controller.signal),
+      controller,
+      'performAudioForwarding',
+    ),
+    out,
+  ];
+}
+
+export function performToolExecutions({
+  session,
+  speechHandle,
+  toolCtx,
+  toolChoice,
+  toolCallStream,
+  onToolExecutionStarted = () => {},
+  onToolExecutionCompleted = () => {},
+  controller,
+}: {
+  session: AgentSession;
+  speechHandle: SpeechHandle;
+  toolCtx: ToolContext;
+  toolChoice?: ToolChoice;
+  toolCallStream: ReadableStream<FunctionCall>;
+  onToolExecutionStarted?: (toolCall: FunctionCall) => void;
+  onToolExecutionCompleted?: (toolExecutionOutput: ToolExecutionOutput) => void;
+  controller: AbortController;
+}): [Task<void>, ToolOutput] {
+  const logger = log();
+  const toolOutput: ToolOutput = {
+    output: [],
+    firstToolStartedFuture: new Future(),
+  };
+  const toolCompleted = (out: ToolExecutionOutput) => {
+    onToolExecutionCompleted(out);
+    toolOutput.output.push(out);
+  };
+
+  const executeToolsTask = async (controller: AbortController) => {
+    const signal = controller.signal;
+    const reader = toolCallStream.getReader();
+
+    // Production always has an activity (and thus a shared executor). Fall back to a standalone
+    // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
+    // which would leave callers awaiting `firstToolStartedFuture` hanging forever.
+    const activity = session._activity;
+    const defaultExecutor = activity?._toolExecutor ?? new ToolExecutor({ owningActivity: null });
+
+    // Route AsyncToolset members to their own executor so session-scoped async
+    // tools survive handoff; everything else falls back to the activity executor.
+    const executorByName = buildExecutorMap({
+      toolsets: toolCtx.toolsets,
+      defaultExecutor,
+    });
+
+    const tasks: Task<void>[] = [];
+    while (!signal.aborted) {
+      const { done, value: toolCall } = await reader.read();
+      if (signal.aborted) break;
+      if (done) break;
+
+      if (toolChoice === 'none') {
+        logger.error(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          "received a tool call with toolChoice set to 'none', ignoring",
+        );
+        continue;
+      }
+
+      // TODO(brian): assert other toolChoice values
+
+      const tool = toolCtx.getFunctionTool(toolCall.name);
+      if (!tool) {
+        const availableTools = sortedToolNames(toolCtx).join(', ');
+        const message = `Unknown function: ${toolCall.name} - available tools: ${availableTools}`;
+        logger.warn(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          `unknown AI function ${toolCall.name}`,
+        );
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+          }),
+        );
+        continue;
+      }
+
+      if (!isFunctionTool(tool)) {
+        logger.error(
+          {
+            function: toolCall.name,
+            speech_id: speechHandle.id,
+          },
+          `unknown tool type: ${typeof tool}`,
+        );
+        continue;
+      }
+
+      let parsedArgs: object | undefined;
+
+      // Ensure valid arguments
+      try {
+        const rawArgs = toolCall.args || '{}';
+        const jsonArgs = parseFunctionArguments(rawArgs);
+        const canonicalArgs = JSON.stringify(jsonArgs);
+        if (canonicalArgs !== rawArgs) {
+          toolCall.args = canonicalArgs;
+        }
+
+        if (isZodSchema(tool.parameters)) {
+          const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
+          if (result.success) {
+            parsedArgs = result.data;
+          } else {
+            throw result.error;
+          }
+        } else {
+          parsedArgs = jsonArgs;
+        }
+      } catch (rawError) {
+        const error = toError(rawError);
+        logger.error(
+          {
+            function: toolCall.name,
+            arguments: toolCall.args,
+            speech_id: speechHandle.id,
+            error: error.message,
+          },
+          `tried to call AI function ${toolCall.name} with invalid arguments`,
+        );
+        // Surface argument-validation errors to the LLM via ToolError so it can correct
+        // its arguments instead of looping on the same invalid call. The argument schema
+        // and the validator's error message do not contain server-side internals.
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(`Invalid arguments for ${toolCall.name}: ${error.message}`),
+          }),
+        );
+        continue;
+      }
+
+      // Resolve right after argument parsing and before execution (including the
+      // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
+      // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
+      if (!toolOutput.firstToolStartedFuture.done) {
+        toolOutput.firstToolStartedFuture.resolve();
+      }
+
+      onToolExecutionStarted(toolCall);
+
+      logger.info(
+        {
+          function: toolCall.name,
+          arguments: parsedArgs,
+          speech_id: speechHandle.id,
+        },
+        'Executing LLM tool call',
+      );
+
+      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
+        span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
+
+        // await for task to complete, if task is aborted, set exception
+        let toolOutput: ToolExecutionOutput | undefined;
+        try {
+          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          toolOutput = createToolOutput({
+            toolCall,
+            exception: isAborted ? new Error('tool call was aborted') : undefined,
+            output: isAborted ? undefined : result,
+          });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
+              toolOutput.toolCallOutput.isError,
+            );
+          }
+        } catch (rawError) {
+          logger.error(
+            {
+              function: toolCall.name,
+              speech_id: speechHandle.id,
+              error: toError(rawError).message,
+            },
+            'exception occurred while executing tool',
+          );
+          toolOutput = createToolOutput({
+            toolCall,
+            exception: toError(rawError),
+          });
+
+          if (toolOutput.toolCallOutput) {
+            span.setAttribute(
+              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
+              toolOutput.toolCallOutput.output,
+            );
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
+          }
+        } finally {
+          if (!toolOutput) throw new Error('toolOutput is undefined');
+          toolCompleted(toolOutput);
+        }
+      };
+
+      const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
+        tracer.startActiveSpan(async (span) => _tracableToolExecutionImpl(toolExecTask, span), {
+          name: 'function_tool',
+        });
+
+      const toolTask = Task.from(
+        async () => {
+          // Ensure this task is marked inline before user tool code executes.
+          const currentTask = Task.current();
+          if (currentTask) {
+            _setActivityTaskInfo(currentTask, {
+              speechHandle,
+              functionCall: toolCall,
+              inlineTask: true,
+            });
+          }
+
+          const toolExecution = functionCallStorage.run(
+            { functionCall: toolCall, speechHandle },
+            async () => {
+              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const mock = getMockTool(session.currentAgent, toolCall.name);
+              const toolToExecute = mock
+                ? {
+                    ...tool,
+                    execute: mock,
+                  }
+                : tool;
+
+              if (mock) {
+                logger.debug(
+                  {
+                    function: toolCall.name,
+                    arguments: parsedArgs,
+                    speech_id: speechHandle.id,
+                  },
+                  'executing mock tool',
+                );
+              }
+
+              const executor = executorByName.get(toolCall.name) ?? defaultExecutor;
+              return await executor.execute({
+                tool: toolToExecute,
+                runCtx,
+                rawArguments: parsedArgs as JSONObject,
+                abortSignal: signal,
+              });
+            },
+          );
+
+          await tracableToolExecution(toolExecution);
+        },
+        controller,
+        `performToolExecution:${toolCall.name}`,
+      );
+
+      _setActivityTaskInfo(toolTask, {
+        speechHandle,
+        functionCall: toolCall,
+        inlineTask: true,
+      });
+      // wait, not cancelling all tool calling tasks
+      tasks.push(toolTask);
+    }
+
+    await ThrowsPromise.allSettled(tasks.map((task) => task.result));
+    if (toolOutput.output.length > 0) {
+      logger.debug(
+        {
+          speech_id: speechHandle.id,
+        },
+        'tools execution completed',
+      );
+    }
+  };
+
+  return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
+}
+
+export function removeInstructions(chatCtx: ChatContext) {
+  // loop in case there are items with the same id (shouldn't happen!)
+  while (true) {
+    const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
+    if (idx !== undefined) {
+      chatCtx.items.splice(idx, 1);
+    } else {
+      break;
+    }
+  }
+}

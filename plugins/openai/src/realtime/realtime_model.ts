@@ -1,0 +1,2182 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
+  Future,
+  Queue,
+  Task,
+  type TimedString,
+  cancelAndWait,
+  createTimedString,
+  delay,
+  isAPIError,
+  llm,
+  log,
+  type metrics,
+  shortuuid,
+  stream,
+} from '@livekit/agents';
+import { Mutex } from '@livekit/mutex';
+import type { AudioResampler } from '@livekit/rtc-node';
+import { AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
+import { type MessageEvent, WebSocket } from 'ws';
+import * as api_proto from './api_proto.js';
+
+// if LK_OPENAI_DEBUG convert it to a number, otherwise set it to 0
+const lkOaiDebug = process.env.LK_OPENAI_DEBUG ? Number(process.env.LK_OPENAI_DEBUG) : 0;
+
+const SAMPLE_RATE = 24000;
+const NUM_CHANNELS = 1;
+const BASE_URL = 'https://api.openai.com/v1';
+
+const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
+
+type Modality = 'text' | 'audio';
+
+interface RealtimeOptions {
+  model: api_proto.Model;
+  voice: api_proto.Voice;
+  toolChoice?: llm.ToolChoice;
+  inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+  inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+  turnDetection?: api_proto.TurnDetectionType | null;
+  maxResponseOutputTokens?: number | 'inf';
+  speed?: number;
+  tracing?: api_proto.TracingConfig | null;
+  reasoning?: api_proto.Reasoning;
+  apiKey?: string;
+  baseURL: string;
+  isAzure: boolean;
+  azureDeployment?: string;
+  entraToken?: string;
+  apiVersion?: string;
+  maxSessionDuration: number;
+  // reset the connection after this many seconds if provided
+  connOptions: APIConnectOptions;
+  modalities: Modality[];
+}
+
+interface MessageGeneration {
+  messageId: string;
+  textChannel: stream.StreamChannel<string | TimedString>;
+  audioChannel: stream.StreamChannel<AudioFrame>;
+  audioTranscript: string;
+  modalities: Future<('text' | 'audio')[]>;
+}
+
+interface ResponseGeneration {
+  messageChannel: stream.StreamChannel<llm.MessageGeneration>;
+  functionChannel: stream.StreamChannel<llm.FunctionCall>;
+  messages: Map<string, MessageGeneration>;
+
+  /** @internal */
+  _doneFut: Future;
+  /** @internal */
+  _createdTimestamp: number;
+  /** @internal */
+  _firstTokenTimestamp?: number;
+}
+
+class DiscardedGeneration {
+  readonly discarded = true;
+}
+
+class CreateResponseHandle {
+  instructions?: string;
+  doneFut: Future<llm.GenerationCreatedEvent>;
+  timeout?: ReturnType<typeof setTimeout>;
+  constructor({ instructions }: { instructions?: string }) {
+    this.instructions = instructions;
+    this.doneFut = new Future();
+  }
+}
+
+const DEFAULT_FIRST_RETRY_INTERVAL_MS = 100;
+const DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
+  type: 'semantic_vad',
+  eagerness: 'medium',
+  create_response: true,
+  interrupt_response: true,
+};
+const DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
+  model: 'gpt-4o-mini-transcribe',
+};
+const DEFAULT_TOOL_CHOICE: llm.ToolChoice = 'auto';
+const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS: number | 'inf' = 'inf';
+
+const AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
+  model: 'whisper-1',
+};
+
+const AZURE_DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
+  type: 'server_vad',
+  threshold: 0.5,
+  prefix_padding_ms: 300,
+  silence_duration_ms: 200,
+  create_response: true,
+};
+
+const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
+
+const DEFAULT_REALTIME_MODEL_OPTIONS = {
+  model: 'gpt-realtime',
+  voice: 'marin',
+  inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+  inputAudioNoiseReduction: undefined as api_proto.NoiseReduction | undefined,
+  turnDetection: DEFAULT_TURN_DETECTION,
+  toolChoice: DEFAULT_TOOL_CHOICE,
+  maxResponseOutputTokens: DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS,
+  maxSessionDuration: DEFAULT_MAX_SESSION_DURATION,
+  connOptions: DEFAULT_API_CONNECT_OPTIONS,
+  modalities: ['text', 'audio'] as Modality[],
+  tracing: undefined as api_proto.TracingConfig | undefined,
+};
+export class RealtimeModel extends llm.RealtimeModel {
+  sampleRate = api_proto.SAMPLE_RATE;
+  numChannels = api_proto.NUM_CHANNELS;
+  inFrameSize = api_proto.IN_FRAME_SIZE;
+  outFrameSize = api_proto.OUT_FRAME_SIZE;
+
+  /* @internal */
+  _options: RealtimeOptions;
+
+  get model(): string {
+    return this._options.model;
+  }
+
+  get provider(): string {
+    try {
+      const url = new URL(this._options.baseURL);
+      return url.host;
+    } catch {
+      return 'api.openai.com';
+    }
+  }
+
+  label(): string {
+    return 'openai.RealtimeModel';
+  }
+
+  constructor(
+    options: {
+      model?: string;
+      reasoning?: api_proto.Reasoning;
+      voice?: string;
+      /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
+      temperature?: number;
+      toolChoice?: llm.ToolChoice;
+      baseURL?: string;
+      modalities?: Modality[];
+      inputAudioTranscription?: api_proto.InputAudioTranscription | null;
+      inputAudioNoiseReduction?: api_proto.NoiseReduction | null;
+      turnDetection?: api_proto.TurnDetectionType | null;
+      speed?: number;
+      tracing?: api_proto.TracingConfig | null;
+      azureDeployment?: string;
+      apiKey?: string;
+      entraToken?: string;
+      apiVersion?: string;
+      maxSessionDuration?: number;
+      connOptions?: APIConnectOptions;
+    } = {},
+  ) {
+    const modalities = (options.modalities ||
+      DEFAULT_REALTIME_MODEL_OPTIONS.modalities) as Modality[];
+
+    super({
+      messageTruncation: true,
+      turnDetection: options.turnDetection !== null,
+      userTranscription: options.inputAudioTranscription !== null,
+      autoToolReplyGeneration: false,
+      audioOutput: modalities.includes('audio'),
+      manualFunctionCalls: true,
+      midSessionChatCtxUpdate: true,
+      midSessionInstructionsUpdate: true,
+      midSessionToolsUpdate: true,
+      perResponseToolChoice: true,
+    });
+
+    const isAzure = !!(options.apiVersion || options.entraToken || options.azureDeployment);
+
+    if (options.apiKey === '' && !isAzure) {
+      throw new Error(
+        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environment variable',
+      );
+    }
+
+    const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+
+    if (!apiKey && !isAzure) {
+      throw new Error(
+        'OpenAI API key is required, either using the argument or by setting the OPENAI_API_KEY environment variable',
+      );
+    }
+
+    if (!options.baseURL && isAzure) {
+      const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+      if (!azureEndpoint) {
+        throw new Error(
+          'Missing Azure endpoint. Please pass base_url or set AZURE_OPENAI_ENDPOINT environment variable.',
+        );
+      }
+      options.baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
+    }
+
+    const { modalities: _, ...optionsWithoutModalities } = options;
+    this._options = {
+      ...DEFAULT_REALTIME_MODEL_OPTIONS,
+      ...optionsWithoutModalities,
+      baseURL: options.baseURL || process.env.OPENAI_BASE_URL || BASE_URL,
+      apiKey,
+      isAzure,
+      model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
+      modalities,
+    };
+  }
+
+  /**
+   * Create a RealtimeModel instance configured for Azure OpenAI Service.
+   *
+   * @param azureDeployment - The name of your Azure OpenAI deployment.
+   * @param azureEndpoint - The endpoint URL for your Azure OpenAI resource. If undefined, will attempt to read from the environment variable AZURE_OPENAI_ENDPOINT.
+   * @param apiVersion - **Deprecated.** API version for legacy Azure OpenAI preview models. Will be removed on April 30, 2026. Omit for GA models.
+   * @param apiKey - Azure OpenAI API key. If undefined, will attempt to read from the environment variable AZURE_OPENAI_API_KEY.
+   * @param entraToken - Azure Entra authentication token. Required if not using API key authentication.
+   * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
+   * @param voice - Voice setting for audio outputs. Defaults to "alloy".
+   * @param inputAudioTranscription - Options for transcribing input audio. Defaults to @see DEFAULT_INPUT_AUDIO_TRANSCRIPTION.
+   * @param inputAudioNoiseReduction - Options for noise reduction. Defaults to undefined.
+   * @param turnDetection - Options for server-based voice activity detection (VAD). Defaults to @see DEFAULT_SERVER_VAD_OPTIONS.
+   * @param speed - Speed of the audio output. Defaults to 1.0.
+   * @param tracing - Tracing configuration. Defaults to undefined.
+   *
+   * @returns A RealtimeModel instance configured for Azure OpenAI Service.
+   *
+   * @throws Error if required Azure parameters are missing or invalid.
+   */
+  static withAzure({
+    azureDeployment,
+    azureEndpoint,
+    apiVersion,
+    apiKey,
+    entraToken,
+    baseURL,
+    voice = 'alloy',
+    temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
+    inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+    inputAudioNoiseReduction,
+    turnDetection = AZURE_DEFAULT_TURN_DETECTION,
+    speed,
+    tracing,
+  }: {
+    azureDeployment: string;
+    azureEndpoint?: string;
+    apiVersion?: string;
+    apiKey?: string;
+    entraToken?: string;
+    baseURL?: string;
+    voice?: string;
+    /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
+    temperature?: number;
+    inputAudioTranscription?: api_proto.InputAudioTranscription;
+    inputAudioNoiseReduction?: api_proto.NoiseReduction;
+    turnDetection?: api_proto.TurnDetectionType;
+    speed?: number;
+    tracing?: api_proto.TracingConfig;
+  }) {
+    apiKey = apiKey || process.env.AZURE_OPENAI_API_KEY;
+    if (!apiKey && !entraToken) {
+      throw new Error(
+        'Missing credentials. Please pass one of `apiKey`, `entraToken`, or the `AZURE_OPENAI_API_KEY` environment variable.',
+      );
+    }
+
+    apiVersion = apiVersion || process.env.OPENAI_API_VERSION;
+    if (apiVersion) {
+      log().warn(
+        'The `apiVersion` parameter for Azure OpenAI Realtime is deprecated and will be removed on April 30, 2026. ' +
+          'Please use the newer Azure OpenAI Realtime API without specifying an API version.',
+      );
+    }
+
+    if (!baseURL) {
+      azureEndpoint = azureEndpoint || process.env.AZURE_OPENAI_ENDPOINT;
+      if (!azureEndpoint) {
+        throw new Error(
+          'Missing Azure endpoint. Please pass the `azure_endpoint` parameter or set the `AZURE_OPENAI_ENDPOINT` environment variable.',
+        );
+      }
+      baseURL = `${azureEndpoint.replace(/\/$/, '')}/openai`;
+    }
+
+    return new RealtimeModel({
+      voice,
+      inputAudioTranscription,
+      inputAudioNoiseReduction,
+      turnDetection,
+      speed,
+      tracing,
+      apiKey,
+      azureDeployment,
+      apiVersion,
+      entraToken,
+      baseURL,
+    });
+  }
+
+  session() {
+    return new RealtimeSession(this);
+  }
+
+  async close() {
+    return;
+  }
+}
+
+/**
+ * In-place normalization of client event dicts for legacy Azure compatibility.
+ *
+ * The legacy Azure Realtime API uses "text" for assistant content parts,
+ * while the newer OpenAI API uses "output_text".
+ */
+function normalizeAzureClientEvent(event: Record<string, unknown>): void {
+  const item = event['item'] as Record<string, unknown> | undefined;
+  if (!item) return;
+  const content = item['content'] as Record<string, unknown>[] | undefined;
+  if (!content) return;
+  for (const contentPart of content) {
+    if (contentPart['type'] === 'output_text') {
+      contentPart['type'] = 'text';
+    }
+  }
+}
+
+/**
+ * Build the conversational Realtime API WebSocket URL.
+ *
+ * The scheme of `baseURL` is respected: `http://` maps to `ws://`
+ * and `https://` maps to `wss://`.
+ *
+ * @internal
+ */
+export function processBaseURL({
+  baseURL,
+  model,
+  isAzure = false,
+  azureDeployment,
+  apiVersion,
+}: {
+  baseURL: string;
+  model: string;
+  isAzure: boolean;
+  azureDeployment?: string;
+  apiVersion?: string;
+}): string {
+  // Azure GA (no apiVersion) uses /v1/realtime; legacy preview uses /realtime
+  const realtimePath = isAzure && !apiVersion ? 'v1/realtime' : 'realtime';
+  const url = new URL([baseURL, realtimePath].join('/'));
+
+  if (url.protocol === 'https:') {
+    url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
+  }
+
+  // ensure "/realtime" is added if the path is empty OR "/v1"
+  if (!url.pathname || ['', '/v1', '/openai'].includes(url.pathname.replace(/\/$/, ''))) {
+    url.pathname = url.pathname.replace(/\/$/, '') + '/realtime';
+  } else {
+    url.pathname = url.pathname.replace(/\/$/, '');
+  }
+
+  const queryParams: Record<string, string> = {};
+  if (isAzure && apiVersion) {
+    // Legacy Azure preview: /realtime?api-version=<v>&deployment=<d>
+    queryParams['api-version'] = apiVersion;
+    if (azureDeployment) {
+      queryParams['deployment'] = azureDeployment;
+    }
+  } else if (isAzure) {
+    // GA Azure: /v1/realtime?model=<deployment>
+    if (azureDeployment) {
+      queryParams['model'] = azureDeployment;
+    }
+  } else {
+    // Standard OpenAI: /realtime?model=<model>
+    queryParams['model'] = model;
+  }
+
+  for (const [key, value] of Object.entries(queryParams)) {
+    url.searchParams.set(key, value);
+  }
+
+  return url.toString();
+}
+
+/**
+ * A session for the OpenAI Realtime API.
+ *
+ * This class is used to interact with the OpenAI Realtime API.
+ * It is responsible for sending events to the OpenAI Realtime API and receiving events from it.
+ *
+ * It exposes two more events:
+ * - openai_server_event_received: expose the raw server events from the OpenAI Realtime API
+ * - openai_client_event_queued: expose the raw client events sent to the OpenAI Realtime API
+ */
+export class RealtimeSession extends llm.RealtimeSession {
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
+  private remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
+  private messageChannel = new Queue<api_proto.ClientEvent>();
+  private inputResampler?: AudioResampler;
+  private instructions?: string;
+  private oaiRealtimeModel: RealtimeModel;
+  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
+  // per-session copy of options so updateOptions can diff against the session's
+  // own state instead of the shared model-level state.
+  private _options: RealtimeOptions;
+  private currentGeneration?: ResponseGeneration | DiscardedGeneration;
+  private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
+  private discardedEventIds = new Set<string>();
+
+  private textModeRecoveryRetries: number = 0;
+
+  private itemCreateFutures: { [id: string]: Future } = {};
+  private itemDeleteFutures: { [id: string]: Future } = {};
+
+  private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
+
+  // Track items that have real server-side audio (created in current session, not restored)
+  // Items restored after reconnection are text-only and cannot be truncated
+  private audioCapableItemIds: Set<string> = new Set();
+
+  private updateChatCtxLock = new Mutex();
+  private updateFuncCtxLock = new Mutex();
+
+  // 100ms chunks
+  private bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
+
+  private pushedDurationMs: number = 0;
+
+  #logger = log();
+  #task: Task<void>;
+  #closed = false;
+
+  constructor(realtimeModel: RealtimeModel) {
+    super(realtimeModel);
+
+    this.oaiRealtimeModel = realtimeModel;
+    // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 796-797 lines
+    // Shallow copy (equivalent to Python's `dataclasses.replace`) so each
+    // session has independent option state. Without this, updateOptions would
+    // mutate the shared model._options before computing its diff, causing the
+    // diff to always see "no change" and never send session.update.
+    this._options = { ...realtimeModel._options };
+
+    this.#task = Task.from(({ signal }) => this.#mainTask(signal));
+
+    this.sendEvent(this.createSessionUpdateEvent());
+  }
+
+  private hasInflightResponse(): boolean {
+    return (
+      this.currentGeneration !== undefined || Object.keys(this.responseCreatedFutures).length > 0
+    );
+  }
+
+  sendEvent(command: api_proto.ClientEvent): void {
+    this.messageChannel.put(command);
+  }
+
+  private createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
+    const opts = this._options;
+    const maxOutputTokens =
+      opts.maxResponseOutputTokens === Infinity ? 'inf' : opts.maxResponseOutputTokens;
+
+    if (opts.isAzure && opts.apiVersion) {
+      // Legacy Azure preview API: flat format
+      const modalities: Modality[] = opts.modalities.includes('audio')
+        ? ['text', 'audio']
+        : ['text'];
+      return {
+        type: 'session.update',
+        session: {
+          model: opts.model,
+          voice: opts.voice,
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          modalities,
+          turn_detection: opts.turnDetection,
+          input_audio_transcription: opts.inputAudioTranscription,
+          tool_choice: toOaiToolChoice(opts.toolChoice),
+          max_response_output_tokens: maxOutputTokens,
+          speed: opts.speed,
+          instructions: this.instructions,
+        },
+      };
+    }
+
+    // GA format (OpenAI or Azure GA)
+    const audioFormat: api_proto.AudioFormat = { type: 'audio/pcm', rate: SAMPLE_RATE };
+    const modality: Modality = opts.modalities.includes('audio') ? 'audio' : 'text';
+    const includeReasoning = opts.reasoning && opts.model.startsWith('gpt-realtime-2');
+    return {
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        model: opts.model,
+        output_modalities: [modality],
+        audio: {
+          input: {
+            format: audioFormat,
+            noise_reduction: opts.inputAudioNoiseReduction,
+            transcription: opts.inputAudioTranscription,
+            turn_detection: opts.turnDetection,
+          },
+          output: {
+            format: audioFormat,
+            speed: opts.speed,
+            voice: opts.voice,
+          },
+        },
+        max_output_tokens: maxOutputTokens,
+        tool_choice: toOaiToolChoice(opts.toolChoice),
+        tracing: opts.tracing,
+        instructions: this.instructions,
+        ...(includeReasoning ? { reasoning: opts.reasoning } : {}),
+      },
+    };
+  }
+
+  get chatCtx() {
+    return this.remoteChatCtx.toChatCtx();
+  }
+
+  get tools() {
+    return this._tools.copy();
+  }
+
+  async updateChatCtx(_chatCtx: llm.ChatContext): Promise<void> {
+    const unlock = await this.updateChatCtxLock.lock();
+    try {
+      const validation = llm.validateChatContextStructure(_chatCtx);
+      const blockingErrors = validation.issues.filter(
+        (issue: llm.ChatContextValidationIssue) =>
+          issue.severity === 'error' && issue.code !== 'timestamp_order',
+      );
+      const timestampOrderIssue = validation.issues.find(
+        (issue: llm.ChatContextValidationIssue) => issue.code === 'timestamp_order',
+      );
+      if (blockingErrors.length > 0) {
+        this.#logger.error(
+          { issues: validation.issues, blockingErrors },
+          'Invalid chat context supplied to updateChatCtx',
+        );
+        throw new Error(
+          `Invalid chat context: ${validation.errors} errors, ${validation.warnings} warnings`,
+        );
+      }
+      if (timestampOrderIssue) {
+        this.#logger.warn(
+          { timestampOrderIssue },
+          'Proceeding with non-monotonic createdAt ordering in realtime chat context',
+        );
+      }
+      if (lkOaiDebug > 0 && validation.warnings > 0) {
+        this.#logger.debug(
+          {
+            warnings: validation.warnings,
+            issues: validation.issues,
+          },
+          'Chat context warnings detected before realtime update',
+        );
+      }
+
+      const events = await this.createChatCtxUpdateEvents(_chatCtx);
+      const futures: Future<void>[] = [];
+      const ownedCreateFutures: { [id: string]: Future<void> } = {};
+      const ownedDeleteFutures: { [id: string]: Future<void> } = {};
+
+      const cleanupTimedOutFutures = () => {
+        // remove timed-out entries so late server acks
+        // don't resolve stale futures from a previous updateChatCtx call.
+        for (const [itemId, future] of Object.entries(ownedDeleteFutures)) {
+          if (this.itemDeleteFutures[itemId] === future) {
+            delete this.itemDeleteFutures[itemId];
+          }
+        }
+        for (const [itemId, future] of Object.entries(ownedCreateFutures)) {
+          if (this.itemCreateFutures[itemId] === future) {
+            delete this.itemCreateFutures[itemId];
+          }
+        }
+      };
+
+      for (const event of events) {
+        if (event.type === 'conversation.item.create') {
+          const future = new Future<void>();
+          futures.push(future);
+          this.itemCreateFutures[event.item.id] = future;
+          ownedCreateFutures[event.item.id] = future;
+        } else if (event.type == 'conversation.item.delete') {
+          const existingDeleteFuture = this.itemDeleteFutures[event.item_id];
+          if (existingDeleteFuture) {
+            futures.push(existingDeleteFuture);
+            continue;
+          }
+          const future = new Future<void>();
+          futures.push(future);
+          this.itemDeleteFutures[event.item_id] = future;
+          ownedDeleteFutures[event.item_id] = future;
+        }
+
+        this.sendEvent(event);
+      }
+
+      if (futures.length === 0) {
+        return;
+      }
+
+      // wait for futures to resolve or timeout.
+      // Cancel the timeout branch once futures resolve to avoid stale cleanup.
+      const timeoutController = new AbortController();
+      const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
+        cleanupTimedOutFutures();
+        throw new Error('Chat ctx update events timed out');
+      });
+
+      try {
+        await Promise.race([Promise.all(futures), timeoutPromise]);
+      } finally {
+        if (!timeoutController.signal.aborted) {
+          timeoutController.abort();
+        }
+      }
+    } catch (e) {
+      this.#logger.error((e as Error).message);
+      throw e;
+    } finally {
+      unlock();
+    }
+  }
+
+  private async createChatCtxUpdateEvents(
+    chatCtx: llm.ChatContext,
+    addMockAudio: boolean = false,
+  ): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]> {
+    const newChatCtx = chatCtx.copy();
+    if (addMockAudio) {
+      newChatCtx.items.push(createMockAudioItem());
+    } else {
+      // clean up existing mock audio items
+      newChatCtx.items = newChatCtx.items.filter(
+        (item) => !item.id.startsWith(MOCK_AUDIO_ID_PREFIX),
+      );
+    }
+
+    const events: (
+      | api_proto.ConversationItemCreateEvent
+      | api_proto.ConversationItemDeleteEvent
+    )[] = [];
+
+    const remoteCtx = this.chatCtx;
+    const remoteIds = new Set(remoteCtx.items.map((item) => item.id));
+    newChatCtx.items = newChatCtx.items.filter(
+      (item) => item.type !== 'message' || item.content.length > 0 || remoteIds.has(item.id),
+    );
+
+    const diffOps = llm.computeChatCtxDiff(remoteCtx, newChatCtx);
+    for (const op of diffOps.toRemove) {
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: op,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+    }
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      const chatItem = newChatCtx.getById(id);
+      if (!chatItem) {
+        throw new Error(`Chat item ${id} not found`);
+      }
+      events.push({
+        type: 'conversation.item.create',
+        item: await livekitItemToOpenAIItem(chatItem),
+        previous_item_id: previousId ?? undefined,
+        event_id: shortuuid('chat_ctx_create_'),
+      } as api_proto.ConversationItemCreateEvent);
+    }
+    return events;
+  }
+
+  async updateTools(_tools: llm.ToolContext): Promise<void> {
+    const unlock = await this.updateFuncCtxLock.lock();
+    const ev = this.createToolsUpdateEvent(_tools);
+    this.sendEvent(ev);
+
+    if (!ev.session.tools) {
+      throw new Error('Tools are missing in the session update event');
+    }
+
+    // TODO(brian): these logics below are noops I think; remove them later.
+    const retainedToolNames = new Set(ev.session.tools.map((tool) => tool.name));
+    // Keep provider tools and Toolsets as-is; only drop function tools the server didn't accept.
+    const retainedEntries = _tools.tools.filter(
+      (entry) => !llm.isFunctionTool(entry) || retainedToolNames.has(entry.name),
+    );
+
+    this._tools = new llm.ToolContext(retainedEntries);
+
+    unlock();
+  }
+
+  private createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+    const oaiTools: api_proto.Tool[] = [];
+
+    for (const t of _tools.flatten()) {
+      // TODO: support provider tools in the Realtime session-update schema.
+      if (!llm.isFunctionTool(t)) continue;
+
+      try {
+        const parameters = llm.toJsonSchema(
+          t.parameters,
+        ) as unknown as api_proto.Tool['parameters'];
+
+        oaiTools.push({
+          name: t.name,
+          description: t.description,
+          parameters: parameters,
+          type: 'function',
+        });
+      } catch (e) {
+        this.#logger.error(
+          { name: t.name, tool: t },
+          "OpenAI Realtime API doesn't support this tool type",
+        );
+        continue;
+      }
+    }
+
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
+    return {
+      type: 'session.update',
+      session: {
+        ...(!isLegacyAzure && { type: 'realtime' }),
+        model: this._options.model,
+        tools: oaiTools,
+      },
+      event_id: shortuuid('tools_update_'),
+    };
+  }
+
+  async updateInstructions(_instructions: string): Promise<void> {
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
+    const eventId = shortuuid('instructions_update_');
+    this.sendEvent({
+      type: 'session.update',
+      session: {
+        ...(!isLegacyAzure && { type: 'realtime' }),
+        instructions: _instructions,
+      },
+      event_id: eventId,
+    } as api_proto.SessionUpdateEvent);
+    this.instructions = _instructions;
+  }
+
+  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
+    const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
+    const nextToolChoice = toOaiToolChoice(toolChoice);
+    if (currentToolChoice === nextToolChoice) {
+      this._options.toolChoice = toolChoice;
+      return;
+    }
+
+    const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
+    const options: api_proto.SessionUpdateEvent['session'] = {
+      ...(!isLegacyAzure && { type: 'realtime' }),
+    };
+
+    this._options.toolChoice = toolChoice;
+    options.tool_choice = toOaiToolChoice(toolChoice);
+
+    // TODO(brian): add other options here
+
+    this.sendEvent({
+      type: 'session.update',
+      session: options,
+      event_id: shortuuid('options_update_'),
+    });
+  }
+
+  pushAudio(frame: AudioFrame): void {
+    for (const f of this.resampleAudio(frame)) {
+      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
+        this.sendEvent({
+          type: 'input_audio_buffer.append',
+          audio: Buffer.from(nf.data.buffer).toString('base64'),
+        } as api_proto.InputAudioBufferAppendEvent);
+        // TODO(AJS-102): use frame.durationMs once available in rtc-node
+        this.pushedDurationMs += (nf.samplesPerChannel / nf.sampleRate) * 1000;
+      }
+    }
+  }
+
+  async commitAudio(): Promise<void> {
+    if (this.pushedDurationMs > 100) {
+      // OpenAI requires at least 100ms of audio
+      this.sendEvent({
+        type: 'input_audio_buffer.commit',
+      } as api_proto.InputAudioBufferCommitEvent);
+      this.pushedDurationMs = 0;
+    }
+  }
+
+  async clearAudio(): Promise<void> {
+    this.sendEvent({
+      type: 'input_audio_buffer.clear',
+    } as api_proto.InputAudioBufferClearEvent);
+    this.pushedDurationMs = 0;
+  }
+
+  async generateReply(
+    instructions?: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<llm.GenerationCreatedEvent> {
+    // In OpenAI realtime, the session-level instructions are completely replaced by the
+    // per-response instructions for this response. Prepend the session instructions so they
+    // are preserved (parity with the Python implementation).
+    let responseInstructions = instructions;
+    if (instructions && this.instructions) {
+      responseInstructions = `${this.instructions}\n${instructions}`;
+    }
+
+    const handle = this.createResponse({
+      instructions: responseInstructions,
+      userInitiated: true,
+    });
+    this.textModeRecoveryRetries = 0;
+
+    const onAbort = () => {
+      const eventId = Object.entries(this.responseCreatedFutures).find(
+        ([, pendingHandle]) => pendingHandle === handle,
+      )?.[0];
+      if (eventId) {
+        delete this.responseCreatedFutures[eventId];
+        this.discardedEventIds.add(eventId);
+      }
+      if (handle.timeout) clearTimeout(handle.timeout);
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error('generateReply aborted'));
+        this.sendEvent({
+          type: 'response.cancel',
+        } as api_proto.ResponseCancelEvent);
+      }
+    };
+
+    if (options.signal?.aborted) {
+      onAbort();
+    } else {
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      return await handle.doneFut.await;
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async interrupt(): Promise<void> {
+    if (!this.hasInflightResponse()) {
+      return;
+    }
+
+    this.sendEvent({
+      type: 'response.cancel',
+    } as api_proto.ResponseCancelEvent);
+  }
+
+  async truncate(_options: {
+    messageId: string;
+    audioEndMs: number;
+    modalities?: Modality[];
+    audioTranscript?: string;
+  }): Promise<void> {
+    // Check if modalities include audio AND the item has real server-side audio
+    // Items restored after reconnection are text-only and cannot be truncated
+    const hasAudioModality = !_options.modalities || _options.modalities.includes('audio');
+    const hasServerSideAudio = this.audioCapableItemIds.has(_options.messageId);
+
+    if (hasAudioModality && hasServerSideAudio) {
+      // Guard against a non-finite audioEndMs (e.g. NaN from an unreported avatar
+      // playback position): JSON.stringify would serialize it as `null`, which the
+      // Realtime API rejects with an `invalid_type` error. Clamp to a valid
+      // non-negative integer (ms).
+      const audioEndMs = Number.isFinite(_options.audioEndMs)
+        ? Math.max(0, Math.floor(_options.audioEndMs))
+        : 0;
+      this.sendEvent({
+        type: 'conversation.item.truncate',
+        content_index: 0,
+        item_id: _options.messageId,
+        audio_end_ms: audioEndMs,
+      } as api_proto.ConversationItemTruncateEvent);
+    } else if (_options.audioTranscript !== undefined) {
+      // sync it to the remote chat context
+      const chatCtx = this.chatCtx.copy();
+      const idx = chatCtx.indexById(_options.messageId);
+      if (idx !== undefined) {
+        const item = chatCtx.items[idx];
+        if (item && item.type === 'message') {
+          const newItem = llm.ChatMessage.create({
+            ...item,
+            content: [_options.audioTranscript],
+          });
+          chatCtx.items[idx] = newItem;
+          const events = await this.createChatCtxUpdateEvents(chatCtx);
+          for (const ev of events) {
+            this.sendEvent(ev);
+          }
+        }
+      }
+    }
+  }
+
+  private loggableEvent(
+    event: api_proto.ClientEvent | api_proto.ServerEvent,
+  ): Record<string, unknown> {
+    const untypedEvent: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(event)) {
+      if (value !== undefined) {
+        untypedEvent[key] = value;
+      }
+    }
+
+    if (untypedEvent.audio && typeof untypedEvent.audio === 'string') {
+      return { ...untypedEvent, audio: '...' };
+    }
+    if (
+      untypedEvent.delta &&
+      typeof untypedEvent.delta === 'string' &&
+      event.type === 'response.audio.delta'
+    ) {
+      return { ...untypedEvent, delta: '...' };
+    }
+    return untypedEvent;
+  }
+
+  private async createWsConn(): Promise<WebSocket> {
+    const headers: Record<string, string> = {
+      'User-Agent': 'LiveKit-Agents-JS',
+    };
+
+    if (this._options.isAzure) {
+      // Microsoft API has two ways of authentication
+      // 1. Entra token set as `Bearer` token
+      // 2. API key set as `api_key` header (also accepts query string)
+      if (this._options.entraToken) {
+        headers.Authorization = `Bearer ${this._options.entraToken}`;
+      } else if (this._options.apiKey) {
+        headers['api-key'] = this._options.apiKey;
+      } else {
+        throw new Error('Microsoft API key or entraToken is required');
+      }
+    } else {
+      if (!this._options.apiKey) {
+        throw new Error(
+          'OpenAI API key is required but not set. Check OPENAI_API_KEY environment variable.',
+        );
+      }
+      headers.Authorization = `Bearer ${this._options.apiKey}`;
+    }
+
+    const url = processBaseURL({
+      baseURL: this._options.baseURL,
+      model: this._options.model,
+      isAzure: this._options.isAzure,
+      apiVersion: this._options.apiVersion,
+      azureDeployment: this._options.azureDeployment,
+    });
+
+    if (lkOaiDebug) {
+      this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, { headers });
+      let waiting = true;
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('WebSocket connection timeout'));
+      }, this._options.connOptions.timeoutMs);
+
+      ws.once('open', () => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        resolve(ws);
+      });
+
+      ws.once('close', () => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        reject(new Error('OpenAI Realtime API connection closed'));
+      });
+    });
+  }
+
+  async #mainTask(signal: AbortSignal): Promise<void> {
+    let reconnecting = false;
+    let numRetries = 0;
+    let wsConn: WebSocket | null = null;
+    const maxRetries = this._options.connOptions.maxRetry;
+
+    const reconnect = async () => {
+      this.#logger.debug(
+        {
+          maxSessionDuration: this._options.maxSessionDuration,
+        },
+        'Reconnecting to OpenAI Realtime API',
+      );
+
+      // Clean up pending futures from old connection to prevent memory leaks
+      for (const fut of Object.values(this.itemCreateFutures)) {
+        if (!fut.done) fut.reject(new Error('Session reconnected'));
+      }
+      this.itemCreateFutures = {};
+
+      for (const fut of Object.values(this.itemDeleteFutures)) {
+        if (!fut.done) fut.reject(new Error('Session reconnected'));
+      }
+      this.itemDeleteFutures = {};
+
+      for (const handle of Object.values(this.responseCreatedFutures)) {
+        if (!handle.doneFut.done) {
+          handle.doneFut.reject(new Error('Session reconnected'));
+        }
+        if (handle.timeout) clearTimeout(handle.timeout);
+      }
+      this.responseCreatedFutures = {};
+      this.discardedEventIds.clear();
+
+      // Clear audio-capable item tracking - restored items are text-only on the server
+      this.audioCapableItemIds.clear();
+      this.inputTranscriptAccumulators.clear();
+
+      const events: api_proto.ClientEvent[] = [];
+
+      // options and instructions
+      events.push(this.createSessionUpdateEvent());
+
+      // tools
+      if (Object.keys(this._tools.functionTools).length > 0) {
+        events.push(this.createToolsUpdateEvent(this._tools));
+      }
+
+      // chat context
+      const chatCtx = this.chatCtx.copy({
+        excludeFunctionCall: true,
+        excludeInstructions: true,
+        excludeEmptyMessage: true,
+      });
+
+      const oldChatCtx = this.remoteChatCtx;
+      this.remoteChatCtx = new llm.RemoteChatContext();
+      events.push(...(await this.createChatCtxUpdateEvents(chatCtx)));
+
+      try {
+        for (const ev of events) {
+          this.emit('openai_client_event_queued', ev);
+          if (this._options.isAzure && this._options.apiVersion) {
+            normalizeAzureClientEvent(ev as unknown as Record<string, unknown>);
+          }
+          wsConn!.send(JSON.stringify(ev));
+        }
+      } catch (error) {
+        this.remoteChatCtx = oldChatCtx;
+        throw new APIConnectionError({
+          message: 'Failed to send message to OpenAI Realtime API during session re-connection',
+        });
+      }
+
+      this.#logger.debug('Reconnected to OpenAI Realtime API');
+
+      this.emit('session_reconnected', {} as llm.RealtimeSessionReconnectedEvent);
+    };
+
+    reconnecting = false;
+    while (!this.#closed && !signal.aborted) {
+      this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
+      wsConn = await this.createWsConn();
+      if (signal.aborted) break;
+
+      try {
+        if (reconnecting) {
+          await reconnect();
+          if (signal.aborted) break;
+          numRetries = 0;
+        }
+
+        await this.runWs(wsConn);
+        if (signal.aborted) break;
+      } catch (error) {
+        if (!isAPIError(error)) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw error;
+        }
+
+        if (maxRetries === 0 || !error.retryable) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw error;
+        }
+
+        if (numRetries === maxRetries) {
+          this.emitError({ error: error as Error, recoverable: false });
+          throw new APIConnectionError({
+            message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
+            options: {
+              body: error,
+              retryable: false,
+            },
+          });
+        }
+
+        this.emitError({ error: error as Error, recoverable: true });
+        const retryInterval =
+          numRetries === 0
+            ? DEFAULT_FIRST_RETRY_INTERVAL_MS
+            : this._options.connOptions.retryIntervalMs;
+        this.#logger.warn(
+          {
+            attempt: numRetries,
+            maxRetries,
+            error,
+          },
+          `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
+        );
+
+        await delay(retryInterval);
+        numRetries++;
+      }
+
+      reconnecting = true;
+    }
+  }
+
+  private async runWs(wsConn: WebSocket): Promise<void> {
+    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
+      const abortFuture = new Future<void>();
+      signal.addEventListener('abort', () => abortFuture.resolve());
+
+      while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
+        try {
+          const event = await Promise.race([this.messageChannel.get(), abortFuture.await]);
+          if (signal.aborted || abortFuture.done || event === undefined) {
+            break;
+          }
+
+          if (lkOaiDebug) {
+            this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
+          }
+
+          this.emit('openai_client_event_queued', event);
+          if (this._options.isAzure && this._options.apiVersion) {
+            normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
+          }
+          wsConn.send(JSON.stringify(event));
+        } catch (error) {
+          break;
+        }
+      }
+
+      wsConn.close();
+    };
+
+    const wsCloseFuture = new Future<void | Error>();
+
+    wsConn.onerror = (error) => {
+      wsCloseFuture.resolve(new APIConnectionError({ message: error.message }));
+    };
+    wsConn.onclose = () => {
+      wsCloseFuture.resolve();
+    };
+
+    wsConn.onmessage = (message: MessageEvent) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const event: any = JSON.parse(message.data as string);
+
+      this.emit('openai_server_event_received', event);
+      if (lkOaiDebug) {
+        this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
+      }
+
+      switch (event.type) {
+        case 'input_audio_buffer.speech_started':
+          this.handleInputAudioBufferSpeechStarted(event);
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          this.handleInputAudioBufferSpeechStopped(event);
+          break;
+        case 'response.created':
+          this.handleResponseCreated(event);
+          break;
+        case 'response.output_item.added':
+          this.handleResponseOutputItemAdded(event);
+          break;
+        case 'conversation.item.added':
+        case 'conversation.item.created': // Beta: kept for backward compatibility
+          this.handleConversationItemCreated(event);
+          break;
+        case 'conversation.item.deleted':
+          this.handleConversationItemDeleted(event);
+          break;
+        case 'conversation.item.input_audio_transcription.delta':
+          this.handleConversationItemInputAudioTranscriptionDelta(event);
+          break;
+        case 'conversation.item.input_audio_transcription.completed':
+          this.handleConversationItemInputAudioTranscriptionCompleted(event);
+          break;
+        case 'conversation.item.input_audio_transcription.failed':
+          this.handleConversationItemInputAudioTranscriptionFailed(event);
+          break;
+        case 'response.content_part.added':
+          this.handleResponseContentPartAdded(event);
+          break;
+        case 'response.content_part.done':
+          this.handleResponseContentPartDone(event);
+          break;
+        case 'response.output_text.delta':
+        case 'response.text.delta': // Beta: kept for backward compatibility
+          this.handleResponseTextDelta(event);
+          break;
+        case 'response.output_text.done':
+        case 'response.text.done': // Beta: kept for backward compatibility
+          this.handleResponseTextDone(event);
+          break;
+        case 'response.output_audio_transcript.delta':
+        case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
+          this.handleResponseAudioTranscriptDelta(event);
+          break;
+        case 'response.output_audio.delta':
+        case 'response.audio.delta': // Beta: kept for backward compatibility
+          this.handleResponseAudioDelta(event);
+          break;
+        case 'response.output_audio_transcript.done':
+        case 'response.audio_transcript.done': // Beta: kept for backward compatibility
+          this.handleResponseAudioTranscriptDone(event);
+          break;
+        case 'response.output_audio.done':
+        case 'response.audio.done': // Beta: kept for backward compatibility
+          this.handleResponseAudioDone(event);
+          break;
+        case 'response.output_item.done':
+          this.handleResponseOutputItemDone(event);
+          break;
+        case 'response.done':
+          this.handleResponseDone(event);
+          break;
+        case 'error':
+          this.handleError(event);
+          break;
+        default:
+          if (lkOaiDebug) {
+            this.#logger.debug(`unhandled event: ${event.type}`);
+          }
+          break;
+      }
+    };
+
+    const sendTask = Task.from(({ signal }) => forwardEvents(signal));
+
+    const wsTask = Task.from(({ signal }) => {
+      const abortPromise = new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => {
+          resolve();
+        });
+      });
+
+      return Promise.race([wsCloseFuture.await, abortPromise]);
+    });
+
+    const waitReconnectTask = Task.from(async ({ signal }) => {
+      await delay(this._options.maxSessionDuration, { signal });
+      return new APIConnectionError({
+        message: 'OpenAI Realtime API connection timeout',
+      });
+    });
+
+    try {
+      const result = await Promise.race([wsTask.result, sendTask.result, waitReconnectTask.result]);
+
+      const currentGeneration = this.currentGeneration;
+      if (waitReconnectTask.done && currentGeneration) {
+        if (currentGeneration instanceof DiscardedGeneration) {
+          this.currentGeneration = undefined;
+        } else {
+          await currentGeneration._doneFut.await;
+        }
+      }
+
+      if (result instanceof Error) {
+        throw result;
+      }
+    } finally {
+      await cancelAndWait([wsTask, sendTask, waitReconnectTask], 2000);
+      wsConn.close();
+    }
+  }
+
+  async close() {
+    super.close();
+    this.#closed = true;
+    await this.#task;
+
+    // Clean up pending futures to prevent memory leaks
+    for (const handle of Object.values(this.responseCreatedFutures)) {
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error('Session closed'));
+      }
+      if (handle.timeout) clearTimeout(handle.timeout);
+    }
+    this.responseCreatedFutures = {};
+
+    for (const fut of Object.values(this.itemCreateFutures)) {
+      if (!fut.done) {
+        fut.reject(new Error('Session closed'));
+      }
+    }
+    this.itemCreateFutures = {};
+
+    for (const fut of Object.values(this.itemDeleteFutures)) {
+      if (!fut.done) {
+        fut.reject(new Error('Session closed'));
+      }
+    }
+    this.itemDeleteFutures = {};
+
+    this.inputTranscriptAccumulators.clear();
+
+    // Clean up current generation if exists
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+    } else if (this.currentGeneration) {
+      for (const gen of this.currentGeneration.messages.values()) {
+        gen.textChannel.close();
+        gen.audioChannel.close();
+        if (!gen.modalities.done) {
+          gen.modalities.resolve(this._options.modalities);
+        }
+      }
+      this.currentGeneration.messages.clear();
+      this.currentGeneration.messageChannel.close();
+      this.currentGeneration.functionChannel.close();
+      if (!this.currentGeneration._doneFut.done) {
+        this.currentGeneration._doneFut.resolve();
+      }
+      this.currentGeneration = undefined;
+    }
+
+    // Clear the message queue
+    this.messageChannel.items.length = 0;
+  }
+
+  private handleInputAudioBufferSpeechStarted(
+    _event: api_proto.InputAudioBufferSpeechStartedEvent,
+  ): void {
+    this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
+  }
+
+  private handleInputAudioBufferSpeechStopped(
+    _event: api_proto.InputAudioBufferSpeechStoppedEvent,
+  ): void {
+    this.emit('input_speech_stopped', {
+      userTranscriptionEnabled: this._options.inputAudioTranscription !== null,
+    } as llm.InputSpeechStoppedEvent);
+  }
+
+  private handleResponseCreated(event: api_proto.ResponseCreatedEvent): void {
+    if (!event.response.id) {
+      throw new Error('response.id is missing');
+    }
+
+    const clientEventId = event.response.metadata?.client_event_id;
+    if (clientEventId && this.discardedEventIds.has(clientEventId)) {
+      this.discardedEventIds.delete(clientEventId);
+      this.sendEvent({
+        type: 'response.cancel',
+        response_id: event.response.id,
+      } as api_proto.ResponseCancelEvent);
+      this.currentGeneration = new DiscardedGeneration();
+      this.#logger.warn('discarding response that arrived after it was timed out or interrupted');
+      return;
+    }
+
+    const currentGeneration: ResponseGeneration = {
+      messageChannel: stream.createStreamChannel<llm.MessageGeneration>(),
+      functionChannel: stream.createStreamChannel<llm.FunctionCall>(),
+      messages: new Map(),
+      _doneFut: new Future(),
+      _createdTimestamp: Date.now(),
+    };
+    this.currentGeneration = currentGeneration;
+
+    // Build generation event and resolve client future (if any) before emitting,
+    // matching Python behavior.
+    const generationEv = {
+      messageStream: currentGeneration.messageChannel.stream(),
+      functionStream: currentGeneration.functionChannel.stream(),
+      userInitiated: false,
+      responseId: event.response.id,
+    } as llm.GenerationCreatedEvent;
+
+    if (clientEventId) {
+      const handle = this.responseCreatedFutures[clientEventId];
+      if (handle) {
+        delete this.responseCreatedFutures[clientEventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
+        generationEv.userInitiated = true;
+        if (!handle.doneFut.done) {
+          handle.doneFut.resolve(generationEv);
+        }
+      }
+    }
+
+    this.emit('generation_created', generationEv);
+  }
+
+  private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    if (!event.item.type) {
+      throw new Error('item.type is not set');
+    }
+
+    const itemType = event.item.type;
+
+    if (itemType !== 'message') {
+      // non-message items (e.g. function calls) don't need additional handling here
+      // the generation event was already emitted in handleResponseCreated
+      this.textModeRecoveryRetries = 0;
+      return;
+    }
+
+    const itemId = event.item.id;
+    if (!itemId) {
+      throw new Error('item.id is not set');
+    }
+
+    const modalitiesFut = new Future<Modality[]>();
+    const itemGeneration: MessageGeneration = {
+      messageId: itemId,
+      textChannel: stream.createStreamChannel<string | TimedString>(),
+      audioChannel: stream.createStreamChannel<AudioFrame>(),
+      audioTranscript: '',
+      modalities: modalitiesFut,
+    };
+
+    // If audioOutput is not supported, close audio channel immediately
+    if (!this.oaiRealtimeModel.capabilities.audioOutput) {
+      itemGeneration.audioChannel.close();
+      modalitiesFut.resolve(['text']);
+    }
+
+    this.currentGeneration.messageChannel.write({
+      messageId: itemId,
+      textStream: itemGeneration.textChannel.stream(),
+      audioStream: itemGeneration.audioChannel.stream(),
+      modalities: modalitiesFut.await,
+    });
+
+    this.currentGeneration.messages.set(itemId, itemGeneration);
+  }
+
+  private handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void {
+    if (!event.item.id) {
+      throw new Error('item.id is not set');
+    }
+
+    const serverEventType = event.type as string;
+    const incomingItem = openAIItemToLivekitItem(event.item);
+    const existingItem = this.remoteChatCtx.get(event.item.id);
+    const pendingCreateFuture = this.itemCreateFutures[event.item.id];
+    if (existingItem && serverEventType === 'conversation.item.added' && !pendingCreateFuture) {
+      // The server may emit a later input-audio-backed view of a user item whose
+      // transcribed text variant we already inserted locally under the same ID.
+      // Treat that as idempotent instead of surfacing a duplicate-ID error.
+      return;
+    }
+
+    try {
+      this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
+    } catch (error) {
+      this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
+    }
+
+    const fut = pendingCreateFuture;
+    if (fut) {
+      fut.resolve();
+      delete this.itemCreateFutures[event.item.id];
+    }
+  }
+
+  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
+    if (!event.item_id) {
+      throw new Error('item_id is not set');
+    }
+
+    // Clean up audio-capable tracking for deleted items
+    this.audioCapableItemIds.delete(event.item_id);
+    this.inputTranscriptAccumulators.delete(event.item_id);
+
+    try {
+      this.remoteChatCtx.delete(event.item_id);
+    } catch (error) {
+      this.#logger.error({ error, itemId: event.item_id }, 'failed to delete conversation item');
+    }
+
+    const fut = this.itemDeleteFutures[event.item_id];
+    if (fut) {
+      fut.resolve();
+      delete this.itemDeleteFutures[event.item_id];
+    }
+  }
+
+  private handleConversationItemInputAudioTranscriptionDelta(
+    event: api_proto.ConversationItemInputAudioTranscriptionDeltaEvent,
+  ): void {
+    if (!event.delta) return;
+
+    const contentIndex = event.content_index ?? 0;
+    let byIndex = this.inputTranscriptAccumulators.get(event.item_id);
+    if (!byIndex) {
+      byIndex = new Map();
+      this.inputTranscriptAccumulators.set(event.item_id, byIndex);
+    }
+    const accumulated = (byIndex.get(contentIndex) ?? '') + event.delta;
+    byIndex.set(contentIndex, accumulated);
+
+    this.emit('input_audio_transcription_completed', {
+      itemId: event.item_id,
+      transcript: accumulated,
+      isFinal: false,
+    });
+  }
+
+  private clearAccumulator(itemId: string, contentIndex: number): string | undefined {
+    const byIndex = this.inputTranscriptAccumulators.get(itemId);
+    if (!byIndex) return undefined;
+    const partial = byIndex.get(contentIndex);
+    byIndex.delete(contentIndex);
+    if (byIndex.size === 0) this.inputTranscriptAccumulators.delete(itemId);
+    return partial;
+  }
+
+  private handleConversationItemInputAudioTranscriptionCompleted(
+    event: api_proto.ConversationItemInputAudioTranscriptionCompletedEvent,
+  ): void {
+    this.clearAccumulator(event.item_id, event.content_index ?? 0);
+
+    const remoteItem = this.remoteChatCtx.get(event.item_id);
+    if (remoteItem) {
+      const item = remoteItem.item;
+      if (item instanceof llm.ChatMessage) {
+        item.content.push(event.transcript);
+      } else {
+        throw new Error('item is not a chat message');
+      }
+    }
+
+    this.emit('input_audio_transcription_completed', {
+      itemId: event.item_id,
+      transcript: event.transcript,
+      isFinal: true,
+    });
+  }
+
+  private handleConversationItemInputAudioTranscriptionFailed(
+    event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
+  ): void {
+    this.#logger.error(
+      { error: event.error },
+      'OpenAI Realtime API failed to transcribe input audio',
+    );
+    this.finalizePartialOnTranscriptionFailure(event.item_id, event.content_index ?? 0);
+  }
+
+  // Close any open partial stream so consumers waiting for isFinal don't hang.
+  private finalizePartialOnTranscriptionFailure(itemId: string, contentIndex: number): void {
+    const partial = this.clearAccumulator(itemId, contentIndex);
+    if (partial === undefined) return;
+    this.emit('input_audio_transcription_completed', {
+      itemId,
+      transcript: partial,
+      isFinal: true,
+    });
+  }
+
+  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemId = event.item_id;
+    const itemType = event.part.type;
+
+    const itemGeneration = this.currentGeneration.messages.get(itemId);
+    if (!itemGeneration) {
+      this.#logger.warn(`itemGeneration not found for itemId=${itemId}`);
+      return;
+    }
+
+    const isTextType = itemType === 'text' || itemType === 'output_text';
+    if (isTextType && this.oaiRealtimeModel.capabilities.audioOutput) {
+      this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
+    }
+
+    if (!itemGeneration.modalities.done) {
+      const modalityResult: Modality[] = isTextType ? ['text'] : ['audio', 'text'];
+      itemGeneration.modalities.resolve(modalityResult);
+
+      // Track items with real server-side audio for truncation eligibility
+      if (!isTextType) {
+        this.audioCapableItemIds.add(itemId);
+      }
+    }
+
+    if (this.currentGeneration._firstTokenTimestamp === undefined) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+  }
+
+  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!event.part) {
+      return;
+    }
+    if (event.part.type !== 'text') {
+      return;
+    }
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    // TODO(shubhra): handle text mode recovery
+  }
+
+  private handleResponseTextDelta(event: api_proto.ResponseTextDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemGeneration = this.currentGeneration.messages.get(event.item_id);
+    if (!itemGeneration) {
+      throw new Error('itemGeneration is not set');
+    }
+
+    if (
+      !this.oaiRealtimeModel.capabilities.audioOutput &&
+      !this.currentGeneration._firstTokenTimestamp
+    ) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+
+    itemGeneration.textChannel.write(event.delta);
+    itemGeneration.audioTranscript += event.delta;
+  }
+
+  private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+  }
+
+  private handleResponseAudioTranscriptDelta(
+    event: api_proto.ResponseAudioTranscriptDeltaEvent,
+  ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemId = event.item_id;
+
+    // When start_time is provided, wrap the delta in a TimedString for aligned transcripts
+    let delta: string | TimedString = event.delta;
+    if (event.start_time !== undefined) {
+      delta = createTimedString({ text: event.delta, startTime: event.start_time });
+    }
+
+    const itemGeneration = this.currentGeneration.messages.get(itemId);
+    if (!itemGeneration) {
+      throw new Error('itemGeneration is not set');
+    } else {
+      itemGeneration.textChannel.write(delta);
+      itemGeneration.audioTranscript += event.delta;
+    }
+  }
+
+  private handleResponseAudioDelta(event: api_proto.ResponseAudioDeltaEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemGeneration = this.currentGeneration.messages.get(event.item_id);
+    if (!itemGeneration) {
+      throw new Error('itemGeneration is not set');
+    }
+
+    if (this.currentGeneration._firstTokenTimestamp === undefined) {
+      this.currentGeneration._firstTokenTimestamp = Date.now();
+    }
+
+    if (!itemGeneration.modalities.done) {
+      itemGeneration.modalities.resolve(['audio', 'text']);
+    }
+
+    const binaryString = atob(event.delta);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    itemGeneration.audioChannel.write(
+      new AudioFrame(
+        new Int16Array(bytes.buffer),
+        api_proto.SAMPLE_RATE,
+        api_proto.NUM_CHANNELS,
+        bytes.length / 2,
+      ),
+    );
+  }
+
+  private handleResponseAudioTranscriptDone(
+    _event: api_proto.ResponseAudioTranscriptDoneEvent,
+  ): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+  }
+
+  private handleResponseAudioDone(_event: api_proto.ResponseAudioDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+  }
+
+  private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) return;
+
+    if (!this.currentGeneration) {
+      throw new Error('currentGeneration is not set');
+    }
+
+    const itemId = event.item.id;
+    const itemType = event.item.type;
+
+    if (itemType === 'function_call') {
+      const item = event.item;
+      if (!item.call_id || !item.name || !item.arguments) {
+        throw new Error('item is not a function call');
+      }
+      this.currentGeneration.functionChannel.write(
+        llm.FunctionCall.create({
+          callId: item.call_id,
+          name: item.name,
+          args: item.arguments,
+        }),
+      );
+    } else if (itemType === 'message') {
+      const itemGeneration = this.currentGeneration.messages.get(itemId);
+      if (!itemGeneration) {
+        return;
+      }
+      // text response doesn't have itemGeneration
+      itemGeneration.textChannel.close();
+      itemGeneration.audioChannel.close();
+      if (!itemGeneration.modalities.done) {
+        // In case message modalities is not set, this shouldn't happen
+        itemGeneration.modalities.resolve(this._options.modalities);
+      }
+    }
+  }
+
+  private handleResponseDone(_event: api_proto.ResponseDoneEvent): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+      return;
+    }
+
+    if (!this.currentGeneration) {
+      // OpenAI has a race condition where we could receive response.done without any
+      // previous response.created (This happens generally during interruption)
+      return;
+    }
+
+    const createdTimestamp = this.currentGeneration._createdTimestamp;
+    const firstTokenTimestamp = this.currentGeneration._firstTokenTimestamp;
+
+    this.#logger.debug(
+      {
+        messageCount: this.currentGeneration.messages.size,
+      },
+      'Closing generation channels in handleResponseDone',
+    );
+
+    for (const generation of this.currentGeneration.messages.values()) {
+      generation.textChannel.close();
+      generation.audioChannel.close();
+      if (!generation.modalities.done) {
+        generation.modalities.resolve(this._options.modalities);
+      }
+    }
+
+    this.currentGeneration.functionChannel.close();
+    this.currentGeneration.messageChannel.close();
+
+    for (const itemId of this.currentGeneration.messages.keys()) {
+      const remoteItem = this.remoteChatCtx.get(itemId);
+      if (remoteItem && remoteItem.item instanceof llm.ChatMessage) {
+        remoteItem.item.content.push(this.currentGeneration.messages.get(itemId)!.audioTranscript);
+      }
+    }
+
+    this.currentGeneration._doneFut.resolve();
+    this.currentGeneration = undefined;
+
+    // Calculate and emit metrics
+    const usage = _event.response.usage;
+    const ttftMs = firstTokenTimestamp ? firstTokenTimestamp - createdTimestamp : -1;
+    const durationMs = Date.now() - createdTimestamp;
+
+    const realtimeMetrics: metrics.RealtimeModelMetrics = {
+      type: 'realtime_model_metrics',
+      timestamp: createdTimestamp,
+      requestId: _event.response.id || '',
+      ttftMs,
+      durationMs,
+      cancelled: _event.response.status === 'cancelled',
+      label: 'openai_realtime',
+      inputTokens: usage?.input_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? 0,
+      totalTokens: usage?.total_tokens ?? 0,
+      tokensPerSecond: durationMs > 0 ? (usage?.output_tokens ?? 0) / (durationMs / 1000) : 0,
+      inputTokenDetails: {
+        audioTokens: usage?.input_token_details?.audio_tokens ?? 0,
+        textTokens: usage?.input_token_details?.text_tokens ?? 0,
+        imageTokens: 0, // Not supported yet
+        cachedTokens: usage?.input_token_details?.cached_tokens ?? 0,
+        cachedTokensDetails: usage?.input_token_details?.cached_tokens_details
+          ? {
+              audioTokens: usage?.input_token_details?.cached_tokens_details?.audio_tokens ?? 0,
+              textTokens: usage?.input_token_details?.cached_tokens_details?.text_tokens ?? 0,
+              imageTokens: usage?.input_token_details?.cached_tokens_details?.image_tokens ?? 0,
+            }
+          : undefined,
+      },
+      outputTokenDetails: {
+        textTokens: usage?.output_token_details?.text_tokens ?? 0,
+        audioTokens: usage?.output_token_details?.audio_tokens ?? 0,
+        imageTokens: 0,
+      },
+    };
+
+    this.emit('metrics_collected', realtimeMetrics);
+    this.handleResponseDoneButNotComplete(_event);
+  }
+
+  private handleResponseDoneButNotComplete(event: api_proto.ResponseDoneEvent): void {
+    if (event.response.status === 'completed') {
+      return;
+    }
+
+    const statusDetails = event.response.status_details;
+    if (event.response.status === 'failed') {
+      const errorBody =
+        typeof statusDetails !== 'string' && statusDetails?.type === 'failed'
+          ? statusDetails.error
+          : undefined;
+      const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
+      const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
+
+      this.emitError({
+        error: new APIError(`OpenAI Realtime API response failed with error type: ${errorType}`, {
+          body: errorBody ?? null,
+          retryable: true,
+        }),
+        recoverable: true,
+      });
+    } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
+      let statusType: string | undefined;
+      let statusReason: string | undefined;
+      if (typeof statusDetails === 'string') {
+        statusType = statusDetails;
+      } else {
+        statusType = statusDetails?.type;
+        statusReason =
+          statusDetails && 'reason' in statusDetails ? statusDetails.reason : undefined;
+      }
+
+      this.#logger.debug(
+        {
+          eventId: event.response.id,
+          eventResponseStatus: event.response.status,
+          eventResponseStatusType: statusType,
+          eventResponseStatusReason: statusReason,
+        },
+        `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
+      );
+    } else {
+      this.#logger.debug({ eventResponseStatus: event.response.status }, 'Unknown response status');
+    }
+  }
+
+  private handleError(event: api_proto.ErrorEvent): void {
+    if (event.error.message.startsWith('Cancellation failed')) {
+      return;
+    }
+    this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+
+    const eventId = event.error.event_id;
+    if (eventId) {
+      const handle = this.responseCreatedFutures[eventId];
+      if (handle) {
+        delete this.responseCreatedFutures[eventId];
+        if (handle.timeout) clearTimeout(handle.timeout);
+        if (!handle.doneFut.done) {
+          handle.doneFut.reject(new Error(event.error.message));
+        }
+      }
+    }
+
+    this.emitError({
+      error: new APIError(event.error.message, {
+        body: event.error,
+        retryable: true,
+      }),
+      recoverable: true,
+    });
+  }
+
+  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
+    // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
+    this.emit('error', {
+      type: 'realtime_model_error',
+      timestamp: Date.now(),
+      // TODO(brian): add label
+      label: '',
+      error,
+      recoverable,
+    } as llm.RealtimeModelError);
+  }
+
+  private *resampleAudio(frame: AudioFrame): Generator<AudioFrame> {
+    yield frame;
+  }
+
+  private createResponse({
+    userInitiated,
+    instructions,
+    oldHandle,
+  }: {
+    userInitiated: boolean;
+    instructions?: string;
+    oldHandle?: CreateResponseHandle;
+  }): CreateResponseHandle {
+    const handle = oldHandle || new CreateResponseHandle({ instructions });
+    if (oldHandle && instructions) {
+      handle.instructions = instructions;
+    }
+
+    const eventId = shortuuid('response_create_');
+    this.discardedEventIds ??= new Set<string>();
+    if (userInitiated) {
+      this.responseCreatedFutures[eventId] = handle;
+      handle.timeout = setTimeout(() => {
+        if (this.responseCreatedFutures[eventId] === handle) {
+          delete this.responseCreatedFutures[eventId];
+        }
+        if (!handle.doneFut.done) {
+          this.discardedEventIds.add(eventId);
+          handle.doneFut.reject(new Error('generateReply timed out.'));
+        }
+      }, 10000);
+    }
+
+    const response: api_proto.ResponseCreateEvent['response'] = {};
+    if (instructions) response.instructions = instructions;
+    if (userInitiated) response.metadata = { client_event_id: eventId };
+
+    this.sendEvent({
+      type: 'response.create',
+      event_id: eventId,
+      response: Object.keys(response).length > 0 ? response : undefined,
+    });
+
+    return handle;
+  }
+}
+
+/** @internal Exported for testing purposes */
+export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_proto.ItemResource> {
+  switch (item.type) {
+    case 'function_call':
+      return {
+        id: item.id,
+        type: 'function_call',
+        call_id: item.callId,
+        name: item.name,
+        arguments: item.args,
+      } as api_proto.FunctionCallItem;
+    case 'function_call_output':
+      return {
+        id: item.id,
+        type: 'function_call_output',
+        call_id: item.callId,
+        output: item.output,
+      } as api_proto.FunctionCallOutputItem;
+    case 'message':
+      const role = item.role === 'developer' ? 'system' : item.role;
+      const contentList: api_proto.Content[] = [];
+      for (const c of item.content) {
+        if (typeof c === 'string') {
+          contentList.push({
+            type: role === 'assistant' ? 'output_text' : 'input_text',
+            text: c,
+          } as api_proto.InputTextContent | api_proto.OutputTextContent);
+        } else if (c.type === 'image_content') {
+          // only user can send image
+          if (role !== 'user') continue;
+
+          const serialized = await llm.serializeImage(c);
+          if (serialized.externalUrl) {
+            log().warn('External URL is not supported for input_image in realtime API');
+            continue;
+          }
+          if (!serialized.base64Data) {
+            log().warn('Serialized image has no data bytes');
+            continue;
+          }
+          contentList.push({
+            type: 'input_image',
+            image_url: `data:${serialized.mimeType};base64,${serialized.base64Data}`,
+          } as api_proto.InputImageContent);
+        } else if (c.type === 'audio_content') {
+          if (role === 'user') {
+            const encodedAudio = Buffer.from(combineAudioFrames(c.frame).data).toString('base64');
+            contentList.push({
+              type: 'input_audio',
+              audio: encodedAudio,
+            } as api_proto.InputAudioContent);
+          }
+        }
+      }
+      return {
+        id: item.id,
+        type: 'message',
+        role,
+        content: contentList,
+      } as api_proto.UserItem | api_proto.AssistantItem | api_proto.SystemItem;
+    default:
+      throw new Error(`Unsupported item type: ${(item as any).type}`);
+  }
+}
+
+function openAIItemToLivekitItem(item: api_proto.ItemResource): llm.ChatItem {
+  if (!item.id) {
+    throw new Error('item.id is not set');
+  }
+
+  switch (item.type) {
+    case 'function_call':
+      return llm.FunctionCall.create({
+        id: item.id,
+        callId: item.call_id,
+        name: item.name,
+        args: item.arguments,
+      });
+    case 'function_call_output':
+      return llm.FunctionCallOutput.create({
+        id: item.id,
+        callId: item.call_id,
+        output: item.output,
+        isError: false,
+      });
+    case 'message':
+      const content: llm.ChatContent[] = [];
+      // item.content can be a single object or an array; normalize to array
+      const contents = Array.isArray(item.content) ? item.content : [item.content];
+      for (const c of contents) {
+        if (c.type === 'text' || c.type === 'input_text' || c.type === 'output_text') {
+          content.push(c.text);
+        } else if (c.type === 'input_image' && (c as api_proto.InputImageContent).image_url) {
+          content.push(
+            llm.createImageContent({ image: (c as api_proto.InputImageContent).image_url }),
+          );
+        }
+      }
+      return llm.ChatMessage.create({
+        id: item.id,
+        role: item.role,
+        content,
+      });
+  }
+}
+
+function createMockAudioItem(durationSeconds: number = 2): llm.ChatMessage {
+  const audioData = Buffer.alloc(durationSeconds * SAMPLE_RATE);
+  return llm.ChatMessage.create({
+    id: shortuuid(MOCK_AUDIO_ID_PREFIX),
+    role: 'user',
+    content: [
+      {
+        type: 'audio_content',
+        frame: [
+          new AudioFrame(
+            new Int16Array(audioData.buffer),
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            audioData.length / 2,
+          ),
+        ],
+      } as llm.AudioContent,
+    ],
+  });
+}
+
+function toOaiToolChoice(toolChoice?: llm.ToolChoice): api_proto.ToolChoice {
+  if (typeof toolChoice === 'string') {
+    return toolChoice;
+  }
+
+  if (toolChoice?.type === 'function') {
+    return toolChoice.function.name;
+  }
+
+  return 'auto';
+}

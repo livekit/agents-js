@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["src/**/*"],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-resemble",
+    "entryPointStrategy": "resolve",
+    "readme": "none",
+    "entryPoints": ["src/index.ts"]
+  }
+}

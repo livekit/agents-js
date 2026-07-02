@@ -1,0 +1,16 @@
+name: Question
+description: Ask for help with an issue you're facing
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hello! Thanks for taking the time to ask a question.
+
+        Before creating this issue, we kindly ask that you use the search functionality to see if anyone else has already asked this question.
+        Feel free to join us in the `#agents` channel on [our Slack](https://livekit.io/join-slack), and ask your question there to get quicker help from us and the community.
+  - type: textarea
+    attributes:
+      label: Your question
+    validations:
+      required: true

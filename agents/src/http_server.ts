@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
+import { log } from './log.js';
+
+export interface HealthCheckResult {
+  healthy: boolean;
+  message: string;
+}
+
+interface WorkerResponse {
+  agent_name: string;
+  worker_type: string;
+  active_jobs: number;
+  sdk_version: string;
+  project_type: string;
+}
+
+export class HTTPServer {
+  host: string;
+  port: number;
+  app: Server;
+  #logger = log();
+
+  constructor(
+    host: string,
+    port: number,
+    healthCheckListener: () => HealthCheckResult,
+    workerListener: () => WorkerResponse,
+  ) {
+    this.host = host;
+    this.port = port;
+
+    this.app = createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (req.url === '/') {
+        const result = healthCheckListener();
+        if (result.healthy) {
+          res.writeHead(200);
+          res.end(result.message);
+        } else {
+          res.writeHead(503);
+          res.end(result.message);
+        }
+      } else if (req.url === '/worker') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(workerListener()));
+      } else {
+        res.writeHead(404);
+        res.end('not found');
+      }
+    });
+  }
+
+  async run(): Promise<void> {
+    return new ThrowsPromise<void, Error>((resolve, reject) => {
+      this.app.listen(this.port, this.host, (err?: Error) => {
+        if (err) reject(err);
+        const address = this.app.address();
+        if (typeof address! !== 'string') {
+          this.#logger.info(`Server is listening on port ${address!.port}`);
+        }
+        resolve();
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    return new ThrowsPromise<void, Error>((resolve, reject) => {
+      this.app.close((err?: Error) => {
+        if (err) reject(err);
+        resolve();
+      });
+    });
+  }
+}
