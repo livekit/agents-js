@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger } from '@livekit/agents';
+import { APIConnectionError, llm as core, initializeLogger } from '@livekit/agents';
 import { llm, llmStrict } from '@livekit/agents-plugins-test';
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
 import { LLM } from '../responses/llm.js';
-import { buildResponsesWsUrl } from './llm.js';
+import { ResponsesWebSocket, WSLLM, buildResponsesWsUrl } from './llm.js';
+import type { WsResponseCreateEvent } from './types.js';
 
 initializeLogger({ level: 'silent', pretty: false });
 
@@ -52,6 +56,318 @@ describe('buildResponsesWsUrl', () => {
     expect(url.protocol).toBe('ws:');
     expect(url.pathname).toBe('/v1/responses');
     expect(url.searchParams.get('model')).toBe('gpt-4o-mini');
+  });
+});
+
+// ============================================================================
+// Receive-side (first-event / inactivity) timeout
+// ============================================================================
+
+/**
+ * Minimal `ws.WebSocket` stand-in for ResponsesWebSocket. Only implements the
+ * surface the wrapper touches: `readyState`, `on`/`emit`, `send`, and `close`.
+ */
+function createFakeWebSocket() {
+  const emitter = new EventEmitter() as EventEmitter & {
+    readyState: number;
+    sent: string[];
+    send: (data: string) => void;
+    close: () => void;
+    emitServerEvent: (event: unknown) => void;
+  };
+  emitter.readyState = WebSocket.OPEN;
+  emitter.sent = [];
+  emitter.send = (data: string) => {
+    emitter.sent.push(data);
+  };
+  emitter.close = () => {
+    if (emitter.readyState === WebSocket.CLOSED) return;
+    emitter.readyState = WebSocket.CLOSED;
+    emitter.emit('close');
+  };
+  emitter.emitServerEvent = (event: unknown) => {
+    emitter.emit('message', Buffer.from(JSON.stringify(event)));
+  };
+  return emitter;
+}
+
+const basePayload: WsResponseCreateEvent = {
+  type: 'response.create',
+  model: 'gpt-4.1',
+  input: [],
+  tools: [],
+};
+
+async function readResult<T>(promise: Promise<T>): Promise<{ value?: T; error?: unknown }> {
+  try {
+    return { value: await promise };
+  } catch (error) {
+    return { error };
+  }
+}
+
+describe('ResponsesWebSocket receive-side timeout', () => {
+  it('aborts the request with a retryable error when no event arrives in time', async () => {
+    const ws = createFakeWebSocket();
+    const conn = new ResponsesWebSocket(ws as unknown as WebSocket);
+
+    const channel = conn.sendRequest(basePayload, 30);
+    const reader = channel.stream().getReader();
+
+    // The reader must reject (not hang forever) once the deadline elapses.
+    const { error } = await readResult(reader.read());
+
+    expect(error).toBeInstanceOf(APIConnectionError);
+    expect((error as APIConnectionError).retryable).toBe(true);
+    // A silent socket is torn down so the pool reconnects on the next turn.
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+  });
+
+  it('aborts on an inactivity gap after the first event', async () => {
+    const ws = createFakeWebSocket();
+    const conn = new ResponsesWebSocket(ws as unknown as WebSocket);
+
+    const channel = conn.sendRequest(basePayload, 40);
+    const reader = channel.stream().getReader();
+
+    // First event arrives promptly and resets the idle deadline...
+    ws.emitServerEvent({ type: 'response.created', response: { id: 'resp_1' } });
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(first.value?.type).toBe('response.created');
+
+    // ...but the stream then goes silent, so the next read still times out.
+    const { error } = await readResult(reader.read());
+    expect(error).toBeInstanceOf(APIConnectionError);
+    expect((error as APIConnectionError).retryable).toBe(true);
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+  });
+
+  it('does not fire when events arrive promptly', async () => {
+    const ws = createFakeWebSocket();
+    const conn = new ResponsesWebSocket(ws as unknown as WebSocket);
+
+    const channel = conn.sendRequest(basePayload, 50);
+    const reader = channel.stream().getReader();
+
+    ws.emitServerEvent({ type: 'response.created', response: { id: 'resp_1' } });
+    ws.emitServerEvent({ type: 'response.completed', response: { id: 'resp_1' } });
+
+    const created = await reader.read();
+    expect(created.value?.type).toBe('response.created');
+    const completed = await reader.read();
+    expect(completed.value?.type).toBe('response.completed');
+
+    // Terminal event closes the channel cleanly; the timer never fires.
+    const end = await reader.read();
+    expect(end.done).toBe(true);
+
+    // Wait past the (cleared) deadline to prove no spurious teardown occurs.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it('never arms a timer when the timeout is disabled (0)', async () => {
+    const ws = createFakeWebSocket();
+    const conn = new ResponsesWebSocket(ws as unknown as WebSocket);
+
+    const channel = conn.sendRequest(basePayload, 0);
+    const reader = channel.stream().getReader();
+
+    // Well past what would have been any reasonable deadline.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+
+    ws.emitServerEvent({ type: 'response.completed', response: { id: 'resp_1' } });
+    const completed = await reader.read();
+    expect(completed.value?.type).toBe('response.completed');
+  });
+});
+
+// ============================================================================
+// Parallel-generation guard (previous_response_id continuation)
+// ============================================================================
+
+interface Deferred<T = void> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * In-process Responses WebSocket server for exercising WSLLM end-to-end without
+ * hitting OpenAI. Records every `response.create` payload it receives and lets
+ * each test script the server's replies per request.
+ */
+class FakeResponsesServer {
+  readonly requests: WsResponseCreateEvent[] = [];
+  #wss: WebSocketServer;
+  #handler: (conn: WebSocket, payload: WsResponseCreateEvent, index: number) => void = () => {};
+  #waiters: Array<{ count: number; d: Deferred }> = [];
+
+  private constructor(wss: WebSocketServer) {
+    this.#wss = wss;
+    wss.on('connection', (conn) => {
+      conn.on('message', (data: Buffer) => {
+        const payload = JSON.parse(data.toString()) as WsResponseCreateEvent;
+        const index = this.requests.push(payload) - 1;
+        this.#handler(conn, payload, index);
+        for (const w of this.#waiters) {
+          if (this.requests.length >= w.count) w.d.resolve();
+        }
+      });
+    });
+  }
+
+  static async start(): Promise<FakeResponsesServer> {
+    const wss = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => wss.once('listening', resolve));
+    return new FakeResponsesServer(wss);
+  }
+
+  get port(): number {
+    return (this.#wss.address() as AddressInfo).port;
+  }
+
+  onRequest(
+    handler: (conn: WebSocket, payload: WsResponseCreateEvent, index: number) => void,
+  ): void {
+    this.#handler = handler;
+  }
+
+  waitForRequests(count: number): Promise<void> {
+    if (this.requests.length >= count) return Promise.resolve();
+    const d = deferred();
+    this.#waiters.push({ count, d });
+    return d.promise;
+  }
+
+  async close(): Promise<void> {
+    for (const client of this.#wss.clients) client.terminate();
+    await new Promise<void>((resolve) => this.#wss.close(() => resolve()));
+  }
+}
+
+function sendCreated(conn: WebSocket, id: string): void {
+  conn.send(JSON.stringify({ type: 'response.created', response: { id } }));
+}
+function sendDelta(conn: WebSocket, delta: string): void {
+  conn.send(JSON.stringify({ type: 'response.output_text.delta', delta }));
+}
+function sendCompleted(conn: WebSocket, id: string): void {
+  conn.send(JSON.stringify({ type: 'response.completed', response: { id } }));
+}
+
+async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _ of stream) {
+    // consume
+  }
+}
+
+function userCtx(items: core.ChatItem[], text: string): core.ChatContext {
+  const ctx = new core.ChatContext([...items]);
+  ctx.addMessage({ role: 'user', content: text });
+  return ctx;
+}
+
+describe('WSLLM parallel-generation guard', () => {
+  let server: FakeResponsesServer;
+  let wsllm: WSLLM;
+
+  afterEach(async () => {
+    await wsllm?.close();
+    await server?.close();
+  });
+
+  it('continues from previous_response_id across serial turns', async () => {
+    server = await FakeResponsesServer.start();
+    // Disable the receive-side deadline so these deterministic tests can't flake.
+    wsllm = new WSLLM({
+      apiKey: 'test',
+      model: 'gpt-4.1',
+      baseURL: `http://localhost:${server.port}`,
+      responseTimeoutMs: 0,
+    });
+
+    let n = 0;
+    server.onRequest((conn) => {
+      const id = `resp_${++n}`;
+      sendCreated(conn, id);
+      sendCompleted(conn, id);
+    });
+
+    const ctx1 = userCtx([], 'hello');
+    await drain(wsllm.chat({ chatCtx: ctx1 }));
+
+    const ctx2 = userCtx(ctx1.items, 'again');
+    await drain(wsllm.chat({ chatCtx: ctx2 }));
+
+    // The second serial turn chains off the first response.
+    expect(server.requests).toHaveLength(2);
+    expect(server.requests[1]!.previous_response_id).toBe('resp_1');
+  });
+
+  it('suppresses continuation during overlap and resets the chain afterwards', async () => {
+    server = await FakeResponsesServer.start();
+    wsllm = new WSLLM({
+      apiKey: 'test',
+      model: 'gpt-4.1',
+      baseURL: `http://localhost:${server.port}`,
+      responseTimeoutMs: 0,
+    });
+
+    const holdFirst = deferred();
+    let n = 0;
+    server.onRequest(async (conn, _payload, index) => {
+      const id = `resp_${++n}`;
+      sendCreated(conn, id);
+      sendDelta(conn, 'x'); // gives the client an observable first chunk
+      if (index === 0) {
+        // Keep the first generation in flight until the test releases it.
+        await holdFirst.promise;
+      }
+      sendCompleted(conn, id);
+    });
+
+    // Turn A: start consuming and wait until its first chunk lands, which proves
+    // response.created was processed (so prev_response_id is now stored) and A
+    // is still active (its completion is being withheld).
+    const firstChunkA = deferred();
+    const ctxA = userCtx([], 'a');
+    const pA = (async () => {
+      for await (const _chunk of wsllm.chat({ chatCtx: ctxA })) {
+        firstChunkA.resolve();
+      }
+    })();
+    await firstChunkA.promise;
+
+    // Turn B starts while A is still active. Even though a stored
+    // previous_response_id exists, the guard must NOT chain off it.
+    const ctxB = userCtx(ctxA.items, 'b');
+    await drain(wsllm.chat({ chatCtx: ctxB }));
+
+    expect(server.requests).toHaveLength(2);
+    expect(server.requests[1]!.previous_response_id).toBeUndefined();
+
+    // Release A and let it finish; overlap must reset the stored chain.
+    holdFirst.resolve();
+    await pA;
+
+    // Turn C is serial again, but because overlap corrupted (and reset) the
+    // chain, it must re-send full context without a previous_response_id.
+    const ctxC = userCtx(ctxB.items, 'c');
+    await drain(wsllm.chat({ chatCtx: ctxC }));
+
+    expect(server.requests).toHaveLength(3);
+    expect(server.requests[2]!.previous_response_id).toBeUndefined();
   });
 });
 

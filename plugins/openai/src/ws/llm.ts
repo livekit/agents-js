@@ -31,6 +31,13 @@ const OPENAI_RESPONSES_WS_URL = 'wss://api.openai.com/v1/responses';
 // OpenAI enforces a 60-minute maximum duration on Responses WebSocket connections.
 const WS_MAX_SESSION_DURATION = 3_600_000;
 
+// Default receive-side deadline: once a `response.create` has been sent, abort the
+// wait if no server event arrives within this window (and, thereafter, if the gap
+// between two consecutive events exceeds it). Healthy first-event latency is ~1s in
+// production, so 15s is comfortably above the happy path while still bounding the
+// pathological "socket stays open, zero events" hang.
+const DEFAULT_WS_RESPONSE_TIMEOUT = 15_000;
+
 /**
  * Build the Responses-API WebSocket URL.
  *
@@ -64,12 +71,27 @@ export function buildResponsesWsUrl(baseURL: string | undefined, model: string):
 // A response is terminated (and its channel closed) when the service sends
 // response.completed, response.failed, or error.
 //
+// Each queue entry may carry a receive-side deadline (see `sendRequest`): if no
+// server event arrives before it fires — the first-event case — or if the gap
+// between two consecutive events exceeds it — the inactivity case — the entry's
+// channel is aborted with a retryable APIConnectionError and the socket is torn
+// down so the next turn reconnects. This guards against the service (or an
+// intermediary gateway) leaving the socket open and silent after a
+// `response.create`, which would otherwise block the reader forever.
+//
 // ============================================================================
+
+interface OutputQueueEntry {
+  channel: stream.StreamChannel<WsServerEvent>;
+  /** Idle/first-event deadline in ms; a non-positive value disables the timer. */
+  timeoutMs?: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
 
 export class ResponsesWebSocket {
   #ws: WebSocket;
   // FIFO queue: the front entry receives validated WsServerEvents for the in-flight response.
-  #outputQueue: stream.StreamChannel<WsServerEvent>[] = [];
+  #outputQueue: OutputQueueEntry[] = [];
 
   constructor(ws: WebSocket) {
     this.#ws = ws;
@@ -91,16 +113,20 @@ export class ResponsesWebSocket {
       if (!parsed.success) return;
 
       const event = parsed.data;
-      void current.write(event);
+      void current.channel.write(event);
 
-      // Close and dequeue on any terminal event.
+      // Close and dequeue on any terminal event; otherwise reset the idle
+      // deadline now that we have proof the connection is still producing.
       if (
         event.type === 'response.completed' ||
         event.type === 'response.failed' ||
         event.type === 'error'
       ) {
-        void current.close();
+        this.#clearTimer(current);
+        void current.channel.close();
         this.#outputQueue.shift();
+      } else {
+        this.#armTimer(current);
       }
     });
 
@@ -108,7 +134,8 @@ export class ResponsesWebSocket {
       // If the WebSocket closes while requests are still in flight, synthesise
       // a typed error event so all readers can handle it cleanly.
       for (const current of this.#outputQueue) {
-        if (!current.closed) {
+        this.#clearTimer(current);
+        if (!current.channel.closed) {
           const closeError: WsServerEvent = {
             type: 'error',
             error: {
@@ -116,7 +143,7 @@ export class ResponsesWebSocket {
               message: 'OpenAI Responses WebSocket closed unexpectedly',
             },
           };
-          void current.write(closeError).finally(() => current.close());
+          void current.channel.write(closeError).finally(() => current.channel.close());
         }
       }
       this.#outputQueue = [];
@@ -126,8 +153,18 @@ export class ResponsesWebSocket {
   /**
    * Send a response.create event.  Returns a typed `StreamChannel<WsServerEvent>`
    * that yields validated server events until the response terminates.
+   *
+   * @param timeoutMs - Receive-side deadline. When set to a positive value, the
+   *   returned channel is aborted with a retryable {@link APIConnectionError} if the
+   *   server sends no event within `timeoutMs` of the request (first-event
+   *   deadline) or between any two consecutive events (inactivity deadline),
+   *   and the underlying socket is closed. This is distinct from the
+   *   connection-establishment timeout used in `connectWs`.
    */
-  sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent> {
+  sendRequest(
+    payload: WsResponseCreateEvent,
+    timeoutMs?: number,
+  ): stream.StreamChannel<WsServerEvent> {
     if (this.#ws.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({
         message: `OpenAI Responses WebSocket is not open (state ${getWebSocketStateLabel(this.#ws.readyState)})`,
@@ -136,17 +173,57 @@ export class ResponsesWebSocket {
     }
 
     const channel = stream.createStreamChannel<WsServerEvent>();
-    this.#outputQueue.push(channel);
+    const entry: OutputQueueEntry = { channel, timeoutMs };
+    this.#outputQueue.push(entry);
+    // Arm the first-event deadline before sending so a completely silent
+    // response is still bounded.
+    this.#armTimer(entry);
     this.#ws.send(JSON.stringify(payload));
     return channel;
   }
 
   close(): void {
     // Drain pending channels before closing the socket.
-    for (const ch of this.#outputQueue) {
-      void ch.close();
+    for (const entry of this.#outputQueue) {
+      this.#clearTimer(entry);
+      void entry.channel.close();
     }
     this.#outputQueue = [];
+    this.#ws.close();
+  }
+
+  #armTimer(entry: OutputQueueEntry): void {
+    if (entry.timeoutMs === undefined || entry.timeoutMs <= 0) return;
+    this.#clearTimer(entry);
+    entry.timer = setTimeout(() => this.#onRequestTimeout(entry), entry.timeoutMs);
+  }
+
+  #clearTimer(entry: OutputQueueEntry): void {
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = undefined;
+    }
+  }
+
+  #onRequestTimeout(entry: OutputQueueEntry): void {
+    const idx = this.#outputQueue.indexOf(entry);
+    // Already resolved (terminal event or socket close won the race).
+    if (idx === -1) return;
+
+    // Remove the dead entry so a later, healthy turn reusing this connection
+    // (were it not torn down below) can't be misrouted to it.
+    this.#outputQueue.splice(idx, 1);
+    this.#clearTimer(entry);
+
+    void entry.channel.abort(
+      new APIConnectionError({
+        message: `OpenAI Responses WebSocket received no event within ${entry.timeoutMs}ms`,
+        options: { retryable: true },
+      }),
+    );
+
+    // A socket that accepted the request but went silent can't be trusted for
+    // reuse — close it so the pool opens a fresh connection on the next turn.
     this.#ws.close();
   }
 }
@@ -169,12 +246,25 @@ export interface WSLLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /**
+   * Receive-side deadline in milliseconds for the persistent Responses
+   * WebSocket. After a `response.create` is sent, the turn is aborted (with a
+   * retryable error that triggers reconnect + retry) if the server sends no
+   * event within this window, or if the gap between two consecutive events
+   * exceeds it. Guards against the socket staying open but silent, which would
+   * otherwise hang the turn indefinitely. Set to `0` (or a negative value) to
+   * disable. Distinct from the connection-establishment timeout.
+   *
+   * @defaultValue 15000
+   */
+  responseTimeoutMs?: number;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
   model: 'gpt-4.1',
   apiKey: process.env.OPENAI_API_KEY,
   strictToolSchema: true,
+  responseTimeoutMs: DEFAULT_WS_RESPONSE_TIMEOUT,
 };
 
 // ============================================================================
@@ -187,6 +277,13 @@ export class WSLLM extends llm.LLM {
   #prevResponseId = '';
   #prevChatCtx: llm.ChatContext | null = null;
   #pendingToolCalls = new Set<string>();
+  // Number of in-flight WSLLMStream generations, and whether any two ever
+  // overlapped. The stored previous_response_id / chat-ctx continuation chain
+  // assumes strictly serial turns; concurrent generations can interleave and
+  // corrupt it, so we only take the continuation shortcut when idle and reset
+  // the stored state once all overlapping generations have drained.
+  #activeStreams = 0;
+  #parallelGeneration = false;
 
   /**
    * Create a new instance of the OpenAI Responses API WebSocket LLM.
@@ -251,6 +348,28 @@ export class WSLLM extends llm.LLM {
     this.#pendingToolCalls = callIds;
   }
 
+  /** Called by WSLLMStream when a generation begins. Tracks overlap so the
+   *  continuation chain can be invalidated if turns run concurrently. */
+  _onStreamStarted(): void {
+    if (this.#activeStreams > 0) {
+      this.#parallelGeneration = true;
+    }
+    this.#activeStreams += 1;
+  }
+
+  /** Called by WSLLMStream when a generation ends (success or failure). Once all
+   *  overlapping generations have drained, drop the stored continuation state so
+   *  the next turn re-sends the full context instead of chaining off a
+   *  potentially corrupted previous_response_id. */
+  _onStreamFinished(): void {
+    this.#activeStreams -= 1;
+    if (this.#activeStreams === 0 && this.#parallelGeneration) {
+      this.#prevResponseId = '';
+      this.#prevChatCtx = null;
+      this.#parallelGeneration = false;
+    }
+  }
+
   chat({
     chatCtx,
     toolCtx,
@@ -304,7 +423,14 @@ export class WSLLM extends llm.LLM {
     let prevResponseId: string | undefined;
     const canUseStoredResponse = modelOptions.store !== false;
 
-    if (canUseStoredResponse && this.#prevChatCtx && this.#prevResponseId) {
+    // Only continue from a stored previous_response_id when no other generation
+    // is in flight — a concurrent turn may be mutating the continuation chain.
+    if (
+      canUseStoredResponse &&
+      this.#activeStreams === 0 &&
+      this.#prevChatCtx &&
+      this.#prevResponseId
+    ) {
       const diff = llm.computeChatCtxDiff(this.#prevChatCtx, chatCtx);
       const lastPrevItemId = this.#prevChatCtx.items.at(-1)?.id ?? null;
 
@@ -339,6 +465,7 @@ export class WSLLM extends llm.LLM {
       modelOptions,
       prevResponseId,
       strictToolSchema: this.#opts.strictToolSchema ?? true,
+      responseTimeoutMs: this.#opts.responseTimeoutMs ?? DEFAULT_WS_RESPONSE_TIMEOUT,
     });
   }
 
@@ -368,6 +495,8 @@ export class WSLLMStream extends llm.LLMStream {
   #fullChatCtx: llm.ChatContext;
   #responseId = '';
   #pendingToolCalls = new Set<string>();
+  #responseTimeoutMs: number;
+  #responseCompleted = false;
 
   constructor(
     llm: WSLLM,
@@ -381,6 +510,7 @@ export class WSLLMStream extends llm.LLMStream {
       modelOptions,
       prevResponseId,
       strictToolSchema,
+      responseTimeoutMs,
     }: {
       pool: ConnectionPool<ResponsesWebSocket>;
       model: string | ChatModels;
@@ -391,6 +521,7 @@ export class WSLLMStream extends llm.LLMStream {
       modelOptions: Record<string, unknown>;
       prevResponseId?: string;
       strictToolSchema: boolean;
+      responseTimeoutMs: number;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -401,11 +532,13 @@ export class WSLLMStream extends llm.LLMStream {
     this.#strictToolSchema = strictToolSchema;
     this.#prevResponseId = prevResponseId;
     this.#fullChatCtx = fullChatCtx;
+    this.#responseTimeoutMs = responseTimeoutMs;
   }
 
   protected async run(): Promise<void> {
     let retryable = true;
 
+    this.#llm._onStreamStarted();
     try {
       await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
         const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
@@ -415,6 +548,19 @@ export class WSLLMStream extends llm.LLMStream {
           // Retry once on the same connection with the full context and no ID.
           retryable = true;
           await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+        }
+
+        // The receive loop drained without a response.completed (e.g. the
+        // channel closed after a non-terminal event). Treat as a transient
+        // failure so the SDK reconnects and retries rather than silently
+        // yielding an empty turn.
+        if (!this.#responseCompleted) {
+          conn.close();
+          this.#pool.invalidate();
+          throw new APIConnectionError({
+            message: 'OpenAI Responses WebSocket stream ended without a completed response',
+            options: { retryable: true },
+          });
         }
       });
     } catch (error) {
@@ -429,6 +575,8 @@ export class WSLLMStream extends llm.LLMStream {
         message: toError(error).message,
         options: { retryable },
       });
+    } finally {
+      this.#llm._onStreamFinished();
     }
   }
 
@@ -483,7 +631,7 @@ export class WSLLMStream extends llm.LLMStream {
 
     let channel: stream.StreamChannel<WsServerEvent>;
     try {
-      channel = conn.sendRequest(payload);
+      channel = conn.sendRequest(payload, this.#responseTimeoutMs);
     } catch (error) {
       if (error instanceof APIConnectionError) {
         conn.close();
@@ -617,6 +765,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
+    this.#responseCompleted = true;
     this.#llm._setPendingToolCalls(this.#pendingToolCalls);
 
     if (event.response.usage) {

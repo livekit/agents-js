@@ -36,6 +36,20 @@ export interface LLMOptions {
    * @default true
    */
   useWebSocket?: boolean;
+
+  /**
+   * Receive-side deadline in milliseconds for the persistent Responses
+   * WebSocket (only applies when {@link useWebSocket} is `true`). After a
+   * request is sent, the turn is aborted and retried if the server sends no
+   * event within this window, or if the gap between two consecutive events
+   * exceeds it — guarding against the socket staying open but silent, which
+   * would otherwise hang the turn indefinitely. Set to `0` to disable. This is
+   * distinct from the connection-establishment / per-request `connOptions`
+   * timeout used by the HTTP path.
+   *
+   * @defaultValue 15000
+   */
+  responseTimeoutMs?: number;
 }
 
 type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'>;
