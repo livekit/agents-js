@@ -170,7 +170,6 @@ export interface Tool {
   [TOOL_SYMBOL]: true;
 }
 
-// TODO(AJS-112): support provider tools
 export abstract class ProviderTool implements Tool {
   readonly type = 'provider' as const;
 

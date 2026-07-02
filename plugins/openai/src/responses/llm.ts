@@ -201,7 +201,6 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
-      // TODO: support provider tools in the Responses schema.
       const tools = this.toolCtx
         ? toResponsesTools(this.toolCtx, this.strictToolSchema)
         : undefined;
