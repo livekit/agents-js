@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-trugen",
-  "version": "1.4.11",
+  "version": "1.5.0",
   "description": "Trugen avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

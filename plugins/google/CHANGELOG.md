@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-google
 
+## 1.5.0
+
+### Minor Changes
+
+- Add Gemini provider tools for Google Search, Google Maps, URL context, File Search, code execution, and Vertex RAG retrieval, and serialize them from `ToolContext` for Google LLM and realtime sessions. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- Updated dependencies [[`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`49f7567`](https://github.com/livekit/agents-js/commit/49f7567600e88f4b5479afab3d629983dca74f69), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`bfad336`](https://github.com/livekit/agents-js/commit/bfad336904ccb5b22acb489cd01d4bae2f393fb9), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a)]:
+  - @livekit/agents@1.5.0
+
 ## 1.4.11
 
 ### Patch Changes
