@@ -497,9 +497,15 @@ export class WSLLMStream extends llm.LLMStream {
   #pendingToolCalls = new Set<string>();
   #responseTimeoutMs: number;
   #responseCompleted = false;
-  // Balances the _onStreamStarted() reservation made in the constructor. run()
-  // may be invoked multiple times (once per retry attempt), so the release must
-  // fire exactly once for the stream's whole lifetime — not per attempt.
+  // Balances the _onStreamStarted() reservation made in the constructor. The
+  // release must fire exactly once, and only after the stream's *whole* lifetime
+  // ends — not per attempt: the base class calls run() once per retry attempt
+  // (up to maxRetry+1 times), so releasing in run()'s finally would drop the
+  // count after the first attempt and leave the stream uncounted during the
+  // retry-delay window, letting a concurrent chat() wrongly reuse the stored
+  // previous_response_id. Instead we release from the monitorMetrics() override,
+  // which the base runs once and which only returns after mainTask has drained
+  // and closed the queue (i.e. after all retries).
   #streamReleased = false;
 
   constructor(
@@ -551,6 +557,20 @@ export class WSLLMStream extends llm.LLMStream {
     this.#llm._onStreamFinished();
   }
 
+  /**
+   * The base class runs this exactly once per stream and it only returns after
+   * `mainTask` has closed the queue — i.e. after every retry attempt has
+   * finished. That makes it the correct place to release the parallel-generation
+   * reservation taken in the constructor (run()'s finally fires per attempt).
+   */
+  protected override async monitorMetrics(): Promise<void> {
+    try {
+      await super.monitorMetrics();
+    } finally {
+      this.#releaseStream();
+    }
+  }
+
   protected async run(): Promise<void> {
     let retryable = true;
 
@@ -590,8 +610,6 @@ export class WSLLMStream extends llm.LLMStream {
         message: toError(error).message,
         options: { retryable },
       });
-    } finally {
-      this.#releaseStream();
     }
   }
 

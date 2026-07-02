@@ -404,6 +404,71 @@ describe('WSLLM parallel-generation guard', () => {
     expect(overlapping.filter((r) => r.previous_response_id === 'resp_1')).toHaveLength(1);
     expect(overlapping.filter((r) => !r.previous_response_id)).toHaveLength(1);
   });
+
+  it('stays reserved across retry attempts, not just the first', async () => {
+    server = await FakeResponsesServer.start();
+    wsllm = new WSLLM({
+      apiKey: 'test',
+      model: 'gpt-4.1',
+      baseURL: `http://localhost:${server.port}`,
+      responseTimeoutMs: 0,
+    });
+
+    // The public LLM wrapper always subscribes to 'error'; mirror that here so
+    // the retryable error below doesn't trip EventEmitter's unhandled-'error'
+    // throw when driving WSLLM directly.
+    wsllm.on('error', () => {});
+
+    const holdRetry = deferred();
+    server.onRequest(async (conn, _payload, index) => {
+      if (index === 0) {
+        // S1 attempt 1: retryable failure -> the base class retries (first retry
+        // is immediate). If the reservation were released in run()'s finally, the
+        // counter would drop to 0 here for the rest of S1's lifetime.
+        conn.send(
+          JSON.stringify({
+            type: 'error',
+            error: { code: 'websocket_connection_limit_reached', message: 'boom' },
+          }),
+        );
+      } else if (index === 1) {
+        // S1 attempt 2 (retry): produce an observable first chunk, then hold the
+        // turn open so S1 is unambiguously still in flight.
+        sendCreated(conn, 'resp_2');
+        sendDelta(conn, 'x');
+        await holdRetry.promise;
+        sendCompleted(conn, 'resp_2');
+      } else {
+        // Concurrent turn S2.
+        sendCreated(conn, `resp_s2_${index}`);
+        sendCompleted(conn, `resp_s2_${index}`);
+      }
+    });
+
+    // Drive S1 with a single retry; resolve once its retried attempt emits a chunk.
+    const s1Retrying = deferred();
+    const ctxS1 = userCtx([], 's1');
+    const pS1 = (async () => {
+      for await (const _chunk of wsllm.chat({
+        chatCtx: ctxS1,
+        connOptions: { maxRetry: 1, retryIntervalMs: 10, timeoutMs: 10_000 },
+      })) {
+        s1Retrying.resolve();
+      }
+    })();
+    await s1Retrying.promise;
+
+    // S1's retried attempt has stored resp_2 and is still active. A concurrent
+    // turn must NOT chain off it (with a per-attempt release it would, because
+    // #activeStreams would have dropped to 0 after S1's first attempt failed).
+    const ctxS2 = userCtx(ctxS1.items, 's2');
+    await drain(wsllm.chat({ chatCtx: ctxS2 }));
+
+    expect(server.requests.at(-1)!.previous_response_id).toBeUndefined();
+
+    holdRetry.resolve();
+    await pS1;
+  });
 });
 
 if (hasOpenAIApiKey) {
