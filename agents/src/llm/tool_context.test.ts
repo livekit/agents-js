@@ -56,7 +56,7 @@ describe('tools object compatibility', () => {
     expect(createdAgent.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
     expect(task.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
     expect(createdTask.toolCtx.getFunctionTool('lookupOrder')?.name).toBe('lookupOrder');
-    expect(Reflect.get(session, '_tools')[0]?.name).toBe('lookupOrder');
+    expect(session.tools[0]?.name).toBe('lookupOrder');
   });
 
   it('keeps rejecting duplicate named function tools in array syntax', () => {
