@@ -135,7 +135,7 @@ export class TTS extends tts.TTS {
     // rather than batching short sentences together — minimizes TTFB on the
     // first sentence and keeps Fish synthesizing continuously.
     const tokenizer =
-      opts.tokenizer ?? new tokenize.basic.SentenceTokenizer({ minSentenceLength: 1 });
+      opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer({ minSentenceLength: 1 });
 
     this.#opts = {
       apiKey,

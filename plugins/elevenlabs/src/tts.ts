@@ -679,7 +679,7 @@ export class TTS extends tts.TTS {
     let wordTokenizer = opts.wordTokenizer;
     if (!wordTokenizer) {
       wordTokenizer = autoMode
-        ? new tokenize.basic.SentenceTokenizer()
+        ? new tokenize.blingfire.SentenceTokenizer()
         : new tokenize.basic.WordTokenizer(false);
     } else if (autoMode && !(wordTokenizer instanceof tokenize.SentenceTokenizer)) {
       this.#logger.warn(

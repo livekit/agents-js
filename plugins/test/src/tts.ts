@@ -31,7 +31,7 @@ export const tts = async (
       if (supports.streaming) {
         stream = tts.stream();
       } else {
-        stream = new ttslib.StreamAdapter(tts, new tokenize.basic.SentenceTokenizer()).stream();
+        stream = new ttslib.StreamAdapter(tts, new tokenize.blingfire.SentenceTokenizer()).stream();
       }
 
       const pattern = [1, 2, 4];
