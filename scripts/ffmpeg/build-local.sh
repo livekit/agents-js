@@ -30,7 +30,7 @@ case "$os/$arch" in
   *)
     echo "build-local: unsupported host '$os/$arch'." >&2
     echo "Windows binaries are cross-compiled in CI (TARGET=win32-x64 from Linux); there is" >&2
-    echo "no native local build. Set LIVEKIT_FFMPEG_PATH to your own ffmpeg.exe instead." >&2
+    echo "no native local build. Set LIVEKIT_FFMPEG_PATH to your own ffmpeg executable instead." >&2
     exit 1
     ;;
 esac
