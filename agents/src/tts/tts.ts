@@ -335,7 +335,7 @@ export abstract class SynthesizeStream
     }
   }
 
-  #markStarted(): void {
+  protected markStarted(): void {
     if (this.#startedTime === undefined) {
       this.#startedTime = performance.now() / 1000;
       this.#startedHrTime = process.hrtime.bigint();
@@ -490,9 +490,6 @@ export abstract class SynthesizeStream
       return;
     }
 
-    if (text) {
-      this.#markStarted();
-    }
     this.input.put(text);
   }
 
