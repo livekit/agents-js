@@ -5,7 +5,7 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { setTracerProvider, tracer } from './traces.js';
+import { setTracerProvider, setupCloudTracer, tracer } from './traces.js';
 
 /** Helper: extract parentSpanId across OTel SDK v1/v2 */
 function parentSpanId(span: unknown): string | undefined {
@@ -138,5 +138,52 @@ describe('register() set-once semantics', () => {
 
     // LK span is a child of the user's parent span
     expect(parentSpanId(lkSession)).toBe(userParent.spanContext().spanId);
+  });
+});
+
+describe('setupCloudTracer with a user-configured provider', () => {
+  let userExporter: InMemorySpanExporter;
+  let userProvider: NodeTracerProvider;
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+
+    userExporter = new InMemorySpanExporter();
+    userProvider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(userExporter)],
+    });
+    userProvider.register();
+    setTracerProvider(userProvider);
+  });
+
+  afterEach(async () => {
+    await userProvider.shutdown();
+    otelContext.disable();
+    trace.disable();
+    // Assigning undefined to process.env.X stores the string "undefined"; delete instead so
+    // env vars that were originally unset stay unset for later tests.
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+  });
+
+  it('does not replace the user provider (attaches the cloud exporter to it instead)', async () => {
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
+    // nothing to flush over the network on shutdown.
+    expect(tracer.getProvider()).toBe(userProvider);
   });
 });
