@@ -36,9 +36,12 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
   async initialize(): Promise<void> {
     this.#mod = _getLocalInferenceModule();
     if (this.#mod === undefined) {
-      throw new Error(
-        'EotRunner: @livekit/local-inference native binding unavailable in the inference process',
-      );
+      // _getLocalInferenceModule() already emits a WARN when the binding
+      // cannot be loaded (e.g. Bun on Windows does not fetch optional native
+      // packages). Returning here — rather than throwing — keeps the inference
+      // process alive so the agent falls back to VAD-only turn detection
+      // instead of crashing with a FATAL (see #1900).
+      return;
     }
     // Eagerly page in the EOT model singleton (~138 MB) so the first
     // request doesn't pay the load on the hot path.
@@ -47,7 +50,10 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
 
   async run(data: EotInferenceInput): Promise<EotInferenceOutput> {
     if (this.#mod === undefined) {
-      throw new Error('EotRunner not initialized');
+      // Native binding unavailable — return a zero probability so callers
+      // treat every frame as "not end-of-turn" and VAD remains the sole
+      // turn-detection mechanism.
+      return { probability: 0, inferenceDurationMs: 0 };
     }
     // base64 → bytes → Int16Array view (PCM is 16 kHz s16le)
     const bytes = Buffer.from(data.pcm, 'base64');
