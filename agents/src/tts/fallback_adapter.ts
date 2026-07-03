@@ -473,6 +473,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
                 stream.endInput();
                 return;
               } else {
+                this.markStarted();
                 stream.pushText(token);
               }
             }

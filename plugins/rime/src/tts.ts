@@ -400,6 +400,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           throw new APIConnectionError({ message: 'Rime WebSocket connection is closed' });
         }
+        this.markStarted();
         ws.send(JSON.stringify({ text: `${event.token} `, contextId }));
         if (!inputSentFuture.done) inputSentFuture.resolve();
         sentCount += 1;

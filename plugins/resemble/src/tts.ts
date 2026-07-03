@@ -222,6 +222,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         activeRequests.add(reqId);
 
+        this.markStarted();
         ws.send(JSON.stringify(packet));
       }
     };

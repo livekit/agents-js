@@ -194,6 +194,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           continue;
         }
 
+        this.markStarted();
         ws.send(JSON.stringify({ text: data }));
       }
     };
