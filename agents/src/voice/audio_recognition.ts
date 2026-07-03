@@ -39,7 +39,7 @@ import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
-import { Event, Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
+import { Task, cancelAndWait, delay, readStream, waitForAbort } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import {
@@ -153,42 +153,6 @@ interface UserTurnTracker {
   words: number;
   transcript: string;
   startedAt?: number;
-}
-
-/**
- * Edge-triggered event with an abort-aware `waitOnce` helper.
- *
- * Used by the audio-EOT bounce race: the bounce task awaits either the
- * endpointing delay or a fresh "user started speaking" signal. We extend
- * the base `Event` rather than reimplementing it because the base already
- * handles the resolver / waiter bookkeeping; this subclass just layers a
- * `waitOnce(signal)` that rejects on cancel so the race can tear down
- * cleanly when the parent task is aborted.
- */
-class SpeakingEvent extends Event {
-  /**
-   * Resolves on the next `set()`. Rejects (and cleans up the listener) if
-   * `signal` aborts first. Returns immediately if the event is already set.
-   */
-  async waitOnce(signal: AbortSignal): Promise<void> {
-    if (this.isSet) return;
-    let abortListener: (() => void) | undefined;
-    try {
-      await Promise.race([
-        this.wait().then(() => undefined),
-        new Promise<never>((_resolve, reject) => {
-          if (signal.aborted) {
-            reject(signal.reason ?? new Error('aborted'));
-            return;
-          }
-          abortListener = () => reject(signal.reason ?? new Error('aborted'));
-          signal.addEventListener('abort', abortListener, { once: true });
-        }),
-      ]);
-    } finally {
-      if (abortListener !== undefined) signal.removeEventListener('abort', abortListener);
-    }
-  }
 }
 
 export class STTPipeline {
@@ -337,16 +301,6 @@ export class AudioRecognition {
    * resolved prediction future, but the event should fire once per request.
    */
   private lastEmittedEotPrediction?: TurnDetectionEvent;
-  /**
-   * Edge-triggered "user is speaking" event used by the audio-EOT bounce
-   * race. Set on VAD `START_OF_SPEECH` (and on any `INFERENCE_DONE` with
-   * accumulated speech), cleared on `END_OF_SPEECH`.
-   *
-   * `Event.set()` is idempotent (re-setting an already-set event resolves
-   * any new waiters immediately); cleared on EOS so subsequent waiters
-   * park until the next utterance.
-   */
-  private userSpeakingEvent = new SpeakingEvent();
   private warnedTurnDetectorPushFailure = false;
   private turnDetectionMode?: TurnDetectionMode;
   private endpointing: BaseEndpointing;
@@ -613,10 +567,6 @@ export class AudioRecognition {
       oldStream.detach();
       void oldStream.aclose().catch(() => undefined);
     }
-    // Cross-detector state should not leak: the cached speaking signal
-    // from the prior detector's turn must not race the new detector's
-    // first bounce.
-    this.userSpeakingEvent.clear();
     const newStream =
       reuseStream !== undefined
         ? reuseStream
@@ -673,61 +623,6 @@ export class AudioRecognition {
         `vad minSilenceDuration=${current}ms is too low for the TurnDetector. ` +
           `Raise the VAD's minSilenceDuration to at least ${required}ms.`,
       );
-    }
-  }
-
-  /**
-   * Speaking-guard wrapper for the bounce-EOU task. When an
-   * `BaseStreamingTurnDetector` is active, the bounce task races against the
-   * `userSpeakingEvent`:
-   *
-   * - if the user is already speaking, skip the EOU outright;
-   * - if the user starts speaking during the endpointing delay (e.g.
-   *   the LLM hadn't returned yet but the user added another phrase),
-   *   abort the inner bounce so the next turn drives the decision.
-   *
-   * VAD `START_OF_SPEECH` also calls `bounceEOUTask?.cancel()`, but the
-   * cancel path only races VAD sessions. STT-only audio-EOT setups need
-   * the explicit event-driven race here.
-   */
-  private async bounceEOUTaskWithSpeakingGuard(
-    controller: AbortController,
-    inner: (innerController: AbortController) => Promise<void>,
-    context: {
-      lastSpeakingTime: number | undefined;
-      lastFinalTranscriptTime: number;
-      speechStartTime: number | undefined;
-    },
-  ): Promise<void> {
-    if (this.speaking) {
-      this.logger.debug(context, 'user is still speaking, skipping end of turn task');
-      return;
-    }
-    const innerController = new AbortController();
-    // Propagate outer cancellation into the inner task.
-    const onOuterAbort = () => innerController.abort();
-    controller.signal.addEventListener('abort', onOuterAbort, { once: true });
-
-    let speakingWon = false;
-    try {
-      const innerPromise = inner(innerController);
-      // When the speaking branch wins, the race settles before finally aborts
-      // innerController, leaving innerPromise's rejection uncaught without this.
-      void innerPromise.catch(() => {});
-      await Promise.race([
-        innerPromise,
-        this.userSpeakingEvent.waitOnce(controller.signal).then(() => {
-          speakingWon = true;
-        }),
-      ]);
-      if (speakingWon) {
-        this.logger.debug(context, 'user spoke during endpointing, cancelling end of turn task');
-      }
-    } finally {
-      controller.signal.removeEventListener('abort', onOuterAbort);
-      // If the speaking-event branch won (or the outer was aborted), tear
-      // down the inner bounce so it doesn't keep awaiting the delay.
-      innerController.abort();
     }
   }
 
@@ -1329,11 +1224,6 @@ export class AudioRecognition {
         }
         this.speaking = true;
         this.lastSpeakingTime = sttLastSpeakingTime;
-        // STT-only sessions never see VAD events; surface the speaking
-        // signal here so the audio-EOT bounce race can still abort on a
-        // mid-window fresh utterance.
-        this.userSpeakingEvent.set();
-
         this.bounceEOUTask?.cancel();
         break;
       case SpeechEventType.END_OF_SPEECH:
@@ -1387,7 +1277,6 @@ export class AudioRecognition {
           );
         }
         this.speaking = false;
-        this.userSpeakingEvent.clear();
         this.userTurnCommitted = true;
         if (!this.hasUserVad || this.lastSpeakingTime === undefined) {
           // vad disabled or missed a speech, use stt timestamp
@@ -1747,20 +1636,9 @@ export class AudioRecognition {
     const lastFinalTranscriptTime = this.lastFinalTranscriptTime;
     const speechStartTime = this.userTurnStart;
 
-    // Audio-EOT detectors get a speaking-guard wrapper: if the user starts
-    // speaking again during the endpointing delay, abort the EOU and let
-    // the next turn drive the decision. Text-based detectors (no audio
-    // pipeline) keep the simpler bounce task — they can't race against
-    // mid-window utterances anyway since they don't run during silence.
-    const factory = hasAudioDetector
-      ? (controller: AbortController) =>
-          this.bounceEOUTaskWithSpeakingGuard(
-            controller,
-            bounceEOUTask(lastSpeakingTime, lastFinalTranscriptTime, speechStartTime),
-            { lastSpeakingTime, lastFinalTranscriptTime, speechStartTime },
-          )
-      : bounceEOUTask(lastSpeakingTime, lastFinalTranscriptTime, speechStartTime);
-    this.bounceEOUTask = Task.from(factory);
+    this.bounceEOUTask = Task.from(
+      bounceEOUTask(lastSpeakingTime, lastFinalTranscriptTime, speechStartTime),
+    );
 
     this.bounceEOUTask.result
       .then(() => {
@@ -1914,7 +1792,6 @@ export class AudioRecognition {
               otelContext.with(ctx, () => this.hooks.onStartOfSpeech(ev));
             }
             this.speaking = true;
-            this.userSpeakingEvent.set();
 
             // Audio EOT: tear down any in-flight inference for the now-stale
             // prior window and re-arm so the next silence tick starts fresh.
@@ -1940,10 +1817,6 @@ export class AudioRecognition {
                 // ev.rawAccumulatedSpeech is in ms (VADEvent durations are all ms in TS).
                 this.speechStartTime = Date.now() - ev.rawAccumulatedSpeech;
               }
-              // Wake any speaking-guard waiter — STT-only sessions don't
-              // see START_OF_SPEECH but do see INFERENCE_DONE-with-speech.
-              this.userSpeakingEvent.set();
-
               // A short intra-segment pause can resolve a request before VAD
               // emits END_OF_SPEECH. When speech resumes (without a new SOS),
               // drop that request so the next pause gets a fresh window.
@@ -1951,12 +1824,6 @@ export class AudioRecognition {
                 this.turnDetectorStream?.cancelInference();
                 this.turnDetectorPredictionFut = undefined;
               }
-            } else if (!this.speaking) {
-              // A sub-threshold speech spike can set `userSpeakingEvent` without
-              // ever reaching START_OF_SPEECH, so no END_OF_SPEECH will fire to
-              // clear it. Clear it here once speech drops back to zero (confirmed
-              // turns are cleared by EOS).
-              this.userSpeakingEvent.clear();
             }
 
             // Audio EOT: start an inference request once we've seen enough
@@ -1992,7 +1859,6 @@ export class AudioRecognition {
             // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.vadSpeechStarted = false;
             this.speaking = false;
-            this.userSpeakingEvent.clear();
             this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
 
             // Audio EOT: the silence tick owns request-starting, not
@@ -2197,9 +2063,6 @@ export class AudioRecognition {
     this.speaking = false;
     this.userTurnCommitted = false;
     this.userTurnTracker = { words: 0, transcript: '' };
-    // Clear the speaking event so a stale `set()` from the just-finished
-    // turn doesn't immediately trip the next speaking-guard race.
-    this.userSpeakingEvent.clear();
     // New turn → allow the next window's prediction to emit.
     this.lastEmittedEotPrediction = undefined;
 
