@@ -183,13 +183,16 @@ export class LiveAvatarAPI {
         }
         return await response.json();
       } catch (e) {
-        if (e instanceof APIStatusError && !e.retryable) {
-          throw e;
+        if (e instanceof APIStatusError) {
+          if (!e.retryable || i >= maxRetry) {
+            throw e;
+          }
+        } else {
+          this.#logger.warn(
+            { error: String(e), url, attempt: i },
+            `API request to ${url} failed on attempt ${i}`,
+          );
         }
-        this.#logger.warn(
-          { error: String(e), url, attempt: i },
-          `API request to ${url} failed on attempt ${i}`,
-        );
       }
 
       if (i < maxRetry) {
