@@ -165,8 +165,12 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await userProvider.shutdown();
     otelContext.disable();
     trace.disable();
-    process.env.LIVEKIT_API_KEY = prevKey;
-    process.env.LIVEKIT_API_SECRET = prevSecret;
+    // Assigning undefined to process.env.X stores the string "undefined"; delete instead so
+    // env vars that were originally unset stay unset for later tests.
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
   });
 
   it('does not replace the user provider (attaches the cloud exporter to it instead)', async () => {

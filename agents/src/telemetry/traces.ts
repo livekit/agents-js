@@ -278,6 +278,10 @@ export async function setupCloudTracer(options: {
           : (currentProvider as Partial<NodeTracerProvider>);
 
       if (existingProvider && typeof existingProvider.addSpanProcessor === 'function') {
+        // The user's provider keeps its own Resource (incl. service.name): a provider has one
+        // Resource shared by all exporters, so applying `resource` here would also relabel the
+        // spans going to the user's own backend. room_id/job_id — the keys Cloud correlates on —
+        // still ride along as span attributes via MetadataSpanProcessor.
         existingProvider.addSpanProcessor(new MetadataSpanProcessor(metadata));
         existingProvider.addSpanProcessor(new BatchSpanProcessor(spanExporter));
       } else {
