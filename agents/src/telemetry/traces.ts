@@ -6,6 +6,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Attributes,
   type Context,
+  ProxyTracerProvider,
   type Span,
   type SpanOptions,
   type Tracer,
@@ -73,6 +74,14 @@ class DynamicTracer {
    */
   getTracer(): Tracer {
     return this.tracer;
+  }
+
+  /**
+   * Returns the current tracer provider — the API's ProxyTracerProvider if none has been set
+   * via setProvider(), which callers use to detect whether a user-configured provider exists.
+   */
+  getProvider(): TracerProvider {
+    return this.tracerProvider;
   }
 
   /**
@@ -259,15 +268,32 @@ export async function setupCloudTracer(options: {
         compression: CompressionAlgorithm.GZIP,
       });
 
-      const tracerProvider = new NodeTracerProvider({
-        resource,
-        spanProcessors: [new MetadataSpanProcessor(metadata), new BatchSpanProcessor(spanExporter)],
-      });
-      // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
-      // and sets the global tracer provider. Both use set-once semantics in the OTel API,
-      // so if the user already called NodeSDK.start(), these are safe no-ops.
-      tracerProvider.register();
-      setTracerProvider(tracerProvider);
+      // If the user already configured a tracer provider (e.g. setTracerProvider in the job
+      // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
+      // both the user's backend and LiveKit Cloud.
+      const currentProvider = tracer.getProvider();
+      const existingProvider =
+        currentProvider instanceof ProxyTracerProvider
+          ? undefined
+          : (currentProvider as Partial<NodeTracerProvider>);
+
+      if (existingProvider && typeof existingProvider.addSpanProcessor === 'function') {
+        existingProvider.addSpanProcessor(new MetadataSpanProcessor(metadata));
+        existingProvider.addSpanProcessor(new BatchSpanProcessor(spanExporter));
+      } else {
+        const tracerProvider = new NodeTracerProvider({
+          resource,
+          spanProcessors: [
+            new MetadataSpanProcessor(metadata),
+            new BatchSpanProcessor(spanExporter),
+          ],
+        });
+        // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
+        // and sets the global tracer provider. Both use set-once semantics in the OTel API,
+        // so if the user already called NodeSDK.start(), these are safe no-ops.
+        tracerProvider.register();
+        setTracerProvider(tracerProvider);
+      }
     }
 
     if (enableLogs) {

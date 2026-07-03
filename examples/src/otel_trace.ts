@@ -59,7 +59,9 @@ function setupOtel(options?: {
   return traceProvider;
 }
 
-const logger = log().child({ example: 'otel-trace-example' });
+// Resolve the logger lazily: log() requires initializeLogger() to have run, which the CLI
+// only does after this module is imported, so calling it at module scope would throw.
+const logger = () => log().child({ example: 'otel-trace-example' });
 
 const lookupWeather = llm.tool({
   name: 'lookupWeather',
@@ -68,7 +70,7 @@ const lookupWeather = llm.tool({
     location: z.string().describe('The location they are asking for'),
   }),
   execute: async ({ location }) => {
-    logger.info({ location }, 'Looking up weather');
+    logger().info({ location }, 'Looking up weather');
     return 'sunny with a temperature of 70 degrees.';
   },
 });
@@ -84,7 +86,7 @@ class Kelly extends voice.Agent {
           description: 'Transfer the call to Alloy.',
           parameters: z.object({}),
           execute: async () => {
-            logger.info('Transferring the call to Alloy');
+            logger().info('Transferring the call to Alloy');
             return llm.handoff({ agent: new Alloy(), returns: 'Transfer complete.' });
           },
         }),
@@ -93,7 +95,7 @@ class Kelly extends voice.Agent {
   }
 
   async onEnter() {
-    logger.info('Kelly is entering the session');
+    logger().info('Kelly is entering the session');
     this.session.generateReply();
   }
 }
@@ -110,7 +112,7 @@ class Alloy extends voice.Agent {
           description: 'Transfer the call to Kelly.',
           parameters: z.object({}),
           execute: async () => {
-            logger.info('Transferring the call to Kelly');
+            logger().info('Transferring the call to Kelly');
             return llm.handoff({ agent: new Kelly(), returns: 'Transfer complete.' });
           },
         }),
@@ -119,7 +121,7 @@ class Alloy extends voice.Agent {
   }
 
   async onEnter() {
-    logger.info('Alloy is entering the session');
+    logger().info('Alloy is entering the session');
     this.session.generateReply();
   }
 }
