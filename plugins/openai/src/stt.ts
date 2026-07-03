@@ -520,6 +520,9 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run(): Promise<void> {
+    // Avoid fusing an open segment into the next connection attempt after a retry.
+    this.#emitEndOfSpeech();
+
     _validateRealtimeVad(this.#options.model, this.#options.turnDetection, this.#options.vad);
     const vad = _requiresRealtimeVad(this.#options.model, this.#options.turnDetection)
       ? await _loadRealtimeVad(this.#options.vad)
@@ -540,7 +543,10 @@ export class SpeechStream extends stt.SpeechStream {
 
     try {
       ws.send(JSON.stringify(this.#sessionUpdateEvent()));
-      const tasks = [this.#forwardInput(ws, vadStream), this.#forwardEvents(ws)];
+      const tasks = [
+        this.#forwardInput(ws, vadStream),
+        this.#forwardEvents(ws, Boolean(vadStream)),
+      ];
       if (vadStream) {
         tasks.push(this.#forwardVadEvents(ws, vadStream));
       }
@@ -634,16 +640,16 @@ export class SpeechStream extends stt.SpeechStream {
     for await (const event of vadStream) {
       if (event.type === VADEventType.START_OF_SPEECH) {
         this.#emitStartOfSpeech();
-      } else if (
-        event.type === VADEventType.END_OF_SPEECH &&
-        this.#options.turnDetection === null
-      ) {
-        ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      } else if (event.type === VADEventType.END_OF_SPEECH) {
+        this.#emitEndOfSpeech();
+        if (this.#options.turnDetection === null) {
+          ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        }
       }
     }
   }
 
-  async #forwardEvents(ws: WebSocket): Promise<void> {
+  async #forwardEvents(ws: WebSocket, hasClientVad: boolean): Promise<void> {
     for await (const data of this.#messages(ws)) {
       const event = parseRealtimeTranscriptionServerEvent(data);
       switch (event.type) {
@@ -653,7 +659,9 @@ export class SpeechStream extends stt.SpeechStream {
           this.#itemAudioTiming.set(itemId, {
             startMs: event.audio_start_ms,
           });
-          this.#emitStartOfSpeech();
+          if (!hasClientVad) {
+            this.#emitStartOfSpeech();
+          }
           break;
         }
         case 'input_audio_buffer.speech_stopped': {
@@ -661,13 +669,15 @@ export class SpeechStream extends stt.SpeechStream {
           const timing = this.#itemAudioTiming.get(itemId) ?? {};
           timing.endMs = event.audio_end_ms;
           this.#itemAudioTiming.set(itemId, timing);
+          if (!hasClientVad) {
+            this.#emitEndOfSpeech();
+          }
           break;
         }
         case 'conversation.item.input_audio_transcription.delta':
           this.#currentItemId = event.item_id ?? this.#currentItemId;
           if (event.delta) {
             this.#targetTranscript += event.delta;
-            this.#emitStartOfSpeech();
             this.queue.put(this.#speechEvent(stt.SpeechEventType.INTERIM_TRANSCRIPT));
           }
           break;
@@ -676,14 +686,11 @@ export class SpeechStream extends stt.SpeechStream {
           const transcript = event.transcript ?? '';
           if (transcript) {
             this.#targetTranscript = transcript;
-            this.#emitStartOfSpeech();
             this.queue.put(this.#speechEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, itemId));
           }
           this.#emitRecognitionUsage(event, itemId);
-          this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
           this.#targetTranscript = '';
           this.#currentItemId = '';
-          this.#speaking = false;
           break;
         }
         case 'error': {
@@ -752,6 +759,12 @@ export class SpeechStream extends stt.SpeechStream {
     if (this.#speaking) return;
     this.#speaking = true;
     this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+  }
+
+  #emitEndOfSpeech(): void {
+    if (!this.#speaking) return;
+    this.#speaking = false;
+    this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
   }
 
   #speechEvent(type: stt.SpeechEventType, requestId = this.#currentItemId): stt.SpeechEvent {
