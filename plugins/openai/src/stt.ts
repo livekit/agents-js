@@ -215,6 +215,7 @@ export interface STTOptions {
   useRealtime: boolean;
   turnDetection?: api_proto.TurnDetectionType | null;
   noiseReductionType?: api_proto.NoiseReductionType;
+  temperature?: number;
   vad?: VAD;
 }
 
@@ -282,6 +283,11 @@ export class STT extends stt.STT {
     );
     if (useRealtime) {
       _validateRealtimeVad(model, turnDetection, opts.vad);
+      if (opts.temperature !== undefined) {
+        console.warn(
+          'Temperature is not supported for realtime transcription; ignoring the value.',
+        );
+      }
     }
 
     this.#opts = {
@@ -292,6 +298,7 @@ export class STT extends stt.STT {
       model,
       useRealtime,
       turnDetection,
+      temperature: useRealtime ? undefined : opts.temperature,
     };
 
     this.#client =
@@ -407,6 +414,7 @@ export class STT extends stt.STT {
         language: config.language,
         prompt: config.prompt,
         response_format: 'json',
+        ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
       },
       {
         signal: abortSignal,
@@ -430,6 +438,7 @@ export class STT extends stt.STT {
   updateOptions(opts: Partial<STTOptions>): void {
     const useRealtime = opts.useRealtime ?? this.#opts.useRealtime;
     const model = opts.model ?? this.#opts.model;
+    const updatedOpts = { ...opts };
     const turnDetection = _normalizeRealtimeTurnDetection(
       model,
       opts.turnDetection !== undefined
@@ -440,10 +449,16 @@ export class STT extends stt.STT {
     );
     if (useRealtime) {
       _validateRealtimeVad(model, turnDetection, opts.vad ?? this.#opts.vad);
+      if (opts.temperature !== undefined) {
+        console.warn(
+          'Temperature is not supported for realtime transcription; ignoring the value.',
+        );
+        delete updatedOpts.temperature;
+      }
     }
     this.#opts = {
       ...this.#opts,
-      ...opts,
+      ...updatedOpts,
       apiKey: opts.apiKey ?? this.#opts.apiKey,
       language: opts.language ? normalizeLanguage(opts.language) : this.#opts.language,
       model,
