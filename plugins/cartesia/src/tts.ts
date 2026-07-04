@@ -329,6 +329,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           transcript: event.token + ' ',
           continue: true,
         };
+        this.markStarted();
         ws.send(JSON.stringify(msg));
       }
 

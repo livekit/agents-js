@@ -452,6 +452,12 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       }
       const resampler = this.adapter.createResamplerForTTS(i);
 
+      // ttfb measures the fallback adapter as a whole: anchor on the first
+      // time a sentence was handed to any underlying TTS — even one that
+      // failed before emitting audio — and never overwrite it when falling
+      // back to another TTS (markStarted only takes effect once).
+      let captureStartedTime: () => void = () => {};
+
       try {
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
@@ -463,6 +469,13 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         const stream = tts.stream({ connOptions });
         let bufferIndex = 0;
         let streamOutputCompleted = false;
+
+        captureStartedTime = () => {
+          const startedTime = stream.startedTime;
+          if (startedTime !== undefined) {
+            this.markStarted(startedTime);
+          }
+        };
         const forwardBufferToTTS = async () => {
           while (true) {
             while (bufferIndex < this.tokenBuffer.length) {
@@ -505,6 +518,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
               }
 
               sawRawAudio = true;
+              captureStartedTime();
 
               if (resampler) {
                 for (const frame of resampler.push(audio.frame)) {
@@ -593,6 +607,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           throw error;
         }
       } finally {
+        // the stream may have received text and failed before emitting audio;
+        // its started time must still anchor the fallback's ttfb
+        captureStartedTime();
         resampler?.close();
       }
     }

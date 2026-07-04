@@ -617,6 +617,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
