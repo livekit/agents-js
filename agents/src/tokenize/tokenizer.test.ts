@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
+import * as blingfire from './blingfire.js';
 
 const TEXT =
   'Hi! ' +
@@ -28,6 +29,34 @@ const EXPECTED_MIN_20 = [
   'Find additional resources on docs.livekit.com.',
   'f(x) = x * 2.54 + 42.',
   'Hey! Hi! Hello!',
+];
+
+// Mirrors tests/test_tokenizer.py in the python agents repo; the expected
+// output must stay in sync with livekit-blingfire's.
+const BLINGFIRE_TEXT =
+  'Hi! ' +
+  'LiveKit is a platform for live audio and video applications and services. \n\n' +
+  'R.T.C stands for Real-Time Communication... again R.T.C. ' +
+  'Mr. Theo is testing the sentence tokenizer. ' +
+  '\nThis is a test. Another test. ' +
+  'A short sentence.\n' +
+  'A longer sentence that is longer than the previous sentence. ' +
+  'f(x) = x * 2.54 + 42. ' +
+  'Hey!\n Hi! Hello! ' +
+  '\n\n' +
+  'This is a sentence. 这是一个中文句子。これは日本語の文章です。' +
+  '你好！LiveKit是一个直播音频和视频应用程序和服务的平台。' +
+  '\nThis is a sentence contains   consecutive spaces.';
+
+const BLINGFIRE_EXPECTED_MIN_20 = [
+  'Hi! LiveKit is a platform for live audio and video applications and services.',
+  'R.T.C stands for Real-Time Communication... again R.T.C. Mr. Theo is testing the sentence tokenizer.',
+  'This is a test. Another test.',
+  'A short sentence. A longer sentence that is longer than the previous sentence. f(x) = x * 2.54 + 42.',
+  'Hey! Hi! Hello! This is a sentence.',
+  '这是一个中文句子。これは日本語の文章です。',
+  '你好！LiveKit是一个直播音频和视频应用程序和服务的平台。',
+  'This is a sentence contains   consecutive spaces.',
 ];
 
 const WORDS_TEXT = 'This is a test. Blabla another test! multiple consecutive spaces:     done';
@@ -253,6 +282,70 @@ describe('tokenizer', () => {
     it('should tokenize paragraphs correctly', () => {
       PARAGRAPH_TEST_CASES.forEach(([a, b]) => {
         expect(splitParagraphs(a)).toStrictEqual(b);
+      });
+    });
+  });
+  describe('blingfire.SentenceTokenizer', () => {
+    const tokenizer = new blingfire.SentenceTokenizer();
+
+    it('should tokenize sentences correctly', () => {
+      const segmented = tokenizer.tokenize(BLINGFIRE_TEXT);
+      BLINGFIRE_EXPECTED_MIN_20.forEach((x, i) => {
+        expect(segmented[i]).toStrictEqual(x);
+      });
+    });
+
+    it('should stream tokenize sentences correctly', async () => {
+      const pattern = [1, 2, 4];
+      let text = BLINGFIRE_TEXT;
+      const chunks = [];
+      const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
+        .fill(pattern)
+        .flat()
+        [Symbol.iterator]();
+
+      for (const size of patternIter) {
+        if (!text) break;
+        chunks.push(text.slice(undefined, size));
+        text = text.slice(size);
+      }
+      const stream = tokenizer.stream();
+      for (const chunk of chunks) {
+        stream.pushText(chunk);
+      }
+      stream.endInput();
+      stream.close();
+
+      for (const x of BLINGFIRE_EXPECTED_MIN_20) {
+        await stream.next().then((value) => {
+          if (value.value) {
+            expect(value.value.token).toStrictEqual(x);
+          }
+        });
+      }
+    });
+  });
+  describe('blingfire.WordTokenizer', () => {
+    const tokenizer = new blingfire.WordTokenizer();
+
+    it('should tokenize words correctly', () => {
+      expect(tokenizer.tokenize(WORDS_TEXT).every((x, i) => WORDS_EXPECTED[i] === x)).toBeTruthy();
+    });
+
+    it('should keep punctuation as separate tokens when not ignored', () => {
+      const words = blingfire.splitWords('Hello world! How are you?', false);
+      expect(words.map((w) => w[0])).toStrictEqual([
+        'Hello',
+        'world',
+        '!',
+        'How',
+        'are',
+        'you',
+        '?',
+      ]);
+      // spans must slice back to the source text
+      words.forEach(([word, start, end]) => {
+        expect('Hello world! How are you?'.slice(start, end)).toStrictEqual(word);
       });
     });
   });

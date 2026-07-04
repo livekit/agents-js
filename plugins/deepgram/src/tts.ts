@@ -46,7 +46,7 @@ const defaultTTSOptions: TTSOptions = {
   capabilities: {
     streaming: true,
   },
-  sentenceTokenizer: new tokenize.basic.SentenceTokenizer({
+  sentenceTokenizer: new tokenize.blingfire.SentenceTokenizer({
     minSentenceLength: MIN_SENTENCE_LENGTH,
   }),
 };

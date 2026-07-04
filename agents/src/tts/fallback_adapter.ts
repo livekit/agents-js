@@ -5,7 +5,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
-import { basic } from '../tokenize/index.js';
+import { blingfire } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
@@ -144,7 +144,7 @@ export class FallbackAdapter extends TTS {
       return tts;
     }
     // Wrap non-streaming TTS with StreamAdapter
-    return new StreamAdapter(tts, new basic.SentenceTokenizer());
+    return new StreamAdapter(tts, new blingfire.SentenceTokenizer());
   }
 
   /**

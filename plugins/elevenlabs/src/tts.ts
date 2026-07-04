@@ -205,7 +205,7 @@ function toTimedWords(
   const lastDuration = durationsMs[durationsMs.length - 1]!;
   const timestamps = [...startTimesMs, lastStartTime + lastDuration];
 
-  const words = tokenize.basic.splitWords(text, false);
+  const words = tokenize.blingfire.splitWords(text, false);
   const timedWords: TimedString[] = [];
 
   if (words.length === 0) {
@@ -679,8 +679,8 @@ export class TTS extends tts.TTS {
     let wordTokenizer = opts.wordTokenizer;
     if (!wordTokenizer) {
       wordTokenizer = autoMode
-        ? new tokenize.basic.SentenceTokenizer()
-        : new tokenize.basic.WordTokenizer(false);
+        ? new tokenize.blingfire.SentenceTokenizer()
+        : new tokenize.blingfire.WordTokenizer(false);
     } else if (autoMode && !(wordTokenizer instanceof tokenize.SentenceTokenizer)) {
       this.#logger.warn(
         'autoMode is enabled, it expects full sentences or phrases, ' +
