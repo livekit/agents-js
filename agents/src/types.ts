@@ -8,6 +8,11 @@
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 
 /**
+ * Key used to store when synthesized text was first sent to the TTS provider.
+ */
+export const USERDATA_TTS_STARTED_TIME = 'lk.tts_started_time';
+
+/**
  * Marker yielded from an LLM node to flush the current audio/text output segment.
  */
 export const FlushSentinel = Symbol.for('lk.FlushSentinel');

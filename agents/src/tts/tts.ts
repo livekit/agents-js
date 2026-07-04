@@ -12,7 +12,12 @@ import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
+import {
+  type APIConnectOptions,
+  DEFAULT_API_CONNECT_OPTIONS,
+  USERDATA_TTS_STARTED_TIME,
+  intervalForRetry,
+} from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
 
@@ -61,6 +66,18 @@ export type TTSCallbacks = {
   ['metrics_collected']: (metrics: TTSMetrics) => void;
   ['error']: (error: TTSError) => void;
 };
+
+/**
+ * Time at which text was first sent to the TTS provider, captured on both
+ * clocks used for TTFB accounting: `time` on the `performance.now()` scale
+ * (seconds, stamped on audio frames) and `hrTime` from
+ * `process.hrtime.bigint()` (used for metrics durations).
+ * @internal
+ */
+export interface SynthesizeStreamStartedTime {
+  time: number;
+  hrTime: bigint;
+}
 
 /**
  * An instance of a text-to-speech adapter.
@@ -191,6 +208,8 @@ export abstract class SynthesizeStream
   // Current `tts_request_run` span – noteProviderRequestId() updates the
   // attribute on this span as new provider ids become known.
   #currentAttemptSpan?: Span;
+  #startedTime?: number;
+  #startedHrTime?: bigint;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -328,6 +347,37 @@ export abstract class SynthesizeStream
     }
   }
 
+  /**
+   * Mark the time at which text was first sent to the TTS provider for the
+   * current segment. Used as the anchor for TTFB so upstream latency (LLM
+   * streaming, sentence tokenization) is not attributed to the TTS. Only the
+   * first call takes effect; the mark is reset after metrics are emitted for
+   * the segment.
+   *
+   * Plugins should call this right before sending text to the provider.
+   * Adapters wrapping another stream may pass that stream's
+   * {@link SynthesizeStream.startedTime} to anchor on the wrapped provider.
+   */
+  protected markStarted(startedTime?: SynthesizeStreamStartedTime): void {
+    if (this.#startedTime === undefined) {
+      this.#startedTime = startedTime?.time ?? performance.now() / 1000;
+      this.#startedHrTime = startedTime?.hrTime ?? process.hrtime.bigint();
+    }
+  }
+
+  /**
+   * Time at which text was first sent to the provider for the current
+   * segment, or `undefined` if nothing has been sent (or metrics for the
+   * segment were already emitted).
+   * @internal
+   */
+  get startedTime(): SynthesizeStreamStartedTime | undefined {
+    if (this.#startedTime === undefined || this.#startedHrTime === undefined) {
+      return undefined;
+    }
+    return { time: this.#startedTime, hrTime: this.#startedHrTime };
+  }
+
   // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
   // bridged from a DeferredReadableStream (`this.deferredInputStream`) rather than
   // consuming the stream directly.
@@ -371,15 +421,17 @@ export abstract class SynthesizeStream
   }
 
   protected async monitorMetrics() {
-    const startTime = process.hrtime.bigint();
     let audioDurationMs = 0;
     let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
     const emit = () => {
+      if (this.#startedHrTime === undefined) {
+        return;
+      }
       if (this.#metricsPendingTexts.length) {
         const text = this.#metricsPendingTexts.shift()!;
-        const duration = process.hrtime.bigint() - startTime;
+        const duration = process.hrtime.bigint() - this.#startedHrTime;
         const roundedAudioDurationMs = Math.round(audioDurationMs);
         const metrics: TTSMetrics = {
           type: 'tts_metrics',
@@ -407,6 +459,10 @@ export abstract class SynthesizeStream
         // Reset token usage after emitting metrics for the next segment
         this.#inputTokens = 0;
         this.#outputTokens = 0;
+        this.#startedTime = undefined;
+        this.#startedHrTime = undefined;
+        ttfb = BigInt(-1);
+        audioDurationMs = 0;
       }
     };
 
@@ -414,8 +470,14 @@ export abstract class SynthesizeStream
       if (this.abortController.signal.aborted) {
         break;
       }
+      if (audio === SynthesizeStream.END_OF_STREAM) {
+        this.output.put(audio);
+        continue;
+      }
+      if (this.#startedTime !== undefined) {
+        audio.frame.userdata[USERDATA_TTS_STARTED_TIME] = this.#startedTime;
+      }
       this.output.put(audio);
-      if (audio === SynthesizeStream.END_OF_STREAM) continue;
       requestId = audio.requestId;
       // The Python AudioEmitter records each `segment_id` automatically via
       // `start_segment`. JS plugins emit `segmentId` directly on the audio
@@ -423,8 +485,8 @@ export abstract class SynthesizeStream
       if (audio.segmentId) {
         this.noteProviderRequestId(audio.segmentId);
       }
-      if (ttfb === BigInt(-1)) {
-        ttfb = process.hrtime.bigint() - startTime;
+      if (ttfb === BigInt(-1) && this.#startedHrTime !== undefined) {
+        ttfb = process.hrtime.bigint() - this.#startedHrTime;
       }
       // TODO(AJS-102): use frame.durationMs once available in rtc-node
       audioDurationMs += (audio.frame.samplesPerChannel / audio.frame.sampleRate) * 1000;
@@ -538,6 +600,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   private logger = log();
   #inputTokens = 0;
   #outputTokens = 0;
+  #startedTime: number;
 
   protected abortController = new AbortController();
 
@@ -550,6 +613,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     this.#text = text;
     this.#tts = tts;
     this._connOptions = connOptions;
+    this.#startedTime = performance.now() / 1000;
 
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => this.abortController.abort(), { once: true });
@@ -664,6 +728,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     let requestId = '';
 
     for await (const audio of this.queue) {
+      audio.frame.userdata[USERDATA_TTS_STARTED_TIME] = this.#startedTime;
       this.output.put(audio);
       requestId = audio.requestId;
       if (ttfb === BigInt(-1)) {

@@ -410,9 +410,15 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
     const msg: ProtoMessage = {
       id: item.id,
       role: ROLE_MAP[item.role] ?? (item.role.toUpperCase() as ProtoRole),
-      content: item.content.map((c: ChatContent) => ({
-        text: isInstructions(c) ? c.value : c,
-      })),
+      // Match Python's `_build_proto_chat_item`: only string content is uploaded.
+      // Non-string content (image/audio) must not leak into the wire format —
+      // the ChatContent proto's `text` field is a string, and non-string values
+      // render as garbage in the dashboard.
+      content: item.content
+        .filter((c: ChatContent) => typeof c === 'string' || isInstructions(c))
+        .map((c) => ({
+          text: isInstructions(c) ? c.value : (c as string),
+        })),
       createdAt: toRFC3339(item.createdAt),
     };
 

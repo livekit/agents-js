@@ -389,6 +389,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (this.abortController.signal.aborted) break;
         const sentence = ev.token;
         if (!sentence) continue;
+        this.markStarted();
         ws!.send(Buffer.from(encode({ event: 'text', text: sentence + ' ' })));
         ws!.send(Buffer.from(encode({ event: 'flush' })));
       }
