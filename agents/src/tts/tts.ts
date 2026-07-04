@@ -68,6 +68,18 @@ export type TTSCallbacks = {
 };
 
 /**
+ * Time at which text was first sent to the TTS provider, captured on both
+ * clocks used for TTFB accounting: `time` on the `performance.now()` scale
+ * (seconds, stamped on audio frames) and `hrTime` from
+ * `process.hrtime.bigint()` (used for metrics durations).
+ * @internal
+ */
+export interface SynthesizeStreamStartedTime {
+  time: number;
+  hrTime: bigint;
+}
+
+/**
  * An instance of a text-to-speech adapter.
  *
  * @remarks
@@ -335,11 +347,35 @@ export abstract class SynthesizeStream
     }
   }
 
-  protected markStarted(): void {
+  /**
+   * Mark the time at which text was first sent to the TTS provider for the
+   * current segment. Used as the anchor for TTFB so upstream latency (LLM
+   * streaming, sentence tokenization) is not attributed to the TTS. Only the
+   * first call takes effect; the mark is reset after metrics are emitted for
+   * the segment.
+   *
+   * Plugins should call this right before sending text to the provider.
+   * Adapters wrapping another stream may pass that stream's
+   * {@link SynthesizeStream.startedTime} to anchor on the wrapped provider.
+   */
+  protected markStarted(startedTime?: SynthesizeStreamStartedTime): void {
     if (this.#startedTime === undefined) {
-      this.#startedTime = performance.now() / 1000;
-      this.#startedHrTime = process.hrtime.bigint();
+      this.#startedTime = startedTime?.time ?? performance.now() / 1000;
+      this.#startedHrTime = startedTime?.hrTime ?? process.hrtime.bigint();
     }
+  }
+
+  /**
+   * Time at which text was first sent to the provider for the current
+   * segment, or `undefined` if nothing has been sent (or metrics for the
+   * segment were already emitted).
+   * @internal
+   */
+  get startedTime(): SynthesizeStreamStartedTime | undefined {
+    if (this.#startedTime === undefined || this.#startedHrTime === undefined) {
+      return undefined;
+    }
+    return { time: this.#startedTime, hrTime: this.#startedHrTime };
   }
 
   // NOTE(AJS-37): The implementation below uses an AsyncIterableQueue (`this.input`)
