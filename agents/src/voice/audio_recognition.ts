@@ -29,7 +29,7 @@ import {
   type OverlappingSpeechEvent,
 } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
-import { type ChatContext } from '../llm/chat_context.js';
+import { ChatContext } from '../llm/chat_context.js';
 import { log } from '../log.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -63,6 +63,10 @@ import {
   createSilenceFrameLike,
   setParticipantSpanAttributes,
 } from './utils.js';
+
+// Maximum number of chat items included in the `lk.chat_ctx` attribute of the
+// `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
+const EOU_MAX_HISTORY_TURNS = 6;
 
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
@@ -1483,11 +1487,23 @@ export class AudioRecognition {
 
                 span.setAttribute(
                   traceTypes.ATTR_CHAT_CTX,
-                  // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span
-                  // attribute (toJSON() emits camelCase). Defaults exclude image/audio/timestamps.
-                  // NOTE: Python's EOU path additionally trims to the last N turns and excludes
-                  // function calls; aligning that is left to a follow-up (behavioral change).
-                  JSON.stringify(toSnakeCaseDeep(chatCtx.toJSON())),
+                  // snake_case wire shape, matching Python's EOU span: trim to the last
+                  // few items and drop function calls, instructions, empty messages,
+                  // handoffs, and config updates, so the span doesn't re-emit the whole
+                  // conversation on every EOU inference.
+                  JSON.stringify(
+                    toSnakeCaseDeep(
+                      new ChatContext(chatCtx.items.slice(-EOU_MAX_HISTORY_TURNS))
+                        .copy({
+                          excludeFunctionCall: true,
+                          excludeInstructions: true,
+                          excludeEmptyMessage: true,
+                          excludeHandoff: true,
+                          excludeConfigUpdate: true,
+                        })
+                        .toJSON({ excludeTimestamp: false }),
+                    ),
+                  ),
                 );
                 if (endOfTurnProbability !== undefined) {
                   span.setAttribute(traceTypes.ATTR_EOU_PROBABILITY, endOfTurnProbability);
@@ -1568,6 +1584,22 @@ export class AudioRecognition {
         if (extraSleep > 0) {
           // add delay to see if there's a potential upcoming EOU task that cancels this one
           await delay(Math.max(extraSleep, 0), { signal: controller.signal });
+        }
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        // Re-check the creation-time transcript guard at fire time. The commit path
+        // (`onEndOfTurn`) awaits, so another bounce can be created in the window between
+        // an earlier bounce reading the transcript and resetting it — that newer bounce
+        // passes the guard at creation, then wakes up here after the transcript was
+        // already committed and cleared. Without this check it commits a duplicate,
+        // empty user turn (with stale metrics) and triggers a spurious reply. Python
+        // avoids this via preemptive task cancellation and a synchronous commit.
+        if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
+          this.logger.debug('skipping EOU commit, transcript was already committed');
+          return;
         }
 
         this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');

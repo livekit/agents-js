@@ -1052,6 +1052,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         const formattedText = `${text} `; // must always end with a space
+        this.markStarted();
         connection.sendContent({
           contextId: this.#contextId,
           text: formattedText,

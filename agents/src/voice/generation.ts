@@ -31,7 +31,12 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT, isFlushSentinel } from '../types.js';
+import {
+  type FlushSentinel,
+  USERDATA_TIMED_TRANSCRIPT,
+  USERDATA_TTS_STARTED_TIME,
+  isFlushSentinel,
+} from '../types.js';
 import {
   Future,
   IdleTimeoutError,
@@ -638,6 +643,7 @@ export function performTTSInference(
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
+  let startTime: number | undefined;
   (async () => {
     const reader = text.getReader();
     try {
@@ -646,6 +652,7 @@ export function performTTSInference(
         if (done) {
           break;
         }
+        startTime ??= performance.now() / 1000;
         const textValue = typeof value === 'string' ? value : value.text;
         await textOnlyWriter.write(textValue);
       }
@@ -675,7 +682,6 @@ export function performTTSInference(
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
     try {
@@ -713,9 +719,13 @@ export function performTTSInference(
 
         if (!firstByteReceived) {
           firstByteReceived = true;
-          ttfb = performance.now() / 1000 - startTime;
-          genData.ttfb = ttfb;
-          span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          const ttsStartedTime = frame.userdata[USERDATA_TTS_STARTED_TIME];
+          const anchor = typeof ttsStartedTime === 'number' ? ttsStartedTime : startTime;
+          if (anchor !== undefined) {
+            ttfb = performance.now() / 1000 - anchor;
+            genData.ttfb = ttfb;
+            span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          }
         }
 
         // Write the audio frame to the output stream
