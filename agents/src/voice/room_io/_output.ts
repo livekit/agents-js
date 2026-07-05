@@ -532,7 +532,7 @@ export class ParticipantAudioOutput extends AudioOutput {
     const track = LocalAudioTrack.createAudioTrack('roomio_audio', this.audioSource);
     this.publication = await this.room.localParticipant?.publishTrack(
       track,
-      new TrackPublishOptions({ source: TrackSource.SOURCE_MICROPHONE }),
+      this.options.trackPublishOptions,
     );
 
     if (signal.aborted) {
