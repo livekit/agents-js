@@ -350,13 +350,33 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
+          // Create a fresh per-iteration abort promise with explicit cleanup.
+          //
+          // The old pattern (one shared `abortPromise = waitForAbort(abortSignal)` hoisted
+          // outside the loop) causes a memory leak: each `Promise.race([input.next(),
+          // abortPromise])` call registers a reaction on the long-lived `abortPromise`, and
+          // because `abortPromise` never settles until the stream is closed, those reactions
+          // accumulate for the lifetime of the stream.  Each reaction holds a reference to its
+          // settled `Promise.race` result, which in turn holds the `AudioFrame` payload —
+          // so audio frames from every prior iteration are kept alive until close.
+          //
+          // The fix: a per-iteration abort promise + `removeEventListener` after each race so
+          // the only time `abortSignal` has a listener is during the current `await`.
+          let abortCleanup: (() => void) | undefined;
+          const abortPromise = new Promise<undefined>((resolve) => {
+            if (this.abortSignal.aborted) {
+              resolve(undefined);
+              return;
+            }
+            const handler = () => resolve(undefined);
+            this.abortSignal.addEventListener('abort', handler, { once: true });
+            abortCleanup = () => this.abortSignal.removeEventListener('abort', handler);
+          });
+
           const result = await Promise.race([this.input.next(), abortPromise]);
+          abortCleanup?.();
 
           if (result === undefined) return; // aborted
           if (result.done) {
