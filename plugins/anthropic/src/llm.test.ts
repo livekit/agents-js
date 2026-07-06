@@ -7,10 +7,6 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { LLM } from './llm.js';
 
-function llm.ToolContext.empty(): llm.ToolContext {
-  return llm.toToolContext([]);
-}
-
 function messageStartEvent(): Anthropic.MessageStreamEvent {
   return {
     type: 'message_start',
