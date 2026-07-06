@@ -89,6 +89,24 @@ class FrameAgent extends Agent {
   }
 }
 
+// Agent whose TTS produces no frames and stays open long enough that an
+// interruption (anchored to ttsNode being invoked, fired well before the
+// close) always lands mid-forwarding with zero audio captured for the segment.
+class NoFrameAgent extends Agent {
+  onTtsStarted?: () => void;
+  constructor() {
+    super({ instructions: 'test' });
+  }
+  async ttsNode(): Promise<ReadableStream<AudioFrame> | null> {
+    this.onTtsStarted?.();
+    return new ReadableStream<AudioFrame>({
+      start(controller) {
+        setTimeout(() => controller.close(), 500);
+      },
+    });
+  }
+}
+
 describe('AgentActivity interrupted-speech commit', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
@@ -212,6 +230,51 @@ describe('AgentActivity interrupted-speech commit', () => {
       expect(msg.interrupted).toBe(true);
       expect(msg.content.length).toBeGreaterThan(0);
       expect('A fairly long spoken reply.'.startsWith(msg.content)).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('does not commit an interrupted reply that forwarded no audio when a stale playback position exists', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A reply that was never spoken.' }]),
+    });
+    const audioOut = new DeferredStartOutput();
+    session.output.audio = audioOut;
+
+    // A previously played segment leaves a non-zero lastPlaybackEvent behind.
+    // waitForPlayout returns it immediately for a segment that captured no
+    // frames — the playback position must not be attributed to that segment.
+    await audioOut.captureFrame(frame());
+    audioOut.flush();
+    audioOut.onPlaybackFinished({ playbackPosition: 0.5, interrupted: false });
+
+    const assistantMessages: { content: string; interrupted: boolean }[] = [];
+    session.on(AgentSessionEventTypes.ConversationItemAdded, (ev: ConversationItemAddedEvent) => {
+      if (ev.item.type === 'message' && ev.item.role === 'assistant') {
+        assistantMessages.push({
+          content: ev.item.textContent ?? '',
+          interrupted: !!ev.item.interrupted,
+        });
+      }
+    });
+
+    const agent = new NoFrameAgent();
+    // Anchor the interruption to TTS starting, so it always lands while the
+    // segment is mid-forwarding (zero frames captured, stream still open).
+    agent.onTtsStarted = () => setTimeout(() => session.interrupt({ force: true }), 150);
+
+    await session.start({ agent });
+    try {
+      const handle = session.generateReply({ userInput: 'hello' });
+      await handle.waitForPlayout();
+
+      // Close drains the reply task fully — the interrupted-commit block (if
+      // it were to run) has fired by the time close resolves. Nothing was
+      // heard: the reply must not be committed on the strength of the stale
+      // playback position.
+      await session.close();
+      expect(assistantMessages).toHaveLength(0);
     } finally {
       await session.close();
     }

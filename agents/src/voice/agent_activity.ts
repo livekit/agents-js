@@ -2898,9 +2898,14 @@ export class AgentActivity implements RecognitionHooks {
             // A reported playback position is proof of partial playback even when
             // the playback-started notification hasn't arrived yet (remote avatar
             // outputs deliver it via RPC, which can race with the interruption).
+            // It only counts as evidence when THIS segment forwarded audio:
+            // waitForPlayout returns the last playback event, which is stale
+            // (from a previous segment) when no frames were captured for the
+            // current one.
+            const forwardedAudio = output.audioOut?.startedForwardingAt !== undefined;
             if (
               (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              interruptedPlaybackEv.playbackPosition > 0
+              (forwardedAudio && interruptedPlaybackEv.playbackPosition > 0)
             ) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
@@ -3465,9 +3470,14 @@ export class AgentActivity implements RecognitionHooks {
             // A reported playback position is proof of partial playback even when
             // the playback-started notification hasn't arrived yet (remote avatar
             // outputs deliver it via RPC, which can race with the interruption).
+            // It only counts as evidence when THIS message forwarded audio:
+            // waitForPlayout returns the last playback event, which is stale
+            // (from a previous message) when no frames were captured for the
+            // current one.
+            const forwardedAudio = output.audioOut?.startedForwardingAt !== undefined;
             if (
               (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              playbackEv.playbackPosition > 0
+              (forwardedAudio && playbackEv.playbackPosition > 0)
             ) {
               output.played = 'partial';
               output.playbackPositionInS = playbackEv.playbackPosition;
