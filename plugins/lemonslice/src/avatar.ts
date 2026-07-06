@@ -54,6 +54,11 @@ export interface AvatarSessionOptions {
    */
   agentImage?: string | Buffer | null;
   /**
+   * MIME type for the agentImage when provided as a Buffer (e.g. 'image/png').
+   * Defaults to 'image/png'.
+   */
+  agentImageMimeType?: string;
+  /**
    * A prompt that subtly influences the avatar's movements and expressions.
    */
   agentPrompt?: string | null;
@@ -155,20 +160,8 @@ export class AvatarSession extends voice.AvatarSession {
     super();
     this.agentId = options.agentId ?? null;
     this.agentImageUrl = options.agentImageUrl ?? null;
-    this.agentImageMimeType = 'image/png';
 
-    if (options.agentImage) {
-      if (typeof options.agentImage === 'string') {
-        this.agentImageBytes = readFileSync(options.agentImage);
-        this.agentImageMimeType = mimeTypeFromExtension(extname(options.agentImage));
-      } else {
-        this.agentImageBytes = options.agentImage;
-      }
-    } else {
-      this.agentImageBytes = null;
-    }
-
-    const sourceCount = [this.agentId, this.agentImageUrl, this.agentImageBytes].filter(
+    const sourceCount = [this.agentId, this.agentImageUrl, options.agentImage].filter(
       Boolean,
     ).length;
     if (sourceCount === 0) {
@@ -178,6 +171,20 @@ export class AvatarSession extends voice.AvatarSession {
       throw new LemonSliceException(
         'Only one of agentId, agentImageUrl, or agentImage can be provided',
       );
+    }
+
+    this.agentImageMimeType = 'image/png';
+    if (options.agentImage) {
+      if (typeof options.agentImage === 'string') {
+        this.agentImageMimeType = mimeTypeFromExtension(extname(options.agentImage));
+        this.agentImageBytes = readFileSync(options.agentImage);
+      } else {
+        this.agentImageMimeType = options.agentImageMimeType ?? 'image/png';
+        validateMimeType(this.agentImageMimeType);
+        this.agentImageBytes = options.agentImage;
+      }
+    } else {
+      this.agentImageBytes = null;
     }
 
     this.agentPrompt = options.agentPrompt ?? null;
@@ -331,7 +338,7 @@ export class AvatarSession extends voice.AvatarSession {
           formData.append(
             'image',
             new Blob([new Uint8Array(this.agentImageBytes)], { type: this.agentImageMimeType }),
-            'image.png',
+            `image${extensionFromMimeType(this.agentImageMimeType)}`,
           );
           body = formData;
         } else {
@@ -383,10 +390,32 @@ const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
   '.webp': 'image/webp',
 };
 
+const SUPPORTED_MIME_TYPES = new Set(Object.values(MIME_TYPES));
+
 function mimeTypeFromExtension(ext: string): string {
-  return MIME_TYPES[ext.toLowerCase()] ?? 'image/png';
+  const mime = MIME_TYPES[ext.toLowerCase()];
+  if (!mime) {
+    throw new LemonSliceException(
+      `Unsupported image extension '${ext}'. Supported: ${Object.keys(MIME_TYPES).join(', ')}`,
+    );
+  }
+  return mime;
+}
+
+function validateMimeType(mime: string): void {
+  if (!SUPPORTED_MIME_TYPES.has(mime)) {
+    throw new LemonSliceException(
+      `Unsupported MIME type '${mime}'. Supported: ${[...SUPPORTED_MIME_TYPES].join(', ')}`,
+    );
+  }
+}
+
+function extensionFromMimeType(mime: string): string {
+  for (const [ext, type] of Object.entries(MIME_TYPES)) {
+    if (type === mime) return ext;
+  }
+  return '.png';
 }
