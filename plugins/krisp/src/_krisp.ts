@@ -25,8 +25,8 @@ import { log } from './log.js';
 
 const require = createRequire(import.meta.url);
 
-const SUPPORTED_SAMPLE_RATES = [8000, 16000, 24000, 32000, 44100, 48000] as const;
-const SUPPORTED_FRAME_DURATIONS_MS = [10, 15, 20, 30, 32] as const;
+const SUPPORTED_SAMPLE_RATES: Array<number> = [8000, 16000, 24000, 32000, 44100, 48000] as const;
+const SUPPORTED_FRAME_DURATIONS_MS: Array<number> = [10, 15, 20, 30, 32] as const;
 
 /** Map a sample rate (Hz) to the SDK's `enums.SamplingRate.Sr<rate>Hz` member. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,7 +166,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
     this.frameDurationMs = opts.frameDurationMs;
     this.modelPath = opts.modelPath;
 
-    if (!SUPPORTED_FRAME_DURATIONS_MS.includes(this.frameDurationMs as never)) {
+    if (!SUPPORTED_FRAME_DURATIONS_MS.includes(this.frameDurationMs)) {
       throw new Error(
         `Unsupported frame duration: ${this.frameDurationMs} ms. ` +
           `Supported durations: ${SUPPORTED_FRAME_DURATIONS_MS.join(', ')} ms`,
