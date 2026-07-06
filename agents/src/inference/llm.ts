@@ -80,7 +80,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   presence_penalty?: number;
   prompt_cache_key?: string;
   prompt_cache_retention?: 'in_memory' | '24h';
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   safety_identifier?: string;
   seed?: number;
   service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
@@ -277,7 +277,7 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
@@ -285,13 +285,14 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     inferenceClass?: InferenceClass;
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     let modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
@@ -299,7 +300,11 @@ export class LLM extends llm.LLM {
         ? parallelToolCalls
         : this.opts.modelOptions.parallel_tool_calls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -402,6 +407,8 @@ export class LLMStream extends llm.LLMStream {
         this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
+      // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
+      // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
         ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
             const oaiParams = {

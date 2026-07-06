@@ -28,6 +28,7 @@
     "HEDRA_API_KEY",
     "HEDRA_API_URL",
     "HEDRA_AVATAR_ID",
+    "HOTEL_TODAY",
     "KRISP_VIVA_SDK_LICENSE_KEY",
     "KRISP_VIVA_FILTER_MODEL_PATH",
     "LEMONSLICE_API_KEY",
@@ -57,6 +58,8 @@
     "PERPLEXITY_API_KEY",
     "TELNYX_API_KEY",
     "TAVUS_API_KEY",
+    "TAVUS_FACE_ID",
+    "TAVUS_PAL_ID",
     "TAVUS_PERSONA_ID",
     "TAVUS_REPLICA_ID",
     "TOGETHER_API_KEY",
@@ -90,6 +93,7 @@
     "SIP_PHONE_NUMBER",
     "LK_OPENAI_DEBUG",
     "LK_GOOGLE_DEBUG",
+    "LK_DRAIN_PLAYOUT_TIMEOUT_MS",
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
     "INWORLD_API_KEY",
@@ -115,6 +119,10 @@
       "outputs": ["dist/**"]
     },
     "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "api:check": {

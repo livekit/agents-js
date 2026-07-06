@@ -12,7 +12,9 @@ import {
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
+import { toResponsesTools } from '../tool_utils.js';
 import { WSLLM } from '../ws/llm.js';
 
 export interface LLMOptions {
@@ -30,6 +32,8 @@ export interface LLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 
   /**
    * Whether to use the WebSocket API.
@@ -55,6 +59,13 @@ class ResponsesHttpLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (this.#opts.apiKey === undefined && this.#opts.client === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -77,25 +88,30 @@ class ResponsesHttpLLM extends llm.LLM {
 
   override chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): ResponsesHttpLLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const modelOptions: Record<string, unknown> = { ...(extraKwargs || {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
 
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -124,6 +140,10 @@ class ResponsesHttpLLM extends llm.LLM {
 
     if (this.#opts.maxOutputTokens !== undefined) {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
+    }
+
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
     }
 
     return new ResponsesHttpLLMStream(this, {
@@ -181,25 +201,9 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
+      // TODO: support provider tools in the Responses schema.
       const tools = this.toolCtx
-        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
-            const oaiParams = {
-              type: 'function' as const,
-              name: name,
-              description: func.description,
-              parameters: llm.toJsonSchema(
-                func.parameters,
-                true,
-                this.strictToolSchema,
-              ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-            } as OpenAI.Responses.FunctionTool;
-
-            if (this.strictToolSchema) {
-              oaiParams.strict = true;
-            }
-
-            return oaiParams;
-          })
+        ? toResponsesTools(this.toolCtx, this.strictToolSchema)
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
@@ -430,7 +434,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;

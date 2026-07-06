@@ -9,6 +9,7 @@ import {
   log,
   normalizeLanguage,
   shortuuid,
+  tokenize,
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
@@ -28,6 +29,8 @@ export interface TTSOptions {
   speed?: number;
   apiKey?: string;
   langCode: TTSLangCodes | string;
+  /** Sentence tokenizer used to batch streamed text before sending it to the provider. */
+  tokenizer?: tokenize.SentenceTokenizer;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -187,14 +190,32 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestId = shortuuid();
     let closing = false;
 
-    const sendTask = async (ws: WebSocket) => {
+    // Batch streamed text into sentences before sending, so the TTFB anchor
+    // (markStarted) reflects when a full sentence was handed to the provider
+    // rather than when the first LLM token arrived.
+    const sentenceStream = (
+      this.#opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()
+    ).stream();
+
+    const tokenizeInput = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          ws.send(JSON.stringify({ text: '<STOP>' }));
+          sentenceStream.flush();
           continue;
         }
+        sentenceStream.pushText(data);
+      }
+      sentenceStream.endInput();
+    };
 
-        ws.send(JSON.stringify({ text: data }));
+    const sendTask = async (ws: WebSocket) => {
+      for await (const ev of sentenceStream) {
+        if (this.abortController.signal.aborted || closing) break;
+        this.markStarted();
+        ws.send(JSON.stringify({ text: ev.token + ' ' }));
+      }
+      if (!closing && !this.abortController.signal.aborted) {
+        ws.send(JSON.stringify({ text: '<STOP>' }));
       }
     };
 
@@ -300,7 +321,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         ws.on('close', (code) => reject(`WebSocket returned ${code}`));
       });
 
-      await Promise.all([sendTask(ws), recvTask(ws)]);
+      await Promise.all([tokenizeInput(), sendTask(ws), recvTask(ws)]);
     } catch (e) {
       throw new Error(`failed to connect to Neuphonic: ${e}`);
     }
@@ -323,7 +344,7 @@ const getQueryParamString = (opts: TTSOptions): string => {
  * Returns all model parameters as an object in snake_case.
  * @param opts - The TTSOptions object.
  */
-const getModelParams = (opts: TTSOptions): Partial<TTSOptions> => {
+const getModelParams = (opts: TTSOptions): Record<string, string | number> => {
   const params: Record<string, string | number> = {};
 
   if (opts.voiceId) params.voice_id = opts.voiceId;

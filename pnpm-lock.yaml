@@ -7,14 +7,14 @@ settings:
 catalogs:
   default:
     '@livekit/rtc-node':
-      specifier: ^0.13.29
-      version: 0.13.29
+      specifier: ^0.13.30
+      version: 0.13.30
     '@types/ws':
       specifier: ^8.5.10
       version: 8.18.1
     ws:
       specifier: ^8.18.0
-      version: 8.20.1
+      version: 8.20.0
 
 patchedDependencies:
   '@changesets/assemble-release-plan':
@@ -29,8 +29,8 @@ importers:
         specifier: ^2.30.0
         version: 2.30.0(@types/node@22.19.1)
       '@livekit/changesets-changelog-github':
-        specifier: ^0.0.4
-        version: 0.0.4
+        specifier: ^0.2.0
+        version: 0.2.0
       '@rushstack/heft':
         specifier: ^0.66.0
         version: 0.66.9(@types/node@22.19.1)
@@ -63,7 +63,7 @@ importers:
         version: 17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
       eslint-config-turbo:
         specifier: ^2.9.14
-        version: 2.9.18(eslint@8.57.0)(turbo@2.9.14)
+        version: 2.10.1(eslint@8.57.0)(turbo@2.9.14)
       eslint-plugin-import:
         specifier: ^2.29.1
         version: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
@@ -87,7 +87,7 @@ importers:
         version: 3.2.5
       tsup:
         specifier: ^8.4.0
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       turbo:
         specifier: 2.9.14
         version: 2.9.14
@@ -99,7 +99,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^7.3.1
-        version: 7.3.5(@types/node@22.19.1)(tsx@4.21.0)
+        version: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
       vitest:
         specifier: ^4.0.17
         version: 4.0.17(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(tsx@4.21.0)
@@ -119,8 +119,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: ^1.46.8
-        version: 1.46.8
+        specifier: ^1.48.0
+        version: 1.48.2
       '@livekit/throws-transformer':
         specifier: 0.1.8
         version: 0.1.8(typescript@5.9.3)
@@ -135,7 +135,7 @@ importers:
         version: 0.54.2
       '@opentelemetry/core':
         specifier: ^2.2.0
-        version: 2.8.0(@opentelemetry/api@1.9.0)
+        version: 2.2.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/exporter-logs-otlp-proto':
         specifier: ^0.54.0
         version: 0.54.2(@opentelemetry/api@1.9.0)
@@ -174,7 +174,7 @@ importers:
         version: 2.1.3
       form-data:
         specifier: ^4.0.5
-        version: 4.0.6
+        version: 4.0.5
       heap-js:
         specifier: ^2.6.0
         version: 2.6.0
@@ -183,7 +183,7 @@ importers:
         version: 0.4.0
       jsonrepair:
         specifier: ^3.14.0
-        version: 3.14.0
+        version: 3.14.1
       livekit-server-sdk:
         specifier: ^2.14.1
         version: 2.14.1
@@ -192,7 +192,7 @@ importers:
         version: 1.5.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@3.25.76)
+        version: 6.8.1(ws@8.20.0)(zod@3.25.76)
       pidusage:
         specifier: ^4.0.1
         version: 4.0.1
@@ -207,14 +207,14 @@ importers:
         version: 0.34.5
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
       zod-to-json-schema:
         specifier: ^3.24.6
         version: 3.24.6(zod@3.25.76)
     devDependencies:
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -232,7 +232,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.4.0
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -331,7 +331,7 @@ importers:
         version: 0.1.9
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0
@@ -367,7 +367,7 @@ importers:
         version: 2.14.1
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@types/node':
         specifier: ^22.5.5
@@ -392,7 +392,7 @@ importers:
         version: 2.14.1
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -405,7 +405,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -414,16 +414,44 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
+
+  plugins/anthropic:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.33.1
+        version: 0.33.1
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.30
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      zod:
+        specifier: ^3.25.76 || ^4.1.8
+        version: 4.3.6
 
   plugins/assemblyai:
     dependencies:
       ws:
         specifier: ^8.16.0
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -436,7 +464,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -445,7 +473,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -454,13 +482,13 @@ importers:
     dependencies:
       dotenv:
         specifier: ^17.2.3
-        version: 17.4.2
+        version: 17.2.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -473,7 +501,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@22.19.1)
@@ -501,7 +529,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -510,7 +538,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -519,7 +547,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
       zod:
         specifier: ^3.25.76 || ^4.1.8
         version: 4.3.6
@@ -538,7 +566,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -547,7 +575,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -559,7 +587,7 @@ importers:
         version: 3.1.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -572,13 +600,13 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -590,7 +618,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -606,7 +634,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -615,7 +643,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -631,7 +659,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -640,7 +668,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -652,7 +680,7 @@ importers:
         version: 1.1.1
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -665,7 +693,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -674,7 +702,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -686,7 +714,7 @@ importers:
         version: 3.1.3
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -699,7 +727,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -708,7 +736,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -732,7 +760,7 @@ importers:
         version: 0.4.0
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -745,13 +773,13 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -767,7 +795,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -776,7 +804,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -794,13 +822,13 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -809,7 +837,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -822,7 +850,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -831,7 +859,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -840,7 +868,7 @@ importers:
     dependencies:
       '@livekit/plugins-krisp-viva-internal':
         specifier: 0.1.1
-        version: 0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.29)
+        version: 0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.30)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -853,7 +881,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -865,7 +893,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -881,7 +909,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -890,7 +918,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -902,14 +930,14 @@ importers:
         version: 2.14.1
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -921,7 +949,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -949,7 +977,7 @@ importers:
         version: 1.24.3
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -958,7 +986,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -968,7 +996,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -977,7 +1005,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -993,13 +1021,13 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1021,13 +1049,13 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1039,7 +1067,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1052,7 +1080,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1061,7 +1089,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1073,10 +1101,10 @@ importers:
         version: 1.1.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
       zod:
         specifier: ^3.25.76 || ^4.1.8
         version: 4.3.6
@@ -1092,7 +1120,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1101,7 +1129,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1110,7 +1138,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
       zod:
         specifier: ^3.25.76 || ^4.1.8
         version: 4.3.6
@@ -1123,13 +1151,13 @@ importers:
         version: link:../openai
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1138,20 +1166,20 @@ importers:
     dependencies:
       phonic:
         specifier: ^0.32.5
-        version: 0.32.5
+        version: 0.32.7
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1160,7 +1188,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:^
@@ -1173,7 +1201,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1182,7 +1210,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1191,7 +1219,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1207,7 +1235,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1216,7 +1244,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1232,7 +1260,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1241,7 +1269,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1250,7 +1278,7 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1266,7 +1294,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1275,7 +1303,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1287,14 +1315,14 @@ importers:
         version: 1.24.3
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1306,7 +1334,7 @@ importers:
         version: 1.24.3
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1315,14 +1343,14 @@ importers:
     dependencies:
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1331,7 +1359,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1347,7 +1375,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1356,7 +1384,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1375,13 +1403,13 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@types/node':
         specifier: ^22.5.5
         version: 22.19.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1400,7 +1428,7 @@ importers:
         version: link:../../agents
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1409,7 +1437,7 @@ importers:
         version: 8.21.0
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1418,10 +1446,10 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.1)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
       ws:
         specifier: 'catalog:'
-        version: 8.20.1
+        version: 8.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1437,7 +1465,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 0.13.29
+        version: 0.13.30
       '@microsoft/api-extractor':
         specifier: ^7.35.0
         version: 7.43.7(@types/node@25.6.0)
@@ -1446,12 +1474,15 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
 
 packages:
+
+  '@anthropic-ai/sdk@0.33.1':
+    resolution: {integrity: sha512-VrlbxiAdVRGuKP2UQlCnsShDHJKWepzvfRCkZMpU+oaUdKLpOfmylLMRojGrAgebV+kDtPjewCVP0laHXg+vsA==}
 
   '@babel/code-frame@7.24.2':
     resolution: {integrity: sha512-y5+tLQyV8pg3fsiln67BVLD1P13Eg4lh5RW9mF0zUuvLrv9uIQ4MCL+CRT+FTsBlBjcIan6PGsLcBN0m3ClUyQ==}
@@ -1547,8 +1578,9 @@ packages:
   '@changesets/get-dependents-graph@2.1.3':
     resolution: {integrity: sha512-gphr+v0mv2I3Oxt19VdWRRUxq3sseyUpX9DaHpTUmLj92Y10AGy+XOtV+kbM6L/fDcpx7/ISDFK6T8A/P3lOdQ==}
 
-  '@changesets/get-github-info@0.5.2':
-    resolution: {integrity: sha512-JppheLu7S114aEs157fOZDjFqUDpm7eHdq5E8SSR0gUBTEK0cNSHsrSR5a66xs0z3RWuo46QvA3vawp8BxDHvg==}
+  '@changesets/get-github-info@1.0.0-next.3':
+    resolution: {integrity: sha512-HQXw3Kcz1hAdCQgGH4cWlKpJWcTeL8pWNJP4zDOR3igoHJQO31wzHhG29XPhxnDBK9wEdyI71Ft86KpXDOLv/Q==}
+    engines: {node: ^22.11 || ^24 || >=26}
 
   '@changesets/get-release-plan@4.0.15':
     resolution: {integrity: sha512-Q04ZaRPuEVZtA+auOYgFaVQQSA98dXiVe/yFaZfY7hoSmQICHGvP0TF4u3EDNHWmmCS4ekA/XSpKlSM2PyTS2g==}
@@ -1576,9 +1608,6 @@ packages:
 
   '@changesets/types@4.1.0':
     resolution: {integrity: sha512-LDQvVDv5Kb50ny2s25Fhm3d9QSZimsoUGBsUioj6MC3qbMUCuC8GPIvk/M6IvXx3lYhAs0lwWUQLb+VIEUCECw==}
-
-  '@changesets/types@5.2.1':
-    resolution: {integrity: sha512-myLfHbVOqaq9UtUKqR/nZA/OY7xFjQMdfgfqeZIBK4d0hA6pgxArvdv8M+6NUzzBsjWLOtvApv8YHr4qM+Kpfg==}
 
   '@changesets/types@6.1.0':
     resolution: {integrity: sha512-rKQcJ+o1nKNgeoYRHKOS07tAMNd3YSN0uHaJOZYjBAgxfV7TUE7JE+z4BzZdQwb5hKaYbayKN5KrYV7ODb2rAA==}
@@ -1973,8 +2002,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@huggingface/jinja@0.5.8':
-    resolution: {integrity: sha512-ZdElB7DPS7QQS8ZnFc5RPPtkg+eN11z8AmIZWAyes6pSbwXqiFB/POVevvm01begdSX1ho9Gxln/F6qlQMsuaA==}
+  '@huggingface/jinja@0.5.9':
+    resolution: {integrity: sha512-uWTG+l3VJRsl7EXxYizuL3P+cCPoc3cRqbWWRcQN0FhejRfbdq0RNhCmbY/YDtnTcz9icdLYuLDjsnz4d8JMuw==}
     engines: {node: '>=18'}
 
   '@huggingface/tasks@0.19.36':
@@ -2167,8 +2196,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@livekit/changesets-changelog-github@0.0.4':
-    resolution: {integrity: sha512-MXaiLYwgkYciZb8G2wkVtZ1pJJzZmVx5cM30Q+ClslrIYyAqQhRbPmZDM79/5CGxb1MTemR/tfOM25tgJgAK0g==}
+  '@livekit/changesets-changelog-github@0.2.0':
+    resolution: {integrity: sha512-HWgR0biITeIaLeBRIUpqYJ0Wacmx7JJjlqhiJtqYrGItqw0kRUe6tTB6vN0fU7tK1oh08hlgr3iYdGLNLNbrNQ==}
 
   '@livekit/local-inference-darwin-arm64@0.2.6':
     resolution: {integrity: sha512-YdzE0eXgLpUfT0S6AcJ73BknX6fnHWqmH2AukNkO6IBmpth4dFnTvTpOrGWPunlbDJmXanCwdD+Bh9O4oQA+PQ==}
@@ -2267,8 +2296,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@livekit/protocol@1.46.8':
-    resolution: {integrity: sha512-mOjcCVLy4Q7qEaEE7gGLi5wXan0K3VTvSpto5Y0ftek2hauALxBW0+cyxNRoakT7dbWFfH+gqc2XQM0P4M1Q/g==}
+  '@livekit/protocol@1.48.2':
+    resolution: {integrity: sha512-xFcZdiVa4LpykarDZwdXbnS17qq+qbNKIT9v5/peNFNTjnMalmJkyo+XIIYfix6T9pG4LumjNzNBvxPEkIOrBg==}
 
   '@livekit/rtc-ffi-bindings-darwin-arm64@0.12.60':
     resolution: {integrity: sha512-YHXqybkYfaTc3txJXXWoVogiSP3yKJdkaZlIlZ6IDMGnN9elUoHDYU+ZSn/rbdGu0pp4HUOzffXkbkItN735Bw==}
@@ -2304,8 +2333,8 @@ packages:
     resolution: {integrity: sha512-ZJD2DNoHfR8PzKeyDMH6i1zKpk7S4LlrQDIZvisxj6HPaJnKofzSssNMF8fpGFvVCZ844kbcOFogRPgHFno82w==}
     engines: {node: '>= 18'}
 
-  '@livekit/rtc-node@0.13.29':
-    resolution: {integrity: sha512-3/mhTVW3zEa8u0l2UzLe74CyDxaz/1Fqrss+monBJARYHyMGMiDlnKAwDT2LiFkRy0xBjl2QY8Yldr0icfPUkw==}
+  '@livekit/rtc-node@0.13.30':
+    resolution: {integrity: sha512-chUeAKM2EABTbd0Xtkf+TXPPb+wS8ry7Pze0CSWN/MhC1Lx5QD26qr2LECrzFxnGg4httK0SzlEnpurgboOxiQ==}
     engines: {node: '>= 18'}
 
   '@livekit/throws-transformer@0.1.8':
@@ -2390,12 +2419,6 @@ packages:
 
   '@opentelemetry/core@2.2.0':
     resolution: {integrity: sha512-FuabnnUm8LflnieVxs6eP7Z383hgQU4W1e3KJS6aOG3RxWxcHyBxH8fDMHNgu/gFx/M2jvTOW/4/PHhLz6bjWw==}
-    engines: {node: ^18.19.0 || >=20.6.0}
-    peerDependencies:
-      '@opentelemetry/api': '>=1.0.0 <1.10.0'
-
-  '@opentelemetry/core@2.8.0':
-    resolution: {integrity: sha512-hd1Lfh8p545nNz+jq1Ejfz+Mn1hyLuxYn1YzTfFNrxr8urEWMNQLPf1Th8kjOH+HxwawCrtgBp8JpBUR4ZSgww==}
     engines: {node: ^18.19.0 || >=20.6.0}
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
@@ -2602,18 +2625,8 @@ packages:
     cpu: [arm]
     os: [android]
 
-  '@rollup/rollup-android-arm-eabi@4.62.0':
-    resolution: {integrity: sha512-IPIQ55ythEHkfEd9jMEi32OQ7SxURsGA43JI22lj01OLZNt2NUbJX8YUHxkVWyQ6daHPNn0truF5nSj3DQp6YQ==}
-    cpu: [arm]
-    os: [android]
-
   '@rollup/rollup-android-arm64@4.60.1':
     resolution: {integrity: sha512-YjG/EwIDvvYI1YvYbHvDz/BYHtkY4ygUIXHnTdLhG+hKIQFBiosfWiACWortsKPKU/+dUwQQCKQM3qrDe8c9BA==}
-    cpu: [arm64]
-    os: [android]
-
-  '@rollup/rollup-android-arm64@4.62.0':
-    resolution: {integrity: sha512-M6s9cr10MibETyo8JsOkq+Lo1+lU6hcvb1MApnUql5qte/5hMEgzlN8/ReIKNfRV8rrqX50W1BX9zoUhC192RA==}
     cpu: [arm64]
     os: [android]
 
@@ -2622,18 +2635,8 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
-  '@rollup/rollup-darwin-arm64@4.62.0':
-    resolution: {integrity: sha512-BqCoMoIbn0keKys+dEAdBa70EtOwV1bEsQCUgU9FdiZmmMge/Zk7LlkYGqbrdHR+Frnt0E1FOanly+rlwvvQzw==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@rollup/rollup-darwin-x64@4.60.1':
     resolution: {integrity: sha512-haZ7hJ1JT4e9hqkoT9R/19XW2QKqjfJVv+i5AGg57S+nLk9lQnJ1F/eZloRO3o9Scy9CM3wQ9l+dkXtcBgN5Ew==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@rollup/rollup-darwin-x64@4.62.0':
-    resolution: {integrity: sha512-SIMzST3VFNXDAbeIWDWiFCNM5qncUBDWaEV7NfE7oZbDt2mgfW4MvbKdbYiGOLoM32gbTv608UMd0XktEYSD7w==}
     cpu: [x64]
     os: [darwin]
 
@@ -2642,18 +2645,8 @@ packages:
     cpu: [arm64]
     os: [freebsd]
 
-  '@rollup/rollup-freebsd-arm64@4.62.0':
-    resolution: {integrity: sha512-ezjfSQMP7ArdUsbBwbQIfwAlhE84I2iVnzQNCFSveqV42q+BmKlzVpf7mxv5EchLcoWU4y6/heFzVg1F+hodUQ==}
-    cpu: [arm64]
-    os: [freebsd]
-
   '@rollup/rollup-freebsd-x64@4.60.1':
     resolution: {integrity: sha512-KVB2rqsxTHuBtfOeySEyzEOB7ltlB/ux38iu2rBQzkjbwRVlkhAGIEDiiYnO2kFOkJp+Z7pUXKyrRRFuFUKt+g==}
-    cpu: [x64]
-    os: [freebsd]
-
-  '@rollup/rollup-freebsd-x64@4.62.0':
-    resolution: {integrity: sha512-9+qTWGW9AZRhnUgwtTwzNwcPlL87ngkeN0LA+q1bADvmY9aNvWaF2TFW8BZgnQPYxpDI7+rMVLivcd4V737TAQ==}
     cpu: [x64]
     os: [freebsd]
 
@@ -2662,18 +2655,8 @@ packages:
     cpu: [arm]
     os: [linux]
 
-  '@rollup/rollup-linux-arm-gnueabihf@4.62.0':
-    resolution: {integrity: sha512-T1dMEQhXA/jkJ/jyMIw9IovK8bSUq7A8kLIlvZTb/6YIVsp2zLavr4F3oyllHWo7eIVJRyE5n3tUjQJEbE1IuQ==}
-    cpu: [arm]
-    os: [linux]
-
   '@rollup/rollup-linux-arm-musleabihf@4.60.1':
     resolution: {integrity: sha512-n83O8rt4v34hgFzlkb1ycniJh7IR5RCIqt6mz1VRJD6pmhRi0CXdmfnLu9dIUS6buzh60IvACM842Ffb3xd6Gg==}
-    cpu: [arm]
-    os: [linux]
-
-  '@rollup/rollup-linux-arm-musleabihf@4.62.0':
-    resolution: {integrity: sha512-2as0LgT7qQpyceQq6VUJYnumUMUrgGQCWIiDIN9DE0/tglsk6o66uCB4f3djRawAltvfCNLyZZrsqbPA6inCsA==}
     cpu: [arm]
     os: [linux]
 
@@ -2682,18 +2665,8 @@ packages:
     cpu: [arm64]
     os: [linux]
 
-  '@rollup/rollup-linux-arm64-gnu@4.62.0':
-    resolution: {integrity: sha512-bVURMg+6eNN9C/yc0aVjooZcwTTtYF4YW3xta5pP0//r3o1V8gXEHXWCndj47w/HhwsFroZrFhR+6uQP5T0n0g==}
-    cpu: [arm64]
-    os: [linux]
-
   '@rollup/rollup-linux-arm64-musl@4.60.1':
     resolution: {integrity: sha512-+pUymDhd0ys9GcKZPPWlFiZ67sTWV5UU6zOJat02M1+PiuSGDziyRuI/pPue3hoUwm2uGfxdL+trT6Z9rxnlMA==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@rollup/rollup-linux-arm64-musl@4.62.0':
-    resolution: {integrity: sha512-Ful8pM/2yYI83PViWdFdpZhdI8HJ5qsXANe5atypbHDf+KIBBDsZsbyy8hbXnULVvW9NsTh5DHwbcBftyLTfiw==}
     cpu: [arm64]
     os: [linux]
 
@@ -2702,18 +2675,8 @@ packages:
     cpu: [loong64]
     os: [linux]
 
-  '@rollup/rollup-linux-loong64-gnu@4.62.0':
-    resolution: {integrity: sha512-9Gp/DgrkzfUBmNPVTyPTvay+4xEP7M/clXpj3efXBcm6uTIVIgDg4rqUpqKXvLEuFRVuEpSAOkhgNeecvaZ4Cg==}
-    cpu: [loong64]
-    os: [linux]
-
   '@rollup/rollup-linux-loong64-musl@4.60.1':
     resolution: {integrity: sha512-4LqhUomJqwe641gsPp6xLfhqWMbQV04KtPp7/dIp0nzPxAkNY1AbwL5W0MQpcalLYk07vaW9Kp1PBhdpZYYcEw==}
-    cpu: [loong64]
-    os: [linux]
-
-  '@rollup/rollup-linux-loong64-musl@4.62.0':
-    resolution: {integrity: sha512-m9tsJz54LUXkSYM8+8PG81B9IKK5r+2T0clMq4QrS16xFosufU7firBDAZEsDheDs7wTlP7h3++S7lMsU955HA==}
     cpu: [loong64]
     os: [linux]
 
@@ -2722,18 +2685,8 @@ packages:
     cpu: [ppc64]
     os: [linux]
 
-  '@rollup/rollup-linux-ppc64-gnu@4.62.0':
-    resolution: {integrity: sha512-3UvJ5PNVU16aJf6M3tFI24pWzAl2/ynfbyRN3ICyQajK1lSkrnVYNnLz3v04J32qKa0FczJc22zeToc0lr2A3w==}
-    cpu: [ppc64]
-    os: [linux]
-
   '@rollup/rollup-linux-ppc64-musl@4.60.1':
     resolution: {integrity: sha512-RMxFhJwc9fSXP6PqmAz4cbv3kAyvD1etJFjTx4ONqFP9DkTkXsAMU4v3Vyc5BgzC+anz7nS/9tp4obsKfqkDHg==}
-    cpu: [ppc64]
-    os: [linux]
-
-  '@rollup/rollup-linux-ppc64-musl@4.62.0':
-    resolution: {integrity: sha512-vRWUAbYLGHBZS6Q8Msb2sfnf1fvJf+47t8l/TwOerM2qArzy+IeNMTHrYLHXh95h8MoatPHI5hhSZNs+mGXKPg==}
     cpu: [ppc64]
     os: [linux]
 
@@ -2742,18 +2695,8 @@ packages:
     cpu: [riscv64]
     os: [linux]
 
-  '@rollup/rollup-linux-riscv64-gnu@4.62.0':
-    resolution: {integrity: sha512-c00T5SYENHAt86cfW47URaP3Us5vLC/4QO7GYud1G5VNRffCwwCuBspwqYrriuJB+5m0WFzClCn9wed0FBjKvg==}
-    cpu: [riscv64]
-    os: [linux]
-
   '@rollup/rollup-linux-riscv64-musl@4.60.1':
     resolution: {integrity: sha512-RAjXjP/8c6ZtzatZcA1RaQr6O1TRhzC+adn8YZDnChliZHviqIjmvFwHcxi4JKPSDAt6Uhf/7vqcBzQJy0PDJg==}
-    cpu: [riscv64]
-    os: [linux]
-
-  '@rollup/rollup-linux-riscv64-musl@4.62.0':
-    resolution: {integrity: sha512-krrCDilhXOwFkSkO3Wm9I/f9H0L92XHHwy2fwxjukxIbh0dem8gZqOW5Y8BsHrpJv5qwlRBV+Wl4ZFyRWhUpwg==}
     cpu: [riscv64]
     os: [linux]
 
@@ -2762,18 +2705,8 @@ packages:
     cpu: [s390x]
     os: [linux]
 
-  '@rollup/rollup-linux-s390x-gnu@4.62.0':
-    resolution: {integrity: sha512-7pfYFSTc4/rUC/FtAI0Qp6QthDBCIi6/AuP1xYqFk5vanI6KnL5dWKP60OM/05LOsbwTmIcvr6eXC4CJuJ75IA==}
-    cpu: [s390x]
-    os: [linux]
-
   '@rollup/rollup-linux-x64-gnu@4.60.1':
     resolution: {integrity: sha512-77PpsFQUCOiZR9+LQEFg9GClyfkNXj1MP6wRnzYs0EeWbPcHs02AXu4xuUbM1zhwn3wqaizle3AEYg5aeoohhg==}
-    cpu: [x64]
-    os: [linux]
-
-  '@rollup/rollup-linux-x64-gnu@4.62.0':
-    resolution: {integrity: sha512-7SDIalKeIpG0Ifogbbdn58HmSotYMlf23K3dCJEmiVd9Fg36Vmni82iPQec27N3wY4Bvbxftkxz6vSx9OcouTg==}
     cpu: [x64]
     os: [linux]
 
@@ -2782,18 +2715,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@rollup/rollup-linux-x64-musl@4.62.0':
-    resolution: {integrity: sha512-eRZevouTH2i1HeAVLqJuLnt256krQkGY0TN6WsTmsIhuzbh457HuWDMakKwmi0Cjadux983CoSr8Lim2QhUIFw==}
-    cpu: [x64]
-    os: [linux]
-
   '@rollup/rollup-openbsd-x64@4.60.1':
     resolution: {integrity: sha512-cl0w09WsCi17mcmWqqglez9Gk8isgeWvoUZ3WiJFYSR3zjBQc2J5/ihSjpl+VLjPqjQ/1hJRcqBfLjssREQILw==}
-    cpu: [x64]
-    os: [openbsd]
-
-  '@rollup/rollup-openbsd-x64@4.62.0':
-    resolution: {integrity: sha512-3oVS7FLGa4U1qcvao9ylGxrjXZyUQqR8UwxEcnUEyPX53O/C/mKDZegNXTdHCP+h3e6ta/f1EN38Yif1mmZHYg==}
     cpu: [x64]
     os: [openbsd]
 
@@ -2802,18 +2725,8 @@ packages:
     cpu: [arm64]
     os: [openharmony]
 
-  '@rollup/rollup-openharmony-arm64@4.62.0':
-    resolution: {integrity: sha512-yTB9TgfWj5wHe5QgktAgXTLLot1gvEjl1NiPPAUiCs4oPrIWFl5V4nC3GrkNdj9LaAU4s94nVrGbGOCqUpyWsg==}
-    cpu: [arm64]
-    os: [openharmony]
-
   '@rollup/rollup-win32-arm64-msvc@4.60.1':
     resolution: {integrity: sha512-i1okWYkA4FJICtr7KpYzFpRTHgy5jdDbZiWfvny21iIKky5YExiDXP+zbXzm3dUcFpkEeYNHgQ5fuG236JPq0g==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@rollup/rollup-win32-arm64-msvc@4.62.0':
-    resolution: {integrity: sha512-5LOhoaesY3doG1c+ac/2JtgREpKoJr5bUHH8tKY0V8di7+uSV6BwLs2PlR0/yzefGOkR+wE7ZolZphHCsyG5Rw==}
     cpu: [arm64]
     os: [win32]
 
@@ -2822,28 +2735,13 @@ packages:
     cpu: [ia32]
     os: [win32]
 
-  '@rollup/rollup-win32-ia32-msvc@4.62.0':
-    resolution: {integrity: sha512-yYkWHhmbhRTWTnWos5HC4GcPQfjlzzCNbM9e/+GXrLuaBXYA3qSDR9f0Vgufd5S8yX81U8jPKp7ZnAjZFMtRnw==}
-    cpu: [ia32]
-    os: [win32]
-
   '@rollup/rollup-win32-x64-gnu@4.60.1':
     resolution: {integrity: sha512-k+600V9Zl1CM7eZxJgMyTUzmrmhB/0XZnF4pRypKAlAgxmedUA+1v9R+XOFv56W4SlHEzfeMtzujLJD22Uz5zg==}
     cpu: [x64]
     os: [win32]
 
-  '@rollup/rollup-win32-x64-gnu@4.62.0':
-    resolution: {integrity: sha512-SoTb6lPg25xZlA2ibwQ++ahCCnH+FP0qmEuafMJ4gznZKOlXioKEAeJLgCrqjM98ACziXM9V1amFjICVL4IFoA==}
-    cpu: [x64]
-    os: [win32]
-
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     resolution: {integrity: sha512-lWMnixq/QzxyhTV6NjQJ4SFo1J6PvOX8vUx5Wb4bBPsEb+8xZ89Bz6kOXpfXj9ak9AHTQVQzlgzBEc1SyM27xQ==}
-    cpu: [x64]
-    os: [win32]
-
-  '@rollup/rollup-win32-x64-msvc@4.62.0':
-    resolution: {integrity: sha512-5L+T1fMX4RIEBoZzT0+sQ0PhTS36NULFmMXtl1TZo44TMAROIMHbZufSOjVWt/Y622BtxgxtaNOokbTDvfsrZA==}
     cpu: [x64]
     os: [win32]
 
@@ -2943,9 +2841,6 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
-  '@types/estree@1.0.9':
-    resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
-
   '@types/fluent-ffmpeg@2.1.28':
     resolution: {integrity: sha512-5ovxsDwBcPfJ+eYs1I/ZpcYCnkce7pvH9AHSvrZllAp1ZPpTRDZAFjF3TRFbukxSgIYTTNYePbS0rKUmaxVbXw==}
 
@@ -2955,8 +2850,14 @@ packages:
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
 
+  '@types/node-fetch@2.6.13':
+    resolution: {integrity: sha512-QGpRVpzSaUs30JBSGPjOg4Uveu384erbHBoT1zeONvyCfwQxIkUshLAOqN/k9EjGviPRmWTTe6aH2qySWKTVSw==}
+
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
+
+  '@types/node@18.19.130':
+    resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
 
   '@types/node@22.19.1':
     resolution: {integrity: sha512-LCCV0HdSZZZb34qifBsyWlUmok6W7ouER+oQIGBScS8EsZsQbrtFTUrDX4hOl+CS6p7cnNC4td+qrSVGSCTUfQ==}
@@ -3174,6 +3075,10 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
+
+  agentkeepalive@4.6.0:
+    resolution: {integrity: sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==}
+    engines: {node: '>= 8.0.0'}
 
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
@@ -3444,8 +3349,8 @@ packages:
     resolution: {integrity: sha512-t/Ygsytq+R995EJ5PZlD4Cu56sWa8InXySaViRzw9apusqsOO2bQP+SbYzAhR0pFKoB+43lYy8rWban9JSuXnA==}
     engines: {node: '>= 0.4'}
 
-  dataloader@1.4.0:
-    resolution: {integrity: sha512-68s5jYdlvasItOJnCuI2Q9s4q98g0pCyL3HrcKJu8KNugUl8ahgmZYg38ysLTgQjjXX3H8CJLkAvWrclWfcalw==}
+  dataloader@2.2.3:
+    resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
 
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
@@ -3525,8 +3430,8 @@ packages:
     resolution: {integrity: sha512-7GO6HghkA5fYG9TYnNxi14/7K9f5occMlp3zXAuSxn7CKCxt9xbNWG7yF8hTCSUchlfWSe3uLmlPfigevRItzQ==}
     engines: {node: '>=12'}
 
-  dotenv@17.4.2:
-    resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
+  dotenv@17.2.3:
+    resolution: {integrity: sha512-JVUnt+DUIzu87TABbhPmNfVdBDt18BLOWjMUFJMSi/Qqg7NTYtabbvSNJGOJ7afbRuv9D/lngizHtP7QyLQ+9w==}
     engines: {node: '>=12'}
 
   dotenv@8.6.0:
@@ -3645,8 +3550,8 @@ packages:
       eslint-plugin-n: '^15.0.0 || ^16.0.0 '
       eslint-plugin-promise: ^6.0.0
 
-  eslint-config-turbo@2.9.18:
-    resolution: {integrity: sha512-zgbFkvM7+qoWxL/JJ7ytEEE5DHg/xsAv1qzzIAyQEYkROIMKk/0mBb3sjxF/qjHjOuwVF8ZYX2P014qLG/Ng9g==}
+  eslint-config-turbo@2.10.1:
+    resolution: {integrity: sha512-6pvDvMKXUIvEaPfPLo9M38JIzrQi8g9LV0oL0l6KfstOihzRU9Mz7noPteWmmsUTNr+uxwDfqo/4b7KXsEcqjQ==}
     peerDependencies:
       eslint: '>6.6.0'
       turbo: '>2.0.0'
@@ -3751,8 +3656,8 @@ packages:
   eslint-plugin-tsdoc@0.2.17:
     resolution: {integrity: sha512-xRmVi7Zx44lOBuYqG8vzTXuL6IdGOeF9nHX17bjJ8+VE6fsxpdGem0/SBTmAwgYMKYB1WBkqRJVQ+n8GK041pA==}
 
-  eslint-plugin-turbo@2.9.18:
-    resolution: {integrity: sha512-WbvNDtwxyNQnX6ODtWs39EutD8a2Eoh25EgGkSqbqRpw8llHG/waCgBUwUUG7i1yh73d6p4HNBWEk+C+mvx9Xw==}
+  eslint-plugin-turbo@2.10.1:
+    resolution: {integrity: sha512-GpuWF6OMoK7cTyZzreB78dmjcXXk7nFrYDQp1pQV2yqEi2jIQiN6YBHekF/gRHfyFqEaZ+sYwjzH15oFKU7iIw==}
     peerDependencies:
       eslint: '>6.6.0'
       turbo: '>2.0.0'
@@ -3904,9 +3809,16 @@ packages:
     resolution: {integrity: sha512-TMKDUnIte6bfb5nWv7V/caI169OHgvwjb7V4WkeUvbQQdjr5rWKqHFiKWb/fcOwB+CzBT+qbWjvj+DVwRskpIg==}
     engines: {node: '>=14'}
 
-  form-data@4.0.6:
-    resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
+  form-data-encoder@1.7.2:
+    resolution: {integrity: sha512-qfqtYan3rxrnCk1VYaA4H+Ms9xdpPqvLZa6xmMgFvhO32x7/3J/ExcTd6qpxM0vH2GdMI+poehyBZvqfMTto8A==}
+
+  form-data@4.0.5:
+    resolution: {integrity: sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==}
     engines: {node: '>= 6'}
+
+  formdata-node@4.4.1:
+    resolution: {integrity: sha512-0iirZp3uVDjVGt9p49aTaqjk84TrglENEDuqfdlZQ1roC9CWlPk6Avf8EEnZNcAqPonwkG35x4n3ww/1THYAeQ==}
+    engines: {node: '>= 12.20'}
 
   formdata-polyfill@4.0.10:
     resolution: {integrity: sha512-buewHzMvYL29jdeQTVILecSaZKnt/RJWjoZCF5OW60Z67/GmSLBkOFM7qh1PI3zFNtJbaZL5eQu1vLfazOwj4g==}
@@ -4066,10 +3978,6 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hasown@2.0.4:
-    resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
-    engines: {node: '>= 0.4'}
-
   heap-js@2.6.0:
     resolution: {integrity: sha512-trFMIq3PATiFRiQmNNeHtsrkwYRByIXUbYNbotiY9RLVfMkdwZdd2eQ38mGt7BRiCKBaj1DyBAIHmm7mmXPuuw==}
     engines: {node: '>=10.0.0'}
@@ -4087,6 +3995,9 @@ packages:
   human-id@4.1.1:
     resolution: {integrity: sha512-3gKm/gCSUipeLsRYZbbdA1BD83lBoWUkZ7G9VFrhWPAU76KwYo5KR8V28bpoPm/ygy0x5/GCbpRQdY7VLYCoIg==}
     hasBin: true
+
+  humanize-ms@1.2.1:
+    resolution: {integrity: sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==}
 
   iconv-lite@0.7.2:
     resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
@@ -4337,8 +4248,8 @@ packages:
     resolution: {integrity: sha512-e0Jtg4KAzDJKKwzbLaUtinCn0RZseWBVRTRGihSpvFlM3wTR7ExSp+PTdeTsDrLNJUe7L7JYJe8mblHX5SCT6A==}
     engines: {node: '>=10.0'}
 
-  jsonrepair@3.14.0:
-    resolution: {integrity: sha512-tWPGKMZf/8UPim+fcW2EfcQ/d/7aKUrP6IECz9G3Tu6Q5dX0orSleqJ9z6sSw7qrQkjF8/Edo4DvsWBZ8H+HNg==}
+  jsonrepair@3.14.1:
+    resolution: {integrity: sha512-NpGgMhmzG/fajkBEFlS9jZvMSGDvc2xN/9wNCHZ+Nx32GZfLRELU6UE6dQkebvrQUct9S+7bvnpX29NB36Qbdw==}
     hasBin: true
 
   jsx-ast-utils@3.3.5:
@@ -4514,8 +4425,8 @@ packages:
   mz@2.7.0:
     resolution: {integrity: sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==}
 
-  nanoid@3.3.12:
-    resolution: {integrity: sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ==}
+  nanoid@3.3.11:
+    resolution: {integrity: sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -4699,8 +4610,8 @@ packages:
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
 
-  phonic@0.32.5:
-    resolution: {integrity: sha512-Zyd7ZCuT9ozjGzAxaPYCNRRZUzlYYckQNoQi2QH5xCqEGiBcj9uWKLMkilPHZ3yZ2Uy7IA6ZeX0Mqrkv5sa+Fg==}
+  phonic@0.32.7:
+    resolution: {integrity: sha512-F0rAJrj78QLTyBO05Z/w2wMw56CaA5IRge1U3BK1TA144esxMcvJ+3qXZGWf4BVf/UaTStBLLfcTrJOgflpa9Q==}
     engines: {node: '>=18.0.0'}
 
   picocolors@1.1.1:
@@ -4779,8 +4690,8 @@ packages:
       yaml:
         optional: true
 
-  postcss@8.5.15:
-    resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
+  postcss@8.5.9:
+    resolution: {integrity: sha512-7a70Nsot+EMX9fFU3064K/kdHWZqGVY+BADLyXc8Dfv+mTLLVl6JzJpPaCZ2kQL9gIJvKXSLMHhqdRRjwQeFtw==}
     engines: {node: ^10 || ^12 || >=14}
 
   prelude-ls@1.2.1:
@@ -4917,11 +4828,6 @@ packages:
 
   rollup@4.60.1:
     resolution: {integrity: sha512-VmtB2rFU/GroZ4oL8+ZqXgSA38O6GR8KSIvWmEFv63pQ0G6KaBH9s07PO8XTXP4vI+3UJUEypOfjkGfmSBBR0w==}
-    engines: {node: '>=18.0.0', npm: '>=8.0.0'}
-    hasBin: true
-
-  rollup@4.62.0:
-    resolution: {integrity: sha512-nc72Wgq62I7rtDV4izT5/aaS0zxy3kttkinf9586ApknY3jZO9NYsmtc24fUckA0X7Q2v+ML4a15pdUlV5V/jA==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
 
@@ -5166,10 +5072,6 @@ packages:
     resolution: {integrity: sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==}
     engines: {node: '>=12.0.0'}
 
-  tinyglobby@0.2.17:
-    resolution: {integrity: sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==}
-    engines: {node: '>=12.0.0'}
-
   tinyrainbow@3.0.3:
     resolution: {integrity: sha512-PSkbLUoxOFRzJYjjxHJt9xro7D+iilgMX/C9lawzVuYiIdcihh9DXmVibBe8lmcFrRi/VzlPjBxbN7rH24q8/Q==}
     engines: {node: '>=14.0.0'}
@@ -5293,6 +5195,9 @@ packages:
   unbox-primitive@1.0.2:
     resolution: {integrity: sha512-61pPlCD9h51VoreyJ0BReideM3MDKMKnh6+V9L08331ipq6Q8OFXZYiqP6n/tbHx4s5I9uRhcye6BrbkizkBDw==}
 
+  undici-types@5.26.5:
+    resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
+
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
@@ -5314,8 +5219,8 @@ packages:
     resolution: {integrity: sha512-c1Q0mCiPlgdTVVVIJIrBuxNicYE+t/7oKeI9MWLj3fh/uq2Pxh/3eeWbVZ4OcGW1TUf53At0njHw5SMdA3tmMg==}
     engines: {node: '>= 0.10'}
 
-  vite@7.3.5:
-    resolution: {integrity: sha512-KuOaNhcnGFN2zIPGA7wRmzF+lJA1sea7rHq17aiJ++9lzY1WWG6Jpwqwe1KNbRVPIqHmr8GLYx7jbrQcN/7/ww==}
+  vite@7.3.2:
+    resolution: {integrity: sha512-Bby3NOsna2jsjfLVOHKes8sGwgl4TT0E6vvpYgnAYDIF/tie7MRaFthmKuHx1NSXjiTueXH3do80FMQgvEktRg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -5402,6 +5307,10 @@ packages:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
     engines: {node: '>= 8'}
 
+  web-streams-polyfill@4.0.0-beta.3:
+    resolution: {integrity: sha512-QW95TCTaHmsYfHDybGMwO5IJIM93I/6vTRk+daHTWFPhwh+C8Cg7j7XyKrwrj8Ib6vYXe0ocYNrmzY4xAAN6ug==}
+    engines: {node: '>= 14'}
+
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
@@ -5458,8 +5367,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.20.1:
-    resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==}
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -5499,6 +5408,18 @@ packages:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
+
+  '@anthropic-ai/sdk@0.33.1':
+    dependencies:
+      '@types/node': 18.19.130
+      '@types/node-fetch': 2.6.13
+      abort-controller: 3.0.0
+      agentkeepalive: 4.6.0
+      form-data-encoder: 1.7.2
+      formdata-node: 4.4.1
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
 
   '@babel/code-frame@7.24.2':
     dependencies:
@@ -5669,12 +5590,9 @@ snapshots:
       picocolors: 1.1.1
       semver: 7.7.3
 
-  '@changesets/get-github-info@0.5.2':
+  '@changesets/get-github-info@1.0.0-next.3':
     dependencies:
-      dataloader: 1.4.0
-      node-fetch: 2.7.0
-    transitivePeerDependencies:
-      - encoding
+      dataloader: 2.2.3
 
   '@changesets/get-release-plan@4.0.15':
     dependencies:
@@ -5727,8 +5645,6 @@ snapshots:
       '@manypkg/get-packages': 1.1.3
 
   '@changesets/types@4.1.0': {}
-
-  '@changesets/types@5.2.1': {}
 
   '@changesets/types@6.1.0': {}
 
@@ -5962,7 +5878,7 @@ snapshots:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
       protobufjs: 7.5.6
-      ws: 8.20.1
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -5972,7 +5888,7 @@ snapshots:
     dependencies:
       '@huggingface/tasks': 0.19.36
 
-  '@huggingface/jinja@0.5.8': {}
+  '@huggingface/jinja@0.5.9': {}
 
   '@huggingface/tasks@0.19.36': {}
 
@@ -5980,7 +5896,7 @@ snapshots:
 
   '@huggingface/transformers@4.2.0':
     dependencies:
-      '@huggingface/jinja': 0.5.8
+      '@huggingface/jinja': 0.5.9
       '@huggingface/tokenizers': 0.1.3
       onnxruntime-node: 1.24.3
       onnxruntime-web: 1.26.0-dev.20260416-b7804b056c
@@ -6127,13 +6043,11 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@livekit/changesets-changelog-github@0.0.4':
+  '@livekit/changesets-changelog-github@0.2.0':
     dependencies:
-      '@changesets/get-github-info': 0.5.2
-      '@changesets/types': 5.2.1
+      '@changesets/get-github-info': 1.0.0-next.3
+      '@changesets/types': 6.1.0
       dotenv: 8.6.0
-    transitivePeerDependencies:
-      - encoding
 
   '@livekit/local-inference-darwin-arm64@0.2.6':
     optional: true
@@ -6176,7 +6090,7 @@ snapshots:
 
   '@livekit/noise-cancellation-node@0.1.9':
     dependencies:
-      '@livekit/rtc-node': 0.13.29
+      '@livekit/rtc-node': 0.13.30
       tsx: 4.21.0
     optionalDependencies:
       '@livekit/noise-cancellation-darwin-arm64': 0.1.9
@@ -6194,10 +6108,10 @@ snapshots:
   '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.1.1':
     optional: true
 
-  '@livekit/plugins-krisp-viva-internal@0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.29)':
+  '@livekit/plugins-krisp-viva-internal@0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.30)':
     dependencies:
       '@livekit/agents': link:agents
-      '@livekit/rtc-node': 0.13.29
+      '@livekit/rtc-node': 0.13.30
       ffi-rs: 1.3.2
       pino: 9.6.0
       pino-pretty: 13.0.0
@@ -6218,7 +6132,7 @@ snapshots:
   '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.1.1':
     optional: true
 
-  '@livekit/protocol@1.46.8':
+  '@livekit/protocol@1.48.2':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
@@ -6247,7 +6161,7 @@ snapshots:
       '@livekit/rtc-ffi-bindings-linux-x64-gnu': 0.12.60
       '@livekit/rtc-ffi-bindings-win32-x64-msvc': 0.12.60
 
-  '@livekit/rtc-node@0.13.29':
+  '@livekit/rtc-node@0.13.30':
     dependencies:
       '@datastructures-js/deque': 1.0.8
       '@livekit/mutex': 1.1.1
@@ -6342,7 +6256,7 @@ snapshots:
 
   '@mistralai/mistralai@2.2.1':
     dependencies:
-      ws: 8.20.1
+      ws: 8.20.0
       zod: 4.3.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
@@ -6392,11 +6306,6 @@ snapshots:
       '@opentelemetry/semantic-conventions': 1.28.0
 
   '@opentelemetry/core@2.2.0(@opentelemetry/api@1.9.0)':
-    dependencies:
-      '@opentelemetry/api': 1.9.0
-      '@opentelemetry/semantic-conventions': 1.38.0
-
-  '@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/semantic-conventions': 1.38.0
@@ -6622,151 +6531,76 @@ snapshots:
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true
 
-  '@rollup/rollup-android-arm-eabi@4.62.0':
-    optional: true
-
   '@rollup/rollup-android-arm64@4.60.1':
-    optional: true
-
-  '@rollup/rollup-android-arm64@4.62.0':
     optional: true
 
   '@rollup/rollup-darwin-arm64@4.60.1':
     optional: true
 
-  '@rollup/rollup-darwin-arm64@4.62.0':
-    optional: true
-
   '@rollup/rollup-darwin-x64@4.60.1':
-    optional: true
-
-  '@rollup/rollup-darwin-x64@4.62.0':
     optional: true
 
   '@rollup/rollup-freebsd-arm64@4.60.1':
     optional: true
 
-  '@rollup/rollup-freebsd-arm64@4.62.0':
-    optional: true
-
   '@rollup/rollup-freebsd-x64@4.60.1':
-    optional: true
-
-  '@rollup/rollup-freebsd-x64@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-arm-gnueabihf@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-arm-gnueabihf@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-arm-musleabihf@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-arm-musleabihf@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-arm64-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-arm64-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-arm64-musl@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-arm64-musl@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-loong64-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-loong64-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-loong64-musl@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-loong64-musl@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-ppc64-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-ppc64-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-ppc64-musl@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-ppc64-musl@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-riscv64-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-riscv64-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-riscv64-musl@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-riscv64-musl@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-s390x-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-s390x-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-linux-x64-gnu@4.60.1':
-    optional: true
-
-  '@rollup/rollup-linux-x64-gnu@4.62.0':
     optional: true
 
   '@rollup/rollup-linux-x64-musl@4.60.1':
     optional: true
 
-  '@rollup/rollup-linux-x64-musl@4.62.0':
-    optional: true
-
   '@rollup/rollup-openbsd-x64@4.60.1':
-    optional: true
-
-  '@rollup/rollup-openbsd-x64@4.62.0':
     optional: true
 
   '@rollup/rollup-openharmony-arm64@4.60.1':
     optional: true
 
-  '@rollup/rollup-openharmony-arm64@4.62.0':
-    optional: true
-
   '@rollup/rollup-win32-arm64-msvc@4.60.1':
-    optional: true
-
-  '@rollup/rollup-win32-arm64-msvc@4.62.0':
     optional: true
 
   '@rollup/rollup-win32-ia32-msvc@4.60.1':
     optional: true
 
-  '@rollup/rollup-win32-ia32-msvc@4.62.0':
-    optional: true
-
   '@rollup/rollup-win32-x64-gnu@4.60.1':
     optional: true
 
-  '@rollup/rollup-win32-x64-gnu@4.62.0':
-    optional: true
-
   '@rollup/rollup-win32-x64-msvc@4.60.1':
-    optional: true
-
-  '@rollup/rollup-win32-x64-msvc@4.62.0':
     optional: true
 
   '@rushstack/eslint-patch@1.10.3': {}
@@ -6906,8 +6740,6 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
-  '@types/estree@1.0.9': {}
-
   '@types/fluent-ffmpeg@2.1.28':
     dependencies:
       '@types/node': 22.19.1
@@ -6916,7 +6748,16 @@ snapshots:
 
   '@types/json5@0.0.29': {}
 
+  '@types/node-fetch@2.6.13':
+    dependencies:
+      '@types/node': 22.19.1
+      form-data: 4.0.5
+
   '@types/node@12.20.55': {}
+
+  '@types/node@18.19.130':
+    dependencies:
+      undici-types: 5.26.5
 
   '@types/node@22.19.1':
     dependencies:
@@ -7052,21 +6893,21 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.0.3
 
-  '@vitest/mocker@4.0.17(vite@7.3.5(@types/node@22.19.1)(tsx@4.21.0))':
+  '@vitest/mocker@4.0.17(vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0))':
     dependencies:
       '@vitest/spy': 4.0.17
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.5(@types/node@22.19.1)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
 
-  '@vitest/mocker@4.0.17(vite@7.3.5(@types/node@25.6.0)(tsx@4.21.0))':
+  '@vitest/mocker@4.0.17(vite@7.3.2(@types/node@25.6.0)(tsx@4.21.0))':
     dependencies:
       '@vitest/spy': 4.0.17
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.5(@types/node@25.6.0)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@25.6.0)(tsx@4.21.0)
 
   '@vitest/pretty-format@4.0.17':
     dependencies:
@@ -7140,6 +6981,10 @@ snapshots:
   adm-zip@0.5.17: {}
 
   agent-base@7.1.4: {}
+
+  agentkeepalive@4.6.0:
+    dependencies:
+      humanize-ms: 1.2.1
 
   ajv@6.12.6:
     dependencies:
@@ -7429,7 +7274,7 @@ snapshots:
       es-errors: 1.3.0
       is-data-view: 1.0.1
 
-  dataloader@1.4.0: {}
+  dataloader@2.2.3: {}
 
   dateformat@4.6.3: {}
 
@@ -7485,7 +7330,7 @@ snapshots:
 
   dotenv@16.0.3: {}
 
-  dotenv@17.4.2: {}
+  dotenv@17.2.3: {}
 
   dotenv@8.6.0: {}
 
@@ -7600,7 +7445,7 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       has-tostringtag: 1.0.2
-      hasown: 2.0.4
+      hasown: 2.0.2
 
   es-shim-unscopables@1.0.2:
     dependencies:
@@ -7709,10 +7554,10 @@ snapshots:
       eslint-plugin-n: 16.6.2(eslint@8.57.0)
       eslint-plugin-promise: 6.1.1(eslint@8.57.0)
 
-  eslint-config-turbo@2.9.18(eslint@8.57.0)(turbo@2.9.14):
+  eslint-config-turbo@2.10.1(eslint@8.57.0)(turbo@2.9.14):
     dependencies:
       eslint: 8.57.0
-      eslint-plugin-turbo: 2.9.18(eslint@8.57.0)(turbo@2.9.14)
+      eslint-plugin-turbo: 2.10.1(eslint@8.57.0)(turbo@2.9.14)
       turbo: 2.9.14
 
   eslint-import-resolver-node@0.3.9:
@@ -7798,7 +7643,7 @@ snapshots:
       emoji-regex: 9.2.2
       es-iterator-helpers: 1.0.19
       eslint: 8.57.0
-      hasown: 2.0.4
+      hasown: 2.0.2
       jsx-ast-utils: 3.3.5
       language-tags: 1.0.9
       minimatch: 3.1.2
@@ -7868,7 +7713,7 @@ snapshots:
       '@microsoft/tsdoc': 0.14.2
       '@microsoft/tsdoc-config': 0.16.2
 
-  eslint-plugin-turbo@2.9.18(eslint@8.57.0)(turbo@2.9.14):
+  eslint-plugin-turbo@2.10.1(eslint@8.57.0)(turbo@2.9.14):
     dependencies:
       dotenv: 16.0.3
       eslint: 8.57.0
@@ -8051,13 +7896,20 @@ snapshots:
       cross-spawn: 7.0.6
       signal-exit: 4.1.0
 
-  form-data@4.0.6:
+  form-data-encoder@1.7.2: {}
+
+  form-data@4.0.5:
     dependencies:
       asynckit: 0.4.0
       combined-stream: 1.0.8
       es-set-tostringtag: 2.1.0
-      hasown: 2.0.4
+      hasown: 2.0.2
       mime-types: 2.1.35
+
+  formdata-node@4.4.1:
+    dependencies:
+      node-domexception: 1.0.0
+      web-streams-polyfill: 4.0.0-beta.3
 
   formdata-polyfill@4.0.10:
     dependencies:
@@ -8251,10 +8103,6 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hasown@2.0.4:
-    dependencies:
-      function-bind: 1.1.2
-
   heap-js@2.6.0: {}
 
   help-me@5.0.0: {}
@@ -8269,6 +8117,10 @@ snapshots:
       - supports-color
 
   human-id@4.1.1: {}
+
+  humanize-ms@1.2.1:
+    dependencies:
+      ms: 2.1.3
 
   iconv-lite@0.7.2:
     dependencies:
@@ -8499,7 +8351,7 @@ snapshots:
 
   jsonpath-plus@4.0.0: {}
 
-  jsonrepair@3.14.0: {}
+  jsonrepair@3.14.1: {}
 
   jsx-ast-utils@3.3.5:
     dependencies:
@@ -8541,7 +8393,7 @@ snapshots:
   livekit-server-sdk@2.14.1:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
-      '@livekit/protocol': 1.46.8
+      '@livekit/protocol': 1.48.2
       camelcase-keys: 9.1.3
       jose: 5.2.4
 
@@ -8658,7 +8510,7 @@ snapshots:
       object-assign: 4.1.1
       thenify-all: 1.6.0
 
-  nanoid@3.3.12: {}
+  nanoid@3.3.11: {}
 
   natural-compare@1.4.0: {}
 
@@ -8755,14 +8607,14 @@ snapshots:
       platform: 1.3.6
       protobufjs: 7.5.6
 
-  openai@6.8.1(ws@8.20.1)(zod@3.25.76):
+  openai@6.8.1(ws@8.20.0)(zod@3.25.76):
     optionalDependencies:
-      ws: 8.20.1
+      ws: 8.20.0
       zod: 3.25.76
 
-  openai@6.8.1(ws@8.20.1)(zod@4.3.6):
+  openai@6.8.1(ws@8.20.0)(zod@4.3.6):
     optionalDependencies:
-      ws: 8.20.1
+      ws: 8.20.0
       zod: 4.3.6
 
   optionator@0.9.4:
@@ -8837,9 +8689,9 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  phonic@0.32.5:
+  phonic@0.32.7:
     dependencies:
-      ws: 8.20.1
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -8936,16 +8788,16 @@ snapshots:
 
   possible-typed-array-names@1.0.0: {}
 
-  postcss-load-config@6.0.1(postcss@8.5.15)(tsx@4.21.0):
+  postcss-load-config@6.0.1(postcss@8.5.9)(tsx@4.21.0):
     dependencies:
       lilconfig: 3.1.2
     optionalDependencies:
-      postcss: 8.5.15
+      postcss: 8.5.9
       tsx: 4.21.0
 
-  postcss@8.5.15:
+  postcss@8.5.9:
     dependencies:
-      nanoid: 3.3.12
+      nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
@@ -9133,37 +8985,6 @@ snapshots:
       '@rollup/rollup-win32-ia32-msvc': 4.60.1
       '@rollup/rollup-win32-x64-gnu': 4.60.1
       '@rollup/rollup-win32-x64-msvc': 4.60.1
-      fsevents: 2.3.3
-
-  rollup@4.62.0:
-    dependencies:
-      '@types/estree': 1.0.9
-    optionalDependencies:
-      '@rollup/rollup-android-arm-eabi': 4.62.0
-      '@rollup/rollup-android-arm64': 4.62.0
-      '@rollup/rollup-darwin-arm64': 4.62.0
-      '@rollup/rollup-darwin-x64': 4.62.0
-      '@rollup/rollup-freebsd-arm64': 4.62.0
-      '@rollup/rollup-freebsd-x64': 4.62.0
-      '@rollup/rollup-linux-arm-gnueabihf': 4.62.0
-      '@rollup/rollup-linux-arm-musleabihf': 4.62.0
-      '@rollup/rollup-linux-arm64-gnu': 4.62.0
-      '@rollup/rollup-linux-arm64-musl': 4.62.0
-      '@rollup/rollup-linux-loong64-gnu': 4.62.0
-      '@rollup/rollup-linux-loong64-musl': 4.62.0
-      '@rollup/rollup-linux-ppc64-gnu': 4.62.0
-      '@rollup/rollup-linux-ppc64-musl': 4.62.0
-      '@rollup/rollup-linux-riscv64-gnu': 4.62.0
-      '@rollup/rollup-linux-riscv64-musl': 4.62.0
-      '@rollup/rollup-linux-s390x-gnu': 4.62.0
-      '@rollup/rollup-linux-x64-gnu': 4.62.0
-      '@rollup/rollup-linux-x64-musl': 4.62.0
-      '@rollup/rollup-openbsd-x64': 4.62.0
-      '@rollup/rollup-openharmony-arm64': 4.62.0
-      '@rollup/rollup-win32-arm64-msvc': 4.62.0
-      '@rollup/rollup-win32-ia32-msvc': 4.62.0
-      '@rollup/rollup-win32-x64-gnu': 4.62.0
-      '@rollup/rollup-win32-x64-msvc': 4.62.0
       fsevents: 2.3.3
 
   run-parallel@1.2.0:
@@ -9441,11 +9262,6 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
 
-  tinyglobby@0.2.17:
-    dependencies:
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
-
   tinyrainbow@3.0.3: {}
 
   to-fast-properties@2.0.0: {}
@@ -9479,7 +9295,7 @@ snapshots:
 
   tslib@2.6.2: {}
 
-  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3):
+  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@22.19.1))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.25.2)
       cac: 6.7.14
@@ -9489,7 +9305,7 @@ snapshots:
       esbuild: 0.25.2
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.15)(tsx@4.21.0)
+      postcss-load-config: 6.0.1(postcss@8.5.9)(tsx@4.21.0)
       resolve-from: 5.0.0
       rollup: 4.60.1
       source-map: 0.8.0-beta.0
@@ -9499,7 +9315,7 @@ snapshots:
       tree-kill: 1.2.2
     optionalDependencies:
       '@microsoft/api-extractor': 7.43.7(@types/node@22.19.1)
-      postcss: 8.5.15
+      postcss: 8.5.9
       typescript: 5.9.3
     transitivePeerDependencies:
       - jiti
@@ -9507,7 +9323,7 @@ snapshots:
       - tsx
       - yaml
 
-  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3):
+  tsup@8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.25.2)
       cac: 6.7.14
@@ -9517,7 +9333,7 @@ snapshots:
       esbuild: 0.25.2
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.15)(tsx@4.21.0)
+      postcss-load-config: 6.0.1(postcss@8.5.9)(tsx@4.21.0)
       resolve-from: 5.0.0
       rollup: 4.60.1
       source-map: 0.8.0-beta.0
@@ -9527,7 +9343,7 @@ snapshots:
       tree-kill: 1.2.2
     optionalDependencies:
       '@microsoft/api-extractor': 7.43.7(@types/node@25.6.0)
-      postcss: 8.5.15
+      postcss: 8.5.9
       typescript: 5.9.3
     transitivePeerDependencies:
       - jiti
@@ -9614,6 +9430,8 @@ snapshots:
       has-symbols: 1.1.0
       which-boxed-primitive: 1.0.2
 
+  undici-types@5.26.5: {}
+
   undici-types@6.21.0: {}
 
   undici-types@7.19.2:
@@ -9629,27 +9447,27 @@ snapshots:
 
   validator@13.12.0: {}
 
-  vite@7.3.5(@types/node@22.19.1)(tsx@4.21.0):
+  vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
-      postcss: 8.5.15
-      rollup: 4.62.0
-      tinyglobby: 0.2.17
+      postcss: 8.5.9
+      rollup: 4.60.1
+      tinyglobby: 0.2.16
     optionalDependencies:
       '@types/node': 22.19.1
       fsevents: 2.3.3
       tsx: 4.21.0
 
-  vite@7.3.5(@types/node@25.6.0)(tsx@4.21.0):
+  vite@7.3.2(@types/node@25.6.0)(tsx@4.21.0):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
-      postcss: 8.5.15
-      rollup: 4.62.0
-      tinyglobby: 0.2.17
+      postcss: 8.5.9
+      rollup: 4.60.1
+      tinyglobby: 0.2.16
     optionalDependencies:
       '@types/node': 25.6.0
       fsevents: 2.3.3
@@ -9658,7 +9476,7 @@ snapshots:
   vitest@4.0.17(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(tsx@4.21.0):
     dependencies:
       '@vitest/expect': 4.0.17
-      '@vitest/mocker': 4.0.17(vite@7.3.5(@types/node@22.19.1)(tsx@4.21.0))
+      '@vitest/mocker': 4.0.17(vite@7.3.2(@types/node@22.19.1)(tsx@4.21.0))
       '@vitest/pretty-format': 4.0.17
       '@vitest/runner': 4.0.17
       '@vitest/snapshot': 4.0.17
@@ -9675,7 +9493,7 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.16
       tinyrainbow: 3.0.3
-      vite: 7.3.5(@types/node@22.19.1)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@22.19.1)(tsx@4.21.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
@@ -9696,7 +9514,7 @@ snapshots:
   vitest@4.0.17(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(tsx@4.21.0):
     dependencies:
       '@vitest/expect': 4.0.17
-      '@vitest/mocker': 4.0.17(vite@7.3.5(@types/node@25.6.0)(tsx@4.21.0))
+      '@vitest/mocker': 4.0.17(vite@7.3.2(@types/node@25.6.0)(tsx@4.21.0))
       '@vitest/pretty-format': 4.0.17
       '@vitest/runner': 4.0.17
       '@vitest/snapshot': 4.0.17
@@ -9713,7 +9531,7 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.16
       tinyrainbow: 3.0.3
-      vite: 7.3.5(@types/node@25.6.0)(tsx@4.21.0)
+      vite: 7.3.2(@types/node@25.6.0)(tsx@4.21.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
@@ -9741,6 +9559,8 @@ snapshots:
       graceful-fs: 4.2.11
 
   web-streams-polyfill@3.3.3: {}
+
+  web-streams-polyfill@4.0.0-beta.3: {}
 
   webidl-conversions@3.0.1: {}
 
@@ -9824,7 +9644,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.20.1: {}
+  ws@8.20.0: {}
 
   yallist@4.0.0: {}
 

@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  type JSONObject,
   type ToolChoice,
   type ToolContext,
   ToolError,
@@ -30,7 +31,12 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT, isFlushSentinel } from '../types.js';
+import {
+  type FlushSentinel,
+  USERDATA_TIMED_TRANSCRIPT,
+  USERDATA_TTS_STARTED_TIME,
+  isFlushSentinel,
+} from '../types.js';
 import {
   Future,
   IdleTimeoutError,
@@ -38,6 +44,7 @@ import {
   shortuuid,
   toError,
   waitForAbort,
+  waitUntilAborted,
   waitUntilTimeout,
 } from '../utils.js';
 import {
@@ -47,6 +54,7 @@ import {
   functionCallStorage,
   isStopResponse,
 } from './agent.js';
+import type { ForwardOutput } from './agent_activity.ts';
 import type { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
@@ -59,6 +67,8 @@ import {
 import { toSnakeCaseDeep } from './report.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { getMockTool } from './testing/run_result.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
@@ -633,6 +643,7 @@ export function performTTSInference(
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
+  let startTime: number | undefined;
   (async () => {
     const reader = text.getReader();
     try {
@@ -641,6 +652,7 @@ export function performTTSInference(
         if (done) {
           break;
         }
+        startTime ??= performance.now() / 1000;
         const textValue = typeof value === 'string' ? value : value.text;
         await textOnlyWriter.write(textValue);
       }
@@ -670,7 +682,6 @@ export function performTTSInference(
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
     try {
@@ -708,9 +719,13 @@ export function performTTSInference(
 
         if (!firstByteReceived) {
           firstByteReceived = true;
-          ttfb = performance.now() / 1000 - startTime;
-          genData.ttfb = ttfb;
-          span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          const ttsStartedTime = frame.userdata[USERDATA_TTS_STARTED_TIME];
+          const anchor = typeof ttsStartedTime === 'number' ? ttsStartedTime : startTime;
+          if (anchor !== undefined) {
+            ttfb = performance.now() / 1000 - anchor;
+            genData.ttfb = ttfb;
+            span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          }
         }
 
         // Write the audio frame to the output stream
@@ -831,6 +846,22 @@ export interface _AudioOut {
   startedForwardingAt?: number;
 }
 
+/**
+ * The text that actually reached the user, accounting for interruptions.
+ *
+ * On a mid-playout interruption (`played === 'partial'`) we prefer the
+ * playback-aligned `synchronizedTranscript`, but fall back to the full generated
+ * text when no synchronized transcript is available (e.g. avatar outputs) so the
+ * heard reply is still committed to chat ctx rather than dropped.
+ */
+export function forwardedTextFor(output: ForwardOutput): string {
+  if (output.played === 'skipped') return '';
+  if (output.played === 'partial' && output.synchronizedTranscript) {
+    return output.synchronizedTranscript;
+  }
+  return output.textOut?.text ?? '';
+}
+
 async function forwardAudio(
   ttsStream: ReadableStream<AudioFrame>,
   audioOutput: AudioOutput,
@@ -842,10 +873,15 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
-  // The audio output is shared across overlapping segments, so ignore a
-  // PLAYBACK_STARTED from another segment until we capture our own first frame.
-  // Resolving `firstFrameFut` early skips resampler creation and pushes an
-  // unresampled frame (`RtcError: sample_rate and num_channels don't match`).
+  // The audio output is shared across overlapping segments. When a speech is
+  // interrupted, the main loop immediately authorizes the next speech, so this
+  // forwarder can register its listener while the interrupted segment's teardown
+  // is still emitting PLAYBACK_STARTED on the same output. Only honor the event
+  // once this loop has captured its own first frame, so a stray event from
+  // another segment can't resolve our `firstFrameFut` prematurely. A premature
+  // resolution skips resampler creation (gated on `!firstFrameFut.done`) and
+  // pushes an unresampled frame to the AudioSource, raising
+  // `RtcError: sample_rate and num_channels don't match`.
   let hasCapturedOwnFrame = false;
 
   const onPlaybackStarted = (ev: { createdAt: number }) => {
@@ -960,7 +996,6 @@ export function performToolExecutions({
     output: [],
     firstToolStartedFuture: new Future(),
   };
-
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
@@ -969,6 +1004,19 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+
+    // Production always has an activity (and thus a shared executor). Fall back to a standalone
+    // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
+    // which would leave callers awaiting `firstToolStartedFuture` hanging forever.
+    const activity = session._activity;
+    const defaultExecutor = activity?._toolExecutor ?? new ToolExecutor({ owningActivity: null });
+
+    // Route AsyncToolset members to their own executor so session-scoped async
+    // tools survive handoff; everything else falls back to the activity executor.
+    const executorByName = buildExecutorMap({
+      toolsets: toolCtx.toolsets,
+      defaultExecutor,
+    });
 
     const tasks: Task<void>[] = [];
     while (!signal.aborted) {
@@ -989,14 +1037,22 @@ export function performToolExecutions({
 
       // TODO(brian): assert other toolChoice values
 
-      const tool = toolCtx[toolCall.name];
+      const tool = toolCtx.getFunctionTool(toolCall.name);
       if (!tool) {
+        const availableTools = sortedToolNames(toolCtx).join(', ');
+        const message = `Unknown function: ${toolCall.name} - available tools: ${availableTools}`;
         logger.warn(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
           `unknown AI function ${toolCall.name}`,
+        );
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+          }),
         );
         continue;
       }
@@ -1056,6 +1112,9 @@ export function performToolExecutions({
         continue;
       }
 
+      // Resolve right after argument parsing and before execution (including the
+      // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
+      // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
       if (!toolOutput.firstToolStartedFuture.done) {
         toolOutput.firstToolStartedFuture.resolve();
       }
@@ -1142,9 +1201,31 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
-                ctx: new RunContext(session, speechHandle, toolCall),
-                toolCallId: toolCall.callId,
+              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const mock = getMockTool(session.currentAgent, toolCall.name);
+              const toolToExecute = mock
+                ? {
+                    ...tool,
+                    execute: mock,
+                  }
+                : tool;
+
+              if (mock) {
+                logger.debug(
+                  {
+                    function: toolCall.name,
+                    arguments: parsedArgs,
+                    speech_id: speechHandle.id,
+                  },
+                  'executing mock tool',
+                );
+              }
+
+              const executor = executorByName.get(toolCall.name) ?? defaultExecutor;
+              return await executor.execute({
+                tool: toolToExecute,
+                runCtx,
+                rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
               });
             },
@@ -1177,45 +1258,6 @@ export function performToolExecutions({
   };
 
   return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
-}
-
-type Aborted<T> =
-  | {
-      result: T;
-      isAborted: false;
-    }
-  | {
-      result: undefined;
-      isAborted: true;
-    };
-
-async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>> {
-  const abortFut = new Future<Aborted<T>>();
-
-  const resolveAbort = () => {
-    if (!abortFut.done) {
-      abortFut.resolve({ result: undefined, isAborted: true });
-    }
-  };
-
-  signal.addEventListener('abort', resolveAbort);
-
-  promise
-    .then((r) => {
-      if (!abortFut.done) {
-        abortFut.resolve({ result: r, isAborted: false });
-      }
-    })
-    .catch((e) => {
-      if (!abortFut.done) {
-        abortFut.reject(e);
-      }
-    })
-    .finally(() => {
-      signal.removeEventListener('abort', resolveAbort);
-    });
-
-  return await abortFut.await;
 }
 
 export function removeInstructions(chatCtx: ChatContext) {

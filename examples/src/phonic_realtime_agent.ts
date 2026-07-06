@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const toggleLight = llm.tool({
+  name: 'toggle_light',
   description: 'Toggle a light on or off. Available lights are A05, A06, A07, and A08.',
   parameters: z.object({
     light_id: z.string().describe('The ID of the light to toggle'),
@@ -23,9 +24,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions: 'You are a helpful voice AI assistant named Alex.',
-      tools: {
-        toggle_light: toggleLight,
-      },
+      tools: [toggleLight],
     });
 
     const session = new voice.AgentSession({

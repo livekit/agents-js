@@ -1,5 +1,34 @@
 # @livekit/agents-plugin-assemblyai
 
+## 1.5.0
+
+### Patch Changes
+
+- Add AssemblyAI streaming `inactivityTimeout` support. - [#1888](https://github.com/livekit/agents-js/pull/1888) ([@chasef07](https://github.com/chasef07))
+
+- Surface AssemblyAI language confidence on speech event metadata. - [#1543](https://github.com/livekit/agents-js/pull/1543) ([@chasef07](https://github.com/chasef07))
+
+- Updated dependencies [[`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`49f7567`](https://github.com/livekit/agents-js/commit/49f7567600e88f4b5479afab3d629983dca74f69), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`bfad336`](https://github.com/livekit/agents-js/commit/bfad336904ccb5b22acb489cd01d4bae2f393fb9), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a), [`51281bf`](https://github.com/livekit/agents-js/commit/51281bf04b72dc77718c2a3971644d0e2e3d8d9a)]:
+  - @livekit/agents@1.5.0
+
+## 1.4.11
+
+### Patch Changes
+
+- Respect AssemblyAI `mode` presets when defaulting turn silence and remap deprecated `u3-pro` to `universal-3-5-pro`. - [#1882](https://github.com/livekit/agents-js/pull/1882) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies []:
+  - @livekit/agents@1.4.11
+
+## 1.4.10
+
+### Patch Changes
+
+- Add AssemblyAI `agentContext`, `previousContextNTurns`, and `u3-rt-pro-beta-1` streaming options. - [#1764](https://github.com/livekit/agents-js/pull/1764) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`fafdeb68c59404adc3dfabaece10ea155a5b30c4`](https://github.com/livekit/agents-js/commit/fafdeb68c59404adc3dfabaece10ea155a5b30c4), [`8267bf37807276b012f5701fe072642ed4b03d87`](https://github.com/livekit/agents-js/commit/8267bf37807276b012f5701fe072642ed4b03d87), [`3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3`](https://github.com/livekit/agents-js/commit/3ca09e5a3fc5ab615ab10f32b8ecb91f5855e3a3), [`7309e113bd98ba620e84cc216d12395e32662186`](https://github.com/livekit/agents-js/commit/7309e113bd98ba620e84cc216d12395e32662186), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`ad8e138fabad04b7b26069a5ae6d50ce56008037`](https://github.com/livekit/agents-js/commit/ad8e138fabad04b7b26069a5ae6d50ce56008037), [`06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f`](https://github.com/livekit/agents-js/commit/06f29bf78f094e02d3ec8a8a6bb5d793c82d2a1f)]:
+  - @livekit/agents@1.4.10
+
 ## 1.4.9
 
 ### Patch Changes

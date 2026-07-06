@@ -222,7 +222,11 @@ export class SpeechHandle {
    */
   async waitForPlayout(): Promise<void> {
     const store = functionCallStorage.getStore();
-    if (store?.functionCall && store.speechHandle === this) {
+    if (
+      store?.functionCall &&
+      store.speechHandle === this &&
+      store.functionCall.extra.__livekit_agents_tool_non_blocking !== true
+    ) {
       throw new SpeechHandleCircularWaitError(store.functionCall.name);
     }
     await this.doneFut.await;
