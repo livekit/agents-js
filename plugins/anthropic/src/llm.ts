@@ -193,14 +193,14 @@ export class LLM extends llm.LLM {
    */
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -213,9 +213,10 @@ export class LLM extends llm.LLM {
     const { system, messages } = this._buildAnthropicContext(chatCtx);
 
     // Build Anthropic tool schemas
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const anthropicTools: Anthropic.Tool[] = [];
     if (toolCtx) {
-      for (const [name, tool] of Object.entries(toolCtx)) {
+      for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
         anthropicTools.push({
           name: name,
           description: tool.description || '',
@@ -292,6 +293,8 @@ export class LLMStream extends llm.LLMStream {
   #ignoringCoT = false;
   #inputTokens = 0;
   #outputTokens = 0;
+  #cacheCreationTokens = 0;
+  #cacheReadTokens = 0;
   #toolCtx?: llm.ToolContext;
 
   constructor(
@@ -317,6 +320,8 @@ export class LLMStream extends llm.LLMStream {
     this.#ignoringCoT = false;
     this.#inputTokens = 0;
     this.#outputTokens = 0;
+    this.#cacheCreationTokens = 0;
+    this.#cacheReadTokens = 0;
 
     try {
       const stream = await this.#client.messages.create(this.#requestParams, {
@@ -327,6 +332,8 @@ export class LLMStream extends llm.LLMStream {
           this.#requestId = event.message.id;
           this.#inputTokens = event.message.usage.input_tokens;
           this.#outputTokens = event.message.usage.output_tokens;
+          this.#cacheCreationTokens = event.message.usage.cache_creation_input_tokens ?? 0;
+          this.#cacheReadTokens = event.message.usage.cache_read_input_tokens ?? 0;
         } else if (event.type === 'message_delta') {
           this.#outputTokens = event.usage.output_tokens;
         } else if (
@@ -367,11 +374,15 @@ export class LLMStream extends llm.LLMStream {
             continue;
           }
 
-          this.queue.put({
-            id: this.#requestId,
-            delta: { role: 'assistant', content: text },
-          });
-          retryable = false;
+          // A delta can be reduced to an empty string when it was entirely a
+          // <thinking> block; don't emit it or mark the stream non-retryable.
+          if (text) {
+            this.queue.put({
+              id: this.#requestId,
+              delta: { role: 'assistant', content: text },
+            });
+            retryable = false;
+          }
         } else if (
           event.type === 'content_block_delta' &&
           event.delta.type === 'input_json_delta'
@@ -398,14 +409,16 @@ export class LLMStream extends llm.LLMStream {
         }
       }
 
-      // Emit final usage chunk
+      // Emit final usage chunk. Anthropic reports cached tokens separately from
+      // input_tokens, so fold them into promptTokens like the Python plugin does.
+      const promptTokens = this.#inputTokens + this.#cacheCreationTokens + this.#cacheReadTokens;
       this.queue.put({
         id: this.#requestId,
         usage: {
           completionTokens: this.#outputTokens,
-          promptTokens: this.#inputTokens,
-          totalTokens: this.#inputTokens + this.#outputTokens,
-          promptCachedTokens: 0,
+          promptTokens,
+          totalTokens: promptTokens + this.#outputTokens,
+          promptCachedTokens: this.#cacheReadTokens,
         },
       });
     } catch (e: unknown) {
@@ -414,16 +427,6 @@ export class LLMStream extends llm.LLMStream {
           throw new APITimeoutError({
             message: e.message,
             options: { retryable },
-          });
-        }
-        if (e.status === 409) {
-          throw new APIStatusError({
-            message: e.message,
-            options: {
-              statusCode: e.status,
-              body: e.error as object,
-              retryable,
-            },
           });
         }
         throw new APIStatusError({

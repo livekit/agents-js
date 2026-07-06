@@ -39,7 +39,8 @@
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.35.0",
     "tsup": "^8.3.5",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "zod": "^3.25.76 || ^4.1.8"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.33.1"

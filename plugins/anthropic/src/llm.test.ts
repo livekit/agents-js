@@ -1,10 +1,15 @@
-// SPDX-FileCopyrightText: 2025 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import type Anthropic from '@anthropic-ai/sdk';
 import { llm } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { LLM } from './llm.js';
+
+function emptyToolCtx(): llm.ToolContext {
+  return llm.toToolContext([]);
+}
 
 function messageStartEvent(): Anthropic.MessageStreamEvent {
   return {
@@ -25,7 +30,7 @@ function textDeltaEvent(text: string): Anthropic.MessageStreamEvent {
 
 async function collectTextFromEvents(
   events: Anthropic.MessageStreamEvent[],
-  toolCtx?: llm.ToolContext,
+  toolCtx?: llm.ToolContextLike,
 ): Promise<string> {
   const client = {
     messages: {
@@ -198,6 +203,78 @@ describe('Anthropic LLM', () => {
     });
   });
 
+  it('sends function tool schemas from a real ToolContext', async () => {
+    let capturedParams: Anthropic.MessageCreateParamsStreaming | undefined;
+    const client = {
+      messages: {
+        create: async (params: Anthropic.MessageCreateParamsStreaming) => {
+          capturedParams = params;
+          return (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+            yield messageStartEvent();
+          })();
+        },
+      },
+    } as unknown as Anthropic;
+    const anthropicLlm = new LLM({
+      apiKey: 'dummy',
+      client,
+      model: 'claude-3-5-sonnet-20241022',
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'What is the weather in Tokyo?' });
+
+    const toolCtx = llm.toToolContext({
+      getWeather: llm.tool({
+        description: 'Get the weather for a given location.',
+        parameters: z.object({ location: z.string() }),
+        execute: async () => 'sunny',
+      }),
+    });
+
+    const stream = anthropicLlm.chat({ chatCtx, toolCtx });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _ of stream) {
+      // drain
+    }
+
+    expect(capturedParams?.tools).toHaveLength(1);
+    const toolSchema = capturedParams!.tools![0] as Anthropic.Tool;
+    expect(toolSchema.name).toBe('getWeather');
+    expect(toolSchema.description).toBe('Get the weather for a given location.');
+    expect(toolSchema.input_schema.type).toBe('object');
+    expect(Object.keys(toolSchema.input_schema.properties ?? {})).toEqual(['location']);
+  });
+
+  it('does not emit an empty delta for a fully-filtered thinking block', async () => {
+    const client = {
+      messages: {
+        create: async () =>
+          (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+            yield messageStartEvent();
+            yield textDeltaEvent('<thinking>only reasoning</thinking>');
+          })(),
+      },
+    } as unknown as Anthropic;
+    const anthropicLlm = new LLM({
+      apiKey: 'dummy',
+      client,
+      model: 'claude-3-5-sonnet-20241022',
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Hello, world!' });
+
+    const stream = anthropicLlm.chat({ chatCtx, toolCtx: emptyToolCtx() });
+    const contentChunks: string[] = [];
+    for await (const chunk of stream) {
+      if (chunk.delta?.content !== undefined) {
+        contentChunks.push(chunk.delta.content);
+      }
+    }
+
+    // The whole delta was a thinking block: nothing (not even '') is emitted.
+    expect(contentChunks).toEqual([]);
+  });
+
   it('filters thinking blocks when tools are active', async () => {
     const text = await collectTextFromEvents(
       [
@@ -205,7 +282,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('<thinking>hidden'),
         textDeltaEvent('still hidden</thinking>visible'),
       ],
-      {},
+      emptyToolCtx(),
     );
 
     expect(text).toBe('visible');
@@ -223,7 +300,7 @@ describe('Anthropic LLM', () => {
   it('preserves text around same-delta thinking blocks', async () => {
     const text = await collectTextFromEvents(
       [messageStartEvent(), textDeltaEvent('before <thinking>hidden</thinking> after')],
-      {},
+      emptyToolCtx(),
     );
 
     expect(text).toBe('before  after');
@@ -236,7 +313,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('before <thinking>hidden'),
         textDeltaEvent('still hidden</thinking> after'),
       ],
-      {},
+      emptyToolCtx(),
     );
 
     expect(text).toBe('before  after');

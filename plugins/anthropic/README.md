@@ -11,12 +11,11 @@ npm install @livekit/agents-plugin-anthropic
 ## Usage
 
 ```typescript
-import { anthropic } from '@livekit/agents-plugin-anthropic';
+import * as anthropic from '@livekit/agents-plugin-anthropic';
 
-const agent = new Agent({
+const session = new voice.AgentSession({
   llm: new anthropic.LLM({
-    model: 'claude-3-5-sonnet-20241022',
-    // caching: 'ephemeral' // uncomment to enable prompt caching
+    model: 'claude-sonnet-4-6',
   }),
 });
 ```
