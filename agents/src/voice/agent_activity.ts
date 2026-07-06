@@ -2895,7 +2895,13 @@ export class AgentActivity implements RecognitionHooks {
           if (audioOutput) {
             audioOutput.clearBuffer();
             const interruptedPlaybackEv = await audioOutput.waitForPlayout();
-            if (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) {
+            // A reported playback position is proof of partial playback even when
+            // the playback-started notification hasn't arrived yet (remote avatar
+            // outputs deliver it via RPC, which can race with the interruption).
+            if (
+              (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
+              interruptedPlaybackEv.playbackPosition > 0
+            ) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
               output.synchronizedTranscript = interruptedPlaybackEv.synchronizedTranscript;
@@ -2917,6 +2923,13 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        // The segment's playout window is over; settle a still-pending
+        // firstFrameFut so forwardAudio's playback-started listener is detached.
+        if (output.audioOut && !output.audioOut.firstFrameFut.done) {
+          output.audioOut.firstFrameFut.reject(
+            new Error('playout finished before playback started'),
+          );
+        }
       }
     };
 
@@ -3449,7 +3462,13 @@ export class AgentActivity implements RecognitionHooks {
           if (audioOutput) {
             audioOutput.clearBuffer();
             const playbackEv = await audioOutput.waitForPlayout();
-            if (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) {
+            // A reported playback position is proof of partial playback even when
+            // the playback-started notification hasn't arrived yet (remote avatar
+            // outputs deliver it via RPC, which can race with the interruption).
+            if (
+              (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
+              playbackEv.playbackPosition > 0
+            ) {
               output.played = 'partial';
               output.playbackPositionInS = playbackEv.playbackPosition;
               output.synchronizedTranscript = playbackEv.synchronizedTranscript;
@@ -3471,6 +3490,13 @@ export class AgentActivity implements RecognitionHooks {
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
         await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        // The segment's playout window is over; settle a still-pending
+        // firstFrameFut so forwardAudio's playback-started listener is detached.
+        if (output.audioOut && !output.audioOut.firstFrameFut.done) {
+          output.audioOut.firstFrameFut.reject(
+            new Error('playout finished before playback started'),
+          );
+        }
       }
     };
 

@@ -936,11 +936,25 @@ async function forwardAudio(
       throw e;
     }
   } finally {
-    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
-
-    if (!out.firstFrameFut.done) {
+    // Forwarding completes as soon as all TTS frames are *captured*, which can be
+    // long before remote playback begins: DataStream avatar outputs (e.g.
+    // LemonSlice, with `waitPlaybackStart: true`) accept frames faster than
+    // real time and only send the `lk.playback_started` RPC once the avatar
+    // worker actually starts playing (typically ~1s later). Rejecting
+    // `firstFrameFut` here would drop that deferred event on the floor: the
+    // agent never enters the "speaking" state and an interrupted reply is
+    // treated as "skipped" and silently removed from the chat context (phantom
+    // utterance). Mirror the python implementation instead: only reject when
+    // forwarding was aborted before playback started, and keep the listener
+    // attached until the future settles. `forwardSegment` settles any future
+    // still pending once the segment's playout window ends, bounding the
+    // listener's lifetime.
+    if (signal?.aborted && !out.firstFrameFut.done) {
       out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
     }
+    out.firstFrameFut.await
+      .catch(() => {})
+      .finally(() => audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted));
 
     reader?.releaseLock();
     audioOutput.flush();
