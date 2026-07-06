@@ -1,48 +1,59 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import type { stt } from '@livekit/agents';
 import { type AudioBuffer, initializeLogger, tokenize, tts as ttslib } from '@livekit/agents';
 import { type AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
+import { spawn } from 'node:child_process';
 import { ReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 
 const TEXT =
   'The people who are crazy enough to think they can change the world are the ones who do.';
 
-const detectCompressedContainer = (data: Uint8Array): string | undefined => {
-  const startsWith = (signature: string, offset = 0) =>
-    data.length >= offset + signature.length &&
-    signature.split('').every((char, i) => data[offset + i] === char.charCodeAt(0));
+const compressedFormats = new Set([
+  'mp3',
+  'aac',
+  'ogg',
+  'flac',
+  'wav',
+  'mov,mp4,m4a,3gp,3g2,mj2',
+  'matroska,webm',
+  'mpeg',
+]);
 
-  if (data[0] === 0xff && data.length > 1 && (data[1]! & 0xf6) === 0xf0) {
-    return 'aac';
-  }
-  if (
-    startsWith('ID3') ||
-    (data[0] === 0xff && data.length > 1 && (data[1]! & 0xe0) === 0xe0 && (data[1]! & 0x06) !== 0)
-  ) {
-    return 'mp3';
-  }
-  if (startsWith('OggS')) return 'ogg';
-  if (startsWith('fLaC')) return 'flac';
-  if (startsWith('RIFF') && startsWith('WAVE', 8)) return 'wav';
-  if (startsWith('ftyp', 4)) return 'mov,mp4,m4a,3gp,3g2,mj2';
-  if (data[0] === 0x1a && data[1] === 0x45 && data[2] === 0xdf && data[3] === 0xa3) {
-    return 'matroska,webm';
-  }
-  if (data[0] === 0x00 && data[1] === 0x00 && data[2] === 0x01 && data[3] === 0xba) {
-    return 'mpeg';
-  }
-};
-
-const assertPCM = (frames: AudioFrame[]) => {
+const assertPCM = async (frames: AudioFrame[]) => {
   const frame = combineAudioFrames(frames);
   const data = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
-  const container = detectCompressedContainer(data);
 
-  if (container) {
+  const container = await new Promise<string | undefined>((resolve, reject) => {
+    const ffmpeg = spawn(ffmpegInstaller.path, [
+      '-hide_banner',
+      '-probesize',
+      '32',
+      '-analyzeduration',
+      '0',
+      '-i',
+      'pipe:0',
+    ]);
+    let stderr = '';
+
+    ffmpeg.stderr.setEncoding('utf8');
+    ffmpeg.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    ffmpeg.stdin.on('error', () => {});
+    ffmpeg.on('error', reject);
+    ffmpeg.on('close', () => {
+      resolve(stderr.match(/Input #0, (.*), from 'pipe:0':/)?.[1]);
+    });
+
+    ffmpeg.stdin.end(data);
+  });
+
+  if (container && compressedFormats.has(container)) {
     throw new Error(`Audio data isn't PCM (detected ${container})`);
   }
 };
@@ -100,7 +111,7 @@ export const tts = async (
         frames.push(event.frame);
       }
 
-      assertPCM(frames);
+      await assertPCM(frames);
       await validate(frames, stt, TEXT, 0.2);
       stream.close();
     });
