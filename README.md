@@ -336,7 +336,7 @@ To contribute to this project:
 2. Create a new branch based on the `main` branch
 3. Make your changes
 4. Submit a pull request
-5. Make sure to complete the pre-review checklist before tagging reviewers
+5. Make sure to complete the pre-review checklist — reviewers will be automatically assigned based on CODEOWNERS
 
 ### Testing changes and plugins
 
