@@ -12,6 +12,7 @@ import {
   tokenize,
   tts,
 } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import type { Speechify } from '@speechify/api';
 import { SpeechifyClient, SpeechifyError } from '@speechify/api';
 import type { TTSModels } from './models.js';
@@ -243,19 +244,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const timed = timedStringsFromMarks(response.speech_marks, cumulativeDuration);
       let attached = false;
 
-      const putFrames = (frames: ReturnType<AudioByteStream['write']>) => {
-        for (const frame of frames) {
-          if (!attached && timed.length > 0) {
-            frame.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
-            attached = true;
-          }
-          cumulativeDuration += frame.samplesPerChannel / frame.sampleRate;
-          this.queue.put({ requestId, frame, final: false, segmentId: requestId });
+      // Defer emitting each frame by one so the last frame of this segment can
+      // be flagged final: true, which the base class needs to emit per-segment
+      // metrics (matches the elevenlabs/cartesia plugins).
+      let lastFrame: AudioFrame | undefined;
+      const sendFrame = (final: boolean) => {
+        if (!lastFrame) return;
+        if (!attached && timed.length > 0) {
+          lastFrame.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
+          attached = true;
         }
+        cumulativeDuration += lastFrame.samplesPerChannel / lastFrame.sampleRate;
+        this.queue.put({ requestId, frame: lastFrame, final, segmentId: requestId });
+        lastFrame = undefined;
       };
 
-      putFrames(bstream.write(audio));
-      putFrames(bstream.flush());
+      for (const frame of [...bstream.write(audio), ...bstream.flush()]) {
+        sendFrame(false);
+        lastFrame = frame;
+      }
+      sendFrame(true);
     };
 
     const consume = async () => {
