@@ -7,6 +7,7 @@ import type { STTMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import type { VAD } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { StreamAdapter } from './stream_adapter.js';
 import {
   STT,
@@ -139,6 +140,9 @@ export class FallbackAdapter extends STT {
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
+      // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (merged capabilities)
+      keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
+      chatContext: wrapped.some((s) => !!s.capabilities.chatContext),
     });
 
     this.sttInstances = wrapped;
@@ -184,6 +188,22 @@ export class FallbackAdapter extends STT {
    */
   get status(): STTStatus[] {
     return this._status;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (_update_session_keyterms)
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    // forward to every underlying STT; unsupported ones warn-and-skip internally
+    for (const sttInstance of this.sttInstances) {
+      sttInstance._updateSessionKeyterms(keyterms);
+    }
+  }
+
+  // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (_push_conversation_item)
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    // forward to every underlying STT; unsupported ones warn-and-skip internally
+    for (const sttInstance of this.sttInstances) {
+      sttInstance._pushConversationItem(ev);
+    }
   }
 
   private setupEventForwarding(): void {

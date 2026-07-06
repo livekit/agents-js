@@ -8,6 +8,7 @@ import type { APIConnectOptions } from '../types.js';
 import { isStreamClosedError } from '../utils.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import type { SpeechEvent } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
@@ -17,7 +18,13 @@ export class StreamAdapter extends STT {
   label: string;
 
   constructor(stt: STT, vad: VAD) {
-    super({ streaming: true, interimResults: false });
+    super({
+      streaming: true,
+      interimResults: false,
+      // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (keyterms/chat_context caps)
+      keyterms: stt.capabilities.keyterms,
+      chatContext: stt.capabilities.chatContext,
+    });
     this.#stt = stt;
     this.#vad = vad;
     this.label = `stt.StreamAdapter<${this.#stt.label}>`;
@@ -33,6 +40,16 @@ export class StreamAdapter extends STT {
 
   _recognize(frame: AudioFrame, abortSignal?: AbortSignal): Promise<SpeechEvent> {
     return this.#stt.recognize(frame, abortSignal);
+  }
+
+  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (_update_session_keyterms)
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    this.#stt._updateSessionKeyterms(keyterms);
+  }
+
+  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (_push_conversation_item)
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    this.#stt._pushConversationItem(ev);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): StreamAdapterWrapper {

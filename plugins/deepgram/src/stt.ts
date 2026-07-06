@@ -83,6 +83,12 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
+  // Ref: python livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py (stream tracking for
+  // session keyterm propagation)
+  #streams = new Set<WeakRef<SpeechStream>>();
+  // Ref: python .../deepgram/stt.py (user keyterms; #opts.keyterm holds the effective set (user + session))
+  #userKeyterm: string[];
+  #sessionKeyterms: string[] = [];
   label = 'deepgram.STT';
   private abortController = new AbortController();
 
@@ -99,6 +105,7 @@ export class STT extends stt.STT {
       streaming: true,
       interimResults: opts.interimResults ?? defaultSTTOptions.interimResults,
       alignedTranscript: 'word',
+      keyterms: true,
     });
     if (opts.apiKey === undefined && defaultSTTOptions.apiKey === undefined) {
       throw new Error(
@@ -117,6 +124,8 @@ export class STT extends stt.STT {
     } else {
       this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
     }
+
+    this.#userKeyterm = [...this.#opts.keyterm];
   }
 
   async _recognize(buffer: AudioBuffer, abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
@@ -170,12 +179,45 @@ export class STT extends stt.STT {
         ? this.#validateModel(opts.model ?? this.#opts.model, language)
         : this.#opts.model;
 
+    // Ref: python .../deepgram/stt.py (update_options re-merges user keyterms with session keyterms)
+    const nextOpts = { ...opts };
+    if (nextOpts.keyterm !== undefined) {
+      this.#userKeyterm = [...nextOpts.keyterm];
+      nextOpts.keyterm = [...new Set([...this.#userKeyterm, ...this.#sessionKeyterms])];
+    }
+
     this.#opts = {
       ...this.#opts,
-      ...opts,
+      ...nextOpts,
       language,
       model,
     };
+  }
+
+  // Ref: python .../deepgram/stt.py (_update_session_keyterms)
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this.#sessionKeyterms[i])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    const merged = [...new Set([...this.#userKeyterm, ...keyterms])];
+    this.#opts.keyterm = merged;
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (!stream) {
+        this.#streams.delete(ref);
+        continue;
+      }
+      if (stream._speaking) {
+        // defer the reconnect to the end of the utterance so we don't cut it off
+        stream._pendingKeyterm = merged;
+      } else {
+        stream.updateOptions({ keyterm: merged });
+      }
+    }
   }
 
   #validateModel(model: STTModels | string, language?: string) {
@@ -211,7 +253,10 @@ export class STT extends stt.STT {
         'language detection is not supported in streaming mode, please disable it and specify a language',
       );
     }
-    return new SpeechStream(this, this.#opts, options?.connOptions);
+    const stream = new SpeechStream(this, this.#opts, options?.connOptions);
+    // Ref: python .../deepgram/stt.py (self._streams weak set)
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 
   async close() {
@@ -226,6 +271,10 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
+  // Ref: python .../deepgram/stt.py (SpeechStream._pending_keyterm)
+  // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
+  /** @internal */
+  _pendingKeyterm: string[] | null = null;
   #audioDurationCollector: PeriodicCollector<number>;
   label = 'deepgram.SpeechStream';
 
@@ -310,9 +359,26 @@ export class SpeechStream extends stt.SpeechStream {
     this.closed = true;
   }
 
+  // Ref: python .../deepgram/stt.py (STT reads stream._speaking)
+  /** @internal */
+  get _speaking(): boolean {
+    return this.#speaking;
+  }
+
   updateOptions(opts: Partial<STTOptions>) {
     this.#opts = { ...this.#opts, ...opts };
+    // Ref: python .../deepgram/stt.py (stream update_options clears _pending_keyterm)
+    if (opts.keyterm !== undefined) {
+      this._pendingKeyterm = null;
+    }
     this.#resetWS.resolve();
+  }
+
+  #onEndOfSpeech() {
+    if (this._pendingKeyterm !== null) {
+      this.updateOptions({ keyterm: this._pendingKeyterm });
+      this._pendingKeyterm = null;
+    }
   }
 
   async #runWS(ws: WebSocket) {
@@ -465,6 +531,8 @@ export class SpeechStream extends stt.SpeechStream {
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  // Ref: python .../deepgram/stt.py (apply deferred keyterms at END_OF_SPEECH)
+                  this.#onEndOfSpeech();
                 }
 
                 break;
@@ -476,6 +544,8 @@ export class SpeechStream extends stt.SpeechStream {
                 if (this.#speaking) {
                   this.#speaking = false;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  // Ref: python .../deepgram/stt.py (apply deferred keyterms at END_OF_SPEECH)
+                  this.#onEndOfSpeech();
                 }
                 break;
               }

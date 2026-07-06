@@ -92,6 +92,11 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import {
+  KeytermDetector,
+  type KeytermsOptions,
+  resolveKeytermsOptions,
+} from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -304,6 +309,14 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    */
   turnHandling?: Partial<TurnHandlingOptions>;
 
+  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (keyterms_options param)
+  /**
+   * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
+   * (LLM extraction). Applies to STTs that accept a term list; on others it warns
+   * and is ignored.
+   */
+  keytermsOptions?: KeytermsOptions;
+
   useTtsAlignedTranscript?: boolean;
 
   /**
@@ -335,6 +348,13 @@ export type AgentSessionUpdateOptions = {
    * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
    */
   turnDetection?: TurnDetectionMode | null;
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (update_options keyterms param)
+  /**
+   * Replace the user-defined keyterms applied to the STT. Auto-detected keyterms
+   * are left untouched.
+   */
+  keyterms?: string[];
 };
 
 type ActivityTransitionOptions = {
@@ -407,6 +427,10 @@ export class AgentSession<
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (self._keyterm_detector)
+  /** @internal */
+  readonly _keytermDetector: KeytermDetector;
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -551,6 +575,14 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+
+    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (self._keyterm_detector)
+    const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
+    this._keytermDetector = new KeytermDetector({
+      staticKeyterms: keytermsOptions.keyterms,
+      options: keytermsOptions.keytermDetection,
+    });
+
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
@@ -593,6 +625,12 @@ export class AgentSession<
 
   get history(): ChatContext {
     return this._chatCtx;
+  }
+
+  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (AgentSession.keyterms)
+  /** The effective keyterms (user-defined + auto-detected) currently applied to the STT. */
+  get keyterms(): string[] {
+    return this._keytermDetector.keyterms;
   }
 
   /** Connection options for STT, LLM, and TTS. */
@@ -993,6 +1031,11 @@ export class AgentSession<
   }
 
   updateOptions(options: AgentSessionUpdateOptions): void {
+    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (update_options keyterms)
+    if (options.keyterms !== undefined) {
+      this._keytermDetector.setStaticKeyterms(options.keyterms);
+    }
+
     const endpointing = options.turnHandling?.endpointing;
     const turnDetection =
       options.turnHandling?.turnDetection !== undefined

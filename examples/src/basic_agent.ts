@@ -88,6 +88,15 @@ export default defineAgent({
           enabled: true,
         },
       },
+      // Ref: python examples/voice_agents/basic_agent.py (keyterms_options)
+      // automatically detect keyterms and apply them to the STT per user turn
+      keytermsOptions: {
+        keyterms: ['LiveKit'],
+        keytermDetection: {
+          enabled: true,
+          turnInterval: 1, // increase to reduce LLM API calls
+        },
+      },
       useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
       connOptions: {
@@ -102,6 +111,10 @@ export default defineAgent({
 
     // Log metrics as they are emitted
     session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      // Ref: python examples/voice_agents/basic_agent.py (skip noisy stt metrics)
+      if (ev.metrics.type === 'stt_metrics') {
+        return;
+      }
       logMetrics(ev.metrics);
     });
 
