@@ -54,6 +54,7 @@ export interface RealtimeModelOptions {
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
   forbidSpeechAfterToolCall?: string[];
+  onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
 }
@@ -168,6 +169,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       forbidSpeechAfterToolCall?: string[];
       /**
+       * Called with the Phonic conversation ID once the conversation is created
+       */
+      onConversationCreated?: (conversationId: string) => void;
+      /**
        * Connection options for the API connection
        */
       connOptions?: APIConnectOptions;
@@ -227,6 +232,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
+      onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
@@ -710,6 +716,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       case 'conversation_created':
         this.conversationId = message.conversation_id;
         this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        this.options.onConversationCreated?.(this.conversationId);
         break;
       case 'tool_call_interrupted':
         this.handleToolCallInterrupted(message);
