@@ -14,6 +14,7 @@ import {
   delay,
   isPending,
   resampleStream,
+  toStream,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -33,6 +34,84 @@ describe('utils', () => {
       controller.abort();
 
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+  });
+
+  describe('toStream', () => {
+    it('converts an async iterable into a ReadableStream', async () => {
+      async function* source() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 2 });
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 3 });
+      await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+    });
+
+    it('propagates errors from the async iterable', async () => {
+      const expectedError = new Error('source failed');
+      async function* source() {
+        yield 1;
+        throw expectedError;
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await expect(reader.read()).rejects.toBe(expectedError);
+    });
+
+    it('runs async iterable cleanup when the stream is canceled mid-stream', async () => {
+      let cleanupRan = false;
+      async function* source() {
+        try {
+          yield 1;
+          yield 2;
+        } finally {
+          cleanupRan = true;
+        }
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      await reader.cancel('stop early');
+
+      expect(cleanupRan).toBe(true);
+    });
+
+    it('does not wait for a pending next value when canceled mid-stream', async () => {
+      let releaseNextValue: (() => void) | undefined;
+      let cleanupRan = false;
+      async function* source() {
+        try {
+          yield 1;
+          await new Promise<void>((resolve) => {
+            releaseNextValue = resolve;
+          });
+          yield 2;
+        } finally {
+          cleanupRan = true;
+        }
+      }
+
+      const reader = toStream(source()).getReader();
+
+      await expect(reader.read()).resolves.toEqual({ done: false, value: 1 });
+      const pendingRead = reader.read();
+      await delay(1);
+      await expect(
+        Promise.race([reader.cancel('stop early'), delay(10).then(() => 'timeout')]),
+      ).resolves.not.toBe('timeout');
+      releaseNextValue?.();
+      await expect(pendingRead).resolves.toEqual({ done: true, value: undefined });
+
+      expect(cleanupRan).toBe(true);
     });
   });
 

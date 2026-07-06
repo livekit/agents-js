@@ -14,6 +14,9 @@ SPDX-License-Identifier: Apache-2.0
 
 <!--END_BANNER_IMAGE-->
 
+> [!TIP]
+> We just released livekit-agents 1.5.0. Check the release note and [migration guide here](https://docs.livekit.io/reference/migration-guides/agents-v1.5).
+
 # LiveKit Agents for Node.js
 
 <!--BEGIN_DESCRIPTION-->
@@ -26,10 +29,6 @@ This is a Node.js distribution of the [LiveKit Agents framework](https://livekit
 originally written in Python.
 
 <!--END_DESCRIPTION-->
-
-## ✨ 1.0 Release ✨
-
-This README reflects the 1.0 release. See the [migration guide](https://docs.livekit.io/agents/start/v0-migration/nodejs/) if you're trying to upgrade from `0.x`.
 
 ## Features
 

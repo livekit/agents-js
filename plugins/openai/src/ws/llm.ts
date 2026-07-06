@@ -14,7 +14,9 @@ import {
 } from '@livekit/agents';
 import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
+import { toResponsesTools } from '../tool_utils.js';
 import type {
   WsOutputItemDoneEvent,
   WsOutputTextDeltaEvent,
@@ -169,6 +171,8 @@ export interface WSLLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 }
 
 const defaultLLMOptions: WSLLMOptions = {
@@ -203,6 +207,13 @@ export class WSLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (!this.#opts.apiKey) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -253,24 +264,29 @@ export class WSLLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): WSLLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const modelOptions: Record<string, unknown> = { ...(extraKwargs ?? {}) };
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       modelOptions.parallel_tool_calls = parallelToolCalls;
     }
 
@@ -298,6 +314,10 @@ export class WSLLM extends llm.LLM {
 
     if (this.#opts.maxOutputTokens !== undefined) {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
+    }
+
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
     }
 
     let inputChatCtx = chatCtx;
@@ -446,26 +466,7 @@ export class WSLLMStream extends llm.LLMStream {
       'openai.responses',
     )) as OpenAI.Responses.ResponseInputItem[];
 
-    const tools = this.toolCtx
-      ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
-          const oaiParams = {
-            type: 'function' as const,
-            name,
-            description: func.description,
-            parameters: llm.toJsonSchema(
-              func.parameters,
-              true,
-              this.#strictToolSchema,
-            ) as unknown as OpenAI.Responses.FunctionTool['parameters'],
-          } as OpenAI.Responses.FunctionTool;
-
-          if (this.#strictToolSchema) {
-            oaiParams.strict = true;
-          }
-
-          return oaiParams;
-        })
-      : undefined;
+    const tools = this.toolCtx ? toResponsesTools(this.toolCtx, this.#strictToolSchema) : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {

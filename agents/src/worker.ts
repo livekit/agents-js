@@ -35,6 +35,7 @@ import { version } from './version.js';
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+const DRAIN_TIMEOUT = 60 * 60 * 1000;
 const PROJECT_TYPE = 'nodejs';
 
 let localEotRunnerRegistered = false;
@@ -159,6 +160,7 @@ export class ServerOptions {
   loadFunc: (worker: AgentServer) => Promise<number>;
   loadThreshold: number;
   numIdleProcesses: number;
+  drainTimeout: number;
   shutdownProcessTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
@@ -185,6 +187,7 @@ export class ServerOptions {
     loadFunc = defaultCpuLoad,
     loadThreshold = undefined,
     numIdleProcesses = undefined,
+    drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
@@ -215,6 +218,8 @@ export class ServerOptions {
     /** When the load exceeds this threshold, the worker will be marked as unavailable. */
     loadThreshold?: number;
     numIdleProcesses?: number;
+    /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
+    drainTimeout?: number;
     shutdownProcessTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
@@ -254,6 +259,7 @@ export class ServerOptions {
     this.loadFunc = loadFunc;
     this.loadThreshold = simulation ? Infinity : loadThreshold || Default.loadThreshold(production);
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
+    this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
@@ -539,9 +545,11 @@ export class AgentServer {
 
     const promises = [joinJobs()];
 
-    if (timeout) {
+    const timeoutMs = timeout ?? this.#opts.drainTimeout;
+
+    if (timeoutMs) {
       promises.push(
-        rejectOnAbort(AbortSignal.timeout(timeout)).catch(() => {
+        rejectOnAbort(AbortSignal.timeout(timeoutMs)).catch(() => {
           throw new WorkerError('timed out draining');
         }),
       );

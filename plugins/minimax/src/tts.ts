@@ -496,6 +496,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       for await (const sentence of this.#tokenStream) {
         if (this.abortController.signal.aborted) break;
+        this.markStarted();
         ws.send(JSON.stringify({ event: 'task_continue', text: sentence.token }));
       }
 

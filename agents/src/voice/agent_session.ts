@@ -9,6 +9,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
@@ -32,7 +33,15 @@ import {
   ChatMessage,
   type Instructions,
 } from '../llm/chat_context.js';
-import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type {
+  LLM,
+  RealtimeModel,
+  RealtimeModelError,
+  ToolChoice,
+  ToolContextEntry,
+  ToolContextLike,
+} from '../llm/index.js';
+import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -46,7 +55,7 @@ import {
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
 } from '../types.js';
-import { Task, asError } from '../utils.js';
+import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -89,6 +98,11 @@ import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { RunResult } from './testing/run_result.js';
+import {
+  type AsyncToolOptions,
+  type ToolHandlingOptions,
+  resolveAsyncToolOptions,
+} from './tool_executor.js';
 import type { TextTransform } from './transcription/text_transforms.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
@@ -141,6 +155,8 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   logs: false,
   transcript: false,
 };
+
+const idleHoldStorage = new AsyncLocalStorage<boolean>();
 
 /**
  * Resolve a `record` argument into explicit per-category flags. A boolean turns
@@ -237,6 +253,8 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
+  tools?: ToolContextLike<UserData>;
+  toolHandling?: ToolHandlingOptions;
 
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
@@ -351,6 +369,7 @@ export class AgentSession<
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
+  private _toolCtx: ToolContext<UserData>;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
 
@@ -360,6 +379,8 @@ export class AgentSession<
   private closing = false;
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
+  private idleHolds = 0;
+  private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
 
@@ -412,6 +433,12 @@ export class AgentSession<
   /** @internal Resolved per-category recording options for this session. */
   _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
 
+  /** @internal */
+  _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
+
+  /** @internal */
+  _sessionToolsetsSetup = false;
+
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
     return (
@@ -449,7 +476,17 @@ export class AgentSession<
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
+    const {
+      vad,
+      stt,
+      llm,
+      tts,
+      userData,
+      connOptions,
+      tools,
+      toolHandling,
+      ...resolvedSessionOptions
+    } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -504,6 +541,8 @@ export class AgentSession<
         : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
+    this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
+    this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
     this._input = new AgentInput(this.onAudioInputChanged);
@@ -517,14 +556,22 @@ export class AgentSession<
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
+    this.idleReleased.set();
   }
 
   emit<K extends keyof AgentSessionCallbacks>(
     event: K,
     ...args: Parameters<AgentSessionCallbacks[K]>
   ): boolean {
-    const eventData = args[0] as AgentEvent;
-    this._recordedEvents.push(eventData);
+    // Only retain events when recording is actually enabled. Otherwise this
+    // array grows unbounded for the entire (potentially hours-long) session,
+    // pinning every event's graph (SpeechHandle, OTel spans/contexts, streams)
+    // and leaking memory even though the events are never reported. The buffer
+    // is only consumed by makeSessionReport() when recording is enabled.
+    if (this._enableRecording) {
+      const eventData = args[0] as AgentEvent;
+      this._recordedEvents.push(eventData);
+    }
     return super.emit(event, ...args);
   }
 
@@ -1249,6 +1296,62 @@ export class AgentSession<
     return this.agent;
   }
 
+  get toolCtx(): ToolContext<UserData> {
+    return this._toolCtx.copy();
+  }
+
+  get tools(): readonly ToolContextEntry<UserData>[] {
+    return this._toolCtx.tools;
+  }
+
+  async waitForIdle(): Promise<AgentActivity> {
+    while (true) {
+      if (this.closingTask) {
+        throw new Error('AgentSession is closing');
+      }
+      const activity = this.activity;
+      if (!activity) {
+        throw new Error('AgentSession has no active AgentActivity');
+      }
+      try {
+        await activity.waitForIdle();
+        return activity;
+      } catch (error) {
+        if (this.activity === activity) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  async waitForIdleAndHold<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {
+    const activity = await this.waitForIdle();
+    this.idleHolds += 1;
+    this.idleReleased.clear();
+    try {
+      return await idleHoldStorage.run(true, () => fn(activity));
+    } finally {
+      this.idleHolds -= 1;
+      if (this.idleHolds === 0) {
+        this.idleReleased.set();
+      }
+    }
+  }
+
+  /**
+   * Wait until any foreground idle-hold (`waitForIdleAndHold`) is released.
+   * Returns `true` if it actually waited for a release — callers use that to
+   * re-verify idleness, since work may have resumed during the hold.
+   * @internal
+   */
+  async _waitForIdleHoldReleased(): Promise<boolean> {
+    if (this.idleHolds > 0 && !idleHoldStorage.getStore()) {
+      await this.idleReleased.wait();
+      return true;
+    }
+    return false;
+  }
+
   async close(): Promise<void> {
     await this.closeImpl(CloseReason.USER_INITIATED);
   }
@@ -1552,6 +1655,9 @@ export class AgentSession<
 
     await this.activity?.close();
     this.activity = undefined;
+
+    const sessionToolsets = this._toolCtx.toolsets;
+    await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
 
     if (this.sessionSpan) {
       this.sessionSpan.end();

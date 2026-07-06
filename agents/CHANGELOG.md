@@ -1,5 +1,107 @@
 # @livekit/agents
 
+## 1.5.0
+
+### Minor Changes
+
+- Port async tool execution semantics from Python: tools can release their turn with `ctx.update()`, - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+  `AsyncToolset` controls session/activity scope, and cancellable tools expose task-management helpers.
+
+- **BREAKING**: `Agent({ tools })` and `agent.updateTools()` now accept a flat list `(FunctionTool | ProviderTool | Toolset)[]` instead of a `Record<string, FunctionTool>` map, and `llm.tool({ ... })` requires a `name` field. `ToolContext` is now a Python-parity class with `functionTools` / `providerTools` / `toolsets` accessors, plus `flatten()`, `hasTool(id)`, `getFunctionTool(id)`, `updateTools()`, `copy()`, and `equals()`. To match the Python reference, registering two **different** function-tool instances under the same `name` now throws `duplicate function name: <name>` instead of silently overriding the earlier entry; passing the **same instance** twice is a no-op. `agent.toolCtx` returns a defensive copy so callers can no longer mutate the agent's internal state. `LLM.chat({ toolCtx })` accepts either a `ToolContext` instance or a raw `(FunctionTool | ProviderTool | Toolset)[]` array (`ToolCtxInput`) and normalizes it internally, so callers don't have to construct a `ToolContext` themselves. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Tools also expose an `id: string` field on the base `Tool` interface (parity with Python's `Tool.id` property): for `FunctionTool` it mirrors `name`, for `ProviderTool` it is the provider tool id. `ToolContext` keys and equality now use `tool.id` consistently.
+
+  **BREAKING**: Provider tools are now modeled to match Python's `ProviderTool`:
+
+  - `ProviderDefinedTool` is renamed to `ProviderTool`, and `isProviderDefinedTool` is renamed to `isProviderTool`.
+  - `ProviderTool` is now an **abstract class** (Python parity). Plugins must subclass it (`class WebSearch extends ProviderTool { ... }`) to attach provider-specific fields and serializers; bare `new ProviderTool(...)` is rejected at compile time.
+  - The `tool({ id })` factory overload is removed; `tool({ ... })` only creates function tools now. Construct provider tools by instantiating a `ProviderTool` subclass.
+  - The `ToolType` literal for provider tools is renamed from `'provider-defined'` to `'provider'`.
+
+  `Toolset` now carries a `TOOLSET_SYMBOL` marker and is detected via a new `isToolset()` guard (consistent with `isFunctionTool` / `isProviderTool`). Existing `instanceof Toolset` checks still work, but symbol-based detection is preferred for cross-realm safety.
+
+- Add beta EndCallTool for ending calls from agent tools - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Promote the `TaskGroup` workflow out of beta. It now lives in the stable `workflows` namespace — import it as `workflows.TaskGroup` (with `workflows.TaskCompletedEvent`, `workflows.TaskGroupOptions`, and `workflows.TaskGroupResult`) instead of `beta.TaskGroup`. The `beta` namespace continues to re-export these symbols as deprecated aliases for backward compatibility; they will be removed in a future release. This is an intentional Node.js-only change; in Python `TaskGroup` remains under `beta.workflows`. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Promote the `WarmTransferTask` workflow out of beta. It now lives in the stable `workflows` namespace — import it as `workflows.WarmTransferTask` (with `workflows.WarmTransferResult`, `workflows.WarmTransferTaskOptions`, and `workflows.InstructionParts`) instead of `beta.WarmTransferTask`. The `beta` namespace continues to re-export these symbols as deprecated aliases for backward compatibility; they will be removed in a future release. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+### Patch Changes
+
+- Add `Agent.updateInstructions()` to update an agent's instructions mid-session (parity with Python). The change propagates the new instructions through the active `AgentActivity`, records an `AgentConfigUpdate` in the chat and session history, and syncs the realtime/stateless contexts. For OpenAI realtime, per-response instructions now preserve the session-level instructions instead of replacing them. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Adaptive interruption detection now omits the threshold from `session.create` unless the user explicitly overrides it, letting the gateway apply its fetched default (surfaced via `default_threshold` on `session.created`). The HTTP transport has been dropped — detection always connects over WebSocket and always requires LiveKit credentials, and its base URL now defaults from `LIVEKIT_INFERENCE_URL` instead of `LIVEKIT_REMOTE_EOT_URL`. Inference requests also send an `X-LiveKit-Worker-Token` header when `LIVEKIT_WORKER_TOKEN` is set (hosted agents); a token supplied via the `--worker-token` CLI flag is now re-exported into the environment so forked job subprocesses inherit it and include the header. The `X-LiveKit-Agent-Id` header is now only attached once the room is connected to avoid leaking an unset local-participant SID. The interruption WebSocket is now closed deterministically on stream teardown (including error and cancel paths) instead of only on graceful completion — previously an orphaned socket leaked per session/activity and accumulated for the worker's lifetime. Mid-session threshold/duration changes via `updateOptions` now reconnect the WebSocket in place rather than closing it and letting the next send error the stream — so option changes no longer consume a failover retry (previously enough updates in a session could exhaust the retry budget and stop interruption detection). - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Agent.create method - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add scoped filler support to RunContext - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Don't retain recorded events when recording is disabled - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add Inworld `delivery_mode` to inference TTS model options. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- List available tools in unknown-function error output. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add `LLMStream.collect()` for awaiting the full response of a chat stream as a single object (text, tool calls, usage, extra). - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- feat(testing): add `mockTools` utility to override an Agent's tool implementations within an async context, mirroring the Python `mock_tools` API - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add object-map tool syntax compatibility. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Fix interrupted assistant speech being dropped from chat history when the audio output provides no playback-aligned transcript. On a mid-playout interruption, `forwardedTextFor` (and the realtime reply path) returned `synchronizedTranscript ?? ''`, so an interrupted-but-heard reply produced no `conversation_item_added` and was missing from `chatCtx` — common with avatar outputs that don't emit a synchronized transcript. The commit now falls back to the forwarded generation text (`textOut.text`), matching the Python SDK's `_ForwardOutput.forwarded_text` behavior. - [#1916](https://github.com/livekit/agents-js/pull/1916) ([@ShayneP](https://github.com/ShayneP))
+
+- Adds base `Toolset` support: a stateful container for a group of tools with `setup()` / `aclose()` lifecycle hooks. Toolsets can be passed directly into `Agent({ tools: [...] })` alongside individual function tools; their tools are flattened into the agent's `ToolContext` and the runtime drives `setup()` on activity start, `aclose()` on close, and a setup/close diff when `agent.updateTools()` adds or removes Toolsets mid-session. Per-toolset `setup()` errors are logged but do not abort the activity. The `IGNORE_ON_ENTER` flag is also respected for function tools nested inside a Toolset. Every LLM and realtime plugin tool builder iterates `ToolContext.flatten()` so toolset-contributed tools are correctly advertised. Also exports `ToolCalledEvent` / `ToolCompletedEvent` payload types. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): scope forwardAudio's playback-started listener to its own segment - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  When a speech is interrupted, the scheduling loop immediately authorizes the next
+  speech, so the new segment's `forwardAudio` registers its `playback_started`
+  listener on the shared audio output while the interrupted segment is still
+  emitting events during teardown. The stray event resolved the new segment's
+  `firstFrameFut` before its first frame was captured, which skipped resampler
+  creation and pushed an unresampled frame straight to the `AudioSource`
+  (`RtcError: sample_rate and num_channels don't match`) and corrupted playback
+  bookkeeping. The listener now only resolves `firstFrameFut` after the segment has
+  captured its own first frame.
+
+- chore(deps): update livekit dependency - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Increase the default worker drain timeout to one hour. - [#1930](https://github.com/livekit/agents-js/pull/1930) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(eot): disable retries for eot connections and errors - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Pipeline nodes (`ttsNode`, `sttNode`, `transcriptionNode`, `realtimeAudioOutputNode`) now accept an async generator/iterable as their stream input end-to-end. This includes the static `Agent.default.*` helpers and the `Agent.create()` / `AgentTask.create()` hook overrides, so overrides can pass a generator directly to `voice.Agent.default.<node>(ctx.agent, generator, settings)` without wrapping it in `toStream()` first. Also fixes a `getReader is not a function` crash when an `Agent.create`/`AgentTask.create` stream hook received a plain `AsyncIterable`. - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(warm-transfer): capture job context for post-merge caller-room cleanup - [#1674](https://github.com/livekit/agents-js/pull/1674) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `WarmTransferTask`'s post-merge `RoomEvent.ParticipantDisconnected` listener called `getJobContext()` to build a `RoomServiceClient` and delete the caller room. That handler runs from a native rtc-node FFI callback whose `AsyncLocalStorage` context is pinned to `FfiClient`-singleton creation, not to the job's context — so `getJobContext()` read an empty (or stale) store and threw, surfacing as an unhandled promise rejection and leaving the 2-party SIP room undeleted when a participant hung up after the bridge. The task now captures the `JobContext` eagerly in `onEnter()` (while the live context is available) and uses `jobCtx.deleteRoom()` in the late handler, which also passes the job's API credentials instead of relying on environment variables.
+
+## 1.4.11
+
+## 1.4.10
+
+### Patch Changes
+
+- Add Deepgram `keyterm` to inference STT model options and support batch recognition in the Deepgram STT plugin. - [#1766](https://github.com/livekit/agents-js/pull/1766) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(llm): log silent error from performLLMInference - [#1880](https://github.com/livekit/agents-js/pull/1880) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve realtime transcription item IDs on user input transcription events. - [#1902](https://github.com/livekit/agents-js/pull/1902) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(dep): update local-inference dep - [#1873](https://github.com/livekit/agents-js/pull/1873) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Simulation fixes: do not start the worker HTTP server, disable the worker load limit so runs can saturate the agent, and honor `LIVEKIT_AGENT_NAME_OVERRIDE` so the worker registers under the name `lk simulate` dispatches to. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Emit the `lk.chat_ctx` span attribute (on LLM-generation and EOU-prediction spans) in snake_case to match the Python framework, which serializes the same attribute via `chat_ctx.to_dict()`. The JS side was stringifying `chatCtx.toJSON()` directly, which emits camelCase field names (`callId`, `args`, `isError`, `createdAt`), so traces from JS agents diverged from Python agents. The chat context is now run through the shared `toSnakeCaseDeep` conversion (exported from the report layer), and the timestamp exclusion is aligned with Python (`toJSON()` defaults exclude image/audio/timestamps). Note: the Python EOU path additionally trims to the last N turns and excludes function calls — aligning that behavior is left to a follow-up. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize chat-item `toJSON()` output in snake_case (e.g. `new_agent_id`, `call_id`, `arguments`, `is_error`, `created_at`) to match the Python session-report schema. The uploaded `chat_history.json` previously used camelCase keys, so LiveKit Cloud's parser rejected required fields (e.g. `agent_handoff.new_agent_id`). Constructor/`create()` APIs are unchanged. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the session report's `events` and `usage` arrays in snake_case to match the Python session-report schema. Event fields (`old_state`, `new_state`, `is_final`, `speaker_id`, `function_calls`, `created_at`, …) and model-usage fields (`input_tokens`, `session_duration`, `audio_duration`, `characters_count`, `total_requests`, …) previously leaked camelCase keys, so LiveKit Cloud's Python parser dropped them. Usage durations are now emitted in seconds (matching the proto wire format and Python model). Also adds the `audio_recording_path`, `audio_recording_started_at`, `sdk_version`, and `options.user_away_timeout` fields to match Python's `SessionReport.to_dict()`. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Serialize the uploaded session-recording `chat_history` in snake_case to match the Python wire schema. `uploadSessionReport` was stringifying `chatHistory.toJSON()` directly, which emits camelCase field names; the snake_case conversion lives only in `sessionReportToJSON` (`toSnakeCaseDeep`). As a result the uploaded chat history carried camelCase keys (`callId`, `args`, `isError`, `newAgentId`, `createdAt`), and the Python consumer's pydantic validation rejected the chat items with "field required" errors for `call_id`, `arguments`, `is_error`, and `new_agent_id`. The upload now reuses `sessionReportToJSON(report).chat_history` so the two serializations can't drift. - [#1804](https://github.com/livekit/agents-js/pull/1804) ([@u9g](https://github.com/u9g))
+
+- Keep the STT input timestamp anchor attached to reused STT pipelines across agent handoff. - [#1870](https://github.com/livekit/agents-js/pull/1870) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.4.9
 
 ### Patch Changes

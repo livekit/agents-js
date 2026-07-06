@@ -127,6 +127,8 @@ export interface InworldOptions {
   speaking_rate?: number;
   /** Range 0-2. */
   temperature?: number;
+  /** Controls output variation on inworld-tts-2 only. */
+  delivery_mode?: 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
   timestamp_type?: 'TIMESTAMP_TYPE_UNSPECIFIED' | 'WORD' | 'CHARACTER';
   apply_text_normalization?: 'APPLY_TEXT_NORMALIZATION_UNSPECIFIED' | 'ON' | 'OFF';
   /** @deprecated Backward-compatible alias. Use `apply_text_normalization`. */
@@ -615,6 +617,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
