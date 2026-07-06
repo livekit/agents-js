@@ -183,6 +183,9 @@ export class RoomIO {
     this.room = room;
     this.inputOptions = { ...DEFAULT_ROOM_INPUT_OPTIONS, ...inputOptions };
     this.outputOptions = { ...DEFAULT_ROOM_OUTPUT_OPTIONS, ...outputOptions };
+    if (this.inputOptions.videoEnabled) {
+      throw new Error('RoomIO video input is not supported in agents-js yet');
+    }
     this.userTranscriptWriter = this.userTranscriptStream.writable.getWriter();
     this.jobContext = getJobContext(false);
 
