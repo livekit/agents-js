@@ -205,7 +205,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('<thinking>hidden'),
         textDeltaEvent('still hidden</thinking>visible'),
       ],
-      {},
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('visible');
@@ -223,7 +223,7 @@ describe('Anthropic LLM', () => {
   it('preserves text around same-delta thinking blocks', async () => {
     const text = await collectTextFromEvents(
       [messageStartEvent(), textDeltaEvent('before <thinking>hidden</thinking> after')],
-      {},
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('before  after');
@@ -236,7 +236,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('before <thinking>hidden'),
         textDeltaEvent('still hidden</thinking> after'),
       ],
-      {},
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('before  after');
