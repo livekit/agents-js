@@ -1,9 +1,10 @@
-// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APIStatusError,
   AudioByteStream,
   USERDATA_TIMED_TRANSCRIPT,
@@ -60,6 +61,9 @@ const buildSpeechRequest = (text: string, opts: TTSOptions): Speechify.GetSpeech
 };
 
 const toError = (e: unknown): Error => {
+  if (e instanceof APIError) {
+    return e;
+  }
   if (e instanceof SpeechifyError) {
     return new APIStatusError({ message: e.message, options: { statusCode: e.statusCode ?? -1 } });
   }
