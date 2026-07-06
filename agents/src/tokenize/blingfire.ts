@@ -76,7 +76,6 @@ export const splitWords = (text: string, ignorePunctuation = true): [string, num
       word = word.replace(punctuationRegex, '');
       if (!word) continue;
     }
-    if (!word.trim()) continue;
     words.push([word, start, end]);
   }
 

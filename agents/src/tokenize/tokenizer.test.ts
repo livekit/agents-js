@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
 import * as blingfire from './blingfire.js';
+import type { SentenceStream, WordStream } from './tokenizer.js';
 
 const TEXT =
   'Hi! ' +
@@ -154,6 +155,39 @@ const PARAGRAPH_TEST_CASES: [string, [string, number, number][]][] = [
   ],
 ];
 
+const expectStreamTokens = async (
+  stream: SentenceStream | WordStream,
+  text: string,
+  expected: string[],
+) => {
+  // push the text in chunks of arbitrary length (1-4)
+  const pattern = [1, 2, 4];
+  const chunks = [];
+  const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
+    .fill(pattern)
+    .flat()
+    [Symbol.iterator]();
+
+  for (const size of patternIter) {
+    if (!text) break;
+    chunks.push(text.slice(undefined, size));
+    text = text.slice(size);
+  }
+  for (const chunk of chunks) {
+    stream.pushText(chunk);
+  }
+  stream.endInput();
+  stream.close();
+
+  for (const x of expected) {
+    await stream.next().then((value) => {
+      if (value.value) {
+        expect(value.value.token).toStrictEqual(x);
+      }
+    });
+  }
+};
+
 describe('tokenizer', () => {
   describe('SentenceTokenizer', () => {
     const tokenizer = new SentenceTokenizer();
@@ -163,33 +197,7 @@ describe('tokenizer', () => {
     });
 
     it('should stream tokenize sentences correctly', async () => {
-      const pattern = [1, 2, 4];
-      let text = TEXT;
-      const chunks = [];
-      const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
-        .fill(pattern)
-        .flat()
-        [Symbol.iterator]();
-
-      for (const size of patternIter) {
-        if (!text) break;
-        chunks.push(text.slice(undefined, size));
-        text = text.slice(size);
-      }
-      const stream = tokenizer.stream();
-      for (const chunk of chunks) {
-        stream.pushText(chunk);
-      }
-      stream.endInput();
-      stream.close();
-
-      for (const x of EXPECTED_MIN_20) {
-        await stream.next().then((value) => {
-          if (value.value) {
-            expect(value.value.token).toStrictEqual(x);
-          }
-        });
-      }
+      await expectStreamTokens(tokenizer.stream(), TEXT, EXPECTED_MIN_20);
     });
   });
   describe('WordTokenizer', () => {
@@ -200,33 +208,7 @@ describe('tokenizer', () => {
     });
 
     it('should stream tokenize words correctly', async () => {
-      const pattern = [1, 2, 4];
-      let text = WORDS_TEXT;
-      const chunks = [];
-      const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
-        .fill(pattern)
-        .flat()
-        [Symbol.iterator]();
-
-      for (const size of patternIter) {
-        if (!text) break;
-        chunks.push(text.slice(undefined, size));
-        text = text.slice(size);
-      }
-      const stream = tokenizer.stream();
-      for (const chunk of chunks) {
-        stream.pushText(chunk);
-      }
-      stream.endInput();
-      stream.close();
-
-      for (const x of WORDS_EXPECTED) {
-        await stream.next().then((value) => {
-          if (value.value) {
-            expect(value.value.token).toStrictEqual(x);
-          }
-        });
-      }
+      await expectStreamTokens(tokenizer.stream(), WORDS_TEXT, WORDS_EXPECTED);
     });
 
     describe('punctuation handling', () => {
@@ -239,35 +221,7 @@ describe('tokenizer', () => {
       });
 
       it('should stream tokenize words correctly', async () => {
-        const pattern = [1, 2, 4];
-        let text = WORDS_PUNCT_TEXT;
-        const chunks = [];
-        const patternIter = Array(
-          Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)),
-        )
-          .fill(pattern)
-          .flat()
-          [Symbol.iterator]();
-
-        for (const size of patternIter) {
-          if (!text) break;
-          chunks.push(text.slice(undefined, size));
-          text = text.slice(size);
-        }
-        const stream = tokenizerPunct.stream();
-        for (const chunk of chunks) {
-          stream.pushText(chunk);
-        }
-        stream.endInput();
-        stream.close();
-
-        for (const x of WORDS_PUNCT_EXPECTED) {
-          await stream.next().then((value) => {
-            if (value.value) {
-              expect(value.value.token).toStrictEqual(x);
-            }
-          });
-        }
+        await expectStreamTokens(tokenizerPunct.stream(), WORDS_PUNCT_TEXT, WORDS_PUNCT_EXPECTED);
       });
     });
   });
@@ -296,33 +250,7 @@ describe('tokenizer', () => {
     });
 
     it('should stream tokenize sentences correctly', async () => {
-      const pattern = [1, 2, 4];
-      let text = BLINGFIRE_TEXT;
-      const chunks = [];
-      const patternIter = Array(Math.ceil(text.length / pattern.reduce((sum, num) => sum + num, 0)))
-        .fill(pattern)
-        .flat()
-        [Symbol.iterator]();
-
-      for (const size of patternIter) {
-        if (!text) break;
-        chunks.push(text.slice(undefined, size));
-        text = text.slice(size);
-      }
-      const stream = tokenizer.stream();
-      for (const chunk of chunks) {
-        stream.pushText(chunk);
-      }
-      stream.endInput();
-      stream.close();
-
-      for (const x of BLINGFIRE_EXPECTED_MIN_20) {
-        await stream.next().then((value) => {
-          if (value.value) {
-            expect(value.value.token).toStrictEqual(x);
-          }
-        });
-      }
+      await expectStreamTokens(tokenizer.stream(), BLINGFIRE_TEXT, BLINGFIRE_EXPECTED_MIN_20);
     });
   });
   describe('blingfire.WordTokenizer', () => {
