@@ -137,10 +137,8 @@ export interface STTCapabilities {
   alignedTranscript?: 'word' | 'chunk' | false;
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py (STTCapabilities.keyterms)
   /** Whether the STT supports keyterm prompting */
   keyterms?: boolean;
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py (STTCapabilities.chat_context)
   /** Whether the STT can natively consume conversation context (see STT._pushConversationItem) */
   chatContext?: boolean;
 }
@@ -244,7 +242,6 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    *
    * @internal
    */
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py (STT._update_session_keyterms)
   _updateSessionKeyterms(_keyterms: string[]): void {
     if (!this.#capabilities.keyterms) {
       if (!this.#keytermsUnsupportedWarned) {
@@ -265,7 +262,6 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    *
    * @internal
    */
-  // Ref: python livekit-agents/livekit/agents/stt/stt.py (STT._push_conversation_item)
   _pushConversationItem(_ev: ConversationItemAddedEvent): void {
     if (!this.#capabilities.chatContext) {
       if (!this.#chatContextUnsupportedWarned) {

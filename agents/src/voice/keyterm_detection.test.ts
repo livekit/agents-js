@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Ref: python tests/test_stt_context.py
 import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ChatContext, ChatMessage, FunctionCall } from '../llm/chat_context.js';

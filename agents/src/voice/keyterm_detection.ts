@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Ref: python livekit-agents/livekit/agents/voice/keyterm_detection.py
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
@@ -15,7 +14,6 @@ import type { STT } from '../stt/stt.js';
 import { Task, delay } from '../utils.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
 
-// Ref: python keyterm_detection.py (KeytermsOptions)
 /**
  * Keyterm biasing for STTs that accept a term list.
  *
@@ -37,7 +35,6 @@ export interface KeytermsOptions {
   keytermDetection?: KeytermDetectionOptions;
 }
 
-// Ref: python keyterm_detection.py (KeytermDetectionOptions)
 /**
  * Configuration for automatic keyterm detection.
  *
@@ -66,12 +63,10 @@ export interface KeytermDetectionOptions {
   timeout?: number;
 }
 
-// Ref: python keyterm_detection.py (_DETECTION_TIMEOUT; python uses 10.0 s)
 // bound a single pass so a stuck LLM call can't hold the single-flight guard forever and
 // stall detection for the rest of the call; a timed-out pass simply makes no change
 const DETECTION_TIMEOUT = 10_000;
 
-// Ref: python keyterm_detection.py (_KEYTERM_DETECTION_DEFAULTS)
 const KEYTERM_DETECTION_DEFAULTS = {
   enabled: false,
   llm: undefined,
@@ -97,20 +92,16 @@ export interface ResolvedKeytermsOptions {
   keytermDetection: ResolvedKeytermDetectionOptions;
 }
 
-// Ref: python keyterm_detection.py (_PENDING_TTL / _MAX_TRANSCRIPT_MESSAGES)
 /** A pending term not confirmed within this many passes is dropped. @internal */
 export const PENDING_TTL = 3;
 const MAX_TRANSCRIPT_MESSAGES = 12;
 
-// Ref: python keyterm_detection.py (_DEFAULT_DETECTION_MODEL, updated in python commit e2b2d092c)
 // default model for keyterm extraction when `keytermDetection.llm` is not set
 const DEFAULT_DETECTION_MODEL = 'google/gemma-4-31b-it';
 
-// Ref: python keyterm_detection.py (lk_keyterms_debug)
 // set LK_KEYTERMS_DEBUG=1 to log the input/output of every detection pass
 const lkKeytermsDebug = parseInt(process.env.LK_KEYTERMS_DEBUG ?? '0', 10) !== 0;
 
-// Ref: python keyterm_detection.py (_resolve_detection)
 /** Return a fully-defaulted keyterm-detection config (`enabled` defaults to false). @internal */
 export function resolveDetection(
   config?: KeytermDetectionOptions,
@@ -126,7 +117,6 @@ export function resolveDetection(
   };
 }
 
-// Ref: python keyterm_detection.py (_resolve_keyterms_options)
 /** Return a fully-defaulted keyterms config. @internal */
 export function resolveKeytermsOptions(config?: KeytermsOptions): ResolvedKeytermsOptions {
   const cfg = config ?? {};
@@ -213,7 +203,6 @@ const recordKeyterms = tool({
  * The minimal session surface the detector needs. `AgentSession` satisfies this
  * structurally; tests can supply a lightweight fake.
  *
- * Ref: python keyterm_detection.py imports AgentSession under TYPE_CHECKING only.
  */
 export interface KeytermDetectorSession {
   readonly history: ChatContext;
@@ -349,7 +338,6 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
     this.emit('metrics_collected', ev);
   };
 
-  // Ref: python keyterm_detection.py (KeytermDetector._on_conversation_item_added)
   private onConversationItemAdded = (ev: ConversationItemAddedEvent): void => {
     const session = this.session;
     if (session === undefined) {
@@ -507,7 +495,6 @@ export async function detectKeyterms(
   reqCtx.addMessage({ role: 'user', content: userMsg });
 
   const stream = llm.chat({ chatCtx: reqCtx, toolCtx: [recordKeyterms], toolChoice: 'required' });
-  // Ref: python keyterm_detection.py (asyncio.wait_for around llm.chat(...).collect())
   const timedOut = Symbol('keyterm-detection-timeout');
   const timeoutController = new AbortController();
   const timeoutPromise: Promise<typeof timedOut> = delay(timeout, {

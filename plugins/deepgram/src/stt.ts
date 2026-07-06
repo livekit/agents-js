@@ -83,10 +83,8 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
-  // Ref: python livekit-plugins-deepgram/livekit/plugins/deepgram/stt.py (stream tracking for
   // session keyterm propagation)
   #streams = new Set<WeakRef<SpeechStream>>();
-  // Ref: python .../deepgram/stt.py (user keyterms; #opts.keyterm holds the effective set (user + session))
   #userKeyterm: string[];
   #sessionKeyterms: string[] = [];
   label = 'deepgram.STT';
@@ -179,7 +177,6 @@ export class STT extends stt.STT {
         ? this.#validateModel(opts.model ?? this.#opts.model, language)
         : this.#opts.model;
 
-    // Ref: python .../deepgram/stt.py (update_options re-merges user keyterms with session keyterms)
     const nextOpts = { ...opts };
     if (nextOpts.keyterm !== undefined) {
       this.#userKeyterm = [...nextOpts.keyterm];
@@ -194,7 +191,6 @@ export class STT extends stt.STT {
     };
   }
 
-  // Ref: python .../deepgram/stt.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     if (
       keyterms.length === this.#sessionKeyterms.length &&
@@ -254,7 +250,6 @@ export class STT extends stt.STT {
       );
     }
     const stream = new SpeechStream(this, this.#opts, options?.connOptions);
-    // Ref: python .../deepgram/stt.py (self._streams weak set)
     this.#streams.add(new WeakRef(stream));
     return stream;
   }
@@ -271,7 +266,6 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
-  // Ref: python .../deepgram/stt.py (SpeechStream._pending_keyterm)
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
   _pendingKeyterm: string[] | null = null;
@@ -359,7 +353,6 @@ export class SpeechStream extends stt.SpeechStream {
     this.closed = true;
   }
 
-  // Ref: python .../deepgram/stt.py (STT reads stream._speaking)
   /** @internal */
   get _speaking(): boolean {
     return this.#speaking;
@@ -367,7 +360,6 @@ export class SpeechStream extends stt.SpeechStream {
 
   updateOptions(opts: Partial<STTOptions>) {
     this.#opts = { ...this.#opts, ...opts };
-    // Ref: python .../deepgram/stt.py (stream update_options clears _pending_keyterm)
     if (opts.keyterm !== undefined) {
       this._pendingKeyterm = null;
     }
@@ -531,7 +523,6 @@ export class SpeechStream extends stt.SpeechStream {
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
-                  // Ref: python .../deepgram/stt.py (apply deferred keyterms at END_OF_SPEECH)
                   this.#onEndOfSpeech();
                 }
 
@@ -544,7 +535,6 @@ export class SpeechStream extends stt.SpeechStream {
                 if (this.#speaking) {
                   this.#speaking = false;
                   putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
-                  // Ref: python .../deepgram/stt.py (apply deferred keyterms at END_OF_SPEECH)
                   this.#onEndOfSpeech();
                 }
                 break;

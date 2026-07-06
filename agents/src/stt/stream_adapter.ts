@@ -21,7 +21,6 @@ export class StreamAdapter extends STT {
     super({
       streaming: true,
       interimResults: false,
-      // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (keyterms/chat_context caps)
       keyterms: stt.capabilities.keyterms,
       chatContext: stt.capabilities.chatContext,
     });
@@ -42,12 +41,10 @@ export class StreamAdapter extends STT {
     return this.#stt.recognize(frame, abortSignal);
   }
 
-  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     this.#stt._updateSessionKeyterms(keyterms);
   }
 
-  // Ref: python livekit-agents/livekit/agents/stt/stream_adapter.py (_push_conversation_item)
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
     this.#stt._pushConversationItem(ev);
   }

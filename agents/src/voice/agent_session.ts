@@ -309,7 +309,6 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    */
   turnHandling?: Partial<TurnHandlingOptions>;
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (keyterms_options param)
   /**
    * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
    * (LLM extraction). Applies to STTs that accept a term list; on others it warns
@@ -349,7 +348,6 @@ export type AgentSessionUpdateOptions = {
    */
   turnDetection?: TurnDetectionMode | null;
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (update_options keyterms param)
   /**
    * Replace the user-defined keyterms applied to the STT. Auto-detected keyterms
    * are left untouched.
@@ -428,7 +426,6 @@ export class AgentSession<
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (self._keyterm_detector)
   /** @internal */
   readonly _keytermDetector: KeytermDetector;
 
@@ -576,7 +573,6 @@ export class AgentSession<
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (self._keyterm_detector)
     const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
     this._keytermDetector = new KeytermDetector({
       staticKeyterms: keytermsOptions.keyterms,
@@ -627,7 +623,6 @@ export class AgentSession<
     return this._chatCtx;
   }
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (AgentSession.keyterms)
   /** The effective keyterms (user-defined + auto-detected) currently applied to the STT. */
   get keyterms(): string[] {
     return this._keytermDetector.keyterms;
@@ -1031,7 +1026,6 @@ export class AgentSession<
   }
 
   updateOptions(options: AgentSessionUpdateOptions): void {
-    // Ref: python livekit-agents/livekit/agents/voice/agent_session.py (update_options keyterms)
     if (options.keyterms !== undefined) {
       this._keytermDetector.setStaticKeyterms(options.keyterms);
     }

@@ -98,10 +98,8 @@ export class STTv2 extends stt.STT {
   #opts: STTv2Options;
   #apiKey: string;
   #logger = log();
-  // Ref: python livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py (stream tracking for
   // session keyterm propagation)
   #streams = new Set<WeakRef<SpeechStreamv2>>();
-  // Ref: python .../deepgram/stt_v2.py (user keyterms; #opts.keyterms holds the effective set (user + session))
   #userKeyterms: string[];
   #sessionKeyterms: string[] = [];
 
@@ -126,7 +124,6 @@ export class STTv2 extends stt.STT {
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
-      // Ref: python .../deepgram/stt_v2.py (keyterms capability)
       keyterms: true,
     });
 
@@ -186,7 +183,6 @@ export class STTv2 extends stt.STT {
   stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
     const streamOpts = { ...this.#opts, apiKey: this.#apiKey };
     const stream = new SpeechStreamv2(this, streamOpts, options?.connOptions);
-    // Ref: python .../deepgram/stt_v2.py (self._streams weak set)
     this.#streams.add(new WeakRef(stream));
     return stream;
   }
@@ -197,7 +193,6 @@ export class STTv2 extends stt.STT {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<STTv2Options>) {
-    // Ref: python .../deepgram/stt_v2.py (update_options re-merges user keyterms with session keyterms)
     const nextOpts = { ...opts };
     if (nextOpts.keyterms !== undefined) {
       this.#userKeyterms = [...nextOpts.keyterms];
@@ -224,7 +219,6 @@ export class STTv2 extends stt.STT {
     this.#logger.debug('Updated STTv2 options');
   }
 
-  // Ref: python .../deepgram/stt_v2.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     if (
       keyterms.length === this.#sessionKeyterms.length &&
@@ -266,7 +260,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
 
-  // Ref: python .../deepgram/stt_v2.py (SpeechStreamv2._pending_keyterm)
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
   _pendingKeyterm: string[] | null = null;
@@ -285,7 +278,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
     );
   }
 
-  // Ref: python .../deepgram/stt_v2.py (STTv2 reads stream._speaking)
   /** @internal */
   get _speaking(): boolean {
     return this.#speaking;
@@ -300,7 +292,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
-    // Ref: python .../deepgram/stt_v2.py (stream update_options clears _pending_keyterm)
     if (opts.keyterms !== undefined) {
       this._pendingKeyterm = null;
     }
@@ -309,7 +300,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
     this.#reconnectEvent.set();
   }
 
-  // Ref: python .../deepgram/stt_v2.py (SpeechStreamv2._on_end_of_speech)
   #onEndOfSpeech() {
     if (this._pendingKeyterm !== null) {
       this.updateOptions({ keyterms: this._pendingKeyterm });
@@ -511,7 +501,6 @@ class SpeechStreamv2 extends stt.SpeechStream {
           type: stt.SpeechEventType.END_OF_SPEECH,
           requestId: this.#requestId,
         });
-        // Ref: python .../deepgram/stt_v2.py (apply deferred keyterms at END_OF_SPEECH)
         this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {

@@ -140,7 +140,6 @@ export class FallbackAdapter extends STT {
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
-      // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (merged capabilities)
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
       chatContext: wrapped.some((s) => !!s.capabilities.chatContext),
     });
@@ -190,7 +189,6 @@ export class FallbackAdapter extends STT {
     return this._status;
   }
 
-  // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     // forward to every underlying STT; unsupported ones warn-and-skip internally
     for (const sttInstance of this.sttInstances) {
@@ -198,7 +196,6 @@ export class FallbackAdapter extends STT {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/stt/fallback_adapter.py (_push_conversation_item)
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
     // forward to every underlying STT; unsupported ones warn-and-skip internally
     for (const sttInstance of this.sttInstances) {

@@ -120,7 +120,6 @@ export interface STTOptions {
    * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
-  // Ref: python livekit-plugins-assemblyai/livekit/plugins/assemblyai/stt.py (agent_context_carryover)
   /**
    * When the model supports it, let an `AgentSession` push each assistant reply into
    * `agentContext` so it is carried into the model's conversation context. Defaults to false;
@@ -143,7 +142,6 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #streams = new Set<WeakRef<SpeechStream>>();
-  // Ref: python .../assemblyai/stt.py (user keyterms; #opts.keytermsPrompt holds the effective
   // set (user + session))
   #userKeyterms: string[];
   #sessionKeyterms: string[] = [];
@@ -158,7 +156,6 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
-    // Ref: python .../assemblyai/stt.py (agent_context carryover is only available on the
     // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
@@ -171,7 +168,6 @@ export class STT extends stt.STT {
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
-      // Ref: python .../assemblyai/stt.py (keyterms/chat_context capabilities)
       keyterms: true,
       chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
     });
@@ -224,7 +220,6 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    // Ref: python .../assemblyai/stt.py (update_options re-merges user keyterms with the active
     // session keyterms so a user update doesn't drop them)
     const nextOpts = { ...opts };
     if (nextOpts.keytermsPrompt !== undefined) {
@@ -242,7 +237,6 @@ export class STT extends stt.STT {
     }
   }
 
-  // Ref: python .../assemblyai/stt.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     if (
       keyterms.length === this.#sessionKeyterms.length &&
@@ -264,7 +258,6 @@ export class STT extends stt.STT {
     }
   }
 
-  // Ref: python .../assemblyai/stt.py (_push_conversation_item)
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
@@ -402,7 +395,6 @@ export class SpeechStream extends stt.SpeechStream {
       end_of_turn_confidence_threshold: this.#opts.endOfTurnConfidenceThreshold,
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
-      // Ref: python .../assemblyai/stt.py (connect params: send keyterms_prompt only when non-empty)
       keyterms_prompt:
         this.#opts.keytermsPrompt !== undefined && this.#opts.keytermsPrompt.length > 0
           ? JSON.stringify(this.#opts.keytermsPrompt)

@@ -586,12 +586,10 @@ export class AgentActivity implements RecognitionHooks {
       this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py (keyterm detector metrics)
     // keyterm detection runs its own LLM, surface its usage
     this.agentSession._keytermDetector.on('metrics_collected', this.onMetricsCollected);
 
     if (this.stt instanceof STT) {
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py (keyterm detector binding)
       // bind the session's keyterm detector to this activity's STT (detection uses its
       // own LLM, configured via keytermsOptions, not the agent's)
       this.agentSession._keytermDetector.start(this.agentSession, this.stt);
@@ -1186,7 +1184,6 @@ export class AgentActivity implements RecognitionHooks {
     );
   };
 
-  // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py
   // (session.on("conversation_item_added", stt._push_conversation_item) — JS needs a stable
   // bound reference so the listener can be removed in _closeSessionResources)
   private pushConversationItemToStt = (ev: ConversationItemAddedEvent): void => {
@@ -4414,7 +4411,6 @@ export class AgentActivity implements RecognitionHooks {
     if (this.stt instanceof STT) {
       this.stt.off('metrics_collected', this.onMetricsCollected);
       this.stt.off('error', this.onModelError);
-      // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py (chat-context unsubscribe)
       this.agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
         this.pushConversationItemToStt,
@@ -4434,7 +4430,6 @@ export class AgentActivity implements RecognitionHooks {
       this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
 
-    // Ref: python livekit-agents/livekit/agents/voice/agent_activity.py (detector teardown in
     // pause/aclose; keyterm state is kept on the session and survives handoffs)
     this.agentSession._keytermDetector.off('metrics_collected', this.onMetricsCollected);
     await this.agentSession._keytermDetector.aclose();

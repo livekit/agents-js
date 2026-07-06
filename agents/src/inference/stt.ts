@@ -224,7 +224,6 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
   });
 }
 
-// Ref: python livekit-agents/livekit/agents/inference/stt.py (_keyterms_extra_for_model)
 /**
  * Return the provider's keyterm `extra` entry: user keyterms (from `extraKwargs`)
  * merged with the framework `sessionKeyterms`.
@@ -383,7 +382,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py (self._session_keyterms)
   /** framework-managed; merged into modelOptions @internal */
   _sessionKeyterms: string[] = [];
 
@@ -419,7 +417,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       interimResults: true,
       alignedTranscript: 'word',
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
-      // Ref: python livekit-agents/livekit/agents/inference/stt.py (keyterms capability)
       keyterms:
         keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
         undefined,
@@ -532,7 +529,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     if (nextOpts.model !== undefined) {
       this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
-      // Ref: python livekit-agents/livekit/agents/inference/stt.py (update_options refreshes keyterms cap)
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
       });
@@ -542,7 +538,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
-      // Ref: python livekit-agents/livekit/agents/inference/stt.py (update_options re-merges
       // the active session keyterms so a user extra update doesn't drop them)
       const keytermExtra = keytermsExtraForModel(this.opts.model, {
         extraKwargs: this.opts.modelOptions as Record<string, unknown>,
@@ -565,7 +560,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py (_update_session_keyterms)
   override _updateSessionKeyterms(keyterms: string[]): void {
     if (
       keyterms.length === this._sessionKeyterms.length &&
@@ -616,7 +610,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       settings: {
         sample_rate: String(this.opts.sampleRate),
         encoding: this.opts.encoding,
-        // Ref: python livekit-agents/livekit/agents/inference/stt.py (connect settings merge
         // the framework session keyterms into the user's extra_kwargs keyterm key)
         extra: {
           ...this.opts.modelOptions,
@@ -673,7 +666,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py (SpeechStream._pending_extra)
   // keyterm extra set while the user is speaking; applied at END_OF_SPEECH (latest wins).
   // inference applies live, but the gateway may reconnect upstream, so defer to a calm moment.
   /** @internal */
@@ -701,7 +693,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py (STT reads stream._speaking)
   /** @internal */
   get _speaking(): boolean {
     return this.speaking;
@@ -721,7 +712,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       modelOptions: mergedModelOptions,
     };
 
-    // Ref: python livekit-agents/livekit/agents/inference/stt.py (update_options clears _pending_extra)
     if (opts.modelOptions !== undefined) {
       this._pendingExtra = undefined;
     }
@@ -744,7 +734,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
-  // Ref: python livekit-agents/livekit/agents/inference/stt.py (SpeechStream._on_end_of_speech)
   private onEndOfSpeech(): void {
     if (this._pendingExtra !== undefined) {
       this.updateOptions({ modelOptions: this._pendingExtra as STTOptions<TModel> });

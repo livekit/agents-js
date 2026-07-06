@@ -36,7 +36,6 @@ export {
   TcpSessionTransport,
 } from './remote_session.js';
 export * from './events.js';
-// Ref: python livekit-agents/livekit/agents/voice/__init__.py (KeytermsOptions/KeytermDetectionOptions)
 export {
   KeytermDetector,
   type KeytermDetectionOptions,
