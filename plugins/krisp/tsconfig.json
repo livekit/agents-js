@@ -8,7 +8,7 @@
     "outDir": "./dist"
   },
   "typedocOptions": {
-    "name": "plugins/agents-plugin-fishaudio",
+    "name": "plugins/agents-plugin-krisp",
     "entryPointStrategy": "resolve",
     "readme": "none",
     "entryPoints": ["src/index.ts"]
