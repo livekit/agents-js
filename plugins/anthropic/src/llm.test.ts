@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { LLM } from './llm.js';
 
-function emptyToolCtx(): llm.ToolContext {
+function llm.ToolContext.empty(): llm.ToolContext {
   return llm.toToolContext([]);
 }
 
@@ -263,7 +263,7 @@ describe('Anthropic LLM', () => {
     const chatCtx = new llm.ChatContext();
     chatCtx.addMessage({ role: 'user', content: 'Hello, world!' });
 
-    const stream = anthropicLlm.chat({ chatCtx, toolCtx: emptyToolCtx() });
+    const stream = anthropicLlm.chat({ chatCtx, toolCtx: llm.ToolContext.empty() });
     const contentChunks: string[] = [];
     for await (const chunk of stream) {
       if (chunk.delta?.content !== undefined) {
@@ -282,7 +282,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('<thinking>hidden'),
         textDeltaEvent('still hidden</thinking>visible'),
       ],
-      emptyToolCtx(),
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('visible');
@@ -300,7 +300,7 @@ describe('Anthropic LLM', () => {
   it('preserves text around same-delta thinking blocks', async () => {
     const text = await collectTextFromEvents(
       [messageStartEvent(), textDeltaEvent('before <thinking>hidden</thinking> after')],
-      emptyToolCtx(),
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('before  after');
@@ -313,7 +313,7 @@ describe('Anthropic LLM', () => {
         textDeltaEvent('before <thinking>hidden'),
         textDeltaEvent('still hidden</thinking> after'),
       ],
-      emptyToolCtx(),
+      llm.ToolContext.empty(),
     );
 
     expect(text).toBe('before  after');
