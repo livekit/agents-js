@@ -332,17 +332,9 @@ describe('tokenizer', () => {
       expect(tokenizer.tokenize(WORDS_TEXT).every((x, i) => WORDS_EXPECTED[i] === x)).toBeTruthy();
     });
 
-    it('should keep punctuation as separate tokens when not ignored', () => {
+    it('should keep punctuation attached to words when not ignored', () => {
       const words = blingfire.splitWords('Hello world! How are you?', false);
-      expect(words.map((w) => w[0])).toStrictEqual([
-        'Hello',
-        'world',
-        '!',
-        'How',
-        'are',
-        'you',
-        '?',
-      ]);
+      expect(words.map((w) => w[0])).toStrictEqual(['Hello', 'world!', 'How', 'are', 'you?']);
       // spans must slice back to the source text
       words.forEach(([word, start, end]) => {
         expect('Hello world! How are you?'.slice(start, end)).toStrictEqual(word);

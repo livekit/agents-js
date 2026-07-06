@@ -51,16 +51,29 @@ const splitSentences = (
   return merged;
 };
 
+const punctuationRegex = new RegExp(`[${tokenizer.PUNCTUATIONS.join('')}]`, 'g');
+
 export const splitWords = (text: string, ignorePunctuation = true): [string, number, number][] => {
   const { spans } = blingfire.textToWordsWithOffsets(text);
 
   const words: [string, number, number][] = [];
-  for (const [start, end] of spans) {
+  let i = 0;
+  while (i < spans.length) {
+    const start = spans[i]![0];
+    let end = spans[i]![1];
+    i++;
+    // BlingFire emits punctuation and contraction parts as separate tokens;
+    // merge tokens not separated by whitespace so word boundaries stay
+    // whitespace-delimited like basic.splitWords. Consumers such as the
+    // transcription synchronizer's forwarding cursor rely on that.
+    while (i < spans.length && spans[i]![0] === end) {
+      end = spans[i]![1];
+      i++;
+    }
+
     let word = text.slice(start, end);
     if (ignorePunctuation) {
-      // BlingFire splits punctuation into its own tokens; dropping the
-      // all-punctuation ones matches basic.splitWords' stripping.
-      word = word.replace(new RegExp(`[${tokenizer.PUNCTUATIONS.join('')}]`, 'g'), '');
+      word = word.replace(punctuationRegex, '');
       if (!word) continue;
     }
     if (!word.trim()) continue;
