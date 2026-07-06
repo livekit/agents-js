@@ -844,6 +844,13 @@ export interface _AudioOut {
    * metric.
    */
   startedForwardingAt?: number;
+  /**
+   * Whether this segment has captured at least one of its own frames. Read by the
+   * PLAYBACK_STARTED listener registered in `performAudioForwarding` to ignore a
+   * stray event emitted by another overlapping segment before this one has played.
+   * @internal
+   */
+  _hasCapturedOwnFrame: boolean;
 }
 
 /**
@@ -873,25 +880,7 @@ async function forwardAudio(
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
 
-  // The audio output is shared across overlapping segments. When a speech is
-  // interrupted, the main loop immediately authorizes the next speech, so this
-  // forwarder can register its listener while the interrupted segment's teardown
-  // is still emitting PLAYBACK_STARTED on the same output. Only honor the event
-  // once this loop has captured its own first frame, so a stray event from
-  // another segment can't resolve our `firstFrameFut` prematurely. A premature
-  // resolution skips resampler creation (gated on `!firstFrameFut.done`) and
-  // pushes an unresampled frame to the AudioSource, raising
-  // `RtcError: sample_rate and num_channels don't match`.
-  let hasCapturedOwnFrame = false;
-
-  const onPlaybackStarted = (ev: { createdAt: number }) => {
-    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
-      out.firstFrameFut.resolve(ev.createdAt);
-    }
-  };
-
   try {
-    audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
     audioOutput.resume();
 
     while (true) {
@@ -912,8 +901,9 @@ async function forwardAudio(
       }
 
       // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
-      // the first captureFrame is attributed to this segment.
-      hasCapturedOwnFrame = true;
+      // the first captureFrame is attributed to this segment (see the listener in
+      // `performAudioForwarding`).
+      out._hasCapturedOwnFrame = true;
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
@@ -936,12 +926,24 @@ async function forwardAudio(
       throw e;
     }
   } finally {
-    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
-
-    if (!out.firstFrameFut.done) {
-      out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
-    }
-
+    // NOTE: `firstFrameFut` is intentionally NOT settled here. Forwarding completes
+    // as soon as all TTS frames are *captured*, which can be long before playback
+    // begins:
+    // - DataStream avatar outputs (`waitPlaybackStart: true`, e.g. LemonSlice)
+    //   accept frames faster than real time and only send the
+    //   `lk.playback_started` RPC once the avatar worker actually starts playing,
+    //   typically ~1s after forwarding has finished (#1960).
+    // - A speech paused in the thinking state (`resumeFalseInterruption`) buffers
+    //   its frames; playback starts only once the output resumes, possibly after
+    //   this task has finished (#1909).
+    // Rejecting the future here dropped those late playback-started events on the
+    // floor: the agent never entered the "speaking" state and an interrupted reply
+    // was classified "skipped" and silently removed from the chat context (phantom
+    // utterance). Mirror the python implementation instead: the PLAYBACK_STARTED
+    // listener registered in `performAudioForwarding` outlives this task and
+    // resolves the future when the late first frame plays; the reply tasks settle
+    // any future still pending once the playout window ends, bounding the
+    // listener's lifetime.
     reader?.releaseLock();
     audioOutput.flush();
     if (signal?.aborted) {
@@ -960,7 +962,31 @@ export function performAudioForwarding(
   const out: _AudioOut = {
     audio: [],
     firstFrameFut: new Future<number>(),
+    _hasCapturedOwnFrame: false,
   };
+
+  // Resolve `firstFrameFut` from the output's PLAYBACK_STARTED event. Registered
+  // here (rather than inside `forwardAudio`) so the listener outlives the
+  // forwarding task: frames may be captured into a paused or remote-buffered
+  // output and only start playing after forwarding has finished (#1909, #1960).
+  const onPlaybackStarted = (ev: { createdAt: number }) => {
+    // The audio output is shared across overlapping segments. Only honor the
+    // event once this segment has captured its own first frame, so a stray event
+    // from another segment can't resolve our `firstFrameFut` prematurely. A
+    // premature resolution skips resampler creation (gated on
+    // `!firstFrameFut.done`) and pushes an unresampled frame to the AudioSource,
+    // raising `RtcError: sample_rate and num_channels don't match`.
+    if (out._hasCapturedOwnFrame && !out.firstFrameFut.done) {
+      out.firstFrameFut.resolve(ev.createdAt);
+    }
+  };
+  audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  // Remove the listener once the future settles — resolved by playback above, or
+  // rejected by the reply task (via `settleFirstFrameFut`) after playout finishes
+  // or is interrupted without a frame ever playing.
+  const removeListener = () =>
+    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  out.firstFrameFut.await.then(removeListener).catch(removeListener);
 
   return [
     Task.from(
