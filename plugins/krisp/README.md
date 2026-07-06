@@ -81,7 +81,7 @@ noiseCancellation.close(); // free resources when done
 
 > **Most users should use the default LiveKit Cloud path above.** This alternative is for running the public Krisp SDK directly with your own Krisp license — for example, when using the LiveKit OSS server.
 
-This path uses the public `krisp-audio-node-sdk` together with a Krisp license key and a `.kef` model file that you obtain from Krisp.
+This path uses the proprietary `krisp-audio-node-sdk` together with a Krisp license key and a `.kef` model file that you obtain from Krisp.
 
 ### Prerequisites
 

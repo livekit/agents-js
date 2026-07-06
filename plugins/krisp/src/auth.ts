@@ -14,7 +14,7 @@
  *   authenticates against LiveKit Cloud using the room JWT, which the agent
  *   framework hands to the FrameProcessor via the standard `onCredentialsUpdated`
  *   callback.
- * - {@link KrispLicenseAuthProvider}: selects the public `krisp-audio-node-sdk`
+ * - {@link KrispLicenseAuthProvider}: selects the proprietary `krisp-audio-node-sdk`
  *   with a `.kef` model file (license key supplied via `KRISP_VIVA_SDK_LICENSE_KEY`).
  *
  * Preferred call sites use the {@link auth} namespace:
@@ -57,7 +57,7 @@ export class LiveKitCloudAuthProvider {
 }
 
 /**
- * Krisp-direct auth using the public `krisp-audio-node-sdk`.
+ * Krisp-direct auth using the proprietary `krisp-audio-node-sdk`.
  *
  * Both inputs are read from the environment, which the native SDK also relies on:
  *

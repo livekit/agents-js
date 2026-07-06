@@ -55,7 +55,7 @@ function frameDurationEnum(mod: any, frameDurationMs: number): unknown {
 }
 
 /**
- * Process-singleton ref counter for the public `krisp-audio-node-sdk`.
+ * Process-singleton ref counter for the proprietary `krisp-audio-node-sdk`.
  *
  * Krisp's `globalInit` / `globalDestroy` are process-global, so this manager
  * keeps a single SDK alive across multiple license-mode frame processors. The

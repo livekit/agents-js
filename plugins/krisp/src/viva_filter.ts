@@ -67,7 +67,7 @@ const DEFAULT_FRAME_DURATION_MS = 10;
  * Pick the auth backend when the caller did not pass one explicitly. Uses the
  * Krisp license path when both `KRISP_VIVA_SDK_LICENSE_KEY` and
  * `KRISP_VIVA_FILTER_MODEL_PATH` are set (the user is responsible for having the
- * public `krisp-audio-node-sdk` installed); otherwise falls back to LiveKit
+ * proprietary `krisp-audio-node-sdk` installed); otherwise falls back to LiveKit
  * Cloud auth.
  */
 function resolveAuthProvider(explicit?: AuthProvider): AuthProvider {
