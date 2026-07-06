@@ -9,7 +9,7 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, withMockTools } from './run_result.js';
+import { RunResult, activeMockTools, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -178,5 +178,18 @@ describe('withMockTools', () => {
     await task.result;
     expect(output.output[0]?.rawException?.message).toBe('test failure');
     expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
+  });
+});
+
+describe('RunResult', () => {
+  it('propagates speech handle errors', async () => {
+    const runResult = new RunResult();
+    const handle = SpeechHandle.create();
+    const error = new Error('generate_reply timed out.');
+
+    runResult._watchHandle(handle);
+    handle._markDone(error);
+
+    await expect(runResult.wait()).rejects.toThrow('generate_reply timed out.');
   });
 });

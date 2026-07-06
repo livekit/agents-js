@@ -75,6 +75,7 @@ import {
   Future,
   IdleTimeoutError,
   Task,
+  asError,
   cancelAndWait,
   delay,
   isDevMode,
@@ -3902,7 +3903,17 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
-      const generationEvent = await generationPromise;
+      let generationEvent: GenerationCreatedEvent;
+      try {
+        generationEvent = await generationPromise;
+      } catch (error) {
+        const cause = asError(error);
+        this.logger.error(cause, 'failed to generate a reply');
+        speechHandle._markDone(cause);
+        this.agentSession._updateAgentState('listening');
+        return;
+      }
+
       await this.realtimeGenerationTask(
         speechHandle,
         generationEvent,
