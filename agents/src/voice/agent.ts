@@ -684,6 +684,13 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       blockedTasks.push(onEnterTask);
     }
 
+    const activeRunState = session._globalRunState;
+    if (activeRunState && !activeRunState.done()) {
+      for (const task of blockedTasks) {
+        activeRunState._watchHandle(task);
+      }
+    }
+
     if (
       taskInfo.functionCall &&
       oldActivity.llm instanceof RealtimeModel &&
@@ -695,6 +702,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
       );
     }
 
+    const suspendedHandles: Array<SpeechHandle | Task<void>> = [];
+
     await session._updateActivity(this, {
       previousActivity: 'pause',
       newActivity: 'start',
@@ -702,15 +711,19 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     });
 
     let runState = session._globalRunState;
-    if (speechHandle && runState && !runState.done()) {
-      // Only unwatch the parent speech handle if there are other handles keeping the run alive.
-      // When watchedHandleCount is 1 (only the parent), unwatching would drop it to 0 and
-      // mark the run done prematurely — before function_call_output and assistant message arrive.
-      if (runState._watchedHandleCount() > 1) {
-        runState._unwatchHandle(speechHandle);
+    if (runState && !runState.done()) {
+      if (speechHandle && runState._unwatchHandle(speechHandle)) {
+        suspendedHandles.push(speechHandle);
       }
-      // it is OK to call _markDoneIfNeeded here, the above _updateActivity will call onEnter
-      // and newly added handles keep the run alive.
+
+      for (const task of blockedTasks) {
+        if (runState._unwatchHandle(task)) {
+          suspendedHandles.push(task);
+        }
+      }
+
+      // It is OK to call _markDoneIfNeeded here: _updateActivity has started
+      // the AgentTask activity, and any onEnter-generated speech is now watched.
       runState._markDoneIfNeeded();
     }
 
@@ -727,8 +740,10 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         );
         await oldActivity.close();
       } else {
-        if (speechHandle && runState && !runState.done()) {
-          runState._watchHandle(speechHandle);
+        if (runState && !runState.done()) {
+          for (const handle of suspendedHandles) {
+            runState._watchHandle(handle);
+          }
         }
 
         const mergedChatCtx = oldAgent._chatCtx.merge(this._chatCtx, {

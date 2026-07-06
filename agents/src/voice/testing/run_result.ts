@@ -195,8 +195,8 @@ export class RunResult<T = unknown> {
    * @internal
    * Unwatch a handle.
    */
-  _unwatchHandle(handle: SpeechHandle | Task<void>): void {
-    this.handles.delete(handle);
+  _unwatchHandle(handle: SpeechHandle | Task<void>): boolean {
+    const wasWatched = this.handles.delete(handle);
     const doneCallback = this.doneCallbacks.get(handle);
 
     if (doneCallback) {
@@ -207,6 +207,8 @@ export class RunResult<T = unknown> {
     if (isSpeechHandle(handle)) {
       handle._removeItemAddedCallback(this.itemAddedCallback);
     }
+
+    return wasWatched;
   }
 
   /** @internal */
