@@ -23,7 +23,7 @@
  * import { auth } from '@livekit/agents-plugin-krisp';
  *
  * auth.livekitCloud();
- * auth.krispLicense({ modelPath: '/path/to/model.kef' });
+ * auth.krispLicense();
  * ```
  */
 import { existsSync, statSync } from 'node:fs';
@@ -57,20 +57,12 @@ export class LiveKitCloudAuthProvider {
 }
 
 /**
- * Options for {@link KrispLicenseAuthProvider}.
- * @public
- */
-export interface KrispLicenseAuthProviderOptions {
-  /** Path to the Krisp `.kef` model file. Falls back to `KRISP_VIVA_FILTER_MODEL_PATH`. */
-  modelPath?: string;
-}
-
-/**
- * Krisp-direct auth using a `.kef` model file.
+ * Krisp-direct auth using the public `krisp-audio-node-sdk`.
  *
- * The `modelPath` defaults to `KRISP_VIVA_FILTER_MODEL_PATH`. The Krisp license
- * key is supplied separately via the `KRISP_VIVA_SDK_LICENSE_KEY` environment
- * variable, which the native SDK reads on initialization.
+ * Both inputs are read from the environment, which the native SDK also relies on:
+ *
+ * - `KRISP_VIVA_FILTER_MODEL_PATH` — path to the `.kef` model file.
+ * - `KRISP_VIVA_SDK_LICENSE_KEY` — Krisp license key (read by the SDK directly).
  *
  * @public
  */
@@ -79,13 +71,11 @@ export class KrispLicenseAuthProvider {
   readonly kind: typeof KRISP_LICENSE_KIND = KRISP_LICENSE_KIND;
   readonly modelPath: string;
 
-  constructor(opts: KrispLicenseAuthProviderOptions = {}) {
-    const resolvedModelPath = opts.modelPath ?? process.env.KRISP_VIVA_FILTER_MODEL_PATH;
+  constructor() {
+    const resolvedModelPath = process.env.KRISP_VIVA_FILTER_MODEL_PATH;
 
     if (!resolvedModelPath) {
-      throw new Error(
-        'Krisp model path is required. Pass modelPath=... or set KRISP_VIVA_FILTER_MODEL_PATH.',
-      );
+      throw new Error('Krisp model path is required. Set KRISP_VIVA_FILTER_MODEL_PATH.');
     }
     if (!resolvedModelPath.endsWith('.kef')) {
       throw new Error('Krisp model must have a .kef extension');
@@ -108,13 +98,12 @@ export type AuthProvider = LiveKitCloudAuthProvider | KrispLicenseAuthProvider;
  * import { auth } from '@livekit/agents-plugin-krisp';
  *
  * auth.livekitCloud();
- * auth.krispLicense({ modelPath: '/path/to/model.kef' });
+ * auth.krispLicense(); // reads KRISP_VIVA_FILTER_MODEL_PATH + KRISP_VIVA_SDK_LICENSE_KEY
  * ```
  *
  * @public
  */
 export const auth = {
   livekitCloud: (): LiveKitCloudAuthProvider => new LiveKitCloudAuthProvider(),
-  krispLicense: (opts?: KrispLicenseAuthProviderOptions): KrispLicenseAuthProvider =>
-    new KrispLicenseAuthProvider(opts),
+  krispLicense: (): KrispLicenseAuthProvider => new KrispLicenseAuthProvider(),
 };

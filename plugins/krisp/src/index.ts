@@ -31,7 +31,6 @@ export {
   type AuthProvider,
   auth,
   KrispLicenseAuthProvider,
-  type KrispLicenseAuthProviderOptions,
   LiveKitCloudAuthProvider,
 } from './auth.js';
 

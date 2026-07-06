@@ -23,7 +23,13 @@ import type {
 import { FrameProcessor } from '@livekit/rtc-node';
 import { createRequire } from 'node:module';
 import { KrispLicenseFrameProcessor } from './_krisp.js';
-import { type AuthProvider, LIVEKIT_CLOUD_KIND, LiveKitCloudAuthProvider } from './auth.js';
+import {
+  type AuthProvider,
+  KrispLicenseAuthProvider,
+  LIVEKIT_CLOUD_KIND,
+  LiveKitCloudAuthProvider,
+} from './auth.js';
+import { log } from './log.js';
 
 const require = createRequire(import.meta.url);
 
@@ -45,10 +51,10 @@ interface KrispBackend extends FrameProcessor<AudioFrame> {
  */
 export interface KrispVivaFilterOptions {
   /**
-   * Authentication backend. Defaults to {@link LiveKitCloudAuthProvider}
-   * (LiveKit Cloud auth + bundled model — no keys or model files). Pass a
-   * {@link KrispLicenseAuthProvider} to use a Krisp license key + `.kef` model
-   * file directly.
+   * Authentication backend. When omitted, it is resolved from the environment:
+   * the Krisp license path ({@link KrispLicenseAuthProvider}) is used when both
+   * `KRISP_VIVA_SDK_LICENSE_KEY` and `KRISP_VIVA_FILTER_MODEL_PATH` are set;
+   * otherwise it falls back to LiveKit Cloud auth ({@link LiveKitCloudAuthProvider}).
    */
   authProvider: AuthProvider;
   /** Noise suppression strength, 0..=100 where 100 is maximum suppression. Default 100. */
@@ -56,6 +62,25 @@ export interface KrispVivaFilterOptions {
 }
 
 const DEFAULT_FRAME_DURATION_MS = 10;
+
+/**
+ * Pick the auth backend when the caller did not pass one explicitly. Uses the
+ * Krisp license path when both `KRISP_VIVA_SDK_LICENSE_KEY` and
+ * `KRISP_VIVA_FILTER_MODEL_PATH` are set (the user is responsible for having the
+ * public `krisp-audio-node-sdk` installed); otherwise falls back to LiveKit
+ * Cloud auth.
+ */
+function resolveAuthProvider(explicit?: AuthProvider): AuthProvider {
+  if (explicit) {
+    return explicit;
+  }
+  if (process.env.KRISP_VIVA_SDK_LICENSE_KEY && process.env.KRISP_VIVA_FILTER_MODEL_PATH) {
+    log().debug('Krisp: using license auth (env vars set)');
+    return new KrispLicenseAuthProvider();
+  }
+  log().debug('Krisp: using LiveKit Cloud auth');
+  return new LiveKitCloudAuthProvider();
+}
 
 function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): KrispBackend {
   if (provider.kind === LIVEKIT_CLOUD_KIND) {
@@ -89,19 +114,21 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
  * FrameProcessor for Krisp noise reduction.
  *
  * Thin facade over two backend FrameProcessor implementations: the LiveKit
- * Cloud-bundled package (default) and a local wrapper around the public
- * `krisp-audio-node-sdk` (selected via {@link KrispLicenseAuthProvider}).
+ * Cloud-bundled package and a local wrapper around the public
+ * `krisp-audio-node-sdk`. When no `authProvider` is given, the backend is
+ * resolved from the environment (see {@link KrispVivaFilterOptions.authProvider}).
  *
  * @example
  * ```ts
  * import * as krisp from '@livekit/agents-plugin-krisp';
  *
- * // Default: LiveKit Cloud auth + bundled model. No keys or model files.
+ * // Auto-resolves: Krisp license path if both KRISP_VIVA_SDK_LICENSE_KEY and
+ * // KRISP_VIVA_FILTER_MODEL_PATH are set, else LiveKit Cloud auth.
  * const processor = krisp.vivaFilter();
  *
- * // Or, explicit Krisp-direct auth with a license + model file.
+ * // Or pin a backend explicitly.
  * const processor = krisp.vivaFilter({
- *   authProvider: krisp.auth.krispLicense({ modelPath: '/path/to/model.kef' }),
+ *   authProvider: krisp.auth.krispLicense(),
  * });
  *
  * await session.start({
@@ -118,7 +145,7 @@ export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
 
   constructor(opts: Partial<KrispVivaFilterOptions> = {}) {
     super();
-    const provider = opts.authProvider ?? new LiveKitCloudAuthProvider();
+    const provider = resolveAuthProvider(opts.authProvider);
     this.inner = buildBackend(provider, opts.noiseSuppressionLevel ?? 100);
   }
 

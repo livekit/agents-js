@@ -22,7 +22,7 @@ The default backend is bundled with the plugin and authenticates through LiveKit
 
 ## Quick start
 
-By default, `krisp.vivaFilter()` uses **LiveKit Cloud** authentication: the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically.
+`krisp.vivaFilter()` resolves its backend from the environment: if both `KRISP_VIVA_SDK_LICENSE_KEY` and `KRISP_VIVA_FILTER_MODEL_PATH` are set, it uses the [Krisp license path](#alternative-krisp-license-auth) (you are responsible for installing `krisp-audio-node-sdk`); otherwise it uses **LiveKit Cloud** authentication — the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically. Pass `authProvider` to pin a backend explicitly.
 
 Pass the processor as `noiseCancellation` in the session's input options:
 
@@ -100,22 +100,18 @@ This path uses the public `krisp-audio-node-sdk` together with a Krisp license k
 
 ### Usage
 
-Select the license backend by passing `authProvider`. The license key is read
-from `KRISP_VIVA_SDK_LICENSE_KEY` by the native SDK, so `krispLicense()` only
-needs the model path:
+Select the license backend by passing `authProvider`. Both the model path and
+the license key come from the environment variables above (read by the native
+SDK), so `krispLicense()` takes no arguments:
 
 ```ts
 import * as krisp from '@livekit/agents-plugin-krisp';
 
 const noiseCancellation = krisp.vivaFilter({
-  authProvider: krisp.auth.krispLicense({
-    modelPath: '/path/to/noise_model.kef', // or KRISP_VIVA_FILTER_MODEL_PATH
-  }),
+  authProvider: krisp.auth.krispLicense(),
   noiseSuppressionLevel: 100,
 });
 ```
-
-`modelPath` falls back to `KRISP_VIVA_FILTER_MODEL_PATH` when omitted.
 
 ## Troubleshooting
 
