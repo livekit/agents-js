@@ -777,6 +777,20 @@ export class ChatContext {
     }
   }
 
+  /**
+   * Remove the first item from the chat context by item or item ID.
+   *
+   * Throws if the item or ID is not found.
+   */
+  remove(item: ChatItem | string): void {
+    const itemId = typeof item === 'string' ? item : item.id;
+    const idx = this.indexById(itemId);
+    if (idx === undefined) {
+      throw new Error(`Item not found: ${typeof item === 'string' ? item : item.id}`);
+    }
+    this._items.splice(idx, 1);
+  }
+
   getById(itemId: string): ChatItem | undefined {
     return this._items.find((i) => i.id === itemId);
   }
