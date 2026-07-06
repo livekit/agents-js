@@ -50,8 +50,9 @@ Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `agentId` | `string` | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided. |
-| `agentImageUrl` | `AvatarImage` | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided. |
+| `agentId` | `string` | The LemonSlice agent ID to use. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImageUrl` | `string` | A publicly accessible url to your avatar image. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImage` | `string \| Buffer` | A local image file path or Buffer to upload as the agent's avatar. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
 | `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
