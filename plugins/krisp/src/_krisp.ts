@@ -20,6 +20,7 @@
  * The frame buffering / reframing logic is ported from the Python plugin.
  */
 import { AudioFrame, FrameProcessor } from '@livekit/rtc-node';
+import type { KrispEnumMember, KrispModule, KrispNcSession } from 'krisp-audio-node-sdk';
 import { createRequire } from 'node:module';
 import { log } from './log.js';
 
@@ -29,8 +30,7 @@ const SUPPORTED_SAMPLE_RATES: Array<number> = [8000, 16000, 24000, 32000, 44100,
 const SUPPORTED_FRAME_DURATIONS_MS: Array<number> = [10, 15, 20, 30, 32] as const;
 
 /** Map a sample rate (Hz) to the SDK's `enums.SamplingRate.Sr<rate>Hz` member. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function samplingRateEnum(mod: any, sampleRate: number): unknown {
+function samplingRateEnum(mod: KrispModule, sampleRate: number): KrispEnumMember {
   const value = mod.enums?.SamplingRate?.[`Sr${sampleRate}Hz`];
   if (value === undefined) {
     throw new Error(
@@ -42,8 +42,7 @@ function samplingRateEnum(mod: any, sampleRate: number): unknown {
 }
 
 /** Map a frame duration (ms) to the SDK's `enums.FrameDuration.Fd<ms>ms` member. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function frameDurationEnum(mod: any, frameDurationMs: number): unknown {
+function frameDurationEnum(mod: KrispModule, frameDurationMs: number): KrispEnumMember {
   const value = mod.enums?.FrameDuration?.[`Fd${frameDurationMs}ms`];
   if (value === undefined) {
     throw new Error(
@@ -63,21 +62,18 @@ function frameDurationEnum(mod: any, frameDurationMs: number): unknown {
  * deployments.
  */
 class KrispLicenseSdkManager {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private static module: any = null;
+  private static module: KrispModule | null = null;
   private static referenceCount = 0;
 
   /** Acquire a reference, returning the loaded `krisp-audio-node-sdk` module. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static acquire(): any {
+  static acquire(): KrispModule {
     if (this.referenceCount === 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let mod: any;
+      let mod: KrispModule;
       try {
         mod = require('krisp-audio-node-sdk');
       } catch {
         throw new Error(
-          'krisp-audio-node-sdk is not installed. Install the public Krisp Node SDK ' +
+          'krisp-audio-node-sdk is not installed. Install the proprietary Krisp Node SDK ' +
             '(`pnpm add krisp-audio-node-sdk`) and provide a .kef model, or use the ' +
             'default LiveKit Cloud auth provider (auth.livekitCloud()).',
         );
@@ -92,7 +88,8 @@ class KrispLicenseSdkManager {
     }
     this.referenceCount += 1;
     log().debug(`Krisp SDK (license) reference count: ${this.referenceCount}`);
-    return this.module;
+    // Non-null once refCount > 0: release() only nulls the module at refCount 0.
+    return this.module!;
   }
 
   /** Release a reference, destroying the SDK on the last release. */
@@ -146,11 +143,10 @@ export interface KrispLicenseFrameProcessorOptions {
  */
 export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
   private enabled = true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private module: any;
+
   private sdkAcquired = false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private session: any = null;
+  private module: KrispModule;
+  private session: KrispNcSession | null = null;
   private level: number;
   private readonly frameDurationMs: number;
   private readonly modelPath: string;
@@ -283,7 +279,8 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
         const chunkIn = pending.subarray(i * chunk, (i + 1) * chunk);
         let chunkOut: Int16Array;
         try {
-          chunkOut = this.session.process(chunkIn, this.level);
+          // Non-null: the guard above (re)creates the session or throws.
+          chunkOut = this.session!.process(chunkIn, this.level);
         } catch (e) {
           log().error(`Error processing frame: ${e}`);
           chunkOut = chunkIn;
