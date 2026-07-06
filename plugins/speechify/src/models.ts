@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Speechify, Inc.
+// SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
