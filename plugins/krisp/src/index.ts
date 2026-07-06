@@ -39,7 +39,7 @@ export {
  *
  * Pass the result as `noiseCancellation` in the session's input options. Uses
  * LiveKit Cloud auth by default; pass `authProvider: auth.krispLicense(...)` to
- * run the public Krisp SDK with your own license + `.kef` model.
+ * run the proprietary Krisp SDK with your own license + `.kef` model.
  *
  * @public
  */

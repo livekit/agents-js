@@ -79,7 +79,7 @@ noiseCancellation.close(); // free resources when done
 
 ## Alternative: Krisp license auth
 
-> **Most users should use the default LiveKit Cloud path above.** This alternative is for running the public Krisp SDK directly with your own Krisp license — for example, when using the LiveKit OSS server.
+> **Most users should use the default LiveKit Cloud path above.** This alternative is for running the proprietary Krisp SDK directly with your own Krisp license — for example, when using the LiveKit OSS server.
 
 This path uses the proprietary `krisp-audio-node-sdk` together with a Krisp license key and a `.kef` model file that you obtain from Krisp.
 
@@ -121,7 +121,7 @@ The default (LiveKit Cloud) backend is bundled as a dependency. If it reports as
 
 ### "krisp-audio-node-sdk is not installed" _(license auth only)_
 
-Install the public Krisp Node SDK (`pnpm add krisp-audio-node-sdk`), or use the default `auth.livekitCloud()` provider.
+Install the proprietary Krisp Node SDK (`pnpm add krisp-audio-node-sdk`), or use the default `auth.livekitCloud()` provider.
 
 ### "Krisp model path is required" / "Krisp model file not found" _(license auth only)_
 
