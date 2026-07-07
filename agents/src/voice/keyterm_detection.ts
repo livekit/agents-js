@@ -287,7 +287,9 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
     // static keyterms must reach the recognizer even with detection disabled
     if (stt !== this.stt) {
       this.stt = stt;
-      if (this.keyterms.length > 0) {
+      // push even an empty list to a keyterm-capable STT: a reused instance may
+      // still hold session keyterms from a previous detector binding
+      if (this.keyterms.length > 0 || stt.capabilities.keyterms) {
         this.stt._updateSessionKeyterms(this.keyterms);
       }
     }
@@ -362,9 +364,9 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
 
     // snapshot the transcript now so the pass isn't affected by later turns
     const snapshot = KeytermDetector.snapshot(session);
-    this._detectTask = Task.from(async () => {
+    this._detectTask = Task.from(async (controller) => {
       try {
-        await this.runOnce(snapshot);
+        await this.runOnce(snapshot, controller.signal);
       } catch (error) {
         this.#logger.child({ error }).error('keyterm detection pass failed');
         throw error;
@@ -384,7 +386,7 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
   }
 
   /** @internal exposed for tests */
-  async runOnce(chatCtx: ChatContext): Promise<void> {
+  async runOnce(chatCtx: ChatContext, abortSignal?: AbortSignal): Promise<void> {
     if (!(this.llm instanceof LLM)) {
       return;
     }
@@ -399,7 +401,13 @@ export class KeytermDetector extends (EventEmitter as new () => TypedEmitter<Key
       currentKeyterms: current,
       instructions: this.instructions,
       timeout: this.detectionTimeout,
+      abortSignal,
     });
+
+    // cancelled mid-flight (e.g. activity shutdown): don't touch keyterm state
+    if (abortSignal?.aborted) {
+      return;
+    }
 
     const before = this.keyterms;
     this.tick += 1;
@@ -478,10 +486,15 @@ export async function detectKeyterms(
     instructions?: string;
     currentKeyterms?: [string, boolean][];
     timeout?: number;
+    abortSignal?: AbortSignal;
   },
 ): Promise<[string[], string[], string[]]> {
   const current = opts?.currentKeyterms ?? [];
   const timeout = opts?.timeout ?? DETECTION_TIMEOUT;
+  const abortSignal = opts?.abortSignal;
+  if (abortSignal?.aborted) {
+    return [[], [], []];
+  }
   const userMsg = formatInput(chatCtx, current);
   if (userMsg === undefined) {
     // no transcript yet — nothing to detect
@@ -503,11 +516,19 @@ export async function detectKeyterms(
     () => timedOut,
     () => timedOut, // aborted: the collect() already won the race
   );
+  // cancellation parity with Python: closing the stream ends its output queue,
+  // which unblocks collect() immediately instead of waiting out the LLM request
+  const onAbort = () => stream.close();
+  abortSignal?.addEventListener('abort', onAbort, { once: true });
   let raced: Awaited<ReturnType<typeof stream.collect>> | typeof timedOut;
   try {
     raced = await Promise.race([stream.collect(), timeoutPromise]);
   } finally {
     timeoutController.abort();
+    abortSignal?.removeEventListener('abort', onAbort);
+  }
+  if (abortSignal?.aborted) {
+    return [[], [], []];
   }
   if (raced === timedOut) {
     stream.close();

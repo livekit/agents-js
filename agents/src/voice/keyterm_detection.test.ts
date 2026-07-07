@@ -120,13 +120,23 @@ class RecordingLLM extends LLM {
 }
 
 class BlockingStream extends FakeStream {
-  constructor(private gate: Future) {
-    super([], [], []);
+  constructor(
+    private gate: Future,
+    result: DetectionResult = [[], [], []],
+  ) {
+    super(...result);
   }
 
   override async collect() {
     await this.gate.await;
     return super.collect();
+  }
+
+  // mirror the real LLMStream: close() ends the output queue, unblocking collect()
+  override close(): void {
+    if (!this.gate.done) {
+      this.gate.resolve();
+    }
   }
 }
 
@@ -135,13 +145,17 @@ class BlockingLLM extends LLM {
   gate = new Future();
   calls = 0;
 
+  constructor(private result: DetectionResult = [[], [], []]) {
+    super();
+  }
+
   label(): string {
     return 'blocking-llm';
   }
 
   chat(_: { chatCtx: ChatContext }): LLMStream {
     this.calls += 1;
-    return new BlockingStream(this.gate) as unknown as LLMStream;
+    return new BlockingStream(this.gate, this.result) as unknown as LLMStream;
   }
 }
 
@@ -402,11 +416,22 @@ describe('STT binding', () => {
     await d.aclose();
   });
 
-  it('start without terms does not push', async () => {
+  it('start pushes empty list to keyterm-capable stt', async () => {
     const stt = new RecordingSTT();
     const session = new FakeSession();
+    // simulate an earlier binding that left session keyterms on the instance
+    stt._updateSessionKeyterms(['Stale']);
     const d = detector({ options: { enabled: false } });
-    d.start(session, stt); // nothing to apply -> no push, no capability warning
+    d.start(session, stt); // empty set still pushed, so stale terms are cleared
+    expect(stt.pushed).toEqual([['Stale'], []]);
+    await d.aclose();
+  });
+
+  it('start without terms does not warn unsupported stt', async () => {
+    const stt = new RecordingSTT({ supportsKeyterms: false });
+    const session = new FakeSession();
+    const d = detector({ options: { enabled: false } });
+    d.start(session, stt); // nothing to apply + no capability -> no push, no warning
     expect(stt.pushed).toEqual([]);
     await d.aclose();
   });
@@ -530,6 +555,27 @@ describe('triggering', () => {
     await drain(d);
     expect(fake.calls).toBe(1);
     await d.aclose();
+  });
+
+  it('aclose cancels an in-flight pass without applying its result', async () => {
+    const session = new FakeSession();
+    // if the pass were allowed to finish, it would confirm "Acme"
+    const fake = new BlockingLLM([[], ['Acme'], []]);
+    const stt = new RecordingSTT();
+    const d = detector({ options: { enabled: true, llm: fake } });
+    d.start(session, stt);
+    expect(stt.pushed).toEqual([[]]); // bind-time push of the (empty) current set
+
+    session.addUser('hi');
+    await Promise.resolve();
+    expect(fake.calls).toBe(1);
+
+    // the gate is never resolved by the test: aclose must unblock the pass itself
+    // (via the abort signal) instead of waiting out the detection timeout
+    await d.aclose();
+
+    expect(d.keyterms).toEqual([]); // cancelled pass must not touch state
+    expect(stt.pushed).toEqual([[]]); // ...nor push to the STT
   });
 
   it('aclose unsubscribes', async () => {
