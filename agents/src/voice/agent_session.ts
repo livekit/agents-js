@@ -92,6 +92,11 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import {
+  KeytermDetector,
+  type KeytermsOptions,
+  resolveKeytermsOptions,
+} from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -178,6 +183,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
+  keytermsOptions: KeytermsOptions;
   userAwayTimeout: number | null;
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
@@ -191,6 +197,7 @@ export const defaultAgentSessionOptions = {
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,
   turnHandling: {},
+  keytermsOptions: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
 } as const satisfies AgentSessionOptions;
@@ -306,6 +313,9 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
 
   useTtsAlignedTranscript?: boolean;
 
+  /** Keyterm biasing for STTs that accept a term list. */
+  keytermsOptions?: KeytermsOptions;
+
   /**
    * Transforms to apply to TTS input text. Built-in transforms are `filter_markdown`
    * and `filter_emoji`; pass `null` to disable text transforms.
@@ -335,6 +345,8 @@ export type AgentSessionUpdateOptions = {
    * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
    */
   turnDetection?: TurnDetectionMode | null;
+  /** Replace the user-defined keyterms applied to the STT. Auto-detected keyterms are kept. */
+  keyterms?: string[];
 };
 
 type ActivityTransitionOptions = {
@@ -368,6 +380,8 @@ export class AgentSession<
   private sessionHost?: SessionHost;
 
   private _chatCtx: ChatContext;
+  /** @internal */
+  _keytermDetector: KeytermDetector;
   private _userData: UserData | undefined;
   private _toolCtx: ToolContext<UserData>;
   private _userState: UserState = 'listening';
@@ -551,6 +565,11 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+    this.sessionOptions.keytermsOptions = resolveKeytermsOptions(opts.keytermsOptions);
+    this._keytermDetector = new KeytermDetector({
+      staticKeyterms: this.sessionOptions.keytermsOptions.keyterms,
+      options: this.sessionOptions.keytermsOptions.keytermDetection,
+    });
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
@@ -610,6 +629,10 @@ export class AgentSession<
   get usage(): AgentSessionUsage {
     // Skip zero fields for more concise usage display (matches python behavior).
     return { modelUsage: this._usageCollector.flatten().map(filterZeroValues) };
+  }
+
+  get keyterms(): string[] {
+    return this._keytermDetector.keyterms;
   }
 
   get useTtsAlignedTranscript(): boolean {
@@ -1018,6 +1041,10 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+    }
+
+    if (options.keyterms !== undefined) {
+      this._keytermDetector.setStaticKeyterms(options.keyterms);
     }
 
     if (this.activity) {
