@@ -536,7 +536,11 @@ export class Agent<UserData = any> {
         wrappedTts = new TTSStreamAdapter(wrappedTts, new BasicSentenceTokenizer());
       }
 
-      activity.tts._setExpressive(activity._isExpressiveActive());
+      const isExpressiveActive = (activity as { _isExpressiveActive?: () => boolean })
+        ._isExpressiveActive;
+      const setExpressive = (activity.tts as { _setExpressive?: (enabled: boolean) => void })
+        ._setExpressive;
+      setExpressive?.(isExpressiveActive?.() ?? false);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });
