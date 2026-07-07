@@ -10,8 +10,8 @@
  * Raised when the model behaves in a way the run cannot recover from.
  */
 export class UnexpectedModelBehavior extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'UnexpectedModelBehavior';
     Error.captureStackTrace(this, UnexpectedModelBehavior);
   }

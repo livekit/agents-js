@@ -1113,7 +1113,11 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input and optional output type
+   * @param options - Run options including user input and optional output type.
+   *   When `outputType` is set and the turn ends without structured output, the
+   *   run re-prompts the model up to `outputOptions.maxRetries` times (default 2)
+   *   before rejecting with `UnexpectedModelBehavior`. Pass `outputOptions: null`
+   *   to disable retries entirely.
    * @returns A RunResult that resolves when the agent finishes responding
    */
   run<T = unknown>({

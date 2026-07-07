@@ -41,6 +41,13 @@ const OUTPUT_RETRY_PROMPT =
   'You have not provided the final output yet. Call the appropriate function ' +
   'to do so; a plain text response alone is not enough.';
 
+/**
+ * Structured-output behavior for `AgentSession.run`.
+ *
+ * Pass `outputOptions: null` to `run()` to disable the retry behavior
+ * entirely (equivalent to `{ maxRetries: 0 }`); omitting the option uses the
+ * defaults below.
+ */
 export type RunOutputOptions = {
   /** Re-prompts when a run ends without its output type. Defaults to 2. */
   maxRetries?: number;
@@ -68,6 +75,7 @@ export class RunResult<T = unknown> {
   private outputType?: OutputSchema<T>;
   private outputRetries: number;
   private outputRetryInstructions: string;
+  private outputRetryError?: unknown;
   private session?: AgentSession;
   private finalOutputValue?: T;
   private hasFinalOutput = false;
@@ -279,12 +287,17 @@ export class RunResult<T = unknown> {
     if (this.outputType) {
       const result = this.outputType.safeParse(finalOutput);
       if (!result.success) {
+        // Only a missing output is retryable. Unlike Python (where a task
+        // completed with None is indistinguishable from one that never
+        // completed), a task completed with null is one-shot — re-prompting
+        // cannot change its result, so it fails immediately.
         if (finalOutput === undefined && this._maybeRetryOutput()) {
           return;
         }
         this.doneFut.reject(
           new UnexpectedModelBehavior(
             `Expected output matching provided zod schema: ${result.error.message}`,
+            this.outputRetryError !== undefined ? { cause: this.outputRetryError } : undefined,
           ),
         );
         return;
@@ -310,18 +323,20 @@ export class RunResult<T = unknown> {
 
     try {
       this.session.generateReply({ instructions: this.outputRetryInstructions });
-    } catch {
+    } catch (error) {
+      // Fall through to UnexpectedModelBehavior; surface the real failure
+      // (e.g. a closing session) as the rejection's cause instead of hiding
+      // it behind a schema-mismatch message.
+      this.outputRetryError = error;
       return false;
     }
 
-    try {
-      log().warn(
-        { outputType: this.outputType?.description },
-        'run ended without the expected output type, retrying',
-      );
-    } catch {
-      // Logging may be uninitialized in lightweight tests.
-    }
+    // zod schemas have no name; description (via .describe()) is the most
+    // useful label, with the schema class name as fallback.
+    log().warn(
+      { outputType: this.outputType?.description ?? this.outputType?.constructor?.name },
+      'run ended without the expected output type, retrying',
+    );
     return true;
   }
 
