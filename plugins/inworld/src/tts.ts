@@ -423,7 +423,7 @@ class ChunkedStream extends tts.ChunkedStream {
     };
 
     const bodyParams: SynthesizeRequest = {
-      text: this.inputText,
+      text: tts.convertMarkup('inworld', this.inputText),
       voiceId: this.#opts.voice,
       modelId: this.#opts.model,
       audioConfig: audioConfig,
@@ -726,7 +726,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
-        await this.#sendText(ws, ev.token);
+        await this.#sendText(ws, tts.convertMarkup('inworld', ev.token));
       }
     };
     const sendPromise = sendLoop();
@@ -738,7 +738,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
         if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
           tokenizerStream.flush();
         } else {
-          tokenizerStream.pushText(text);
+          tokenizerStream.pushText(tts.normalizeMarkup('inworld', text));
         }
       }
       tokenizerStream.endInput();

@@ -28,6 +28,7 @@ const defaultSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
 
 const defaultLegacyVoiceOptions: VoiceOptions = {

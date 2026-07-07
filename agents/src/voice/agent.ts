@@ -34,7 +34,7 @@ import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
-import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, ExpressiveOptions, TurnDetectionMode } from './agent_session.js';
 import {
   type AgentCreateOptions,
   type AgentTaskCreateOptions,
@@ -141,6 +141,7 @@ export interface AgentOptions<UserData> {
   vad?: VAD;
   llm?: LLM | RealtimeModel | LLMModels;
   tts?: TTS | TTSModelString;
+  expressive?: boolean | ExpressiveOptions;
   turnHandling?: TurnHandlingOptions;
   toolHandling?: ToolHandlingOptions;
   minConsecutiveSpeechDelay?: number;
@@ -158,6 +159,7 @@ export class Agent<UserData = any> {
   private _llm?: LLM | RealtimeModel;
   private _tts?: TTS;
   private _turnHandling?: Partial<TurnHandlingOptions>;
+  private _expressive?: boolean | ExpressiveOptions;
 
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
@@ -191,6 +193,7 @@ export class Agent<UserData = any> {
     vad,
     llm,
     tts,
+    expressive,
     allowInterruptions,
     turnHandling,
     toolHandling,
@@ -250,6 +253,7 @@ export class Agent<UserData = any> {
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
+    this._expressive = expressive;
 
     this._agentActivity = undefined;
   }
@@ -272,6 +276,10 @@ export class Agent<UserData = any> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
+  }
+
+  get expressive(): boolean | ExpressiveOptions | undefined {
+    return this._expressive;
   }
 
   get chatCtx(): ReadonlyChatContext {

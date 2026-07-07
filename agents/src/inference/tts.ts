@@ -13,6 +13,7 @@ import { createStreamChannel } from '../stream/stream_channel.js';
 import { basic as tokenizeBasic } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
+import { convertMarkup, normalizeMarkup } from '../tts/provider_format.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   Event,
@@ -597,7 +598,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        sendTokenizerStream.pushText(normalizeMarkup(this.opts.model, data));
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -617,11 +618,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        const transcript = convertMarkup(this.opts.model, ev.token);
         this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
-            transcript: ev.token + ' ',
+            transcript: transcript + ' ',
             generation_config: generationConfig,
             extra: (this.opts.modelOptions as Record<string, unknown>) ?? {},
           },

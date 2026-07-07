@@ -123,6 +123,21 @@ export interface AgentSessionUsage {
   modelUsage: Array<Partial<ModelUsage>>;
 }
 
+export interface ExpressiveOptions {
+  /** Template used to inject provider-specific TTS marker instructions. */
+  ttsInstructionsTemplate?: string | Instructions;
+  /** Extra expressive guidance appended after the rendered template. */
+  ttsInstructionsAppend?: string;
+}
+
+export const DEFAULT_EXPRESSIVE_OPTIONS: Required<ExpressiveOptions> = {
+  ttsInstructionsTemplate:
+    'You can control how you speak using the following formatting tags. ' +
+    'Use them when appropriate to make your speech more expressive and natural:\n\n' +
+    '{tts.markup.llm_instructions}',
+  ttsInstructionsAppend: '',
+};
+
 /**
  * Granular control over which recording features are active.
  *
@@ -187,6 +202,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  expressive: boolean | ExpressiveOptions;
 }
 
 export const defaultAgentSessionOptions = {
@@ -198,6 +214,7 @@ export const defaultAgentSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -323,6 +340,9 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /** Enable expressive TTS marker prompting for supported inference TTS providers. */
+  expressive?: boolean | ExpressiveOptions;
 };
 
 export type AgentSessionUpdateOptions = {

@@ -17,8 +17,10 @@ export {
 export * from './amd.js';
 export {
   AgentSession,
+  DEFAULT_EXPRESSIVE_OPTIONS,
   type AgentSessionOptions,
   type AgentSessionUsage,
+  type ExpressiveOptions,
   type VoiceOptions,
 } from './agent_session.js';
 export * from './avatar/index.js';
