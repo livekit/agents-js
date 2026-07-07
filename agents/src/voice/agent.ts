@@ -724,7 +724,13 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
 
       // It is OK to call _markDoneIfNeeded here: _updateActivity has started
       // the AgentTask activity, and any onEnter-generated speech is now watched.
-      runState._markDoneIfNeeded();
+      // Only call it when something was actually suspended — a run created
+      // mid-transition has no watched handles yet (its generateReply is still
+      // deferred behind the activity lock), and marking done on an empty
+      // handle set would resolve it before it produced any events.
+      if (suspendedHandles.length > 0) {
+        runState._markDoneIfNeeded();
+      }
     }
 
     try {
