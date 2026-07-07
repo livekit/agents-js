@@ -7,6 +7,17 @@
 // streams, fetch, and the broader Web API ecosystem.
 
 /**
+ * Raised when the model behaves in a way the run cannot recover from.
+ */
+export class UnexpectedModelBehavior extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnexpectedModelBehavior';
+    Error.captureStackTrace(this, UnexpectedModelBehavior);
+  }
+}
+
+/**
  * Raised when accepting a job but not receiving an assignment within the specified timeout.
  * The server may have chosen another worker to handle this job.
  */

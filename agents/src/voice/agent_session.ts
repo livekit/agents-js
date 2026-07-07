@@ -97,7 +97,7 @@ import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { RunResult } from './testing/run_result.js';
+import { type RunOutputOptions, RunResult } from './testing/run_result.js';
 import {
   type AsyncToolOptions,
   type ToolHandlingOptions,
@@ -1120,10 +1120,12 @@ export class AgentSession<
     userInput,
     inputModality,
     outputType,
+    outputOptions,
   }: {
     userInput: string;
     inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
+    outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
@@ -1132,6 +1134,8 @@ export class AgentSession<
     const runState = new RunResult<T>({
       userInput,
       outputType,
+      outputOptions,
+      session: this,
     });
 
     this._globalRunState = runState;
