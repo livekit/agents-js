@@ -6,6 +6,8 @@ import {
   type APIConnectOptions,
   type AudioBuffer,
   AudioByteStream,
+  ChatMessage,
+  type ConversationItemAddedEvent,
   Future,
   Task,
   createTimedString,
@@ -118,6 +120,13 @@ export interface STTOptions {
    * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  /**
+   * When the model supports it, let an `AgentSession` push each assistant reply into
+   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
+   * set true to enable. Prior user turns are carried automatically by the model regardless of
+   * this flag. Ignored on models without context support.
+   */
+  agentContextCarryover?: boolean;
   baseUrl: string;
 }
 
@@ -133,6 +142,9 @@ const defaultSTTOptions: STTOptions = {
 export class STT extends stt.STT {
   #opts: STTOptions;
   #streams = new Set<WeakRef<SpeechStream>>();
+  // set (user + session))
+  #userKeyterms: string[];
+  #sessionKeyterms: string[] = [];
   label = 'assemblyai.STT';
 
   get model(): string {
@@ -144,10 +156,20 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
+    // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
+    const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
+    const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
+    if (opts.agentContextCarryover && !supportsCarryover) {
+      log().warn(
+        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+      );
+    }
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      keyterms: true,
+      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
     });
 
     if (opts.speechModel === 'u3-pro') {
@@ -189,6 +211,7 @@ export class STT extends stt.STT {
       apiKey,
       minTurnSilence,
     };
+    this.#userKeyterms = [...(this.#opts.keytermsPrompt ?? [])];
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -197,14 +220,48 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = { ...this.#opts, ...opts };
+    // session keyterms so a user update doesn't drop them)
+    const nextOpts = { ...opts };
+    if (nextOpts.keytermsPrompt !== undefined) {
+      this.#userKeyterms = [...nextOpts.keytermsPrompt];
+      nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
+    }
+    this.#opts = { ...this.#opts, ...nextOpts };
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
-        stream.updateOptions(opts);
+        stream.updateOptions(nextOpts);
       } else {
         this.#streams.delete(ref);
       }
+    }
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this.#sessionKeyterms[i])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    const merged = [...new Set([...this.#userKeyterms, ...keyterms])];
+    this.#opts.keytermsPrompt = merged;
+    // applied live via the stream's UpdateConfiguration (no reconnect)
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions({ keytermsPrompt: merged });
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      this.updateOptions({ agentContext: chatItem.textContent });
     }
   }
 
@@ -339,7 +396,7 @@ export class SpeechStream extends stt.SpeechStream {
       min_turn_silence: minSilence,
       max_turn_silence: maxSilence,
       keyterms_prompt:
-        this.#opts.keytermsPrompt !== undefined
+        this.#opts.keytermsPrompt !== undefined && this.#opts.keytermsPrompt.length > 0
           ? JSON.stringify(this.#opts.keytermsPrompt)
           : undefined,
       language_detection: languageDetection,

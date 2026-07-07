@@ -412,16 +412,22 @@ export class LLMStream extends llm.LLMStream {
       // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
         ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+            // zod v3 conversion embeds a `$schema` URI ("draft/2019-09") that some gateway
+            // deployments reject, silently ending the stream with no tool call. Python's
+            // pydantic schemas carry no `$schema` key, so strip it for parity. Destructure
+            // instead of `delete` so a caller-supplied raw JSON schema object isn't mutated.
+            const { $schema: _dropped, ...parameters } = llm.toJsonSchema(
+              func.parameters,
+              true,
+              this.strictToolSchema,
+            ) as unknown as Record<string, unknown>;
             const oaiParams = {
               type: 'function' as const,
               function: {
                 name,
                 description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+                parameters:
+                  parameters as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
               } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
             };
 

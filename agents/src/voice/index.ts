@@ -37,6 +37,11 @@ export {
 } from './remote_session.js';
 export * from './events.js';
 export {
+  KeytermDetector,
+  type KeytermDetectionOptions,
+  type KeytermsOptions,
+} from './keyterm_detection.js';
+export {
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,
