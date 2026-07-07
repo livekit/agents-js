@@ -19,6 +19,77 @@ import {
 
 const STANDARD_SPEECH_RATE = 3.83; // hyphens (syllables) per second
 
+const XML_MARKUP_TAGS = [
+  'expr',
+  'emotion',
+  'speed',
+  'volume',
+  'break',
+  'spell',
+  'expression',
+  'sound',
+  'happy',
+  'sad',
+  'angry',
+  'excited',
+  'calm',
+  'surprised',
+  'sympathetic',
+  'curious',
+  'sarcastic',
+  'confident',
+  'playful',
+  'nervous',
+  'emphasis',
+  'whisper',
+  'soft',
+  'loud',
+  'build-intensity',
+  'decrease-intensity',
+  'higher-pitch',
+  'lower-pitch',
+  'slow',
+  'fast',
+  'sing-song',
+  'singing',
+  'laugh-speak',
+];
+const XML_MARKUP_TAG_RE = new RegExp(
+  `<\\/?(?:${XML_MARKUP_TAGS.join('|')})(?:\\s[^>]*)?\\/?>`,
+  'gi',
+);
+const BRACKET_MARKUP_RE = /\[[^\]]+\]/g;
+
+class TranscriptMarkupStripper {
+  private buffer = '';
+
+  push(text: string): string {
+    this.buffer += text;
+    if (this.hasOpenTag()) {
+      return '';
+    }
+
+    const clean = this.stripMarkup(this.buffer);
+    this.buffer = '';
+    return clean;
+  }
+
+  private hasOpenTag(): boolean {
+    const lastLt = this.buffer.lastIndexOf('<');
+    if (lastLt > this.buffer.lastIndexOf('>')) {
+      const next = this.buffer.slice(lastLt + 1, lastLt + 2);
+      if (!next || next === '/' || /[a-z]/i.test(next)) {
+        return true;
+      }
+    }
+    return this.buffer.lastIndexOf('[') > this.buffer.lastIndexOf(']');
+  }
+
+  private stripMarkup(text: string): string {
+    return text.replace(XML_MARKUP_TAG_RE, '').replace(BRACKET_MARKUP_RE, '');
+  }
+}
+
 interface TextSyncOptions {
   speed: number;
   hyphenateWord: (word: string) => string[];
@@ -152,6 +223,7 @@ class SegmentSynchronizerImpl {
   private outputStreamWriter: WritableStreamDefaultWriter<string | TimedString>;
   private captureTask: Promise<void>;
   private startWallTime?: number;
+  private pacingStripper = new TranscriptMarkupStripper();
 
   private startFuture: Future = new Future();
   private closedFuture: Future = new Future();
@@ -442,16 +514,14 @@ class SegmentSynchronizerImpl {
             endTime: this.synchronizedElapsedSeconds(),
           }),
         );
-        const cleanWords = this.options.splitWords(word);
-        const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-        this.textData.forwardedHyphens += this.options.hyphenateWord(cleanWord).length;
+        const cleanWord = this.pacingStripper.push(forwardedWord);
+        this.textData.forwardedHyphens += cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
         this.textData.forwardedText += forwardedWord;
         continue;
       }
 
-      const cleanWords = this.options.splitWords(word);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
+      const cleanWord = this.pacingStripper.push(forwardedWord);
+      const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
       const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;
