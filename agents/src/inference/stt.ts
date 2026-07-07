@@ -538,7 +538,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
-      // the active session keyterms so a user extra update doesn't drop them)
+      // re-apply the active session keyterms on top of the update sent to live streams,
+      // so a user extra update doesn't drop them. `this.opts.modelOptions` must stay a
+      // pure user baseline (no session terms baked in), or a later session-keyterm
+      // change could never remove previously applied terms.
       const keytermExtra = keytermsExtraForModel(this.opts.model, {
         extraKwargs: this.opts.modelOptions as Record<string, unknown>,
         sessionKeyterms: this._sessionKeyterms,
@@ -548,10 +551,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
           ...nextOpts.modelOptions,
           ...keytermExtra,
         } as STTOptions<TModel>;
-        this.opts = {
-          ...this.opts,
-          modelOptions: { ...this.opts.modelOptions, ...keytermExtra } as STTOptions<TModel>,
-        };
       }
     }
 
