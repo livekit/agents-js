@@ -977,13 +977,13 @@ export function getMockTool(
   session?: AgentSession,
 ): MockToolFn | undefined {
   // Context-scoped mocks (withMockTools) take precedence over session-scoped
-  // ones (mockTools). A registered mock set fully replaces the tools for its
-  // Agent type — there is no per-tool fallthrough between the two scopes.
+  // ones (mockTools), per tool: a scope whose mock set lacks the tool falls
+  // through to the next scope instead of unmocking it.
   const scopes = [activeMockTools, session ? sessionMockTools.get(session) : undefined];
   for (const scope of scopes) {
     if (!scope) continue;
     for (const [agentConstructor, mocks] of scope) {
-      if (agent.constructor === agentConstructor) {
+      if (agent.constructor === agentConstructor && toolName in mocks) {
         return mocks[toolName];
       }
     }
@@ -1040,7 +1040,8 @@ export function withMockTools(
  * Mocks intercept tool *execution* only; the LLM keeps seeing the real tool
  * schemas. Call again to replace the mock set for that Agent type, or pass an
  * empty record to remove all mocks for it. When both this and
- * {@link withMockTools} are active, the context-scoped mocks take precedence.
+ * {@link withMockTools} are active, the context-scoped mocks take precedence
+ * per tool; session mocks for tools the context set does not cover still apply.
  *
  * Mirrors the session form of Python's `mock_tools` (livekit/agents#6080).
  *

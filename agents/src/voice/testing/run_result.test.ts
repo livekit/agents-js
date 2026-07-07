@@ -242,6 +242,22 @@ describe('mockTools (session-scoped)', () => {
     expect(getMockTool(agent, 'tool1', session)).toBe(sessionMock);
   });
 
+  it('falls through to session mocks for tools the context set does not cover', () => {
+    const session = makeSession();
+    const agent = new AgentA();
+    const sessionMock = () => 'session';
+
+    mockTools(AgentA, { getWeather: sessionMock }, session);
+
+    {
+      // context mocks a *different* tool of the same agent type — the
+      // session-scoped mock for getWeather must remain active
+      using _mock = withMockTools(AgentA, { orderItem: () => 'ordered' });
+      expect(getMockTool(agent, 'getWeather', session)).toBe(sessionMock);
+      expect(getMockTool(agent, 'orderItem', session)).toBeDefined();
+    }
+  });
+
   it('routes performToolExecutions to a session-scoped mock', async () => {
     let realCalled = false;
     const realTool = tool({
