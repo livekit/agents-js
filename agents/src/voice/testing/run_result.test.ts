@@ -9,7 +9,7 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, withMockTools } from './run_result.js';
+import { activeMockTools, getMockTool, mockTools, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -178,5 +178,108 @@ describe('withMockTools', () => {
     await task.result;
     expect(output.output[0]?.rawException?.message).toBe('test failure');
     expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
+  });
+});
+
+describe('mockTools (session-scoped)', () => {
+  // mockTools only uses the session as a WeakMap key; a stub is sufficient,
+  // matching the session stubs used by the performToolExecutions tests above.
+  const makeSession = () => ({ currentAgent: undefined }) as never;
+
+  it('registers mocks for a session and resolves them via getMockTool', () => {
+    const session = makeSession();
+    const agent = new AgentA();
+    const mock = () => 'session-mocked';
+
+    mockTools(AgentA, { tool1: mock }, session);
+
+    expect(getMockTool(agent, 'tool1', session)).toBe(mock);
+    // without the session, session-scoped mocks are invisible
+    expect(getMockTool(agent, 'tool1')).toBeUndefined();
+  });
+
+  it('isolates mock sets per session', () => {
+    const sessionA = makeSession();
+    const sessionB = makeSession();
+    const agent = new AgentA();
+
+    mockTools(AgentA, { tool1: () => 'a' }, sessionA);
+
+    expect(getMockTool(agent, 'tool1', sessionA)).toBeDefined();
+    expect(getMockTool(agent, 'tool1', sessionB)).toBeUndefined();
+  });
+
+  it('replaces the mock set on re-registration and removes it with an empty record', () => {
+    const session = makeSession();
+    const agent = new AgentA();
+    const second = () => 'second';
+
+    mockTools(AgentA, { tool1: () => 'first' }, session);
+    mockTools(AgentA, { tool2: second }, session);
+
+    // full replacement: tool1 is gone, tool2 is present
+    expect(getMockTool(agent, 'tool1', session)).toBeUndefined();
+    expect(getMockTool(agent, 'tool2', session)).toBe(second);
+
+    mockTools(AgentA, {}, session);
+    expect(getMockTool(agent, 'tool2', session)).toBeUndefined();
+  });
+
+  it('context-scoped mocks take precedence over session-scoped ones', () => {
+    const session = makeSession();
+    const agent = new AgentA();
+    const sessionMock = () => 'session';
+    const contextMock = () => 'context';
+
+    mockTools(AgentA, { tool1: sessionMock }, session);
+
+    {
+      using _mock = withMockTools(AgentA, { tool1: contextMock });
+      expect(getMockTool(agent, 'tool1', session)).toBe(contextMock);
+    }
+
+    // context scope ended: session mocks apply again
+    expect(getMockTool(agent, 'tool1', session)).toBe(sessionMock);
+  });
+
+  it('routes performToolExecutions to a session-scoped mock', async () => {
+    let realCalled = false;
+    const realTool = tool({
+      name: 'greet',
+      description: 'real',
+      parameters: z.object({ name: z.string() }),
+      execute: async () => {
+        realCalled = true;
+        return 'real';
+      },
+    });
+    const toolCtx = new ToolContext([realTool]);
+    const speechHandle = SpeechHandle.create({ allowInterruptions: false });
+    const session = { currentAgent: new AgentA() } as never;
+
+    mockTools(AgentA, { greet: () => 'session-mocked' }, session);
+
+    const controller = new AbortController();
+    const call = FunctionCall.create({
+      callId: 'call_session_mock',
+      name: 'greet',
+      args: JSON.stringify({ name: 'world' }),
+    });
+    const stream = new ReadableStream<FunctionCall>({
+      start(c) {
+        c.enqueue(call);
+        c.close();
+      },
+    });
+    const [task, output] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: stream,
+      controller,
+    });
+    await task.result;
+    expect(realCalled).toBe(false);
+    expect(output.output[0]?.rawOutput).toBe('session-mocked');
   });
 });

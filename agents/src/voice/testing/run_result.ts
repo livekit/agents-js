@@ -9,6 +9,7 @@ import { tool } from '../../llm/tool_context.js';
 import type { Task } from '../../utils.js';
 import { Future } from '../../utils.js';
 import type { Agent } from '../agent.js';
+import type { AgentSession } from '../agent_session.js';
 import { type SpeechHandle, isSpeechHandle } from '../speech_handle.js';
 import {
   type AgentHandoffAssertOptions,
@@ -966,13 +967,25 @@ export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 /** @internal */
 export let activeMockTools: MockToolsMap | undefined;
 
-/** @internal */
-export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
-  if (!activeMockTools) return undefined;
+/** @internal – session-scoped mock sets registered via {@link mockTools}. */
+const sessionMockTools = new WeakMap<AgentSession, MockToolsMap>();
 
-  for (const [agentConstructor, mocks] of activeMockTools) {
-    if (agent.constructor === agentConstructor) {
-      return mocks[toolName];
+/** @internal */
+export function getMockTool(
+  agent: Agent,
+  toolName: string,
+  session?: AgentSession,
+): MockToolFn | undefined {
+  // Context-scoped mocks (withMockTools) take precedence over session-scoped
+  // ones (mockTools). A registered mock set fully replaces the tools for its
+  // Agent type — there is no per-tool fallthrough between the two scopes.
+  const scopes = [activeMockTools, session ? sessionMockTools.get(session) : undefined];
+  for (const scope of scopes) {
+    if (!scope) continue;
+    for (const [agentConstructor, mocks] of scope) {
+      if (agent.constructor === agentConstructor) {
+        return mocks[toolName];
+      }
     }
   }
   return undefined;
@@ -1018,6 +1031,42 @@ export function withMockTools(
       activeMockTools = previous;
     },
   };
+}
+
+/**
+ * Assign a set of mock tool callables to a specific Agent type on a session,
+ * effective immediately and for the session's lifetime.
+ *
+ * Mocks intercept tool *execution* only; the LLM keeps seeing the real tool
+ * schemas. Call again to replace the mock set for that Agent type, or pass an
+ * empty record to remove all mocks for it. When both this and
+ * {@link withMockTools} are active, the context-scoped mocks take precedence.
+ *
+ * Mirrors the session form of Python's `mock_tools` (livekit/agents#6080).
+ *
+ * @param agent - The Agent constructor whose tools should be mocked.
+ * @param mocks - A record mapping tool name to a mock implementation.
+ * @param session - The session the mock set is bound to.
+ *
+ * @example
+ * ```typescript
+ * mockTools(DriveThruAgent, { getWeather: () => 'sunny' }, session);
+ *
+ * const result = await session.run({ userInput: "What's the weather?" });
+ * result.expect.containsFunctionCallOutput({ output: 'sunny' });
+ * ```
+ */
+export function mockTools(
+  agent: AgentConstructor,
+  mocks: Record<string, MockToolFn>,
+  session: AgentSession,
+): void {
+  let map = sessionMockTools.get(session);
+  if (!map) {
+    map = new Map();
+    sessionMockTools.set(session, map);
+  }
+  map.set(agent, { ...mocks });
 }
 
 /**

@@ -30,6 +30,7 @@ export {
   MessageAssert,
   RunAssert,
   RunResult,
+  mockTools,
   withMockTools,
   type MockToolFn,
   type MockToolsMap,
