@@ -95,7 +95,8 @@ class PausedGateOutput extends AudioOutput {
   async captureFrame(f: AudioFrame): Promise<void> {
     if (this.gateFut && !this.gateFut.done) {
       this.onGateBlocked?.();
-      await Promise.race([this.gateFut.await, this.interruptedFut.await]);
+      // Neither future is ever rejected in this test; catch satisfies throws-check.
+      await Promise.race([this.gateFut.await, this.interruptedFut.await]).catch(() => {});
       if (this.interruptedFut.done) {
         return;
       }
