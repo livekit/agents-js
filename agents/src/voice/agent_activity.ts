@@ -2918,14 +2918,16 @@ export class AgentActivity implements RecognitionHooks {
             // A reported playback position is proof of partial playback even when
             // the playback-started notification hasn't arrived yet (remote avatar
             // outputs deliver it via RPC, which can race with the interruption).
-            // It only counts as evidence when THIS segment forwarded audio:
-            // waitForPlayout returns the last playback event, which is stale
-            // (from a previous segment) when no frames were captured for the
-            // current one.
-            const forwardedAudio = output.audioOut?.startedForwardingAt !== undefined;
+            // It only counts as evidence when THIS segment bumped the output's
+            // segment count — the same condition under which waitForPlayout waits
+            // for this segment's playback event instead of returning a stale one
+            // from a previous segment (see _AudioOut.capturedSegmentsBefore).
+            const playedOwnFrame =
+              output.audioOut != null &&
+              audioOutput.capturedPlayoutSegments > output.audioOut.capturedSegmentsBefore;
             if (
               (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              (forwardedAudio && interruptedPlaybackEv.playbackPosition > 0)
+              (playedOwnFrame && interruptedPlaybackEv.playbackPosition > 0)
             ) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
@@ -3486,14 +3488,16 @@ export class AgentActivity implements RecognitionHooks {
             // A reported playback position is proof of partial playback even when
             // the playback-started notification hasn't arrived yet (remote avatar
             // outputs deliver it via RPC, which can race with the interruption).
-            // It only counts as evidence when THIS message forwarded audio:
-            // waitForPlayout returns the last playback event, which is stale
-            // (from a previous message) when no frames were captured for the
-            // current one.
-            const forwardedAudio = output.audioOut?.startedForwardingAt !== undefined;
+            // It only counts as evidence when THIS message bumped the output's
+            // segment count — the same condition under which waitForPlayout waits
+            // for this message's playback event instead of returning a stale one
+            // from a previous message (see _AudioOut.capturedSegmentsBefore).
+            const playedOwnFrame =
+              output.audioOut != null &&
+              audioOutput.capturedPlayoutSegments > output.audioOut.capturedSegmentsBefore;
             if (
               (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              (forwardedAudio && playbackEv.playbackPosition > 0)
+              (playedOwnFrame && playbackEv.playbackPosition > 0)
             ) {
               output.played = 'partial';
               output.playbackPositionInS = playbackEv.playbackPosition;

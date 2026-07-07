@@ -5,6 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
@@ -70,6 +71,42 @@ class DeferredStartOutput extends AudioOutput {
   }
   clearBuffer(): void {
     this.onPlaybackFinished({ playbackPosition: this.playbackPosition, interrupted: true });
+  }
+}
+
+// Mimics ParticipantAudioOutput's pause gate (room_io/_output.ts): a frame
+// forwarded while the output is paused awaits the gate and BAILS on interruption
+// before `super.captureFrame` counts the segment (#1662). `forwardAudio` sets
+// `startedForwardingAt` before awaiting captureFrame, so "forwarding started"
+// must not count as playback evidence — nothing of this segment was captured.
+// `clearBuffer` releases gated frames without reporting a playback event (like
+// the real output when no segment is pending), leaving the PREVIOUS segment's
+// lastPlaybackEvent as what waitForPlayout returns.
+class PausedGateOutput extends AudioOutput {
+  onGateBlocked?: () => void;
+  private gateFut: Future | null = null;
+  private interruptedFut = new Future();
+  constructor() {
+    super(24000);
+  }
+  pause(): void {
+    this.gateFut = new Future();
+  }
+  async captureFrame(f: AudioFrame): Promise<void> {
+    if (this.gateFut && !this.gateFut.done) {
+      this.onGateBlocked?.();
+      await Promise.race([this.gateFut.await, this.interruptedFut.await]);
+      if (this.interruptedFut.done) {
+        return;
+      }
+    }
+    await super.captureFrame(f);
+  }
+  flush(): void {
+    super.flush();
+  }
+  clearBuffer(): void {
+    this.interruptedFut.resolve();
   }
 }
 
@@ -279,4 +316,49 @@ describe('AgentActivity interrupted-speech commit', () => {
       await session.close();
     }
   });
+
+  it('does not commit a reply whose first frame bailed at a pause gate (stale playback position)', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A reply that was never spoken.' }]),
+    });
+    const audioOut = new PausedGateOutput();
+    session.output.audio = audioOut;
+
+    // A previously played segment leaves a non-zero lastPlaybackEvent behind.
+    await audioOut.captureFrame(frame());
+    audioOut.flush();
+    audioOut.onPlaybackFinished({ playbackPosition: 0.5, interrupted: false });
+
+    // The output is paused (false-interruption pause during the thinking state):
+    // the reply's first frame will block at the gate, never reaching
+    // super.captureFrame — so the segment count is never bumped and waitForPlayout
+    // returns the stale event above. Forwarding DID start (`startedForwardingAt`
+    // is set), which is exactly why forwarding-started must not gate the commit.
+    audioOut.pause();
+    // A genuine interruption arrives while the frame is blocked at the gate.
+    audioOut.onGateBlocked = () => session.interrupt({ force: true });
+
+    const assistantMessages: { content: string; interrupted: boolean }[] = [];
+    session.on(AgentSessionEventTypes.ConversationItemAdded, (ev: ConversationItemAddedEvent) => {
+      if (ev.item.type === 'message' && ev.item.role === 'assistant') {
+        assistantMessages.push({
+          content: ev.item.textContent ?? '',
+          interrupted: !!ev.item.interrupted,
+        });
+      }
+    });
+
+    await session.start({ agent: new FrameAgent() });
+    try {
+      const handle = session.generateReply({ userInput: 'hello' });
+      await handle.waitForPlayout();
+
+      // Nothing of this reply was captured, let alone played: the stale 0.5s
+      // position from the previous segment must not commit it as 'partial'.
+      await session.close();
+      expect(assistantMessages).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  }, 15_000);
 });

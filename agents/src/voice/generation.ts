@@ -851,6 +851,18 @@ export interface _AudioOut {
    * @internal
    */
   _hasCapturedOwnFrame: boolean;
+  /**
+   * The output's monotonic segment count (`capturedPlayoutSegments`) when forwarding
+   * was set up. The interrupted-commit gate compares the current count against this
+   * baseline: a bump proves a frame of THIS segment made it through
+   * `AudioOutput.captureFrame` — the same condition under which `waitForPlayout()`
+   * waits for this segment's playback event instead of returning a stale one — so
+   * the reported playback position can be trusted as evidence of partial playback.
+   * (`startedForwardingAt` is set *before* `captureFrame` resolves and is therefore
+   * not usable as capture evidence; a frame can bail at a pause/interrupt gate,
+   * e.g. `ParticipantAudioOutput`, without ever being counted.)
+   */
+  capturedSegmentsBefore: number;
 }
 
 /**
@@ -963,6 +975,7 @@ export function performAudioForwarding(
     audio: [],
     firstFrameFut: new Future<number>(),
     _hasCapturedOwnFrame: false,
+    capturedSegmentsBefore: audioOutput.capturedPlayoutSegments,
   };
 
   // Resolve `firstFrameFut` from the output's PLAYBACK_STARTED event. Registered
