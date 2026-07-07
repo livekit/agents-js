@@ -229,6 +229,63 @@ export function concatInstructions(...parts: Array<string | Instructions>): stri
 
 export type ChatContent = ImageContent | AudioContent | Instructions | string;
 
+const EXPRESSIVE_MARKUP_TAGS = [
+  'angry',
+  'break',
+  'build-intensity',
+  'calm',
+  'confident',
+  'curious',
+  'decrease-intensity',
+  'emotion',
+  'emphasis',
+  'excited',
+  'fast',
+  'happy',
+  'higher-pitch',
+  'laugh-speak',
+  'loud',
+  'lower-pitch',
+  'nervous',
+  'playful',
+  'sad',
+  'sarcastic',
+  'singing',
+  'sing-song',
+  'slow',
+  'soft',
+  'sound',
+  'spell',
+  'speed',
+  'surprised',
+  'sympathetic',
+  'volume',
+  'whisper',
+].join('|');
+
+const EXPRESSIVE_WRAPPER_RE = new RegExp(
+  `<(${EXPRESSIVE_MARKUP_TAGS})\\b[^>]*\\s*>([\\s\\S]*?)<\\/\\1\\s*>`,
+  'g',
+);
+const EXPRESSIVE_OPEN_RE = new RegExp(`<(?:${EXPRESSIVE_MARKUP_TAGS})\\b[^>]*\\s*\\/?\\s*>`, 'g');
+const EXPRESSIVE_CLOSE_RE = new RegExp(`<\\/(?:${EXPRESSIVE_MARKUP_TAGS})\\s*>`, 'g');
+
+function stripAllMarkup(text: string): string {
+  let clean = text.replace(/<expr\b[^>]*>/g, '').replace(/<\/expr\s*>/g, '');
+  let previous: string | undefined;
+
+  while (clean !== previous) {
+    previous = clean;
+    clean = clean
+      .replace(EXPRESSIVE_WRAPPER_RE, '$2')
+      .replace(EXPRESSIVE_OPEN_RE, '')
+      .replace(EXPRESSIVE_CLOSE_RE, '')
+      .replace(/\[[^\]]+\]/g, '');
+  }
+
+  return clean;
+}
+
 export function createImageContent(params: {
   image: string | VideoFrame;
   id?: string;
@@ -365,6 +422,16 @@ export class ChatMessage {
       .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
       .map((c) => (typeof c === 'string' ? c : c.value));
     return parts.length > 0 ? parts.join('\n') : undefined;
+  }
+
+  /**
+   * Returns a single string with all text parts of the message joined by new
+   * lines, without expressive markup tags. If no string content is present,
+   * returns `undefined`.
+   */
+  get plainTextContent(): string | undefined {
+    const raw = this.textContent;
+    return raw === undefined ? undefined : stripAllMarkup(raw);
   }
 
   toJSONContent(): JSONValue[] {
@@ -925,6 +992,7 @@ export class ChatContext {
       excludeTimestamp?: boolean;
       excludeFunctionCall?: boolean;
       excludeConfigUpdate?: boolean;
+      stripMarkup?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): JSONObject {
@@ -934,6 +1002,7 @@ export class ChatContext {
       excludeTimestamp = true,
       excludeFunctionCall = false,
       excludeConfigUpdate = false,
+      stripMarkup = false,
     } = options;
 
     const items: ChatItem[] = [];
@@ -972,6 +1041,12 @@ export class ChatContext {
           processedItem.content = processedItem.content.filter((c) => {
             return !(typeof c === 'object' && c.type === 'audio_content');
           });
+        }
+
+        if (stripMarkup && processedItem.role === 'assistant') {
+          processedItem.content = processedItem.content.map((c) =>
+            typeof c === 'string' ? stripAllMarkup(c) : c,
+          );
         }
       }
 
@@ -1171,7 +1246,8 @@ export class ChatContext {
         if (item.role !== 'user' && item.role !== 'assistant') continue;
         if (item.extra?.is_summary === true) continue;
 
-        const text = (item.textContent ?? '').trim();
+        const content = item.role === 'assistant' ? item.plainTextContent : item.textContent;
+        const text = (content ?? '').trim();
         if (text) {
           toSummarize.push(item);
         }
@@ -1187,7 +1263,8 @@ export class ChatContext {
     const sourceText = toSummarize
       .map((item) => {
         if (item.type === 'message') {
-          return toXml(item.role, (item.textContent ?? '').trim());
+          const content = item.role === 'assistant' ? item.plainTextContent : item.textContent;
+          return toXml(item.role, (content ?? '').trim());
         }
 
         return functionCallItemToMessage(item).textContent ?? '';

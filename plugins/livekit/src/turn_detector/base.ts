@@ -244,13 +244,12 @@ export abstract class EOUModel {
         continue;
       }
 
-      for (const content of message.content) {
-        if (typeof content === 'string') {
-          messages.push({
-            role: message.role === 'assistant' ? 'assistant' : 'user',
-            content: content,
-          });
-        }
+      const content = message.role === 'assistant' ? message.plainTextContent : message.textContent;
+      if (content) {
+        messages.push({
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content,
+        });
       }
     }
 
