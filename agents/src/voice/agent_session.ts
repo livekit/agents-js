@@ -97,7 +97,7 @@ import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { RunResult } from './testing/run_result.js';
+import { type RunOutputOptions, RunResult } from './testing/run_result.js';
 import {
   type AsyncToolOptions,
   type ToolHandlingOptions,
@@ -1113,17 +1113,23 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input and optional output type
+   * @param options - Run options including user input and optional output type.
+   *   When `outputType` is set and the turn ends without structured output, the
+   *   run re-prompts the model up to `outputOptions.maxRetries` times (default 2)
+   *   before rejecting with `UnexpectedModelBehavior`. Pass `outputOptions: null`
+   *   to disable retries entirely.
    * @returns A RunResult that resolves when the agent finishes responding
    */
   run<T = unknown>({
     userInput,
     inputModality,
     outputType,
+    outputOptions,
   }: {
     userInput: string;
     inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
+    outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
@@ -1132,6 +1138,8 @@ export class AgentSession<
     const runState = new RunResult<T>({
       userInput,
       outputType,
+      outputOptions,
+      session: this,
     });
 
     this._globalRunState = runState;
