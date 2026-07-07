@@ -138,6 +138,15 @@ export class TTS extends tts.TTS {
     return 'Cartesia';
   }
 
+  /**
+   * Key into the shared expressive markup tables; markup delegation lives in
+   * the base class.
+   * @internal
+   */
+  override _markupProviderKey(): string {
+    return 'cartesia';
+  }
+
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolvedOpts = {
       ...defaultTTSOptions,

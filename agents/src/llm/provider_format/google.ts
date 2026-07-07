@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ChatContext, ChatItem, ImageContent } from '../chat_context.js';
-import { isInstructions } from '../chat_context.js';
 import { type SerializedImage, serializeImage } from '../utils.js';
 import { convertMidConversationInstructions, groupToolCalls } from './utils.js';
 
@@ -60,8 +59,6 @@ export async function toChatCtx(
       for (const content of msg.content) {
         if (content && typeof content === 'string') {
           parts.push({ text: content });
-        } else if (isInstructions(content)) {
-          parts.push({ text: content.value });
         } else if (content && typeof content === 'object') {
           if (content.type === 'image_content') {
             parts.push(await toImagePart(content));

@@ -335,6 +335,21 @@ export class TTS extends tts.TTS {
     return this.#pool;
   }
 
+  override get model(): string {
+    return this.#opts.model;
+  }
+
+  /**
+   * Key into the shared expressive markup tables; markup delegation lives in
+   * the base class. Only inworld-tts-2 understands the markup tags; older
+   * models get no markup so the tags aren't injected, converted, or stripped
+   * (matches the inference gateway's behavior).
+   * @internal
+   */
+  override _markupProviderKey(): string {
+    return this.#opts.model.includes('tts-2') ? 'inworld' : '';
+  }
+
   get authorization(): string {
     return this.#authorization;
   }

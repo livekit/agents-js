@@ -20,6 +20,13 @@ import {
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
+import type { ExpressiveTag } from './_provider_format.js';
+import {
+  convertMarkup,
+  normalizeMarkup,
+  llmInstructions as providerLlmInstructions,
+  splitMarkup,
+} from './_provider_format.js';
 
 /**
  * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
@@ -80,6 +87,123 @@ export interface SynthesizeStreamStartedTime {
 }
 
 /**
+ * Declares TTS markup capabilities for the expressive pipeline.
+ *
+ * All methods delegate to the shared per-provider markup tables, keyed on the
+ * TTS's `_markupProviderKey()`. Plugins opt into markup support by overriding
+ * that method on their TTS class.
+ */
+export class TTSMarkup {
+  #tts: TTS;
+
+  constructor(tts: TTS) {
+    this.#tts = tts;
+  }
+
+  #providerKey(): string {
+    return this.#tts._markupProviderKey();
+  }
+
+  /**
+   * Return instructions for the LLM describing available markup tags.
+   *
+   * The framework injects this into the LLM system prompt when
+   * `expressive` is enabled. Returns `undefined` if this TTS has no markup support.
+   */
+  llmInstructions(): string | undefined {
+    return providerLlmInstructions(this.#providerKey());
+  }
+
+  /** Strip markup and collect the stripped tags in one pass. */
+  #split(text: string): [string, ExpressiveTag[]] {
+    return splitMarkup(this.#providerKey(), text);
+  }
+
+  /**
+   * Strip TTS-specific markup from `text`, returning plain text.
+   *
+   * Used for transcripts streamed to the user and for chat history storage.
+   * The TTS itself receives the original marked-up text.
+   */
+  toText(text: string): string {
+    return this.#split(text)[0];
+  }
+
+  /**
+   * Strip TTS markup from a stream of text chunks.
+   *
+   * Buffers partial XML tags across chunks so that each buffer is stripped as a
+   * whole. When `tagsOut` is given, the stripped tags are appended to it (in
+   * document order) as a byproduct of the same pass — no second scan.
+   */
+  async *toTextStream(
+    textStream: AsyncIterable<string>,
+    options?: { tagsOut?: ExpressiveTag[] },
+  ): AsyncGenerator<string, void, void> {
+    const tagsOut = options?.tagsOut;
+    let buf = '';
+    for await (const chunk of textStream) {
+      buf += chunk;
+      // hold the buffer only for a *tag-shaped* trailing "<" (a partial tag
+      // arriving across chunks); a bare "<" as in "3 < 5" is plain text and
+      // must not stall the transcript until the next ">" or flush
+      const lastOpen = buf.lastIndexOf('<');
+      if (lastOpen > buf.lastIndexOf('>')) {
+        const nxt = buf.slice(lastOpen + 1, lastOpen + 2);
+        if (!nxt || nxt === '/' || /[a-zA-Z]/.test(nxt)) {
+          continue;
+        }
+      }
+      const [stripped, tags] = this.#split(buf);
+      buf = '';
+      if (tagsOut !== undefined) {
+        tagsOut.push(...tags);
+      }
+      if (stripped) {
+        yield stripped;
+      }
+    }
+
+    if (buf) {
+      const [stripped, tags] = this.#split(buf);
+      if (tagsOut !== undefined) {
+        tagsOut.push(...tags);
+      }
+      if (stripped) {
+        yield stripped;
+      }
+    }
+  }
+
+  /**
+   * Extract the markup tags that {@link toText} would strip, in order.
+   *
+   * Lets the framework surface stripped expressive tags (e.g. as transcription
+   * attributes for the frontend) instead of discarding them. Returns `[]` when
+   * the provider declares no markup.
+   */
+  extractTags(text: string): ExpressiveTag[] {
+    return this.#split(text)[1];
+  }
+
+  /** Fix common LLM markup mistakes (e.g. unclosed self-closing tags). */
+  normalize(text: string): string {
+    return normalizeMarkup(this.#providerKey(), text);
+  }
+
+  /**
+   * Convert framework-standard markup to the provider's native format.
+   *
+   * Called before text is sent to the TTS; a no-op when the provider declares
+   * no markup. Plugins that use non-XML formats (e.g. square brackets) opt in
+   * via `_markupProviderKey` so `<expression value="..."/>` becomes native syntax.
+   */
+  convert(text: string): string {
+    return convertMarkup(this.#providerKey(), text);
+  }
+}
+
+/**
  * An instance of a text-to-speech adapter.
  *
  * @remarks
@@ -90,6 +214,15 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   #capabilities: TTSCapabilities;
   #sampleRate: number;
   #numChannels: number;
+  #markup?: TTSMarkup;
+  /**
+   * Whether expressive is active for the current turn, set by the framework
+   * before each synthesis. TTS implementations that tokenize their own input
+   * read this to batch into larger chunks (continuous prosody); false (the
+   * default) means per-sentence chunking. See {@link _setExpressive}.
+   * @internal
+   */
+  _expressive = false;
   abstract label: string;
 
   constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
@@ -102,6 +235,39 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   /** Returns this TTS's capabilities */
   get capabilities(): TTSCapabilities {
     return this.#capabilities;
+  }
+
+  /**
+   * Key into the shared `_provider_format` markup tables, or "" for none.
+   *
+   * Plugins override this to opt into markup support; the default ("") means
+   * no markup instructions, stripping, normalization, or conversion are applied.
+   * The {@link markup} methods delegate through this key, so a plugin only needs
+   * to override `_markupProviderKey`.
+   * @internal
+   */
+  _markupProviderKey(): string {
+    return '';
+  }
+
+  /** Access TTS markup capabilities (instructions for LLM, text stripping). */
+  get markup(): TTSMarkup {
+    if (this.#markup === undefined) {
+      this.#markup = new TTSMarkup(this);
+    }
+    return this.#markup;
+  }
+
+  /**
+   * Framework-internal: mark whether expressive is active for this turn.
+   *
+   * Called by the voice pipeline before each synthesis. TTS implementations widen
+   * their input chunking when enabled; a no-op for TTS that don't tokenize their
+   * own input.
+   * @internal
+   */
+  _setExpressive(enabled: boolean): void {
+    this._expressive = enabled;
   }
 
   /** Returns the sample rate of audio frames returned by this TTS */

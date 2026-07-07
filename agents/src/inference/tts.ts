@@ -10,7 +10,7 @@ import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
-import { basic as tokenizeBasic } from '../tokenize/index.js';
+import { sentenceTokenizer as markupSentenceTokenizer } from '../tts/_provider_format.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -380,6 +380,20 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'livekit';
   }
 
+  /**
+   * Key into the shared markup tables, derived from the gateway model string.
+   * @internal
+   */
+  override _markupProviderKey(): string {
+    const model = this.opts.model ?? '';
+    const provider = model.split('/')[0]!;
+    if (provider === 'inworld') {
+      // older inworld models don't support markup
+      return model.includes('tts-2') ? 'inworld' : '';
+    }
+    return provider;
+  }
+
   override get capabilities() {
     return { streaming: true, alignedTranscript: this.#alignedTranscript };
   }
@@ -507,6 +521,13 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeStream {
   private opts: InferenceTTSOptions<TModel>;
   private tts: TTS<TModel>;
+  /**
+   * Snapshot whether expressive is active now, while the framework holds it
+   * fixed for this synthesis (set synchronously before stream()). Reading it
+   * lazily in run() would race with the next turn/session mutating the shared
+   * TTS instance.
+   */
+  private expressive: boolean;
 
   #logger = log();
 
@@ -514,6 +535,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     super(tts, connOptions);
     this.opts = opts;
     this.tts = tts;
+    this.expressive = tts._expressive;
   }
 
   get label() {
@@ -547,7 +569,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
 
-    const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
+    // chunking defaults (cap + expressive batch size) live in _provider_format
+    const provider = (this.opts.model ?? '').split('/')[0]!;
+    const sendTokenizerStream = markupSentenceTokenizer(provider, {
+      expressive: this.expressive,
+    }).stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
@@ -597,7 +623,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        sendTokenizerStream.pushText(this.tts.markup.normalize(data));
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -617,11 +643,15 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
+        // re-normalize at sentence level: tags split across input chunks
+        // aren't caught by the per-chunk normalize in the input task
+        const converted = this.tts.markup.convert(this.tts.markup.normalize(ev.token));
+
         this.markStarted();
         await sendClientEvent(
           {
             type: 'input_transcript',
-            transcript: ev.token + ' ',
+            transcript: converted + ' ',
             generation_config: generationConfig,
             extra: (this.opts.modelOptions as Record<string, unknown>) ?? {},
           },

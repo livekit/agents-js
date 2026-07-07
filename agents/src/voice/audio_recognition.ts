@@ -35,7 +35,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type SpeechEvent, SpeechEventType, isSpeakerContext } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
@@ -355,6 +355,7 @@ export class AudioRecognition {
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
   private readonly sttLifecycleLock = new Mutex();
+  private _sttContext?: object;
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
@@ -522,6 +523,36 @@ export class AudioRecognition {
   /** @internal */
   get inputStartedAt() {
     return this.sttPipeline?.inputStartedAt;
+  }
+
+  /**
+   * Live speaker metadata from the STT stream.
+   *
+   * STT plugins set `SpeechStream.context` during recognition.
+   * The framework copies it here so it's accessible even after the stream
+   * is replaced (e.g. during agent handoff).
+   */
+  get sttContext(): object | undefined {
+    return this._sttContext;
+  }
+
+  set sttContext(value: object | undefined) {
+    this._sttContext = value;
+  }
+
+  /**
+   * Speaker context formatted as LLM instructions.
+   *
+   * Returns `sttContext.toInstructions()` if the context implements
+   * {@link SpeakerContext}, otherwise `undefined`.
+   */
+  llmInstructions(): string | undefined {
+    const ctx = this._sttContext;
+    if (ctx !== undefined && isSpeakerContext(ctx)) {
+      const result = ctx.toInstructions();
+      return result ? result : undefined;
+    }
+    return undefined;
   }
 
   /** @internal */

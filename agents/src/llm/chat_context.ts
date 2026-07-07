@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
-import { createImmutableArray, shortuuid } from '../utils.js';
+import { createImmutableArray, safeRender, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
 import type { JSONObject, JSONValue, ToolContext } from './tool_context.js';
@@ -37,15 +37,6 @@ export interface AudioContent {
   transcript?: string;
 }
 
-type InstructionsOptions = {
-  /** The audio/voice variant of the instructions. */
-  audio: string;
-  /** The text variant of the instructions; falls back to `audio` when omitted. */
-  text?: string;
-  /** The currently rendered string value, used by `value`/`toString()`. */
-  represent?: string;
-};
-
 const INSTRUCTIONS_SYMBOL = Symbol.for('livekit.agents.Instructions');
 
 export function isInstructions(value: unknown): value is Instructions {
@@ -58,131 +49,143 @@ export function isInstructions(value: unknown): value is Instructions {
 }
 
 /**
- * Instructions that adapt based on the user's input modality (audio vs. text).
+ * Instructions with optional modality-specific additions.
  *
- * The `value` property is the rendered string providers see. By default it
- * equals the `audio` variant; after {@link asModality} it equals the chosen
- * variant. Both the `audio` variant and the raw `text` variant are preserved
- * so {@link asModality} can be called again for a different modality (e.g.,
- * when the same `ChatContext` is reused across tool-call turns).
+ * Construction:
+ * ```ts
+ * // Simple — same instructions for all modalities
+ * new Instructions('You are a helpful assistant.');
+ *
+ * // With modality-specific additions
+ * new Instructions('You are a helpful assistant.', {
+ *   audio: 'Keep responses short for voice.',
+ *   text: 'Use markdown formatting.',
+ * });
+ * ```
+ *
+ * Rendering:
+ * ```ts
+ * instr.render();                                            // → common text
+ * instr.render({ modality: 'audio' });                       // → common + audio addition
+ * instr.render({ modality: 'text', data: { name: 'Alex' } }); // → common + text, with {name} filled
+ * ```
  */
 export class Instructions {
   readonly type = 'instructions' as const;
 
-  private readonly _audioVariant: string;
+  common: string;
 
-  /** Raw text variant; falls back to {@link audio} when omitted. */
-  private readonly _textVariant?: string;
+  audio?: string;
 
-  /** The currently rendered string (what providers should treat as content). */
-  readonly value: string;
+  text?: string;
 
   /** @internal Symbol marker for type identification */
   readonly [INSTRUCTIONS_SYMBOL] = true;
 
-  constructor(options: InstructionsOptions) {
-    this._audioVariant = options.audio;
-    this._textVariant = options.text;
-    this.value = options.represent ?? options.audio;
-  }
-
-  static tpl(
-    strings: TemplateStringsArray,
-    ...values: Array<Instructions | string | number | boolean | null | undefined>
-  ): Instructions {
-    const render = (mode: 'audio' | 'text' | 'value') => {
-      let result = strings[0]!;
-      for (let i = 0; i < values.length; i++) {
-        const value = values[i]!;
-        if (isInstructions(value)) {
-          result += mode === 'audio' ? value.audio : mode === 'text' ? value.text : value.value;
-        } else {
-          result += String(value);
-        }
-        result += strings[i + 1]!;
-      }
-      return result;
-    };
-
-    const hasTextVariant = values.some(
-      (value) => isInstructions(value) && value._textVariant !== undefined,
-    );
-
-    return new Instructions({
-      audio: render('audio'),
-      text: hasTextVariant ? render('text') : undefined,
-      represent: render('value'),
-    });
-  }
-
-  /** The audio (voice) variant of the instructions. */
-  get audio(): string {
-    return this._audioVariant;
-  }
-
-  /** The text variant of the instructions. Falls back to {@link audio}. */
-  get text(): string {
-    return this._textVariant ?? this.audio;
+  constructor(common: string = '', options?: { audio?: string; text?: string }) {
+    this.common = common;
+    this.audio = options?.audio;
+    this.text = options?.text;
   }
 
   /**
-   * Return a copy whose {@link value} is the variant matching `modality`.
-   * Both `audio` and `text` variants are preserved on the result, so this can
-   * be called again for a different modality (e.g. across tool-call turns).
+   * Render instructions to a plain string.
+   *
+   * @param options.modality - If given, appends the modality-specific addition to the common text.
+   * @param options.data - Template variables to fill. Missing placeholders log an error
+   *   and are replaced with empty strings.
    */
-  asModality(modality: 'audio' | 'text'): Instructions {
-    return new Instructions({
-      audio: this.audio,
-      text: this._textVariant,
-      represent: modality === 'audio' ? this.audio : this.text,
-    });
+  render(options?: { modality?: 'audio' | 'text'; data?: Record<string, unknown> }): string {
+    const { modality, data } = options ?? {};
+
+    const parts = [this.common];
+    if (modality !== undefined) {
+      const addition = modality === 'audio' ? this.audio : this.text;
+      if (addition) {
+        parts.push(addition);
+      }
+    }
+
+    let result = parts.filter((p) => p).join('\n\n');
+
+    if (data && Object.keys(data).length > 0) {
+      result = safeRender(result, data);
+    }
+
+    return result;
   }
 
-  /** Concatenate, propagating both variants and the current rendered value. */
-  concat(other: string | Instructions): Instructions {
-    if (isInstructions(other)) {
-      const hasText = this._textVariant !== undefined || other._textVariant !== undefined;
-      return new Instructions({
-        audio: this.audio + other.audio,
-        text: hasText ? this.text + other.text : undefined,
-        represent: this.value + other.value,
+  /**
+   * Fill a template string, producing an `Instructions` with modality variants.
+   *
+   * If any kwarg value is an `Instructions` object, its `common`/`audio`/`text`
+   * parts are substituted into the matching variant of the result. This is used by
+   * workflow tasks to build modality-aware instructions from a single template.
+   */
+  static resolveTemplate(template: string, kwargs: Record<string, unknown>): Instructions {
+    const anyInstructions = Object.values(kwargs).some((v) => isInstructions(v));
+    if (anyInstructions) {
+      const commonKw: Record<string, unknown> = {};
+      const audioKw: Record<string, unknown> = {};
+      const textKw: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(kwargs)) {
+        if (isInstructions(v)) {
+          commonKw[k] = v.toString();
+          // an explicit "" removes the section; only undefined falls back to common
+          audioKw[k] = v.audio !== undefined ? v.audio : v.toString();
+          textKw[k] = v.text !== undefined ? v.text : v.toString();
+        } else {
+          commonKw[k] = v;
+          audioKw[k] = v;
+          textKw[k] = v;
+        }
+      }
+      return new Instructions(safeRender(template, commonKw), {
+        audio: safeRender(template, audioKw),
+        text: safeRender(template, textKw),
       });
     }
-    return new Instructions({
-      audio: this.audio + other,
-      text: this._textVariant !== undefined ? this._textVariant + other : undefined,
-      represent: this.value + other,
-    });
+    return new Instructions(safeRender(template, kwargs));
   }
 
   toString(): string {
-    return this.value;
+    return this.common;
   }
 
-  toJSON(): { type: 'instructions'; audio: string; text?: string } {
-    const result: { type: 'instructions'; audio: string; text?: string } = {
+  toJSON(): { type: 'instructions'; common: string; audio?: string; text?: string } {
+    const result: { type: 'instructions'; common: string; audio?: string; text?: string } = {
       type: 'instructions',
-      audio: this.audio,
+      common: this.common,
     };
-    if (this._textVariant !== undefined) {
-      result.text = this._textVariant;
+    if (this.audio !== undefined) {
+      result.audio = this.audio;
+    }
+    if (this.text !== undefined) {
+      result.text = this.text;
     }
     return result;
   }
 }
 
+/**
+ * Resolve instructions to a plain string. Plain strings pass through;
+ * {@link Instructions} are rendered (with the modality-specific addition
+ * appended when `modality` is given).
+ */
 export function renderInstructions(
   instructions: string | Instructions,
   modality?: 'audio' | 'text',
 ): string {
   if (typeof instructions === 'string') return instructions;
-  return modality === undefined ? instructions.value : instructions.asModality(modality).value;
+  return instructions.render({ modality });
 }
 
 /**
  * Compare two instruction values by content. Plain strings compare by value;
- * {@link Instructions} compare by their audio + text variants so that two
- * distinct instances with the same content are treated as equal.
+ * {@link Instructions} compare by their common/audio/text parts so that two
+ * distinct instances with the same content are treated as equal. An
+ * {@link Instructions} with no modality additions equals the plain string
+ * matching its common text (mirrors Python's `__eq__`).
  */
 export function instructionsEqual(
   a: string | Instructions | undefined,
@@ -193,41 +196,18 @@ export function instructionsEqual(
   const aIsInstr = isInstructions(a);
   const bIsInstr = isInstructions(b);
   if (aIsInstr && bIsInstr) {
-    return a.audio === b.audio && a.text === b.text;
+    return a.common === b.common && a.audio === b.audio && a.text === b.text;
   }
-  if (!aIsInstr && !bIsInstr) {
-    return a === b;
+  if (aIsInstr && !bIsInstr) {
+    return a.common === b;
   }
-  return false;
+  if (!aIsInstr && bIsInstr) {
+    return a === b.common;
+  }
+  return a === b;
 }
 
-/**
- * Concatenate any mix of plain strings and {@link Instructions}, propagating
- * both audio/text variants. If no argument is an {@link Instructions} the
- * result is a plain string; otherwise the result is an {@link Instructions}
- * preserving both variants from every contributing operand.
- */
-export function concatInstructions(...parts: Array<string | Instructions>): string | Instructions {
-  if (parts.length === 0) return '';
-  const hasInstructions = parts.some((p) => isInstructions(p));
-  if (!hasInstructions) return parts.join('');
-
-  let acc = parts[0]!;
-  for (let i = 1; i < parts.length; i++) {
-    const next = parts[i]!;
-    if (isInstructions(acc)) {
-      acc = acc.concat(next);
-    } else if (isInstructions(next)) {
-      // string + Instructions (radd-style): prepend `acc` to both variants.
-      acc = new Instructions({ audio: acc }).concat(next);
-    } else {
-      acc = acc + next;
-    }
-  }
-  return acc;
-}
-
-export type ChatContent = ImageContent | AudioContent | Instructions | string;
+export type ChatContent = ImageContent | AudioContent | string;
 
 export function createImageContent(params: {
   image: string | VideoFrame;
@@ -361,9 +341,7 @@ export class ChatMessage {
    * lines. If no string content is present, returns `null`.
    */
   get textContent(): string | undefined {
-    const parts = this.content
-      .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
-      .map((c) => (typeof c === 'string' ? c : c.value));
+    const parts = this.content.filter((c): c is string => typeof c === 'string');
     return parts.length > 0 ? parts.join('\n') : undefined;
   }
 
@@ -371,8 +349,6 @@ export class ChatMessage {
     return this.content.map((c) => {
       if (typeof c === 'string') {
         return c as JSONValue;
-      } else if (isInstructions(c)) {
-        return c.toJSON() as JSONValue;
       } else if (c.type === 'image_content') {
         return {
           id: c.id,
@@ -650,7 +626,7 @@ export class AgentConfigUpdate {
 
   readonly type = 'agent_config_update' as const;
 
-  instructions?: string | Instructions;
+  instructions?: string;
 
   toolsAdded?: string[];
 
@@ -661,7 +637,7 @@ export class AgentConfigUpdate {
   constructor(
     params: {
       id?: string;
-      instructions?: string | Instructions;
+      instructions?: string;
       toolsAdded?: string[];
       toolsRemoved?: string[];
       createdAt?: number;
@@ -683,7 +659,7 @@ export class AgentConfigUpdate {
 
   static create(params: {
     id?: string;
-    instructions?: string | Instructions;
+    instructions?: string;
     toolsAdded?: string[];
     toolsRemoved?: string[];
     createdAt?: number;
@@ -698,9 +674,7 @@ export class AgentConfigUpdate {
     };
 
     if (this.instructions !== undefined) {
-      result.instructions = isInstructions(this.instructions)
-        ? (this.instructions.toJSON() as JSONValue)
-        : this.instructions;
+      result.instructions = this.instructions;
     }
     if (this.toolsAdded !== undefined) {
       result.toolsAdded = this.toolsAdded;
@@ -747,7 +721,7 @@ export class ChatContext {
    */
   addMessage(params: {
     role: ChatRole;
-    content: ChatContent[] | string;
+    content: ChatContent[] | string | Instructions;
     id?: string;
     interrupted?: boolean;
     createdAt?: number;
@@ -755,7 +729,8 @@ export class ChatContext {
     metrics?: MetricsReport;
     extra?: Record<string, unknown>;
   }): ChatMessage {
-    const msg = new ChatMessage(params);
+    const content = isInstructions(params.content) ? params.content.toString() : params.content;
+    const msg = new ChatMessage({ ...params, content });
     if (params.createdAt !== undefined) {
       const idx = this.findInsertionIndex(params.createdAt);
       this._items.splice(idx, 0, msg);
@@ -1084,21 +1059,6 @@ export class ChatContext {
       }
 
       if (typeof contentA !== typeof contentB) {
-        return false;
-      }
-
-      if (isInstructions(contentA) && isInstructions(contentB)) {
-        if (
-          contentA.audio !== contentB.audio ||
-          contentA.text !== contentB.text ||
-          contentA.value !== contentB.value
-        ) {
-          return false;
-        }
-        continue;
-      }
-
-      if (isInstructions(contentA) || isInstructions(contentB)) {
         return false;
       }
 

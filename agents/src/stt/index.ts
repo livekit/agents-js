@@ -10,6 +10,7 @@ export {
 export { StreamAdapter, StreamAdapterWrapper } from './stream_adapter.js';
 export {
   type RecognitionUsage,
+  type SpeakerContext,
   type SpeechData,
   type SpeechEvent,
   SpeechEventType,
@@ -17,5 +18,6 @@ export {
   STT,
   type STTCallbacks,
   type STTCapabilities,
+  isSpeakerContext,
 } from './stt.js';
 export * as testing from './testing/index.js';

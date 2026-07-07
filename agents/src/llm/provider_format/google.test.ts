@@ -64,20 +64,21 @@ describe('Google Provider Format - toChatCtx', () => {
   });
 
   it('should render Instructions as their resolved value', async () => {
+    // Instructions are resolved to a plain string before storage in the chat context
     const ctx = ChatContext.empty();
     ctx.addMessage({
       role: 'system',
       content: [
-        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
-          'text',
-        ),
+        new Instructions('common instructions', { text: 'text instructions' }).render({
+          modality: 'text',
+        }),
       ],
     });
     ctx.addMessage({ role: 'user', content: 'Hello' });
 
     const [, formatData] = await toChatCtx(ctx, false);
 
-    expect(formatData.systemMessages).toEqual(['text instructions']);
+    expect(formatData.systemMessages).toEqual(['common instructions\n\ntext instructions']);
   });
 
   it('should handle multiple system messages', async () => {

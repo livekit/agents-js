@@ -14,9 +14,8 @@ import {
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-const BASE_INSTRUCTIONS = (modalitySpecific: string, currentDate: string) =>
+const BASE_INSTRUCTIONS = (currentDate: string) =>
   `You are a scheduling assistant named Alex that helps users book appointments.
-${modalitySpecific}
 Call \`book_appointment\` to finalise the booking.
 Never invent or assume details the user did not provide — ask for them instead.
 The current date is ${currentDate}.
@@ -48,9 +47,11 @@ class SchedulingAgent extends voice.Agent {
     const now = new Date();
     const weekday = now.toLocaleDateString(undefined, { weekday: 'long' });
     const currentDate = `${now.toISOString().slice(0, 10)} ${weekday}`;
-    const instructions = new llm.Instructions({
-      audio: BASE_INSTRUCTIONS(AUDIO_SPECIFIC, currentDate),
-      text: BASE_INSTRUCTIONS(TEXT_SPECIFIC, currentDate),
+    // common text is always present; the audio/text additions are appended
+    // depending on the turn's input modality
+    const instructions = new llm.Instructions(BASE_INSTRUCTIONS(currentDate), {
+      audio: AUDIO_SPECIFIC,
+      text: TEXT_SPECIFIC,
     });
 
     super({

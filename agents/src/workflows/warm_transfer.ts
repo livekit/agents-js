@@ -492,7 +492,7 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 }
 
 const renderInstructionPart = (value: Instructions | string): string =>
-  typeof value === 'string' ? value : value.value;
+  typeof value === 'string' ? value : value.toString();
 
 function resolveInstructions(
   instructions: InstructionParts | string | undefined,

@@ -82,7 +82,10 @@ export const splitSentences = (
   }
 
   if (buf) {
-    sentences.push([buf.slice(prePad.length), start, text.length - 1]);
+    // end must cover the full remaining text: xmlWrapTokenizer maps this offset
+    // back onto the original string, and an off-by-one here splits the last
+    // character into a phantom sentence (emitting mid-word chunks upstream).
+    sentences.push([buf.slice(prePad.length), start, text.length]);
   }
 
   return sentences;

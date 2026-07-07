@@ -5,6 +5,15 @@ export const ATTRIBUTE_TRANSCRIPTION_TRACK_ID = 'lk.transcribed_track_id';
 export const ATTRIBUTE_TRANSCRIPTION_FINAL = 'lk.transcription_final';
 export const TOPIC_TRANSCRIPTION = 'lk.transcription';
 export const ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID = 'lk.segment_id';
+/**
+ * The expression (delivery/emotion) the agent used for a transcription segment, surfaced so
+ * the frontend can react to it, when expressive markup is stripped from the transcript. The
+ * value is a JSON object `{"value": ...}` carrying the segment's leading expression — the
+ * `<expression>` tag for Inworld or the `<emotion>` tag for Cartesia, e.g.
+ * `{"value": "speak happy"}`. A JSON object (rather than a bare string) so the shape can
+ * gain fields later without breaking parsers.
+ */
+export const ATTRIBUTE_TRANSCRIPTION_EXPRESSION = 'lk.expression';
 export const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 export const TOPIC_CHAT = 'lk.chat';
 

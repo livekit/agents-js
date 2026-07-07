@@ -460,10 +460,6 @@ export function validateChatContextStructure(chatCtx: ChatContext): ChatContextV
           return;
         }
 
-        if (term.type === 'instructions') {
-          return;
-        }
-
         if (term.type === 'image_content') {
           if (!term.id || term.image === undefined || term.image === null) {
             pushIssue({
@@ -612,10 +608,6 @@ function formatChatHistoryItemBody(item: ChatItem): string {
 function formatMessageContentPart(part: ChatContent): string {
   if (typeof part === 'string') {
     return part;
-  }
-
-  if (part.type === 'instructions') {
-    return part.value;
   }
 
   if (part.type === 'image_content') {

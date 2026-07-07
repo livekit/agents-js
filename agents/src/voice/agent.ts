@@ -34,13 +34,14 @@ import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
-import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, ExpressiveOptions, TurnDetectionMode } from './agent_session.js';
 import {
   type AgentCreateOptions,
   type AgentTaskCreateOptions,
   createAgentTaskV2,
   createAgentV2,
 } from './agent_v2.js';
+import type { AudioRecognition } from './audio_recognition.js';
 import type { UserTurnExceededEvent } from './events.js';
 import type { TimedString } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
@@ -143,6 +144,11 @@ export interface AgentOptions<UserData> {
   tts?: TTS | TTSModelString;
   turnHandling?: TurnHandlingOptions;
   toolHandling?: ToolHandlingOptions;
+  /**
+   * Enable the expressive pipeline for this agent, overriding the session-level
+   * setting. See {@link AgentSessionOptions.expressive}.
+   */
+  expressive?: boolean | ExpressiveOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
   /** @deprecated use turnHandling.turnDetection instead */
@@ -159,6 +165,7 @@ export class Agent<UserData = any> {
   private _tts?: TTS;
   private _turnHandling?: Partial<TurnHandlingOptions>;
 
+  private _expressive?: boolean | ExpressiveOptions;
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
 
@@ -194,6 +201,7 @@ export class Agent<UserData = any> {
     allowInterruptions,
     turnHandling,
     toolHandling,
+    expressive,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
   }: AgentOptions<UserData>) {
@@ -248,6 +256,7 @@ export class Agent<UserData = any> {
       this._tts = tts;
     }
 
+    this._expressive = expressive;
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
 
@@ -274,6 +283,14 @@ export class Agent<UserData = any> {
     return this._useTtsAlignedTranscript;
   }
 
+  /**
+   * The agent-level expressive setting, overriding the session-level one when set.
+   * `undefined` means "not given" (fall back to the session option).
+   */
+  get expressive(): boolean | ExpressiveOptions | undefined {
+    return this._expressive;
+  }
+
   get chatCtx(): ReadonlyChatContext {
     return new ReadonlyChatContext(this._chatCtx.items);
   }
@@ -292,6 +309,22 @@ export class Agent<UserData = any> {
 
   get session(): AgentSession<UserData> {
     return this.getActivityOrThrow().agentSession as AgentSession<UserData>;
+  }
+
+  /**
+   * Access the audio recognition system for this agent.
+   *
+   * The only public member is `sttContext` — live speaker metadata from the
+   * STT stream.
+   *
+   * @throws Error if the agent is not running.
+   */
+  get audioRecognition(): AudioRecognition {
+    const audioRecognition = this.getActivityOrThrow()._audioRecognition;
+    if (!audioRecognition) {
+      throw new Error('audio recognition is not available for this agent');
+    }
+    return audioRecognition;
   }
 
   get turnHandling(): Partial<TurnHandlingOptions> | undefined {
@@ -522,11 +555,23 @@ export class Agent<UserData = any> {
         throw new Error('ttsNode called but no TTS node is available');
       }
 
+      const expressiveActive = activity._resolveExpressiveOptions() !== undefined;
       let wrappedTts = activity.tts;
 
       if (!activity.tts.capabilities.streaming) {
-        wrappedTts = new TTSStreamAdapter(wrappedTts, new BasicSentenceTokenizer());
+        wrappedTts = new TTSStreamAdapter(
+          wrappedTts,
+          // markup only exists in the stream when expressive is active
+          new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
+        );
       }
+
+      // Mark whether expressive is active for this synthesis, synchronously
+      // just before stream() snapshots it. Doing it here (the single synthesis
+      // choke point for both generateReply and say()) scopes it to this turn
+      // rather than leaving stale state on the instance. The provider's chunk
+      // defaults then drive the TTS's input tokenizer.
+      activity.tts._setExpressive(expressiveActive);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });

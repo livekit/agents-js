@@ -24,7 +24,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
-import { isInstructions, renderInstructions } from '../llm/chat_context.js';
+import { renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -415,10 +415,8 @@ function chatItemToProto(item: ChatItem): ProtoChatItem {
       // the ChatContent proto's `text` field is a string, and non-string values
       // render as garbage in the dashboard.
       content: item.content
-        .filter((c: ChatContent) => typeof c === 'string' || isInstructions(c))
-        .map((c) => ({
-          text: isInstructions(c) ? c.value : (c as string),
-        })),
+        .filter((c: ChatContent) => typeof c === 'string')
+        .map((c) => ({ text: c })),
       createdAt: toRFC3339(item.createdAt),
     };
 

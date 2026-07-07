@@ -17,14 +17,15 @@ import {
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { TTS as InferenceTTS } from '../inference/tts.js';
 import {
   AgentConfigUpdate,
   type ChatContext,
   ChatMessage,
-  type Instructions,
+  Instructions,
   type MetricsReport,
-  concatInstructions,
   instructionsEqual,
+  isInstructions,
   renderInstructions,
 } from '../llm/chat_context.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
@@ -91,7 +92,12 @@ import {
   _setActivityTaskInfo,
   speechHandleStorage,
 } from './agent.js';
-import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentSession,
+  DEFAULT_EXPRESSIVE_OPTIONS,
+  type ExpressiveOptions,
+  type TurnDetectionMode,
+} from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -120,7 +126,6 @@ import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './gene
 import {
   type _AudioOut,
   type _TextOut,
-  applyInstructionsModality,
   forwardedTextFor,
   performAudioForwarding,
   performLLMInference,
@@ -131,6 +136,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
+import { resolveOptions as resolveExpressivePreset } from './presets.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -520,7 +526,7 @@ export class AgentActivity implements RecognitionHooks {
       try {
         const realtimeInstructions =
           !rtReused || capabilities.midSessionInstructionsUpdate
-            ? renderInstructions(this.agent.instructions)
+            ? this._renderRealtimeInstructions(this.agent.instructions)
             : undefined;
         await this.realtimeSession!._updateSession(
           realtimeInstructions,
@@ -552,9 +558,12 @@ export class AgentActivity implements RecognitionHooks {
 
     const initialToolCtx = this.tools;
     const initialTools = Object.keys(initialToolCtx.functionTools);
-    if (runOnEnter && (this.agent.instructions || initialTools.length > 0)) {
+    // collapse modality variants for the record; audio-first matches the
+    // updateInstructions default for voice sessions
+    const initialInstructions = renderInstructions(this.agent.instructions, 'audio');
+    if (runOnEnter && (initialInstructions || initialTools.length > 0)) {
       const initialConfig = new AgentConfigUpdate({
-        instructions: this.agent.instructions,
+        instructions: initialInstructions,
         toolsAdded: initialTools.length > 0 ? initialTools : undefined,
       });
       this.agent._chatCtx.insert(initialConfig);
@@ -872,6 +881,11 @@ export class AgentActivity implements RecognitionHooks {
     return this.audioRecognition?.inputStartedAt;
   }
 
+  /** @internal */
+  get _audioRecognition(): AudioRecognition | undefined {
+    return this.audioRecognition;
+  }
+
   /**
    * @internal — used by AMD to obtain a private branch of the participant
    * audio stream that does not interfere with the pipeline VAD/STT.
@@ -900,12 +914,15 @@ export class AgentActivity implements RecognitionHooks {
   async updateInstructions(instructions: string | Instructions): Promise<void> {
     this.agent._instructions = instructions;
 
-    const configUpdate = new AgentConfigUpdate({ instructions });
+    // Record the configuration change (audio-first, matching the initial config record)
+    const configUpdate = new AgentConfigUpdate({
+      instructions: renderInstructions(instructions, 'audio'),
+    });
     this.agent._chatCtx.insert(configUpdate);
     this.agentSession.history.insert(configUpdate);
 
     if (this.realtimeSession) {
-      await this.realtimeSession.updateInstructions(renderInstructions(instructions));
+      await this.realtimeSession.updateInstructions(this._renderRealtimeInstructions(instructions));
     } else {
       updateInstructions({
         chatCtx: this.agent._chatCtx,
@@ -1837,6 +1854,91 @@ export class AgentActivity implements RecognitionHooks {
     return this.agentSession.chatCtx;
   }
 
+  /**
+   * Resolve instructions to a plain string for the realtime session.
+   *
+   * Realtime instructions are session-level (there is no per-turn modality
+   * resolution like the pipeline path), so modality-specific {@link Instructions}
+   * resolve to the realtime model's output modality.
+   * @internal
+   */
+  _renderRealtimeInstructions(instructions: string | Instructions): string {
+    if (isInstructions(instructions)) {
+      const modality: 'audio' | 'text' =
+        this.llm instanceof RealtimeModel && this.llm.capabilities.audioOutput ? 'audio' : 'text';
+      return instructions.render({ modality });
+    }
+    return instructions;
+  }
+
+  /**
+   * Resolve expressive from agent (overrides session). Returns undefined if disabled.
+   *
+   * Expressive mode requires two things:
+   * - the inference gateway TTS (`livekit.agents.inference.TTS`): the markup
+   *   normalization/conversion and expressive chunking run there, so direct
+   *   provider plugins would receive unconverted markup.
+   * - a TTS that actually declares a markup dialect (`llmInstructions()` is
+   *   not `undefined`): gateway providers without one (e.g. `rime`, `deepgram`)
+   *   get no markup instructions, so no tags can appear in the stream — leaving
+   *   it "active" would enable xml-aware chunking with nothing to chunk and
+   *   re-introduce the stray-`<` streaming stall.
+   * @internal
+   */
+  _resolveExpressiveOptions(): ExpressiveOptions | undefined {
+    if (!(this.tts instanceof InferenceTTS) || this.tts.markup.llmInstructions() === undefined) {
+      return undefined;
+    }
+
+    let expr = this.agent.expressive;
+    if (expr === undefined) {
+      expr = this.agentSession.sessionOptions.expressive;
+    }
+    if (typeof expr === 'object') {
+      // a `preset` selector resolves to the active TTS provider's tuned preset
+      // (falling back to the agnostic default); explicit fields override on top
+      const providerKey = this.tts ? this.tts._markupProviderKey() : '';
+      return resolveExpressivePreset(expr, {
+        providerKey,
+        defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS,
+      });
+    }
+    return expr ? DEFAULT_EXPRESSIVE_OPTIONS : undefined;
+  }
+
+  /**
+   * Inject the TTS markup guide into the chat context.
+   * @internal
+   */
+  _injectExpressiveInstructions(
+    chatCtx: ChatContext,
+    options: ExpressiveOptions,
+    speechHandle: SpeechHandle,
+  ): void {
+    const toInstructions = (v: Instructions | string): Instructions =>
+      isInstructions(v) ? v : new Instructions(v);
+
+    const turnModality = speechHandle?.inputDetails.modality;
+
+    const ttsInstructions = this.tts ? this.tts.markup.llmInstructions() : undefined;
+    if (ttsInstructions) {
+      const ttsTemplate = toInstructions(options.ttsInstructionsTemplate!);
+      const text = ttsTemplate.render({
+        modality: turnModality,
+        data: {
+          tts: {
+            markup: {
+              llm_instructions: ttsInstructions,
+            },
+          },
+        },
+      });
+      if (text.trim()) {
+        chatCtx.addMessage({ role: 'system', content: text });
+      }
+    }
+  }
+
   async waitForIdle(
     options: { waitForAgent?: boolean; waitForUser?: boolean } = {},
   ): Promise<void> {
@@ -2036,7 +2138,7 @@ export class AgentActivity implements RecognitionHooks {
       inputDetails,
     } = options;
 
-    let instructions: string | Instructions | undefined = defaultInstructions;
+    const instructions: string | Instructions | undefined = defaultInstructions;
     let toolChoice = defaultToolChoice;
     let allowInterruptions = defaultAllowInterruptions;
 
@@ -2090,7 +2192,10 @@ export class AgentActivity implements RecognitionHooks {
             speechHandle: handle,
             // TODO(brian): support llm.ChatMessage for the realtime model
             userInput: userMessage?.textContent,
-            instructions,
+            instructions:
+              instructions !== undefined
+                ? this._renderRealtimeInstructions(instructions)
+                : undefined,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
@@ -2101,12 +2206,10 @@ export class AgentActivity implements RecognitionHooks {
         name: 'AgentActivity.realtimeReply',
       });
     } else if (this.llm instanceof LLM) {
-      // instructions used inside generateReply are "extra" instructions.
-      // this matches the behavior of the Realtime API:
+      // instructions used inside generateReply are "extra" instructions: they are
+      // appended as a separate system message for this turn only, matching the
+      // behavior of the Realtime API:
       // https://platform.openai.com/docs/api-reference/realtime-client-events/response/create
-      if (instructions) {
-        instructions = concatInstructions(this.agent.instructions, '\n', instructions);
-      }
 
       // Filter out tools with IGNORE_ON_ENTER flag when generateReply is called inside onEnter
       const onEnterData = onEnterStorage.getStore();
@@ -2618,7 +2721,10 @@ export class AgentActivity implements RecognitionHooks {
 
     span.setAttribute(traceTypes.ATTR_SPEECH_ID, speechHandle.id);
     if (instructions) {
-      span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
+      span.setAttribute(
+        traceTypes.ATTR_INSTRUCTIONS,
+        renderInstructions(instructions, speechHandle.inputDetails.modality),
+      );
     }
     if (newMessage) {
       span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
@@ -2645,20 +2751,32 @@ export class AgentActivity implements RecognitionHooks {
       chatCtx.insert(newMessage);
     }
 
+    // resolve modality-specific instructions for this turn
+    const turnModality = speechHandle.inputDetails.modality;
     if (instructions) {
+      // extra instructions are appended as a separate system message for this turn
+      chatCtx.addMessage({
+        role: 'system',
+        content: [renderInstructions(instructions, turnModality)],
+      });
+    } else if (isInstructions(this.agent.instructions)) {
       try {
         updateInstructions({
           chatCtx,
-          instructions,
-          addIfMissing: true,
+          instructions: this.agent.instructions,
+          modality: turnModality,
+          addIfMissing: false,
         });
       } catch (e) {
         this.logger.error({ error: e }, 'error occurred during updateInstructions');
       }
     }
 
-    // apply the correct variant of the instructions for the turn's input modality
-    applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
+    // inject expressive instructions (TTS markup guide)
+    const exprOpts = this._resolveExpressiveOptions();
+    if (exprOpts !== undefined) {
+      this._injectExpressiveInstructions(chatCtx, exprOpts, speechHandle);
+    }
 
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
@@ -3857,7 +3975,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings;
     abortController: AbortController;
     userInput?: string;
-    instructions?: string | Instructions;
+    /** Extra instructions, already resolved to a plain string by the caller. */
+    instructions?: string;
   }): Promise<void> {
     speechHandleStorage.enterWith(speechHandle);
 
@@ -3888,12 +4007,9 @@ export class AgentActivity implements RecognitionHooks {
 
     try {
       const generateReplyAbortController = new AbortController();
-      const generationPromise = this.realtimeSession.generateReply(
-        instructions !== undefined
-          ? renderInstructions(instructions, speechHandle.inputDetails.modality)
-          : undefined,
-        { signal: generateReplyAbortController.signal },
-      );
+      const generationPromise = this.realtimeSession.generateReply(instructions, {
+        signal: generateReplyAbortController.signal,
+      });
       void generationPromise.catch(() => undefined);
 
       await speechHandle.waitIfNotInterrupted([generationPromise]);

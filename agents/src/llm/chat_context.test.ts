@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
-import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
   type AudioContent,
@@ -15,7 +14,6 @@ import {
   type ImageContent,
   Instructions,
   ReadonlyChatContext,
-  concatInstructions,
   isInstructions,
   renderInstructions,
 } from './chat_context.js';
@@ -1243,241 +1241,163 @@ describe('ChatContext.isEquivalent', () => {
 });
 
 describe('Instructions', () => {
-  it('constructs from an object with audio and text variants', () => {
-    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+  it('constructs from common text with audio and text additions', () => {
+    const instr = new Instructions('common text', {
+      audio: 'audio addition',
+      text: 'text addition',
+    });
 
-    expect(instr.audio).toBe('audio variant');
-    expect(instr.text).toBe('text variant');
-    expect(instr.value).toBe('audio variant');
+    expect(instr.common).toBe('common text');
+    expect(instr.audio).toBe('audio addition');
+    expect(instr.text).toBe('text addition');
+    expect(instr.toString()).toBe('common text');
   });
 
   it('identifies Instructions with a type guard', () => {
-    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
+    const instr = new Instructions('common', { audio: 'audio addition' });
 
     expect(isInstructions(instr)).toBe(true);
-    expect(isInstructions('audio variant')).toBe(false);
-    expect(isInstructions({ type: 'instructions', audio: 'audio variant' })).toBe(false);
+    expect(isInstructions('common')).toBe(false);
+    expect(isInstructions({ type: 'instructions', common: 'common' })).toBe(false);
   });
 
-  it('tpl propagates Instructions interpolations into audio and text variants', () => {
-    const instr = Instructions.tpl`persona
-${new Instructions({ audio: 'audio rules', text: 'text rules' })}
-extra`;
+  it('render() combines common + modality-specific additions', () => {
+    const instr = new Instructions('You are a helpful assistant.', {
+      audio: 'Keep responses short for voice.',
+      text: 'Use markdown formatting.',
+    });
+
+    expect(instr.render({ modality: 'audio' })).toBe(
+      'You are a helpful assistant.\n\nKeep responses short for voice.',
+    );
+    expect(instr.render({ modality: 'text' })).toBe(
+      'You are a helpful assistant.\n\nUse markdown formatting.',
+    );
+    // no modality returns just the common text
+    expect(instr.render()).toBe('You are a helpful assistant.');
+  });
+
+  it('render() without modality additions returns just common for both', () => {
+    const commonOnly = new Instructions('common only');
+    expect(commonOnly.render({ modality: 'audio' })).toBe('common only');
+    expect(commonOnly.render({ modality: 'text' })).toBe('common only');
+  });
+
+  it('render() with only one modality addition', () => {
+    const audioOnly = new Instructions('base', { audio: 'audio extra' });
+    expect(audioOnly.render({ modality: 'audio' })).toBe('base\n\naudio extra');
+    expect(audioOnly.render({ modality: 'text' })).toBe('base');
+
+    const textOnly = new Instructions('base', { text: 'text extra' });
+    expect(textOnly.render({ modality: 'audio' })).toBe('base');
+    expect(textOnly.render({ modality: 'text' })).toBe('base\n\ntext extra');
+  });
+
+  it('render() with empty common returns just the addition', () => {
+    const emptyCommon = new Instructions('', { audio: 'audio only', text: 'text only' });
+    expect(emptyCommon.render({ modality: 'audio' })).toBe('audio only');
+    expect(emptyCommon.render({ modality: 'text' })).toBe('text only');
+  });
+
+  it('render() fills template placeholders from data', () => {
+    const instr = new Instructions('Hello {name}, the weather is {weather.condition}.');
+    expect(instr.render({ data: { name: 'Alice', weather: { condition: 'sunny' } } })).toBe(
+      'Hello Alice, the weather is sunny.',
+    );
+  });
+
+  it('render() replaces missing placeholders with empty strings', () => {
+    const instr = new Instructions('Hello {name}!');
+    expect(instr.render({ data: { other: 'value' } })).toBe('Hello !');
+  });
+
+  it('resolveTemplate interpolates primitive values into all variants', () => {
+    const instr = Instructions.resolveTemplate('date={date} count={count}', {
+      date: '2026-05-13',
+      count: 3,
+    });
 
     expect(instr).toBeInstanceOf(Instructions);
+    expect(instr.common).toBe('date=2026-05-13 count=3');
+    expect(instr.audio).toBeUndefined();
+    expect(instr.text).toBeUndefined();
+  });
+
+  it('resolveTemplate propagates Instructions interpolations into modality variants', () => {
+    const rules = new Instructions('common rules', {
+      audio: 'audio rules',
+      text: 'text rules',
+    });
+    const instr = Instructions.resolveTemplate('persona\n{rules}\nextra', { rules });
+
+    expect(instr.common).toBe('persona\ncommon rules\nextra');
     expect(instr.audio).toBe('persona\naudio rules\nextra');
     expect(instr.text).toBe('persona\ntext rules\nextra');
-    expect(instr.value).toBe('persona\naudio rules\nextra');
-    expect(instr.asModality('text').value).toBe('persona\ntext rules\nextra');
   });
 
-  it('tpl preserves audio-only interpolation as audio-only output', () => {
-    const instr = Instructions.tpl`prefix ${new Instructions({ audio: 'same' })} suffix`;
+  it('resolveTemplate falls back to common when an Instructions kwarg has no variant', () => {
+    const rules = new Instructions('common rules', { audio: 'audio rules' });
+    const instr = Instructions.resolveTemplate('prefix {rules} suffix', { rules });
 
-    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'prefix same suffix' });
-    expect(instr.audio).toBe('prefix same suffix');
-    expect(instr.text).toBe('prefix same suffix');
-  });
-
-  it('tpl interpolates primitive values into both variants', () => {
-    const instr = Instructions.tpl`date=${'2026-05-13'} enabled=${true} count=${3}`;
-
-    expect(instr.toJSON()).toEqual({
-      type: 'instructions',
-      audio: 'date=2026-05-13 enabled=true count=3',
-    });
-    expect(instr.audio).toBe('date=2026-05-13 enabled=true count=3');
-    expect(instr.text).toBe('date=2026-05-13 enabled=true count=3');
-    expect(instr.value).toBe('date=2026-05-13 enabled=true count=3');
-  });
-
-  it('tpl combines multiple modality-aware interpolations', () => {
-    const instr = Instructions.tpl`${new Instructions({ audio: 'audio A', text: 'text A' })} / ${new Instructions({ audio: 'audio B', text: 'text B' })}`;
-
-    expect(instr.audio).toBe('audio A / audio B');
-    expect(instr.text).toBe('text A / text B');
-    expect(instr.value).toBe('audio A / audio B');
-  });
-
-  it('tpl preserves the current rendered value of resolved interpolations', () => {
-    const resolved = new Instructions({ audio: 'audio rules', text: 'text rules' }).asModality(
-      'text',
-    );
-    const instr = Instructions.tpl`prefix ${resolved} suffix`;
-
+    expect(instr.common).toBe('prefix common rules suffix');
     expect(instr.audio).toBe('prefix audio rules suffix');
-    expect(instr.text).toBe('prefix text rules suffix');
-    expect(instr.value).toBe('prefix text rules suffix');
+    // no text variant on the kwarg: text falls back to the common value
+    expect(instr.text).toBe('prefix common rules suffix');
   });
 
-  it('tpl stringifies null and undefined values like template literals', () => {
-    const instr = Instructions.tpl`null=${null} undefined=${undefined}`;
-
-    expect(instr.toJSON()).toEqual({
-      type: 'instructions',
-      audio: 'null=null undefined=undefined',
+  it('serializes with toJSON and omits undefined variants', () => {
+    const both = new Instructions('common text', {
+      audio: 'audio addition',
+      text: 'text addition',
     });
-    expect(instr.audio).toBe('null=null undefined=undefined');
-    expect(instr.text).toBe('null=null undefined=undefined');
-  });
-
-  it('serializes to a dict with both variants and round-trips through toJSON', () => {
-    const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
-
-    const ctx = new ChatContext([ChatMessage.create({ role: 'system', content: [instr] })]);
-    const data = ctx.toJSON();
-    const items = (data.items as Record<string, unknown>[])!;
-    const content = (items[0]!.content as Record<string, unknown>[])![0]!;
-
-    expect(content).toEqual({
+    expect(both.toJSON()).toEqual({
       type: 'instructions',
-      audio: 'audio variant',
-      text: 'text variant',
+      common: 'common text',
+      audio: 'audio addition',
+      text: 'text addition',
+    });
+
+    const audioOnly = new Instructions('common', { audio: 'audio only' });
+    expect(audioOnly.toJSON()).toEqual({
+      type: 'instructions',
+      common: 'common',
+      audio: 'audio only',
     });
   });
 
-  it('omits the text key in toJSON when only audio variant is provided', () => {
-    const instr = new Instructions({ audio: 'audio only' });
-    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'audio only' });
-  });
-
-  it('falls back text -> audio when no text variant is provided', () => {
-    const instr = new Instructions({ audio: 'audio only' });
-    expect(instr.audio).toBe('audio only');
-    expect(instr.text).toBe('audio only');
-    expect(instr.value).toBe('audio only');
-  });
-
-  it('renderInstructions returns strings and resolved Instructions values explicitly', () => {
-    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
+  it('renderInstructions returns strings and renders Instructions with modality', () => {
+    const instr = new Instructions('common', {
+      audio: 'audio addition',
+      text: 'text addition',
+    });
 
     expect(renderInstructions('plain instructions')).toBe('plain instructions');
-    expect(renderInstructions(instr)).toBe('audio instructions');
-    expect(renderInstructions(instr, 'audio')).toBe('audio instructions');
-    expect(renderInstructions(instr, 'text')).toBe('text instructions');
+    expect(renderInstructions(instr)).toBe('common');
+    expect(renderInstructions(instr, 'audio')).toBe('common\n\naudio addition');
+    expect(renderInstructions(instr, 'text')).toBe('common\n\ntext addition');
   });
 
-  it('concatenates two Instructions, propagating both variants', () => {
-    const a = new Instructions({ audio: 'audio A', text: 'text A' });
-    const b = new Instructions({ audio: 'audio B', text: 'text B' });
-    const result = a.concat(b);
-    expect(result).toBeInstanceOf(Instructions);
-    expect(result.audio).toBe('audio Aaudio B');
-    expect(result.text).toBe('text Atext B');
-  });
+  it('is resolved to str before storage in ChatMessage content', () => {
+    const instr = new Instructions('common text', {
+      audio: 'audio addition',
+      text: 'text addition',
+    });
 
-  it('concatenates Instructions + string, propagating both variants', () => {
-    const instr = new Instructions({ audio: 'audio', text: 'text' });
-    const result = instr.concat(' suffix');
-    expect(result.audio).toBe('audio suffix');
-    expect(result.text).toBe('text suffix');
-  });
+    // addMessage with Instructions resolves to toString() = common
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'system', content: [instr.toString()] });
+    const content = (ctx.items[0]! as ChatMessage).content[0];
+    expect(typeof content).toBe('string');
+    expect(content).toBe('common text');
 
-  it('concatInstructions handles string + Instructions (radd-style)', () => {
-    const instr = new Instructions({ audio: 'audio', text: 'text' });
-    const result = concatInstructions('prefix ', instr);
-    expect(isInstructions(result)).toBe(true);
-    if (!isInstructions(result)) return;
-    expect(result.audio).toBe('prefix audio');
-    expect(result.text).toBe('prefix text');
-  });
-
-  it('preserves text=undefined when concatenating an audio-only instructions', () => {
-    const audioOnly = new Instructions({ audio: 'audio only' });
-    const result = audioOnly.concat(' more');
-    expect(result.toJSON()).toEqual({ type: 'instructions', audio: 'audio only more' });
-    expect(result.audio).toBe('audio only more');
-    expect(result.text).toBe('audio only more');
-  });
-
-  it('when only one side has a text variant, the other contributes its audio', () => {
-    const a = new Instructions({ audio: 'audio A', text: 'text A' });
-    const b = new Instructions({ audio: 'audio B' });
-    const result = concatInstructions(a, ' ', b);
-    expect(isInstructions(result)).toBe(true);
-    if (!isInstructions(result)) return;
-    expect(result.audio).toBe('audio A audio B');
-    expect(result.text).toBe('text A audio B');
-  });
-
-  it('asModality returns a copy with both variants preserved', () => {
-    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
-
-    let resolved = instr.asModality('audio');
-    expect(resolved.value).toBe('audio instructions');
-    expect(resolved.audio).toBe('audio instructions');
-    expect(resolved.text).toBe('text instructions');
-
-    resolved = instr.asModality('text');
-    expect(resolved.value).toBe('text instructions');
-    expect(resolved.audio).toBe('audio instructions');
-    expect(resolved.text).toBe('text instructions');
-  });
-
-  it('can switch modality after a previous resolution', () => {
-    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
-    const resolvedText = instr.asModality('text');
-    const resolvedAudio = resolvedText.asModality('audio');
-    expect(resolvedAudio.value).toBe('audio instructions');
-  });
-
-  it('asModality on audio-only Instructions returns audio for both modalities', () => {
-    const audioOnly = new Instructions({ audio: 'audio only' });
-    expect(audioOnly.asModality('audio').value).toBe('audio only');
-    expect(audioOnly.asModality('text').value).toBe('audio only');
-  });
-
-  it('applyInstructionsModality rewrites the system message content', () => {
-    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
-    const ctx = new ChatContext([
-      ChatMessage.create({
-        id: INSTRUCTIONS_MESSAGE_ID,
-        role: 'system',
-        content: [instr],
-      }),
-    ]);
-
-    applyInstructionsModality(ctx, { modality: 'audio' });
-    let content = (ctx.items[0]! as ChatMessage).content[0]!;
-    expect(isInstructions(content) ? content.value : '').toBe('audio instructions');
-
-    applyInstructionsModality(ctx, { modality: 'text' });
-    content = (ctx.items[0]! as ChatMessage).content[0]!;
-    expect(isInstructions(content) ? content.value : '').toBe('text instructions');
-  });
-
-  it('applyInstructionsModality is a no-op when content has no Instructions', () => {
-    const ctx = new ChatContext([
-      ChatMessage.create({
-        id: INSTRUCTIONS_MESSAGE_ID,
-        role: 'system',
-        content: ['plain string instructions'],
-      }),
-    ]);
-    const before = (ctx.items[0]! as ChatMessage).content[0];
-    applyInstructionsModality(ctx, { modality: 'text' });
-    expect((ctx.items[0]! as ChatMessage).content[0]).toBe(before);
-  });
-
-  it('survives copy and lets a different modality be applied to the copy', () => {
-    const instr = new Instructions({ audio: 'audio instructions', text: 'text instructions' });
-    const baseCtx = new ChatContext([
-      ChatMessage.create({
-        id: INSTRUCTIONS_MESSAGE_ID,
-        role: 'system',
-        content: [instr],
-      }),
-    ]);
-    const turn1 = baseCtx.copy();
-    applyInstructionsModality(turn1, { modality: 'text' });
-    const turn2 = turn1.copy();
-    applyInstructionsModality(turn2, { modality: 'audio' });
-
-    const turn2Content = (turn2.items[0]! as ChatMessage).content[0]!;
-    expect(isInstructions(turn2Content) ? turn2Content.value : '').toBe('audio instructions');
-
-    // base context content is untouched (was the original instr)
-    expect((baseCtx.items[0]! as ChatMessage).content[0]).toBe(instr);
+    // toJSON round-trip with resolved str content
+    const resolved = instr.render({ modality: 'audio' });
+    const ctx2 = new ChatContext([ChatMessage.create({ role: 'system', content: [resolved] })]);
+    const data = ctx2.toJSON();
+    const items = (data.items as Record<string, unknown>[])!;
+    const serialized = (items[0]!.content as unknown[])![0]!;
+    expect(typeof serialized).toBe('string');
+    expect(serialized).toBe('common text\n\naudio addition');
   });
 });
 
