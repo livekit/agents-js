@@ -131,6 +131,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
+import { resolveOptions as resolveExpressivePresetOptions } from './presets.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -542,7 +543,7 @@ export class AgentActivity implements RecognitionHooks {
       try {
         updateInstructions({
           chatCtx: this.agent._chatCtx,
-          instructions: this.agent.instructions,
+          instructions: this.instructionsWithExpressive(this.agent.instructions),
           addIfMissing: true,
         });
       } catch (error) {
@@ -776,6 +777,42 @@ export class AgentActivity implements RecognitionHooks {
     return this.agent.tts || this.agentSession.tts;
   }
 
+  private resolveExpressiveOptions() {
+    const expressive = this.agent.expressive ?? this.agentSession.sessionOptions.expressive;
+    if (!expressive || !this.tts?.markup.llmInstructions()) {
+      return undefined;
+    }
+
+    const base = {
+      ttsInstructionsTemplate:
+        'You can control how you speak using the following formatting tags. Use them when appropriate to make your speech more expressive and natural:\n\n{tts.markup.llm_instructions}',
+    };
+    return resolveExpressivePresetOptions(expressive === true ? {} : expressive, base);
+  }
+
+  /** @internal */
+  _isExpressiveActive(): boolean {
+    return this.resolveExpressiveOptions() !== undefined;
+  }
+
+  private instructionsWithExpressive(instructions: string | Instructions): string | Instructions {
+    const expressive = this.resolveExpressiveOptions();
+    if (!expressive) {
+      return instructions;
+    }
+
+    const llmInstructions = this.tts?.markup.llmInstructions();
+    if (!llmInstructions) {
+      return instructions;
+    }
+
+    const rendered = renderInstructions(expressive.ttsInstructionsTemplate ?? '').replace(
+      /\{tts\.markup\.llm_instructions\}/g,
+      llmInstructions,
+    );
+    return concatInstructions(instructions, '\n\n', rendered);
+  }
+
   get tools(): ToolContext {
     const tools: ToolContextEntry[] = [
       ...this.agentSession.toolCtx.tools,
@@ -891,7 +928,7 @@ export class AgentActivity implements RecognitionHooks {
     } else {
       updateInstructions({
         chatCtx,
-        instructions: this.agent.instructions,
+        instructions: this.instructionsWithExpressive(this.agent.instructions),
         addIfMissing: true,
       });
     }
@@ -909,7 +946,7 @@ export class AgentActivity implements RecognitionHooks {
     } else {
       updateInstructions({
         chatCtx: this.agent._chatCtx,
-        instructions,
+        instructions: this.instructionsWithExpressive(instructions),
         addIfMissing: true,
       });
     }
@@ -2649,7 +2686,7 @@ export class AgentActivity implements RecognitionHooks {
       try {
         updateInstructions({
           chatCtx,
-          instructions,
+          instructions: this.instructionsWithExpressive(instructions),
           addIfMissing: true,
         });
       } catch (e) {

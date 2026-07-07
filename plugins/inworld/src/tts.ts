@@ -339,6 +339,19 @@ export class TTS extends tts.TTS {
     return this.#authorization;
   }
 
+  get model(): string {
+    return this.#opts.model;
+  }
+
+  get provider(): string {
+    return 'Inworld';
+  }
+
+  /** @internal */
+  override _markupProviderKey(): string {
+    return 'inworld';
+  }
+
   /**
    * List all available voices in the workspace associated with the API key.
    * @param language - Optional ISO 639-1 language code to filter voices (e.g., 'en', 'es', 'fr')

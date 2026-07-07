@@ -138,6 +138,11 @@ export class TTS extends tts.TTS {
     return 'Cartesia';
   }
 
+  /** @internal */
+  override _markupProviderKey(): string {
+    return 'cartesia';
+  }
+
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolvedOpts = {
       ...defaultTTSOptions,

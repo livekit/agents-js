@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as presets from './presets.js';
+
 export {
   Agent,
   AgentTask,
@@ -46,6 +48,7 @@ export {
   isTimedString,
 } from './io.js';
 export * from './report.js';
+export { presets };
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
 export * from './turn_config/endpointing.js';

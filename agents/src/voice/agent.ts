@@ -34,7 +34,7 @@ import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Future, Task, toStream } from '../utils.js';
 import type { VAD } from '../vad.js';
 import { type AgentActivity, agentActivityStorage } from './agent_activity.js';
-import type { AgentSession, TurnDetectionMode } from './agent_session.js';
+import type { AgentSession, ExpressiveOptions, TurnDetectionMode } from './agent_session.js';
 import {
   type AgentCreateOptions,
   type AgentTaskCreateOptions,
@@ -145,6 +145,7 @@ export interface AgentOptions<UserData> {
   toolHandling?: ToolHandlingOptions;
   minConsecutiveSpeechDelay?: number;
   useTtsAlignedTranscript?: boolean;
+  expressive?: boolean | ExpressiveOptions;
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
   /** @deprecated use turnHandling.interruption.enabled instead */
@@ -161,6 +162,7 @@ export class Agent<UserData = any> {
 
   private _minConsecutiveSpeechDelay?: number;
   private _useTtsAlignedTranscript?: boolean;
+  private _expressive?: boolean | ExpressiveOptions;
 
   /** @internal */
   _agentActivity?: AgentActivity;
@@ -196,6 +198,7 @@ export class Agent<UserData = any> {
     toolHandling,
     minConsecutiveSpeechDelay,
     useTtsAlignedTranscript,
+    expressive,
   }: AgentOptions<UserData>) {
     if (id) {
       this._id = id;
@@ -250,6 +253,7 @@ export class Agent<UserData = any> {
 
     this._minConsecutiveSpeechDelay = minConsecutiveSpeechDelay;
     this._useTtsAlignedTranscript = useTtsAlignedTranscript;
+    this._expressive = expressive;
 
     this._agentActivity = undefined;
   }
@@ -272,6 +276,10 @@ export class Agent<UserData = any> {
 
   get useTtsAlignedTranscript(): boolean | undefined {
     return this._useTtsAlignedTranscript;
+  }
+
+  get expressive(): boolean | ExpressiveOptions | undefined {
+    return this._expressive;
   }
 
   get chatCtx(): ReadonlyChatContext {
@@ -527,6 +535,8 @@ export class Agent<UserData = any> {
       if (!activity.tts.capabilities.streaming) {
         wrappedTts = new TTSStreamAdapter(wrappedTts, new BasicSentenceTokenizer());
       }
+
+      activity.tts._setExpressive(activity._isExpressiveActive());
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
       const stream = wrappedTts.stream({ connOptions });

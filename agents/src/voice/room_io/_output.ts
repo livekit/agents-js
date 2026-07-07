@@ -17,14 +17,22 @@ import {
   TrackSource,
 } from '@livekit/rtc-node';
 import {
+  ATTRIBUTE_TRANSCRIPTION_EXPRESSION,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
   ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID,
   ATTRIBUTE_TRANSCRIPTION_TRACK_ID,
   TOPIC_TRANSCRIPTION,
 } from '../../constants.js';
 import { log } from '../../log.js';
+import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future, Task, shortuuid } from '../../utils.js';
-import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
+import {
+  AudioOutput,
+  TextOutput,
+  type TimedString,
+  createTimedString,
+  isTimedString,
+} from '../io.js';
 import { findMicrophoneTrackId } from '../transcription/index.js';
 
 abstract class BaseParticipantTranscriptionOutput extends TextOutput {
@@ -35,6 +43,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
   protected capturing: boolean = false;
   protected latestText: string = '';
   protected currentId: string = this.generateCurrentId();
+  protected markupStripper = new TranscriptMarkupStripper();
   protected logger = log();
 
   constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null) {
@@ -106,6 +115,7 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
     this.currentId = this.generateCurrentId();
     this.capturing = false;
     this.latestText = '';
+    this.markupStripper = new TranscriptMarkupStripper();
   }
 
   async captureText(text: string | TimedString) {
@@ -113,9 +123,17 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
       return;
     }
 
+    if (!this.capturing) {
+      this.resetState();
+      this.capturing = true;
+    }
+
     const textStr = isTimedString(text) ? text.text : text;
-    this.latestText = textStr;
-    await this.handleCaptureText(textStr);
+    const cleanText = this.markupStripper.push(textStr);
+    this.latestText = cleanText;
+    if (cleanText) {
+      await this.handleCaptureText(cleanText);
+    }
   }
 
   flush() {
@@ -123,6 +141,11 @@ abstract class BaseParticipantTranscriptionOutput extends TextOutput {
       return;
     }
 
+    const cleanText = this.markupStripper.flush();
+    if (cleanText) {
+      this.latestText = this.isDeltaStream ? this.latestText + cleanText : cleanText;
+      void this.handleCaptureText(cleanText);
+    }
     this.capturing = false;
     this.handleFlush();
   }
@@ -159,15 +182,40 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       return;
     }
 
+    if (!this.capturing) {
+      this.resetState();
+      this.capturing = true;
+    }
+
     // latestText must hold the encoded payload so non-delta flush (FINAL=true) republishes the
     // same newline-delimited JSON format as the interim chunks.
-    const payload = this.jsonFormat
-      ? this.encodeJsonChunk(text)
-      : isTimedString(text)
-        ? text.text
-        : text;
+    const textStr = isTimedString(text) ? text.text : text;
+    const cleanText = this.markupStripper.push(textStr);
+    if (!cleanText) {
+      return;
+    }
+
+    const cleanValue = isTimedString(text)
+      ? createTimedString({ ...text, text: cleanText })
+      : cleanText;
+    const payload = this.jsonFormat ? this.encodeJsonChunk(cleanValue) : cleanText;
     this.latestText = payload;
     await this.handleCaptureText(payload);
+  }
+
+  override flush() {
+    if (!this.participantIdentity || !this.capturing) {
+      return;
+    }
+
+    const cleanText = this.markupStripper.flush();
+    if (cleanText) {
+      const payload = this.jsonFormat ? this.encodeJsonChunk(cleanText) : cleanText;
+      this.latestText = this.isDeltaStream ? this.latestText + payload : payload;
+      void this.handleCaptureText(payload);
+    }
+    this.capturing = false;
+    this.handleFlush();
   }
 
   private encodeJsonChunk(text: string | TimedString): string {
@@ -234,6 +282,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
       }
     }
+    const expressionAttributes = this.markupStripper.expressionAttributes();
+    if (expressionAttributes && attributes[ATTRIBUTE_TRANSCRIPTION_EXPRESSION] === undefined) {
+      Object.assign(attributes, expressionAttributes);
+    }
     attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
 
     return await this.room.localParticipant.streamText({
@@ -250,6 +302,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     if (this.trackId) {
       attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
     }
+    Object.assign(attributes, this.markupStripper.expressionAttributes());
 
     const abortPromise = new Promise<void>((resolve) => {
       signal.addEventListener('abort', () => resolve());

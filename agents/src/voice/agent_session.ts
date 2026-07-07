@@ -92,6 +92,7 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import type { Preset } from './presets.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -193,7 +194,14 @@ export const defaultAgentSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
+
+export type ExpressiveOptions = {
+  preset?: Preset;
+  ttsInstructionsTemplate?: Instructions | string;
+  ttsInstructionsAppend?: string;
+};
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
 export type VoiceOptions = {
@@ -311,6 +319,9 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /** Enable LLM-authored TTS markup for expressive speech. */
+  expressive?: boolean | ExpressiveOptions;
 };
 
 export type AgentSessionUpdateOptions = {

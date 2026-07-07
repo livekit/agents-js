@@ -20,6 +20,8 @@ import {
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
+import type { ExpressiveTag } from './provider_format.js';
+import { convertMarkup, llmInstructions, normalizeMarkup, splitMarkup } from './provider_format.js';
 
 /**
  * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
@@ -67,6 +69,34 @@ export type TTSCallbacks = {
   ['error']: (error: TTSError) => void;
 };
 
+export class TTSMarkup {
+  constructor(private readonly tts: TTS) {}
+
+  llmInstructions(): string | undefined {
+    return llmInstructions(this.tts._markupProviderKey());
+  }
+
+  toText(text: string): string {
+    return this.split(text).clean;
+  }
+
+  extractTags(text: string): ExpressiveTag[] {
+    return this.split(text).tags;
+  }
+
+  normalize(text: string): string {
+    return normalizeMarkup(this.tts._markupProviderKey(), text);
+  }
+
+  convert(text: string): string {
+    return convertMarkup(this.tts._markupProviderKey(), text);
+  }
+
+  private split(text: string): { clean: string; tags: ExpressiveTag[] } {
+    return splitMarkup(this.tts._markupProviderKey(), text);
+  }
+}
+
 /**
  * Time at which text was first sent to the TTS provider, captured on both
  * clocks used for TTFB accounting: `time` on the `performance.now()` scale
@@ -90,6 +120,8 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   #capabilities: TTSCapabilities;
   #sampleRate: number;
   #numChannels: number;
+  #markup: TTSMarkup;
+  #expressive = false;
   abstract label: string;
 
   constructor(sampleRate: number, numChannels: number, capabilities: TTSCapabilities) {
@@ -97,6 +129,7 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
     this.#capabilities = capabilities;
     this.#sampleRate = sampleRate;
     this.#numChannels = numChannels;
+    this.#markup = new TTSMarkup(this);
   }
 
   /** Returns this TTS's capabilities */
@@ -136,6 +169,25 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
    */
   get provider(): string {
     return 'unknown';
+  }
+
+  /** @internal */
+  _markupProviderKey(): string {
+    return '';
+  }
+
+  /** @internal */
+  _setExpressive(enabled: boolean): void {
+    this.#expressive = enabled;
+  }
+
+  /** @internal */
+  get expressive(): boolean {
+    return this.#expressive;
+  }
+
+  get markup(): TTSMarkup {
+    return this.#markup;
   }
 
   /**
@@ -526,7 +578,8 @@ export abstract class SynthesizeStream
       return;
     }
 
-    this.input.put(text);
+    const markup = this.#tts.markup;
+    this.input.put(markup.convert(markup.normalize(text)));
   }
 
   /** Flush the TTS, causing it to process all pending text */

@@ -380,6 +380,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     return 'livekit';
   }
 
+  /** @internal */
+  override _markupProviderKey(): string {
+    return this.model.split('/', 1)[0]?.toLowerCase() ?? '';
+  }
+
   override get capabilities() {
     return { streaming: true, alignedTranscript: this.#alignedTranscript };
   }
