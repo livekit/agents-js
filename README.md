@@ -82,6 +82,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
 | [@livekit/agents-plugin-fishaudio](https://www.npmjs.com/package/@livekit/agents-plugin-fishaudio)   | TTS           |
 | [@livekit/agents-plugin-hume](https://www.npmjs.com/package/@livekit/agents-plugin-hume)             | TTS           |
+| [@livekit/agents-plugin-aws](https://www.npmjs.com/package/@livekit/agents-plugin-aws)               | LLM, STT, TTS |
 
 ## Docs and guides
 
@@ -117,9 +118,9 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
+  inference,
   llm,
   voice,
-  inference,
 } from '@livekit/agents';
 import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
@@ -154,7 +155,10 @@ export default defineAgent({
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
@@ -253,7 +257,10 @@ export default defineAgent({
       vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
+      tts: new inference.TTS({
+        model: 'cartesia/sonic-3',
+        voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      }),
       userData: userdata,
     });
 
@@ -343,6 +350,7 @@ To contribute to this project:
 To test any changes or plugins:
 
 1. Build the project:
+
    ```bash
    pnpm build
    ```
@@ -371,7 +379,9 @@ Refer to [the license](LICENSES/Apache-2.0.txt) for details.
 The LiveKit turn detection models are licensed under the [LiveKit Model License](MODEL_LICENSE).
 
 <!--BEGIN_REPO_NAV-->
+
 <br/><table>
+
 <thead><tr><th colspan="2">LiveKit Ecosystem</th></tr></thead>
 <tbody>
 <tr><td>Agents SDKs</td><td><a href="https://github.com/livekit/agents">Python</a> · <b>Node.js</b></td></tr><tr></tr>
