@@ -68,6 +68,22 @@ describe('AWS Transcribe STT - constructor', () => {
     expect(() => new STT({ identifyLanguage: true, languageOptions: 'en-US,es-US' })).not.toThrow();
   });
 
+  it('defaults numberOfChannels to 2 when enableChannelIdentification is set', () => {
+    expect(() => new STT({ enableChannelIdentification: true })).not.toThrow();
+  });
+
+  it('throws when numberOfChannels is set without enableChannelIdentification', () => {
+    expect(() => new STT({ numberOfChannels: 2 })).toThrow(
+      /numberOfChannels requires enableChannelIdentification/,
+    );
+  });
+
+  it('throws when enableChannelIdentification is set with a numberOfChannels other than 2', () => {
+    expect(() => new STT({ enableChannelIdentification: true, numberOfChannels: 1 })).toThrow(
+      /numberOfChannels must be 2/,
+    );
+  });
+
   it('reports streaming-only capabilities with word-aligned transcripts', () => {
     const sttInstance = new STT();
     expect(sttInstance.capabilities).toEqual({
@@ -149,6 +165,58 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     expect(events[1]?.alternatives?.[0]?.words).toHaveLength(1);
     expect(events[1]?.alternatives?.[0]?.words?.[0]?.text).toBe('hello');
     expect(events[1]?.alternatives?.[0]?.confidence).toBe(0.9);
+  });
+
+  it('surfaces Transcribe speaker labels on words and the segment', async () => {
+    const client = fakeClient([
+      async function* () {
+        yield transcriptEvent({
+          StartTime: 0,
+          EndTime: 0.8,
+          IsPartial: false,
+          Alternatives: [
+            {
+              Transcript: 'hello world',
+              Items: [
+                {
+                  Content: 'hello',
+                  Type: 'pronunciation',
+                  StartTime: 0,
+                  EndTime: 0.3,
+                  Confidence: 0.95,
+                  Speaker: 'spk_0',
+                },
+                {
+                  Content: 'world',
+                  Type: 'pronunciation',
+                  StartTime: 0.4,
+                  EndTime: 0.8,
+                  Confidence: 0.9,
+                  Speaker: 'spk_0',
+                },
+              ],
+            },
+          ],
+        });
+      },
+    ]);
+
+    const speechStream = stream(client);
+
+    const events: Awaited<ReturnType<typeof speechStream.next>>['value'][] = [];
+    const collect = (async () => {
+      for await (const event of speechStream) {
+        events.push(event);
+      }
+    })();
+
+    speechStream.endInput();
+    await collect;
+
+    const alt = events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)
+      ?.alternatives?.[0];
+    expect(alt?.speakerId).toBe('spk_0');
+    expect(alt?.words?.map((w) => w.speakerId)).toEqual(['spk_0', 'spk_0']);
   });
 
   it('emits START_OF_SPEECH for every utterance, not just the first in the session', async () => {

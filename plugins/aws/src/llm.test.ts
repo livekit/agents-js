@@ -181,13 +181,14 @@ describe('AWS Bedrock LLM - streaming', () => {
 });
 
 describe('AWS Bedrock LLM - mapConverseStreamException', () => {
-  it('maps validationException to a non-retryable APIStatusError', () => {
+  it('maps validationException to a non-retryable 400 APIStatusError', () => {
     const error = mapConverseStreamException(
       { validationException: { message: 'bad input' } },
       'req_1',
       true,
     );
     expect(error).toBeInstanceOf(APIStatusError);
+    expect(error?.statusCode).toBe(400);
     expect(error?.retryable).toBe(false);
     expect(error?.message).toMatch(/bad input/);
   });
@@ -213,13 +214,27 @@ describe('AWS Bedrock LLM - mapConverseStreamException', () => {
     expect(error?.message).toMatch(/oops/);
   });
 
-  it('maps modelStreamErrorException using its originalStatusCode', () => {
+  it('maps modelStreamErrorException using a 5xx originalStatusCode', () => {
     const error = mapConverseStreamException(
       { modelStreamErrorException: { message: 'stream broke', originalStatusCode: 503 } },
       'req_1',
       true,
     );
     expect(error?.statusCode).toBe(503);
+    expect(error?.retryable).toBe(true);
+    expect(error?.message).toMatch(/stream broke/);
+  });
+
+  it('maps modelStreamErrorException with originalStatusCode 424 to a retryable 500', () => {
+    // Bedrock documents model stream errors with 424; APIStatusError would otherwise force
+    // non-retryable for that 4xx. Keep the configured 500 so the base LLM retry loop can recover.
+    const error = mapConverseStreamException(
+      { modelStreamErrorException: { message: 'stream broke', originalStatusCode: 424 } },
+      'req_1',
+      true,
+    );
+    expect(error?.statusCode).toBe(500);
+    expect(error?.retryable).toBe(true);
     expect(error?.message).toMatch(/stream broke/);
   });
 

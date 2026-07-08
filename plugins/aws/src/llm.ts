@@ -105,12 +105,38 @@ const CONVERSE_STREAM_EXCEPTIONS: Array<{
   statusCode?: number;
   retryable?: false;
 }> = [
-  { key: 'validationException', defaultMessage: 'validation error', retryable: false },
+  {
+    key: 'validationException',
+    defaultMessage: 'validation error',
+    statusCode: 400,
+    retryable: false,
+  },
   { key: 'throttlingException', defaultMessage: 'throttled', statusCode: 429 },
   { key: 'internalServerException', defaultMessage: 'internal server error', statusCode: 500 },
   { key: 'modelStreamErrorException', defaultMessage: 'model stream error', statusCode: 500 },
   { key: 'serviceUnavailableException', defaultMessage: 'service unavailable', statusCode: 503 },
 ];
+
+/**
+ * Resolves the HTTP status to report for a Converse stream exception.
+ *
+ * `modelStreamErrorException` often carries `originalStatusCode: 424` (Failed Dependency).
+ * `APIStatusError` treats most 4xx as non-retryable, but AWS documents this event as a
+ * transient stream failure — keep 5xx originals (and the configured default) so the LLM
+ * retry loop can recover when no output has been emitted yet.
+ */
+function resolveConverseStreamStatusCode(
+  key: keyof ConverseStreamExceptionEvent,
+  exception: ConverseStreamException,
+  statusCode: number | undefined,
+): number | undefined {
+  const original = exception.originalStatusCode;
+  if (key === 'modelStreamErrorException') {
+    if (original !== undefined && original >= 500) return original;
+    return statusCode;
+  }
+  return original ?? statusCode;
+}
 
 /**
  * Bedrock delivers fatal mid-stream errors as regular `ConverseStreamOutput` union events
@@ -134,7 +160,7 @@ export function mapConverseStreamException(
     return new APIStatusError({
       message: `aws bedrock llm: ${exception.message ?? defaultMessage}`,
       options: {
-        statusCode: exception.originalStatusCode ?? statusCode,
+        statusCode: resolveConverseStreamStatusCode(key, exception, statusCode),
         retryable: retryableOverride ?? retryable,
         requestId,
       },

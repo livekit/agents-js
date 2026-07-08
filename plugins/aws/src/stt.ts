@@ -129,6 +129,7 @@ export class STT extends stt.STT {
 
     const identifyLanguage = opts.identifyLanguage ?? false;
     const identifyMultipleLanguages = opts.identifyMultipleLanguages ?? false;
+    const enableChannelIdentification = opts.enableChannelIdentification ?? false;
 
     // StartStreamTranscription requires LanguageOptions whenever either identify flag is set;
     // without it AWS returns BadRequest, so fail fast at construction with a clear message.
@@ -139,11 +140,31 @@ export class STT extends stt.STT {
       );
     }
 
+    // EnableChannelIdentification and NumberOfChannels must be supplied together; streaming
+    // Transcribe supports two channels. Default numberOfChannels to 2 when identification is
+    // enabled without an explicit value, and reject the inverse (channels without identification).
+    let numberOfChannels = opts.numberOfChannels;
+    if (enableChannelIdentification && numberOfChannels === undefined) {
+      numberOfChannels = 2;
+    } else if (!enableChannelIdentification && numberOfChannels !== undefined) {
+      throw new Error(
+        'numberOfChannels requires enableChannelIdentification to be true ' +
+          '(Amazon Transcribe rejects NumberOfChannels without EnableChannelIdentification)',
+      );
+    } else if (enableChannelIdentification && numberOfChannels !== 2) {
+      throw new Error(
+        'numberOfChannels must be 2 when enableChannelIdentification is true ' +
+          '(Amazon Transcribe streaming supports two channels)',
+      );
+    }
+
     this.#opts = {
       ...defaultSTTOptions,
       ...opts,
       identifyLanguage,
       identifyMultipleLanguages,
+      enableChannelIdentification,
+      numberOfChannels,
       // Auto language detection is mutually exclusive with a fixed language code.
       language:
         identifyLanguage || identifyMultipleLanguages
@@ -198,9 +219,12 @@ export class SpeechStream extends stt.SpeechStream {
   // `#channel` for the lifetime of this stream — the channel itself is never replaced, so
   // no already-buffered frame can ever be orphaned on a session transition. Each session
   // instead reads through a token-guarded wrapper generator: the token is invalidated the
-  // moment its session ends, so a superseded generator drops (at most) the one frame it may
-  // already be mid-await on instead of racing the new session for every subsequent frame.
+  // moment its session ends. Takes are serialised via `#frameTakeChain` so a superseded
+  // generator that is mid-await requeues its frame for the active session rather than
+  // dropping the start of the next utterance.
   #channel = new AsyncIterableQueue<Uint8Array>();
+  #requeuedFrames: Uint8Array[] = [];
+  #frameTakeChain: Promise<void> = Promise.resolve();
   #pumpStarted = false;
 
   constructor(
@@ -365,13 +389,49 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  /**
+   * Exclusively take the next audio frame for `token`. Serialises readers so an abandoned
+   * session generator cannot race the active one on `#channel`, and requeues a frame that
+   * was dequeued after the token was invalidated so reconnects do not clip the next utterance.
+   */
+  async #takeFrame(token: SessionToken): Promise<IteratorResult<Uint8Array>> {
+    let outcome: IteratorResult<Uint8Array> = { value: undefined, done: true };
+
+    const previous = this.#frameTakeChain;
+    let release!: () => void;
+    this.#frameTakeChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      if (!token.active) {
+        return outcome;
+      }
+
+      if (this.#requeuedFrames.length > 0) {
+        return { value: this.#requeuedFrames.shift()!, done: false };
+      }
+
+      const result = await this.#channel.next();
+      // Invalidated while awaiting — stash the frame for the active session instead of dropping it.
+      if (!token.active) {
+        if (!result.done) {
+          this.#requeuedFrames.push(result.value);
+        }
+        return outcome;
+      }
+
+      return result;
+    } finally {
+      release();
+    }
+  }
+
   async *#audioStreamGenerator(token: SessionToken): AsyncGenerator<TranscribeAudioStream> {
     for (;;) {
       if (!token.active) return;
-      const result = await this.#channel.next();
-      // The token may have been invalidated while awaiting a frame that belonged to a
-      // session that has since ended (e.g. an idle-timeout reconnect) — drop it rather
-      // than yielding it into a request the SDK has already abandoned.
+      const result = await this.#takeFrame(token);
       if (!token.active) return;
       if (result.done) break;
       yield { AudioEvent: { AudioChunk: result.value } };
@@ -434,6 +494,20 @@ export class SpeechStream extends stt.SpeechStream {
 
     const offset = this.startTimeOffset + this.#connectionTimeOffset;
 
+    // When showSpeakerLabel is enabled, Transcribe attaches a Speaker label to each item.
+    // Surface it on every word and derive a segment-level speakerId from the first labelled word.
+    const words = items?.map((item) =>
+      createTimedString({
+        text: item.Content ?? '',
+        startTime: (item.StartTime ?? 0) + offset,
+        endTime: (item.EndTime ?? 0) + offset,
+        confidence: item.Confidence ?? 0,
+        startTimeOffset: offset,
+        speakerId: item.Speaker ?? null,
+      }),
+    );
+    const speakerId = words?.find((word) => word.speakerId)?.speakerId ?? null;
+
     return {
       language: normalizeLanguage(detectedLanguage),
       startTime: (result.StartTime ?? 0) + offset,
@@ -441,15 +515,8 @@ export class SpeechStream extends stt.SpeechStream {
       text: alternative?.Transcript ?? '',
       confidence,
       sourceLanguages,
-      words: items?.map((item) =>
-        createTimedString({
-          text: item.Content ?? '',
-          startTime: (item.StartTime ?? 0) + offset,
-          endTime: (item.EndTime ?? 0) + offset,
-          confidence: item.Confidence ?? 0,
-          startTimeOffset: offset,
-        }),
-      ),
+      speakerId,
+      words,
     };
   }
 }
