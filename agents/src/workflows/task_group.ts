@@ -8,7 +8,8 @@ import { asError } from '../utils.js';
 import { AgentTask } from '../voice/agent.js';
 
 interface FactoryInfo {
-  taskFactory: () => AgentTask;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts tasks with any result type
+  taskFactory: () => AgentTask<any>;
   id: string;
   description: string;
 }
@@ -64,7 +65,8 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
     this._taskCompletedCallback = onTaskCompleted;
   }
 
-  add(task: () => AgentTask, { id, description }: { id: string; description: string }): this {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts tasks with any result type
+  add(task: () => AgentTask<any>, { id, description }: { id: string; description: string }): this {
     this._registeredFactories.set(id, { taskFactory: task, id, description });
     return this;
   }
