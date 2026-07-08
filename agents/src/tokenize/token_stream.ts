@@ -10,10 +10,11 @@ type TokenizeFunc = (x: string) => string[] | [string, number, number][];
 // the tag name must start with a letter so "<5>" / "<3 wins>" are not counted as
 // tags — this keeps the depth counter consistent with the letter-start tail check
 // in hasUnclosedXmlTags (all TTS markup tags are letter-named).
-// The body is a single unambiguous `[^>]*` (no adjacent overlapping quantifiers)
-// so matching stays linear-time on untrusted input (avoids polynomial ReDoS);
-// self-closing detection is done on the captured body instead of in the regex.
-const XML_TAG_RE = /<(\/?)([A-Za-z][^>]*)>/g;
+// The body is a single `[^<>]*` — excluding both angle brackets keeps matching
+// linear-time on untrusted LLM output (a body allowing "<" makes unterminated
+// input like "<A<A<A…" rescan to end-of-string from every "<", i.e. polynomial
+// ReDoS); self-closing detection is done on the captured body, not in the regex.
+const XML_TAG_RE = /<(\/?)([A-Za-z][^<>]*)>/g;
 
 /** Return true if a tag body captured by {@link XML_TAG_RE} marks a self-closing tag. */
 function isSelfClosingTagBody(body: string): boolean {
