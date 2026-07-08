@@ -108,6 +108,7 @@ import {
 import type {
   AgentState,
   AgentStateChangedEvent,
+  ConversationItemAddedEvent,
   EotPredictionEvent,
   UserTurnExceededEvent,
   _AgentBackchannelOpportunityEvent,
@@ -592,6 +593,25 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
       this._resolvedTurnDetection.on('metrics_collected', this.onMetricsCollected);
+    }
+
+    // keyterm detection runs its own LLM, surface its usage
+    this.agentSession._keytermDetector.on('metrics_collected', this.onMetricsCollected);
+
+    if (this.stt instanceof STT) {
+      // bind the session's keyterm detector to this activity's STT (detection uses its
+      // own LLM, configured via keytermsOptions, not the agent's)
+      this.agentSession._keytermDetector.start(this.agentSession, this.stt);
+
+      // forward conversation turns to STTs that consume context natively; gated by the
+      // STT's own capability (toggled via the STT's args). stateless and activity-scoped,
+      // so it lives here rather than in the detector.
+      if (this.stt.capabilities.chatContext) {
+        this.agentSession.on(
+          AgentSessionEventTypes.ConversationItemAdded,
+          this.pushConversationItemToStt,
+        );
+      }
     }
 
     // Bundled-default VAD is treated as absent when the RealtimeModel does
@@ -1179,6 +1199,14 @@ export class AgentActivity implements RecognitionHooks {
       AgentSessionEventTypes.SessionUsageUpdated,
       createSessionUsageUpdatedEvent({ usage }),
     );
+  };
+
+  // (session.on("conversation_item_added", stt._push_conversation_item) — JS needs a stable
+  // bound reference so the listener can be removed in _closeSessionResources)
+  private pushConversationItemToStt = (ev: ConversationItemAddedEvent): void => {
+    if (this.stt instanceof STT) {
+      this.stt._pushConversationItem(ev);
+    }
   };
 
   private onError(ev: RealtimeModelError | STTError | TTSError | LLMError): void {
@@ -4499,6 +4527,10 @@ export class AgentActivity implements RecognitionHooks {
     if (this.stt instanceof STT) {
       this.stt.off('metrics_collected', this.onMetricsCollected);
       this.stt.off('error', this.onModelError);
+      this.agentSession.off(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.pushConversationItemToStt,
+      );
     }
 
     if (this.tts instanceof TTS) {
@@ -4513,6 +4545,10 @@ export class AgentActivity implements RecognitionHooks {
     if (this._resolvedTurnDetection instanceof BaseStreamingTurnDetector) {
       this._resolvedTurnDetection.off('metrics_collected', this.onMetricsCollected);
     }
+
+    // pause/aclose; keyterm state is kept on the session and survives handoffs)
+    this.agentSession._keytermDetector.off('metrics_collected', this.onMetricsCollected);
+    await this.agentSession._keytermDetector.aclose();
 
     this.detachAudioInput();
     this.realtimeSpans?.clear();

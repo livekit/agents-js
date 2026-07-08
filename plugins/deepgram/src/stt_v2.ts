@@ -98,6 +98,10 @@ export class STTv2 extends stt.STT {
   #opts: STTv2Options;
   #apiKey: string;
   #logger = log();
+  // session keyterm propagation)
+  #streams = new Set<WeakRef<SpeechStreamv2>>();
+  #userKeyterms: string[];
+  #sessionKeyterms: string[] = [];
 
   /**
    * Create a new Deepgram STTv2 instance.
@@ -120,6 +124,7 @@ export class STTv2 extends stt.STT {
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      keyterms: true,
     });
 
     this.#opts = {
@@ -127,6 +132,7 @@ export class STTv2 extends stt.STT {
       ...opts,
       language: opts.language ? normalizeLanguage(opts.language) : defaultSTTv2Options.language,
     };
+    this.#userKeyterms = [...this.#opts.keyterms];
 
     const apiKey = opts.apiKey || process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
@@ -176,7 +182,9 @@ export class STTv2 extends stt.STT {
    */
   stream(options?: { connOptions?: APIConnectOptions }): stt.SpeechStream {
     const streamOpts = { ...this.#opts, apiKey: this.#apiKey };
-    return new SpeechStreamv2(this, streamOpts, options?.connOptions);
+    const stream = new SpeechStreamv2(this, streamOpts, options?.connOptions);
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 
   /**
@@ -185,9 +193,14 @@ export class STTv2 extends stt.STT {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<STTv2Options>) {
+    const nextOpts = { ...opts };
+    if (nextOpts.keyterms !== undefined) {
+      this.#userKeyterms = [...nextOpts.keyterms];
+      nextOpts.keyterms = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
+    }
     this.#opts = {
       ...this.#opts,
-      ...opts,
+      ...nextOpts,
       language:
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
@@ -204,6 +217,31 @@ export class STTv2 extends stt.STT {
       );
     }
     this.#logger.debug('Updated STTv2 options');
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this.#sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this.#sessionKeyterms[i])
+    ) {
+      return;
+    }
+    this.#sessionKeyterms = [...keyterms];
+    const merged = [...new Set([...this.#userKeyterms, ...keyterms])];
+    this.#opts.keyterms = merged;
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (!stream) {
+        this.#streams.delete(ref);
+        continue;
+      }
+      if (stream._speaking) {
+        // defer the reconnect to the end of the utterance so we don't cut it off
+        stream._pendingKeyterm = merged;
+      } else {
+        stream.updateOptions({ keyterms: merged });
+      }
+    }
   }
 }
 
@@ -222,6 +260,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
   // Parity: _reconnect_event - using existing Event class from @livekit/agents
   #reconnectEvent = new Event();
 
+  // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
+  /** @internal */
+  _pendingKeyterm: string[] | null = null;
+
   constructor(
     sttInstance: STTv2,
     opts: STTv2Options & { apiKey: string },
@@ -236,6 +278,11 @@ class SpeechStreamv2 extends stt.SpeechStream {
     );
   }
 
+  /** @internal */
+  get _speaking(): boolean {
+    return this.#speaking;
+  }
+
   updateOptions(opts: Partial<STTv2Options>) {
     this.#logger.debug('Stream received option update', opts);
     this.#opts = {
@@ -245,9 +292,19 @@ class SpeechStreamv2 extends stt.SpeechStream {
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
     if (opts.tags) this.#opts.tags = validateTags(opts.tags);
+    if (opts.keyterms !== undefined) {
+      this._pendingKeyterm = null;
+    }
 
     // Trigger reconnection loop
     this.#reconnectEvent.set();
+  }
+
+  #onEndOfSpeech() {
+    if (this._pendingKeyterm !== null) {
+      this.updateOptions({ keyterms: this._pendingKeyterm });
+      this._pendingKeyterm = null;
+    }
   }
 
   protected async run() {
@@ -444,6 +501,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           type: stt.SpeechEventType.END_OF_SPEECH,
           requestId: this.#requestId,
         });
+        this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {
       this.#logger.warn('deepgram sent an error', { data });

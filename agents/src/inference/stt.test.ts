@@ -327,6 +327,50 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT session keyterms', () => {
+  it('updateOptions does not bake session keyterms into the user baseline', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    // a later user option update must re-apply session terms to live streams...
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Niamh']);
+    // ...but must not pollute the STT's own user baseline with them
+    expect(stt['opts'].modelOptions ?? {}).not.toHaveProperty('keyterm');
+
+    stream.close();
+  });
+
+  it('session keyterm change after updateOptions drops stale terms', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Stale']);
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+
+    // detector replaced the session terms: the old one must disappear downstream
+    stt._updateSessionKeyterms(['Fresh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Fresh']);
+
+    stream.close();
+  });
+
+  it('user keyterms from modelOptions are preserved across session updates', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3', modelOptions: { keyterm: ['Acme'] } });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Niamh']);
+
+    stt._updateSessionKeyterms(['Other']);
+    // user term stays; only the session portion is swapped
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Other']);
+
+    stream.close();
+  });
+});
+
 describe('STT VAD handling for Speechmatics models', () => {
   class MockVAD extends VAD {
     label = 'mock';

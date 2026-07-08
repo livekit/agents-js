@@ -14,6 +14,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import type { TimedString } from '../voice/index.js';
 
 /** Indicates start/middle/end of speech */
@@ -136,6 +137,10 @@ export interface STTCapabilities {
   alignedTranscript?: 'word' | 'chunk' | false;
   /** Whether this STT supports speaker diarization. */
   diarization?: boolean;
+  /** Whether the STT supports keyterm prompting */
+  keyterms?: boolean;
+  /** Whether the STT can natively consume conversation context (see STT._pushConversationItem) */
+  chatContext?: boolean;
 }
 
 export interface STTError {
@@ -161,6 +166,8 @@ export type STTCallbacks = {
 export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCallbacks>) {
   abstract label: string;
   #capabilities: STTCapabilities;
+  #keytermsUnsupportedWarned = false;
+  #chatContextUnsupportedWarned = false;
 
   constructor(capabilities: STTCapabilities) {
     super();
@@ -225,6 +232,47 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
     frame: AudioBuffer,
     abortSignal?: AbortSignal,
   ): Promise<SpeechEvent>;
+
+  /**
+   * Set the framework-managed keyterms (session config + auto-detection).
+   *
+   * Internal hook called by the framework, kept separate from the user's own keyterms
+   * (constructor / `updateOptions`). Plugins that support keyterms override this to
+   * store the session set and apply it merged with the user keyterms.
+   *
+   * @internal
+   */
+  _updateSessionKeyterms(_keyterms: string[]): void {
+    if (!this.#capabilities.keyterms) {
+      if (!this.#keytermsUnsupportedWarned) {
+        this.#keytermsUnsupportedWarned = true;
+        log()
+          .child({ stt: this.label })
+          .warn('keyterms are not supported by this STT, ignoring keyterms update');
+      }
+      return;
+    }
+  }
+
+  /**
+   * Feed a new conversation turn to the STT to bias recognition (context carryover).
+   *
+   * Plugins with native context support set `STTCapabilities.chatContext` and override
+   * this to forward the item to their provider's carryover field.
+   *
+   * @internal
+   */
+  _pushConversationItem(_ev: ConversationItemAddedEvent): void {
+    if (!this.#capabilities.chatContext) {
+      if (!this.#chatContextUnsupportedWarned) {
+        this.#chatContextUnsupportedWarned = true;
+        log()
+          .child({ stt: this.label })
+          .warn('chat context is not supported by this STT, ignoring chat context update');
+      }
+      return;
+    }
+  }
 
   /**
    * Returns a {@link SpeechStream} that can be used to push audio frames and receive
