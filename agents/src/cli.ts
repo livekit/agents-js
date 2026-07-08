@@ -212,11 +212,15 @@ export const runApp = (opts: ServerOptions) => {
     .action((...[, command]) => {
       const commandOptions = command.opts();
       opts.logLevel = commandOptions.logLevel;
+      const globalOptions = program.optsWithGlobals();
+      opts.wsURL = globalOptions.url || opts.wsURL;
       initializeLogger({ pretty: true, level: opts.logLevel });
       process.env.LIVEKIT_DEV_MODE = '1';
       runConsole({
         agentPath: opts.agent,
         connectAddr: commandOptions.connectAddr,
+        agentName: opts.agentName,
+        wsURL: opts.wsURL,
         record: commandOptions.record === true,
       }).catch((error) => {
         log().fatal(`console mode failed: ${formatErrorMessage(error)}`);

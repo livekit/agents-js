@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentSession as pb } from '@livekit/protocol';
+import { AgentDev, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
@@ -241,6 +241,13 @@ const TCP_HEADER_SIZE = 4;
 const TCP_MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
 const TCP_DRAIN_THRESHOLD = 64 * 1024; // 64 KiB
 
+type TcpSessionTransportOptions = {
+  serverInfo?: {
+    agentName: string;
+    url: string;
+  };
+};
+
 /**
  * Resolve once the socket's write buffer drains, or when the socket closes or
  * errors. Unlike a bare `once('drain')`, this can't hang forever if the peer
@@ -268,13 +275,19 @@ function waitForDrain(socket: net.Socket): Promise<void> {
 export class TcpSessionTransport extends SessionTransport {
   private readonly host: string;
   private readonly port: number;
+  private readonly options: TcpSessionTransportOptions;
   private socket: net.Socket | null = null;
   private closed = false;
 
-  constructor(host: string, port: number) {
+  constructor(
+    host: string,
+    port: number,
+    options: { serverInfo?: { agentName: string; url: string } } = {},
+  ) {
     super();
     this.host = host;
     this.port = port;
+    this.options = options;
   }
 
   override async start(): Promise<void> {
@@ -291,13 +304,26 @@ export class TcpSessionTransport extends SessionTransport {
       };
       socket.once('error', onConnectError);
     });
+
+    if (this.options.serverInfo) {
+      const msg = new AgentDev.AgentDevMessage({
+        message: {
+          case: 'serverInfo',
+          value: new AgentDev.ServerInfo(this.options.serverInfo),
+        },
+      });
+      await this.sendFramed(msg.toBinary());
+    }
   }
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+    await this.sendFramed(msg.toBinary());
+  }
+
+  private async sendFramed(data: Uint8Array): Promise<void> {
     const socket = this.socket;
     if (this.closed || socket === null) return;
 
-    const data = msg.toBinary();
     const header = Buffer.allocUnsafe(TCP_HEADER_SIZE);
     header.writeUInt32BE(data.length, 0);
     const flushed = socket.write(Buffer.concat([header, data]));

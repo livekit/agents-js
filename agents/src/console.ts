@@ -55,10 +55,14 @@ async function loadAgent(agentPath: string): Promise<Agent> {
 export async function runConsole({
   agentPath,
   connectAddr,
+  agentName,
+  wsURL,
   record,
 }: {
   agentPath: string;
   connectAddr: string;
+  agentName: string;
+  wsURL: string;
   record: boolean;
 }): Promise<void> {
   const logger = log();
@@ -77,7 +81,12 @@ export async function runConsole({
   const agent = await loadAgent(agentPath);
   const prewarm = agent.prewarm ?? defaultInitializeProcessFunc;
 
-  const transport = new TcpSessionTransport(host, port);
+  const transport = new TcpSessionTransport(host, port, {
+    serverInfo: {
+      agentName,
+      url: wsURL,
+    },
+  });
   const audioInput = new TcpAudioInput();
   const audioOutput = new TcpAudioOutput(transport);
 
