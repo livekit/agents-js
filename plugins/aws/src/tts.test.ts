@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { PollyClient } from '@aws-sdk/client-polly';
+import { APIConnectionError, APIStatusError } from '@livekit/agents';
 import { tts as ttsTest } from '@livekit/agents-plugins-test';
 import { describe, expect, it } from 'vitest';
 import { STT } from './stt.js';
 import { TTS } from './tts.js';
+import { toAwsApiError } from './utils.js';
 
 const hasAwsCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
 
@@ -89,6 +91,31 @@ describe('AWS Polly TTS - synthesis', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.final).toBe(true);
     expect(events[0]?.frame.samplesPerChannel).toBe(1600);
+  });
+
+  // Error classification for Polly failures goes through toAwsApiError (used by
+  // ChunkedStream.run). Exercise the mapper directly — driving the full stream
+  // would also surface a by-design floating rejection from ThrowsPromise.
+  it('maps Polly service errors with an HTTP status to non-retryable APIStatusError', () => {
+    const err = Object.assign(new Error('Invalid voice id'), {
+      name: 'InvalidParameterException',
+      $metadata: { httpStatusCode: 400, requestId: 'req_bad_voice' },
+    });
+
+    const error = toAwsApiError(err, 'aws polly tts');
+    expect(error).toBeInstanceOf(APIStatusError);
+    const statusError = error as APIStatusError;
+    expect(statusError.statusCode).toBe(400);
+    expect(statusError.retryable).toBe(false);
+    expect(statusError.requestId).toBe('req_bad_voice');
+    expect(statusError.message).toMatch(/Invalid voice id/);
+  });
+
+  it('maps Polly errors without an HTTP status to APIConnectionError', () => {
+    const error = toAwsApiError(new Error('network reset'), 'aws polly tts');
+    expect(error).toBeInstanceOf(APIConnectionError);
+    expect(error).not.toBeInstanceOf(APIStatusError);
+    expect(error.message).toMatch(/network reset/);
   });
 });
 

@@ -5,7 +5,6 @@ import type { SynthesizeSpeechCommandInput } from '@aws-sdk/client-polly';
 import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
 import {
   type APIConnectOptions,
-  APIConnectionError,
   APITimeoutError,
   AudioByteStream,
   shortuuid,
@@ -13,7 +12,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TTSLanguage, TTSSpeechEngine, TTSTextType } from './models.js';
-import { type AwsCredentials, resolveRegion, stripUndefined } from './utils.js';
+import { type AwsCredentials, resolveRegion, stripUndefined, toAwsApiError } from './utils.js';
 
 /** Amazon Polly only returns PCM (16-bit little-endian, mono) at these sample rates. */
 const SUPPORTED_PCM_SAMPLE_RATES = [8000, 16000];
@@ -188,9 +187,10 @@ export class ChunkedStream extends tts.ChunkedStream {
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new APITimeoutError({ message: error.message });
       }
-      throw new APIConnectionError({
-        message: error instanceof Error ? error.message : String(error),
-      });
+      // Prefer APIStatusError when the SDK surfaces an HTTP status (e.g. invalid VoiceId /
+      // Engine, malformed SSML) so non-retryable 4xx inputs are not retried as connection
+      // failures by the base ChunkedStream.
+      throw toAwsApiError(error, 'aws polly tts');
     } finally {
       this.queue.close();
     }

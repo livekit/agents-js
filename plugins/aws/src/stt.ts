@@ -6,6 +6,7 @@ import type {
   StartStreamTranscriptionCommandInput,
   AudioStream as TranscribeAudioStream,
   TranscriptEvent,
+  TranscriptResultStream,
 } from '@aws-sdk/client-transcribe-streaming';
 import {
   StartStreamTranscriptionCommand,
@@ -13,7 +14,7 @@ import {
 } from '@aws-sdk/client-transcribe-streaming';
 import {
   type APIConnectOptions,
-  APIConnectionError,
+  APIStatusError,
   AsyncIterableQueue,
   type AudioBuffer,
   createTimedString,
@@ -21,7 +22,7 @@ import {
   normalizeLanguage,
   stt,
 } from '@livekit/agents';
-import { type AwsCredentials, resolveRegion, stripUndefined } from './utils.js';
+import { type AwsCredentials, resolveRegion, stripUndefined, toAwsApiError } from './utils.js';
 
 export interface STTOptions {
   sampleRate: number;
@@ -40,12 +41,30 @@ export interface STTOptions {
   languageModelName?: string;
   identifyLanguage?: boolean;
   identifyMultipleLanguages?: boolean;
+  /**
+   * Comma-separated language codes Amazon Transcribe should consider when automatic
+   * language identification is enabled. Required when {@link identifyLanguage} or
+   * {@link identifyMultipleLanguages} is true (AWS rejects the request without it).
+   */
   languageOptions?: string;
   preferredLanguage?: string;
   vocabularyNames?: string;
   vocabularyFilterNames?: string;
   client?: TranscribeStreamingClient;
 }
+
+/**
+ * HTTP status codes for exception members of {@link TranscriptResultStream}. These arrive
+ * as event-stream union members rather than thrown SDK errors, so they have no
+ * `$metadata.httpStatusCode` to read.
+ */
+const STREAM_EXCEPTION_STATUS: Record<string, number> = {
+  BadRequestException: 400,
+  LimitExceededException: 429,
+  InternalFailureException: 500,
+  ConflictException: 409,
+  ServiceUnavailableException: 503,
+};
 
 const defaultSTTOptions: Pick<STTOptions, 'sampleRate' | 'language'> = {
   sampleRate: 24000,
@@ -110,6 +129,15 @@ export class STT extends stt.STT {
 
     const identifyLanguage = opts.identifyLanguage ?? false;
     const identifyMultipleLanguages = opts.identifyMultipleLanguages ?? false;
+
+    // StartStreamTranscription requires LanguageOptions whenever either identify flag is set;
+    // without it AWS returns BadRequest, so fail fast at construction with a clear message.
+    if ((identifyLanguage || identifyMultipleLanguages) && !opts.languageOptions) {
+      throw new Error(
+        'languageOptions is required when identifyLanguage or identifyMultipleLanguages is true ' +
+          '(comma-separated language codes Amazon Transcribe should consider, e.g. "en-US,es-US")',
+      );
+    }
 
     this.#opts = {
       ...defaultSTTOptions,
@@ -241,9 +269,9 @@ export class SpeechStream extends stt.SpeechStream {
           this.#logger.info('aws transcribe stt: idle timeout, restarting session');
           continue;
         }
-        throw new APIConnectionError({
-          message: `aws transcribe stt: ${error instanceof Error ? error.message : String(error)}`,
-        });
+        // Preserve APIStatusError (incl. non-retryable 4xx) so the base SpeechStream does not
+        // treat client errors as retryable connection failures.
+        throw toAwsApiError(error, 'aws transcribe stt');
       }
 
       // #runSession only returns without throwing once its audio generator drains
@@ -289,7 +317,51 @@ export class SpeechStream extends stt.SpeechStream {
     for await (const event of response.TranscriptResultStream) {
       if (event.TranscriptEvent) {
         this.#processTranscriptEvent(event.TranscriptEvent);
+        continue;
       }
+
+      // Amazon Transcribe can deliver service failures as TranscriptResultStream union
+      // members rather than thrown errors. Ignoring them lets the stream end "successfully"
+      // with no transcript and no retry — surface them as API errors instead.
+      this.#throwIfStreamException(event);
+    }
+  }
+
+  /**
+   * Maps a non-transcript event-stream member onto a thrown error so the session loop in
+   * {@link run} can classify idle timeouts / retryable failures / hard client errors.
+   */
+  #throwIfStreamException(event: TranscriptResultStream): void {
+    const entries: Array<
+      [name: string, value: { Message?: string; message?: string } | undefined]
+    > = [
+      ['BadRequestException', event.BadRequestException],
+      ['LimitExceededException', event.LimitExceededException],
+      ['InternalFailureException', event.InternalFailureException],
+      ['ConflictException', event.ConflictException],
+      ['ServiceUnavailableException', event.ServiceUnavailableException],
+    ];
+
+    for (const [name, value] of entries) {
+      if (!value) continue;
+
+      const message = value.Message ?? value.message ?? name;
+
+      // Preserve the idle-timeout shape so {@link isIdleTimeout} still recognises it and
+      // the session reconnects rather than failing the stream.
+      if (name === 'BadRequestException' && message.startsWith('Your request timed out')) {
+        const err = new Error(message);
+        err.name = 'BadRequestException';
+        throw err;
+      }
+
+      throw new APIStatusError({
+        message: `aws transcribe stt: ${message}`,
+        options: {
+          statusCode: STREAM_EXCEPTION_STATUS[name] ?? 500,
+          body: value as object,
+        },
+      });
     }
   }
 

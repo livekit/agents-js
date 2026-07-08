@@ -2,13 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TranscribeStreamingClient } from '@aws-sdk/client-transcribe-streaming';
-import { stt } from '@livekit/agents';
+import { APIError, APIStatusError, stt } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt as sttTest } from '@livekit/agents-plugins-test';
 import { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { STT } from './stt.js';
 import type { STTOptions } from './stt.js';
+
+// Failure-path tests drive SpeechStream.mainTask, which re-throws after
+// emitting the STT 'error' event (the rethrow only drives `.finally()` cleanup).
+// That produces a by-design floating rejection; swallow expected API errors.
+const swallowExpectedRejection = (reason: unknown) => {
+  if (reason instanceof APIError) return;
+  throw reason;
+};
+beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
 const hasAwsCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
 
@@ -42,6 +52,20 @@ describe('AWS Transcribe STT - constructor', () => {
     expect(() => new STT({ identifyLanguage: true, identifyMultipleLanguages: true })).toThrow(
       /mutually exclusive/,
     );
+  });
+
+  it('throws when identifyLanguage is set without languageOptions', () => {
+    expect(() => new STT({ identifyLanguage: true })).toThrow(/languageOptions is required/);
+  });
+
+  it('throws when identifyMultipleLanguages is set without languageOptions', () => {
+    expect(() => new STT({ identifyMultipleLanguages: true })).toThrow(
+      /languageOptions is required/,
+    );
+  });
+
+  it('accepts identifyLanguage when languageOptions is provided', () => {
+    expect(() => new STT({ identifyLanguage: true, languageOptions: 'en-US,es-US' })).not.toThrow();
   });
 
   it('reports streaming-only capabilities with word-aligned transcripts', () => {
@@ -351,6 +375,73 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     const firstEnd = finals[0]?.alternatives?.[0]?.endTime ?? -Infinity;
     const secondStart = finals[1]?.alternatives?.[0]?.startTime ?? -Infinity;
     expect(secondStart).toBeGreaterThanOrEqual(firstEnd);
+  });
+
+  it('surfaces a BadRequestException stream event as a non-retryable APIStatusError', async () => {
+    const client = fakeClient([
+      async function* () {
+        yield { BadRequestException: { Message: 'Invalid sample rate' } };
+      },
+    ]);
+
+    const sttInstance = new STT({ ...baseOpts, client });
+    // Fatal errors surface on the STT instance, not through the event iterator.
+    const errorEvent = new Promise<{ error: Error; recoverable: boolean }>((resolve) => {
+      sttInstance.on('error', (event) => resolve(event));
+    });
+
+    const speechStream = sttInstance.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _event of speechStream) {
+        // discard
+      }
+    })();
+
+    speechStream.endInput();
+
+    const { error, recoverable } = await errorEvent;
+    expect(error).toBeInstanceOf(APIStatusError);
+    const statusError = error as APIStatusError;
+    expect(statusError.statusCode).toBe(400);
+    expect(statusError.retryable).toBe(false);
+    expect(statusError.message).toMatch(/Invalid sample rate/);
+    expect(recoverable).toBe(false);
+
+    await drain.catch(() => {});
+  });
+
+  it('reconnects when idle timeout arrives as a BadRequestException stream event', async () => {
+    const client = fakeClient([
+      async function* () {
+        yield {
+          BadRequestException: { Message: 'Your request timed out waiting for input' },
+        };
+      },
+      async function* () {
+        yield transcriptEvent({
+          StartTime: 0,
+          EndTime: 0.2,
+          IsPartial: false,
+          Alternatives: [{ Transcript: 'hi', Items: [] }],
+        });
+      },
+    ]);
+
+    const speechStream = stream(client);
+
+    const events: Awaited<ReturnType<typeof speechStream.next>>['value'][] = [];
+    const collect = (async () => {
+      for await (const event of speechStream) {
+        events.push(event);
+      }
+    })();
+
+    speechStream.endInput();
+    await collect;
+
+    expect(events.some((e) => e.alternatives?.[0]?.text === 'hi')).toBe(true);
   });
 
   it('classifies a non-idle-timeout failure as a hard failure the base class retries', async () => {

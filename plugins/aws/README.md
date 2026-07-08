@@ -68,6 +68,18 @@ const stt = new aws.STT({
 });
 ```
 
+Automatic language identification requires a companion `languageOptions` list
+(comma-separated codes Amazon Transcribe should consider). AWS rejects the
+request without it:
+
+```ts
+const stt = new aws.STT({
+  identifyLanguage: true,
+  languageOptions: 'en-US,es-US',
+  preferredLanguage: 'en-US', // optional
+});
+```
+
 ### TTS
 
 Uses [Amazon Polly](https://docs.aws.amazon.com/polly/latest/dg/API_SynthesizeSpeech.html).
