@@ -9,9 +9,12 @@
  * provider-agnostic at the call site:
  *
  * ```ts
- * import { presets } from '@livekit/agents/voice';
+ * import { voice } from '@livekit/agents';
  *
- * const session = new AgentSession({ tts: 'inworld/inworld-tts-2', expressive: presets.CASUAL });
+ * const session = new AgentSession({
+ *   tts: 'inworld/inworld-tts-2',
+ *   expressive: voice.presets.CASUAL,
+ * });
  * ```
  *
  * Each `presets.*` constant is just an {@link ExpressiveOptions} carrying a `preset`.

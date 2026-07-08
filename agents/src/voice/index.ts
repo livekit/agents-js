@@ -50,6 +50,7 @@ export {
   createTimedString,
   isTimedString,
 } from './io.js';
+export * as presets from './presets.js';
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
