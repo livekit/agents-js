@@ -14,6 +14,7 @@ import {
   type ImageContent,
   Instructions,
   ReadonlyChatContext,
+  instructionsEqual,
   isInstructions,
   renderInstructions,
 } from './chat_context.js';
@@ -1345,6 +1346,20 @@ describe('Instructions', () => {
     expect(instr.text).toBe('prefix common rules suffix');
   });
 
+  it('render() on resolveTemplate output picks the modality variant without duplicating the template', () => {
+    const rules = new Instructions('common rules', {
+      audio: 'audio rules',
+      text: 'text rules',
+    });
+    const instr = Instructions.resolveTemplate('persona\n{rules}\nextra', { rules });
+
+    // the variants are full template renders — render(modality) must return the
+    // variant alone, not common + variant (which would repeat persona/extra twice)
+    expect(instr.render({ modality: 'audio' })).toBe('persona\naudio rules\nextra');
+    expect(instr.render({ modality: 'text' })).toBe('persona\ntext rules\nextra');
+    expect(instr.render()).toBe('persona\ncommon rules\nextra');
+  });
+
   it('serializes with toJSON and omits undefined variants', () => {
     const both = new Instructions('common text', {
       audio: 'audio addition',
@@ -1398,6 +1413,34 @@ describe('Instructions', () => {
     const serialized = (items[0]!.content as unknown[])![0]!;
     expect(typeof serialized).toBe('string');
     expect(serialized).toBe('common text\n\naudio addition');
+  });
+});
+
+describe('instructionsEqual', () => {
+  it('compares plain strings by value', () => {
+    expect(instructionsEqual('hello', 'hello')).toBe(true);
+    expect(instructionsEqual('hello', 'other')).toBe(false);
+    expect(instructionsEqual(undefined, 'hello')).toBe(false);
+    expect(instructionsEqual(undefined, undefined)).toBe(true);
+  });
+
+  it('compares Instructions by common/audio/text parts', () => {
+    const a = new Instructions('hello', { audio: 'a', text: 't' });
+    const b = new Instructions('hello', { audio: 'a', text: 't' });
+    const c = new Instructions('hello', { audio: 'other' });
+
+    expect(instructionsEqual(a, b)).toBe(true);
+    expect(instructionsEqual(a, c)).toBe(false);
+  });
+
+  it('equals a plain string only when there are no modality additions', () => {
+    expect(instructionsEqual(new Instructions('hello'), 'hello')).toBe(true);
+    expect(instructionsEqual('hello', new Instructions('hello'))).toBe(true);
+
+    // an Instructions with additions renders differently — it must not compare
+    // equal to its bare common text (would skip realtime instruction updates)
+    expect(instructionsEqual(new Instructions('hello', { audio: 'extra' }), 'hello')).toBe(false);
+    expect(instructionsEqual('hello', new Instructions('hello', { text: 'extra' }))).toBe(false);
   });
 });
 

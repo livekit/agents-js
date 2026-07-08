@@ -82,6 +82,14 @@ export class Instructions {
   /** @internal Symbol marker for type identification */
   readonly [INSTRUCTIONS_SYMBOL] = true;
 
+  /**
+   * When true (set by {@link Instructions.resolveTemplate} when modality variants were
+   * produced), `audio`/`text` hold *full* renders of the template and replace `common`
+   * in {@link render} instead of being appended to it. Not serialized by `toJSON`.
+   * @internal
+   */
+  private variantsReplaceCommon = false;
+
   constructor(common: string = '', options?: { audio?: string; text?: string }) {
     this.common = common;
     this.audio = options?.audio;
@@ -98,11 +106,13 @@ export class Instructions {
   render(options?: { modality?: 'audio' | 'text'; data?: Record<string, unknown> }): string {
     const { modality, data } = options ?? {};
 
-    const parts = [this.common];
+    let parts = [this.common];
     if (modality !== undefined) {
       const addition = modality === 'audio' ? this.audio : this.text;
       if (addition) {
-        parts.push(addition);
+        // resolveTemplate variants are full renders of the template, not additions —
+        // appending them to common would duplicate the whole template
+        parts = this.variantsReplaceCommon ? [addition] : [...parts, addition];
       }
     }
 
@@ -140,10 +150,14 @@ export class Instructions {
           textKw[k] = v;
         }
       }
-      return new Instructions(safeRender(template, commonKw), {
+      const resolved = new Instructions(safeRender(template, commonKw), {
         audio: safeRender(template, audioKw),
         text: safeRender(template, textKw),
       });
+      // the variants are full template renders: render(modality) must pick one,
+      // not append it to the common render
+      resolved.variantsReplaceCommon = true;
+      return resolved;
     }
     return new Instructions(safeRender(template, kwargs));
   }
@@ -184,8 +198,9 @@ export function renderInstructions(
  * Compare two instruction values by content. Plain strings compare by value;
  * {@link Instructions} compare by their common/audio/text parts so that two
  * distinct instances with the same content are treated as equal. An
- * {@link Instructions} with no modality additions equals the plain string
- * matching its common text (mirrors Python's `__eq__`).
+ * {@link Instructions} equals a plain string only when it has no modality
+ * additions and its common text matches — an Instructions with additions
+ * renders differently, so it must not compare equal to its bare common text.
  */
 export function instructionsEqual(
   a: string | Instructions | undefined,
@@ -199,10 +214,10 @@ export function instructionsEqual(
     return a.common === b.common && a.audio === b.audio && a.text === b.text;
   }
   if (aIsInstr && !bIsInstr) {
-    return a.common === b;
+    return a.audio === undefined && a.text === undefined && a.common === b;
   }
   if (!aIsInstr && bIsInstr) {
-    return a === b.common;
+    return b.audio === undefined && b.text === undefined && a === b.common;
   }
   return a === b;
 }

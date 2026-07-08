@@ -2781,13 +2781,10 @@ export class AgentActivity implements RecognitionHooks {
 
     // resolve modality-specific instructions for this turn
     const turnModality = speechHandle.inputDetails.modality;
-    if (instructions) {
-      // extra instructions are appended as a separate system message for this turn
-      chatCtx.addMessage({
-        role: 'system',
-        content: [renderInstructions(instructions, turnModality)],
-      });
-    } else if (isInstructions(this.agent.instructions)) {
+    // always re-render the base instructions for this turn's modality — even when
+    // extra per-turn instructions are supplied — so a text turn never keeps the
+    // audio-rendered base rules copied from the session chat context
+    if (isInstructions(this.agent.instructions)) {
       try {
         updateInstructions({
           chatCtx,
@@ -2798,6 +2795,13 @@ export class AgentActivity implements RecognitionHooks {
       } catch (e) {
         this.logger.error({ error: e }, 'error occurred during updateInstructions');
       }
+    }
+    if (instructions) {
+      // extra instructions are appended as a separate system message for this turn
+      chatCtx.addMessage({
+        role: 'system',
+        content: [renderInstructions(instructions, turnModality)],
+      });
     }
 
     // inject expressive instructions (TTS markup guide)
