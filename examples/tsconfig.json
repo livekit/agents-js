@@ -5,6 +5,10 @@
   // them out of the package build so they can't break `pnpm build`.
   "exclude": ["./src/test_*.ts"],
   "compilerOptions": {
+    // relative imports use .ts extensions so examples can run directly under
+    // node's type stripping (e.g. `lk agent console`); tsc rewrites them to
+    // .js in the emitted output
+    "rewriteRelativeImportExtensions": true,
     // match output dir to input dir. e.g. dist/index instead of dist/src/index
     "rootDir": "./src",
     "declarationDir": "./dist",

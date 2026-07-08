@@ -21,7 +21,7 @@ import {
   FakeCalendar,
   SlotUnavailableError,
   getUniqueHash,
-} from './calendar_api.js';
+} from './calendar_api.ts';
 
 export interface Userdata {
   cal: Calendar;

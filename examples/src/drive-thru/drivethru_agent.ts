@@ -13,13 +13,13 @@ import {
   type MenuItem,
   findItemsById,
   menuInstructions,
-} from './database.js';
+} from './database.ts';
 import {
   OrderState,
   createOrderedCombo,
   createOrderedHappy,
   createOrderedRegular,
-} from './order.js';
+} from './order.ts';
 
 export interface UserData {
   order: OrderState;

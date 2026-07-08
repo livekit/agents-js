@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { CalComCalendar } from './calendar_api.js';
+import { CalComCalendar } from './calendar_api.ts';
 
 describe('Calendar Integration Tests', () => {
   describe('CalComCalendar with real API', () => {
