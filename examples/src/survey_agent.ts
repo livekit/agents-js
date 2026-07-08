@@ -6,7 +6,9 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  inference,
   llm,
+  log,
   voice,
   workflows,
 } from '@livekit/agents';
@@ -371,14 +373,49 @@ export class SurveyAgent extends voice.Agent<SurveyUserData> {
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession<SurveyUserData>({
-      llm: 'openai/gpt-4.1',
-      stt: 'deepgram/nova-3',
-      tts: 'cartesia/sonic-3',
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
+      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'multi' }),
+      tts: new inference.TTS({
+        model: 'inworld/inworld-tts-2',
+        voice: 'Nate',
+        modelOptions: { delivery_mode: 'CREATIVE' },
+      }),
+      expressive: voice.presets.CASUAL,
       userData: {
         filename: 'survey_results.csv',
         candidateName: '',
         taskResults: {},
       },
+      // Flip userState to "away" after 10s of mutual silence so we can
+      // check whether they're still there (default is 15s).
+      userAwayTimeout: 10.0,
+    });
+
+    const logger = log();
+    let idleNudge: AbortController | null = null;
+
+    const nudgeWhileIdle = async (signal: AbortSignal) => {
+      // Nudge every 10s until the user speaks again — speaking flips
+      // userState out of "away", which aborts this loop below.
+      while (!signal.aborted) {
+        logger.info("user idle — checking if they're still there");
+        await session.generateReply({
+          instructions: "The user has been idle, see if they're still there",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+    };
+
+    session.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
+      if (ev.newState === 'away') {
+        if (idleNudge === null) {
+          idleNudge = new AbortController();
+          void nudgeWhileIdle(idleNudge.signal);
+        }
+      } else if (idleNudge !== null) {
+        idleNudge.abort();
+        idleNudge = null;
+      }
     });
 
     await session.start({
