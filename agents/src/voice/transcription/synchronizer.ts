@@ -7,7 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
-import { splitAllMarkup } from '../../tts/_provider_format.js';
+import { TranscriptMarkupStripper } from '../../tts/_provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -142,11 +142,17 @@ interface AudioData {
   annotatedRate: SpeakingRateData | null;
 }
 
-class SegmentSynchronizerImpl {
+/** @internal Exported for testing purposes. */
+export class SegmentSynchronizerImpl {
   private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
+  // paces against the visible text only; stateful because a markup tag with
+  // spaces in its attributes (e.g. <expr type="expression" label="warm surprise"/>)
+  // is shredded across word tokens and a per-token strip can't recognize the
+  // fragments — each would otherwise be paced as if it were spoken
+  private pacingStripper = new TranscriptMarkupStripper();
   // Emit TimedString objects so downstream outputs (e.g. RoomIO's json_format) can
   // attach `end_time` reflecting synchronized playback timing.
   private outputStream: IdentityTransform<string | TimedString>;
@@ -437,12 +443,13 @@ class SegmentSynchronizerImpl {
       pushedTextCursor = wordEnd;
 
       // forward the raw token (the room output strips markup and surfaces the
-      // expression downstream), but pace against the visible text only so a
-      // markup-only token adds no delay
-      const [strippedWord] = splitAllMarkup(word);
-      const cleanWords = this.options.splitWords(strippedWord);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : strippedWord;
-      const wordHyphens = cleanWord ? this.options.hyphenateWord(cleanWord).length : 0;
+      // expression downstream), but pace against the visible text only so markup
+      // adds no delay. The stripper holds back an unclosed tag across tokens and
+      // releases the clean text once it completes. Feed it the raw pushedText slice
+      // (not the bare token) so the whitespace inside tag attributes survives and a
+      // shredded tag can reassemble.
+      const cleanWord = this.pacingStripper.push(forwardedWord);
+      const wordHyphens = cleanWord.trim() ? this.calcHyphens(cleanWord).length : 0;
 
       if (this.playbackCompleted) {
         this.outputStreamWriter.write(

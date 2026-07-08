@@ -61,8 +61,10 @@ describe('xAI dialect', () => {
     const instr = llmInstructions('xai');
     // non-undefined is what the expressive gate keys on
     expect(instr).toBeDefined();
-    expect(instr).toContain('<sound value="laugh"/>');
-    expect(instr).toContain('<whisper>');
+    // this branch instructs the unified expr dialect; convertMarkup lowers it to
+    // xAI's native syntax (see expr_markup.test.ts)
+    expect(instr).toContain('<expr type="sound" label="laugh"/>');
+    expect(instr).toContain('<expr type="prosody" label="');
   });
 
   it('splitMarkup strips inline tags and keeps wrapping inner text', () => {
@@ -127,8 +129,8 @@ describe('xAI dialect', () => {
       });
       const tmpl = opts.ttsInstructionsTemplate!;
       const body = isInstructions(tmpl) ? tmpl.common : tmpl;
-      // tuned body, not the agnostic default (which has no xai tag reference)
-      expect(body).toContain('<whisper>');
+      // tuned body, not the agnostic default (which has no xai marker reference)
+      expect(body).toContain('<expr type="prosody" label="whisper">');
     }
   });
 });
