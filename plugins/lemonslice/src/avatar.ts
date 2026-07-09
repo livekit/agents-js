@@ -148,13 +148,13 @@ export class AvatarSession extends voice.AvatarSession {
   private agentIdlePrompt: string | null;
   private idleTimeout: number | null;
   private extraPayload: Record<string, unknown> | null;
-  #sessionId: string | null = null;
   private apiUrl: string;
   private apiKey: string;
   private avatarParticipantIdentity: string;
   private avatarParticipantName: string;
   private connOptions: APIConnectOptions;
 
+  #sessionId: string | null = null;
   #logger = log();
 
   /**
