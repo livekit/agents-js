@@ -490,12 +490,12 @@ export function createWarmTransferTask({
 
       if (holdAudio !== null) {
         await backgroundAudio.start({ room: callerRoom });
+        if (task.done) {
+          // The caller hung up while the hold audio was starting; setResult
+          // already closed the player, so don't create an orphaned play handle.
+          return;
+        }
         holdAudioHandle = backgroundAudio.play(holdAudio, true);
-      }
-
-      if (task.done) {
-        // The caller hung up while the hold audio was starting.
-        return;
       }
 
       setIoEnabled(false);
