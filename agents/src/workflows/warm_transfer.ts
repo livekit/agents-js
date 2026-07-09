@@ -159,6 +159,9 @@ export function createWarmTransferTask({
   // creation, so getJobContext() would read an empty/stale store there.
   let jobCtx: JobContext | null = null;
   let transferAgentSession: AgentSession | null = null;
+  // Session handed off to the caller-hangup notification flow, which owns its
+  // teardown from that point on — no other cleanup path may close it.
+  let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
 
@@ -268,6 +271,7 @@ export function createWarmTransferTask({
     if (session) {
       transferAgentSession = null;
       humanAgentRoom = null;
+      hangupNotifySession = session;
       void notifyHumanAgentOfHangup(session);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
@@ -572,9 +576,10 @@ export function createWarmTransferTask({
         setResult(new ToolError('could not dial human agent'));
       } finally {
         abortController.abort();
-        // If the dial won the race we kept its session; otherwise discard it.
+        // If the dial won the race we kept its session; if the hangup-notify
+        // flow took it, that flow shuts it down; otherwise discard it.
         const session = await dialPromise.catch(() => null);
-        if (session && transferAgentSession !== session) {
+        if (session && transferAgentSession !== session && hangupNotifySession !== session) {
           await cleanupHumanAgentDial(session, humanAgentRoom);
           humanAgentRoom = null;
         }
