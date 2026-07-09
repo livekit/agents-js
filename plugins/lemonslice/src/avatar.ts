@@ -6,11 +6,11 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
+  type RoomInputOptions,
+  type RoomOutputOptions,
   getJobContext,
   intervalForRetry,
   voice,
-  type RoomInputOptions,
-  type RoomOutputOptions,
 } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
@@ -341,12 +341,16 @@ export class AvatarSession extends voice.AvatarSession {
       chatSink = (payload) => chatRelay.submitJson(payload);
     }
 
-    this.meetingRelayTask = streamMeetingRelay(result.websocketUrl, (payload) => {
-      meetingAudio.submit(payload);
-    }, {
-      stop: relayAbort.signal,
-      chatSink,
-    });
+    this.meetingRelayTask = streamMeetingRelay(
+      result.websocketUrl,
+      (payload) => {
+        meetingAudio.submit(payload);
+      },
+      {
+        stop: relayAbort.signal,
+        chatSink,
+      },
+    );
 
     this.meetingBotId = result.meetingBotId;
     return result;

@@ -77,16 +77,13 @@ export default defineAgent({
     await avatar.start(session, ctx.room);
 
     const meta = ctx.job.metadata ? JSON.parse(ctx.job.metadata) : {};
-    const meetingUrl = meta.meeting_url ?? process.env.MEETING_URL;
+    const meetingUrl = meta.meeting_url;
     if (!meetingUrl) {
-      throw new Error('Set meeting_url in job metadata or MEETING_URL env var');
+      throw new Error('Set meeting_url in job metadata');
     }
 
-    const listenToMeetingChat = optionalBool(
-      meta.listen_to_meeting_chat ?? process.env.LISTEN_TO_MEETING_CHAT,
-      { default: true },
-    );
-    const botName = meta.bot_name ?? process.env.MEETING_BOT_NAME;
+    const listenToMeetingChat = optionalBool(meta.listen_to_meeting_chat, { default: true });
+    const botName = meta.bot_name;
 
     await avatar.joinMeeting(meetingUrl, {
       botName,

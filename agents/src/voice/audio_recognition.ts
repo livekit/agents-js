@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
+import type { AudioFrame } from '@livekit/rtc-node';
+import { type ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,

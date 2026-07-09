@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { voice } from '@livekit/agents';
+import type { voice } from '@livekit/agents';
 import { log } from '../log.js';
 import { deserializeChat } from './codec.js';
 

@@ -39,8 +39,7 @@ export function deserializeChat(payload: string): MeetingChatMessage | null {
   const to = record.to;
 
   return {
-    sender:
-      typeof sender === 'string' && sender.trim() ? sender.trim() : 'Someone',
+    sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'Someone',
     text: text.trim(),
     to: typeof to === 'string' && to.trim() ? to.trim() : undefined,
   };
