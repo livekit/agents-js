@@ -369,7 +369,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     this.#opts = opts;
-    this.#tokenizer = (opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()).stream();
+    this.#tokenizer = (opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer()).stream();
   }
 
   protected async run() {

@@ -10,7 +10,7 @@ import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
-import { basic as tokenizeBasic } from '../tokenize/index.js';
+import { blingfire as tokenizeBlingfire } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -547,7 +547,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
 
-    const sendTokenizerStream = new tokenizeBasic.SentenceTokenizer().stream();
+    const sendTokenizerStream = new tokenizeBlingfire.SentenceTokenizer().stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();

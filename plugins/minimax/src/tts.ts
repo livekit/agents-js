@@ -162,7 +162,7 @@ const resolveOptions = (opts: TTSOptions): ResolvedTTSOptions => {
     bitrate: opts.bitrate ?? DEFAULT_BITRATE,
     apiKey,
     baseUrl: opts.baseUrl ?? process.env.MINIMAX_BASE_URL ?? DEFAULT_BASE_URL,
-    tokenizer: opts.tokenizer ?? new tokenize.basic.SentenceTokenizer(),
+    tokenizer: opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer(),
   };
 };
 

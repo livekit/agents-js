@@ -161,7 +161,7 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
     baseURL: opts.baseURL ?? SARVAM_BASE_URL,
     sentenceTokenizer:
       opts.sentenceTokenizer ??
-      new tokenize.basic.SentenceTokenizer({ minSentenceLength: MIN_SENTENCE_LENGTH }),
+      new tokenize.blingfire.SentenceTokenizer({ minSentenceLength: MIN_SENTENCE_LENGTH }),
   };
 
   if (isV3) {

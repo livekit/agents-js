@@ -7,7 +7,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/promise';
 import type { Throws } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import { basic } from './tokenize/index.js';
+import { basic, blingfire } from './tokenize/index.js';
 import type { SentenceStream, SentenceTokenizer } from './tokenize/tokenizer.js';
 import { AsyncIterableQueue, Future, shortuuid } from './utils.js';
 
@@ -33,9 +33,9 @@ export const defaultTextSyncOptions: TextSyncOptions = {
   language: '',
   speed: 1,
   newSentenceDelay: 400,
-  sentenceTokenizer: new basic.SentenceTokenizer(),
+  sentenceTokenizer: new blingfire.SentenceTokenizer(),
   hyphenateWord: basic.hyphenateWord,
-  splitWords: basic.splitWords,
+  splitWords: blingfire.splitWords,
 };
 
 interface AudioData {

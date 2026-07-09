@@ -6,7 +6,7 @@ import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/we
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
-import { basic } from '../../tokenize/index.js';
+import { basic, blingfire } from '../../tokenize/index.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -566,8 +566,8 @@ export interface TranscriptionSynchronizerOptions {
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   speed: 1,
   hyphenateWord: basic.hyphenateWord,
-  splitWords: basic.splitWords,
-  wordTokenizer: new basic.WordTokenizer(false),
+  splitWords: blingfire.splitWords,
+  wordTokenizer: new blingfire.WordTokenizer(false),
   enabled: true,
 };
 
