@@ -152,6 +152,7 @@ export class AvatarSession extends voice.AvatarSession {
   private livekitApiSecret: string | null = null;
   private livekitRoom: string | null = null;
   private meetingBotId: string | null = null;
+  private meetingAudio: MeetingAudioInput | null = null;
   private meetingChat: MeetingChatRelay | null = null;
   private meetingRelayAbort: AbortController | null = null;
   private meetingRelayTask: Promise<void> | null = null;
@@ -326,8 +327,10 @@ export class AvatarSession extends voice.AvatarSession {
       broadcastToken,
       botName,
     });
+    this.meetingBotId = result.meetingBotId;
 
     const meetingAudio = new MeetingAudioInput();
+    this.meetingAudio = meetingAudio;
     this.agentSession.input.audio = meetingAudio;
 
     const relayAbort = new AbortController();
@@ -352,7 +355,6 @@ export class AvatarSession extends voice.AvatarSession {
       },
     );
 
-    this.meetingBotId = result.meetingBotId;
     return result;
   }
 
@@ -385,6 +387,15 @@ export class AvatarSession extends voice.AvatarSession {
         this.meetingChat = null;
       }
 
+      const meetingAudio = this.meetingAudio;
+      this.meetingAudio = null;
+      if (meetingAudio !== null) {
+        if (this.agentSession?.input.audio === meetingAudio) {
+          this.agentSession.input.audio = null;
+        }
+        await meetingAudio.close().catch(() => undefined);
+      }
+
       this.meetingRelayAbort = null;
     }
   }
@@ -398,8 +409,8 @@ export class AvatarSession extends voice.AvatarSession {
   roomOptions(options: RoomOptions = {}): RoomOptions {
     if (this.meetingBotId !== null) {
       return {
-        inputOptions: { audioEnabled: false, closeOnDisconnect: false, ...options.inputOptions },
-        outputOptions: { audioEnabled: false, ...options.outputOptions },
+        inputOptions: { ...options.inputOptions, audioEnabled: false, closeOnDisconnect: false },
+        outputOptions: { ...options.outputOptions, audioEnabled: false },
       };
     }
     return options;
@@ -512,10 +523,15 @@ export class AvatarSession extends voice.AvatarSession {
 
     const url = `${this.apiUrl.replace(/\/$/, '')}/${sessionId}/join-meeting`;
     const data = await this.postMeeting(url, payload);
-    return {
-      websocketUrl: String(data.websocket_url),
-      meetingBotId: String(data.meeting_bot_id),
-    };
+    const websocketUrl = data.websocket_url;
+    const meetingBotId = data.meeting_bot_id;
+    if (typeof websocketUrl !== 'string' || !websocketUrl) {
+      throw new LemonSliceException('join-meeting response missing websocket_url');
+    }
+    if (typeof meetingBotId !== 'string' || !meetingBotId) {
+      throw new LemonSliceException('join-meeting response missing meeting_bot_id');
+    }
+    return { websocketUrl, meetingBotId };
   }
 
   private async callLeaveMeeting(sessionId: string, meetingBotId: string): Promise<void> {
