@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as openai from '@livekit/agents-plugin-openai';
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  defineAgent,
+  inference,
+  llm,
+  log,
+  voice,
+} from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
@@ -13,13 +19,13 @@ import {
   type MenuItem,
   findItemsById,
   menuInstructions,
-} from './database.js';
+} from './database.ts';
 import {
   OrderState,
   createOrderedCombo,
   createOrderedHappy,
   createOrderedRegular,
-} from './order.js';
+} from './order.ts';
 
 export interface UserData {
   order: OrderState;
@@ -375,13 +381,46 @@ export default defineAgent({
     const userdata = await newUserData();
 
     const session = new voice.AgentSession({
-      stt: new deepgram.STT(),
-      llm: new openai.LLM({ model: 'gpt-4.1', temperature: 0.45 }),
-      tts: new elevenlabs.TTS(),
+      stt: new inference.STT({ model: 'deepgram/nova-3' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
+      tts: new inference.TTS({
+        model: 'inworld/inworld-tts-2',
+        voice: 'Sarah',
+        modelOptions: { delivery_mode: 'CREATIVE', speaking_rate: 1.1 },
+      }),
+      expressive: voice.presets.CUSTOMER_SERVICE,
       userData: userdata,
-      voiceOptions: {
-        maxToolSteps: 10,
-      },
+      maxToolSteps: 10,
+      // Flip userState to "away" after 10s of mutual silence so we can
+      // check whether they're still there (default is 15s).
+      userAwayTimeout: 10.0,
+    });
+
+    const logger = log();
+    let idleNudge: AbortController | null = null;
+
+    const nudgeWhileIdle = async (signal: AbortSignal) => {
+      // Nudge every 10s until the user speaks again — speaking flips
+      // userState out of "away", which aborts this loop below.
+      while (!signal.aborted) {
+        logger.info("user idle — checking if they're still there");
+        await session.generateReply({
+          instructions: "The user has been idle, see if they're still there",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+    };
+
+    session.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
+      if (ev.newState === 'away') {
+        if (idleNudge === null) {
+          idleNudge = new AbortController();
+          void nudgeWhileIdle(idleNudge.signal);
+        }
+      } else if (idleNudge !== null) {
+        idleNudge.abort();
+        idleNudge = null;
+      }
     });
 
     await session.start({

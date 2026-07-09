@@ -26,7 +26,7 @@ import {
   ExperienceTask,
   IntroTask,
   type SurveyUserData,
-} from '../survey_agent.js';
+} from '../survey_agent.ts';
 
 const { TaskGroup } = workflows;
 type TaskGroupResult = workflows.TaskGroupResult;

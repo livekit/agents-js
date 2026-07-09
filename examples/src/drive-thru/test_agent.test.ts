@@ -20,7 +20,7 @@
 import { initializeLogger, llm, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DriveThruAgent, type UserData, newUserData } from './drivethru_agent.js';
+import { DriveThruAgent, type UserData, newUserData } from './drivethru_agent.ts';
 
 initializeLogger({ pretty: false, level: 'warn' });
 

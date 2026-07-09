@@ -31,8 +31,8 @@ import {
   speakCode,
   speakTime,
   speakUsd,
-} from './hotel_db.js';
-import { buildLookupPolicyTool } from './policies.js';
+} from './hotel_db.ts';
+import { buildLookupPolicyTool } from './policies.ts';
 
 type UserData = {
   db: HotelDB;
