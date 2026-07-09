@@ -169,6 +169,30 @@ describe('transcript stripping (per-provider + provider-agnostic)', () => {
     expect(tags).toContainEqual({ type: '', value: 'sigh' });
   });
 
+  it('preserves document order when mixing native and expr markup', () => {
+    // a hallucinated native tag ahead of an expr marker must stay ahead in the tag
+    // list — lk.expression surfaces the segment's *leading* expression/emotion
+    const text = '<emotion value="sad"/><expr type="expression" label="happy"/>Hi';
+    const [clean, tags] = splitAllMarkup(text);
+    expect(clean).toBe('Hi');
+    expect(tags).toEqual([
+      { type: 'emotion', value: 'sad' },
+      { type: 'expression', value: 'happy' },
+    ]);
+    expect(expressionAttribute(tags)).toEqual({ 'lk.expression': '{"value":"sad"}' });
+
+    // same through the per-provider path, with brackets in the mix
+    const [, inworldTags] = splitMarkup(
+      'inworld',
+      '[sigh] <expr type="expression" label="calm"/> hi <sound value="laugh"/>',
+    );
+    expect(inworldTags).toEqual([
+      { type: '', value: 'sigh' },
+      { type: 'expression', value: 'calm' },
+      { type: 'sound', value: 'laugh' },
+    ]);
+  });
+
   it('does not match the native <expression> tag with the expr regexes', () => {
     // "<expr" is a prefix of "<expression" — the word boundary in the expr regexes
     // must keep the native Inworld tag on the generic strip path with its own type
@@ -217,6 +241,17 @@ describe('normalizeMarkup: fix unclosed self-closing expr markers', () => {
     const text =
       '<expr type="prosody" label="whisper">hi</expr> <expr type="break" label="1s"/> ' +
       '<expr type="spell">A7X9</expr>';
+    expect(normalizeMarkup('xai', text)).toBe(text);
+  });
+
+  it('closes an unclosed Cartesia prosody point control', () => {
+    // Cartesia prosody is self-closing, so the missing-slash fix applies there —
+    // otherwise convertExpr's stray-tag cleanup would drop the control entirely
+    const text = '<expr type="prosody" label="slow"> One moment.';
+    const normalized = normalizeMarkup('cartesia', text);
+    expect(normalized).toBe('<expr type="prosody" label="slow"/> One moment.');
+    expect(convertMarkup('cartesia', normalized)).toBe('<speed ratio="0.85"/> One moment.');
+    // xAI prosody legitimately wraps, so its opening tag must stay untouched
     expect(normalizeMarkup('xai', text)).toBe(text);
   });
 });

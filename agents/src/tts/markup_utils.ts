@@ -37,12 +37,17 @@ const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * @param text - The text containing markup.
  * @param xmlTags - XML tag names to handle (e.g. `["emotion", "sound"]`).
  * @param brackets - Whether to also handle square-bracket tags like `[laughs]`.
+ * @param offsetsOut - Optional array receiving, per recorded tag, the offset of its
+ *   match so callers can merge tags from separate stripping passes in document order.
+ *   Offsets are exact for top-level tags; a tag exposed by unwrapping an outer tag
+ *   (nested markup, found in a later fixed-point pass) reports its offset within the
+ *   partially-stripped text — approximate, but ordering stays monotonic in practice.
  */
 export function extractAndStrip(
   text: string,
-  options: { xmlTags: string[]; brackets: boolean },
+  options: { xmlTags: string[]; brackets: boolean; offsetsOut?: number[] },
 ): [string, Array<[string, string]>] {
-  const { xmlTags, brackets } = options;
+  const { xmlTags, brackets, offsetsOut } = options;
   if (xmlTags.length === 0 && !brackets) {
     return [text, []];
   }
@@ -67,6 +72,7 @@ export function extractAndStrip(
 
   const repl = (match: string, ...args: unknown[]): string => {
     const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
     const tag = groups.tag;
     if (tag !== undefined) {
       const inner = groups.inner;
@@ -78,6 +84,7 @@ export function extractAndStrip(
         value = attrMatch ? attrMatch[1]! : '';
       }
       tags.push([tag, value]);
+      offsetsOut?.push(offset);
       // wrapping tags keep their inner content; self-closing/lone tags vanish
       return inner !== undefined ? inner : '';
     }
@@ -85,6 +92,7 @@ export function extractAndStrip(
     const bracket = groups.bracket;
     if (bracket !== undefined) {
       tags.push(['', bracket.trim()]);
+      offsetsOut?.push(offset);
       return '';
     }
 

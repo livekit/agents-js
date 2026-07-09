@@ -604,8 +604,12 @@ const EXPR_CLOSE_RE = /<\/expr\s*>/g;
 const EXPR_SELF_RE = /<expr\b([^>]*?)\/\s*>/g;
 // a wrapping marker (prosody/spell) and its span; non-greedy, instructed not to nest
 const EXPR_WRAP_RE = /<expr\b(?=[^>]*type="(?:prosody|spell)")([^>]*?)>([\s\S]*?)<\/expr\s*>/g;
-// a non-wrapping type the LLM forgot to self-close (normalizeMarkup fixes these)
+// a non-wrapping type the LLM forgot to self-close (normalizeMarkup fixes these).
+// For Cartesia, prosody is a self-closing point control, so it's included there; for
+// xAI prosody legitimately wraps, so it must stay an opening tag.
 const EXPR_UNCLOSED_RE = /(<expr\b(?=[^>]*type="(?:expression|break|sound)")[^>]*[^/>\s])\s*>/g;
+const EXPR_UNCLOSED_CARTESIA_RE =
+  /(<expr\b(?=[^>]*type="(?:expression|break|sound|prosody)")[^>]*[^/>\s])\s*>/g;
 
 // expr sound labels that differ from xAI's native cue names
 const XAI_SOUND_ALIASES: Record<string, string> = { breathe: 'breath' };
@@ -626,6 +630,16 @@ function exprAttrs(attrs: string): Record<string, string> {
   return out;
 }
 
+// any expr delimiter — an open/self-closing marker (attrs in group 1) or a close tag —
+// in a single alternation so splitExpr can strip both in one pass with exact offsets
+const EXPR_TAG_RE = /<expr\b([^>]*?)\/?\s*>|<\/expr\s*>/g;
+
+/** A span splitExpr removed: its position in the *clean* text and its original length. */
+interface ExprRemoval {
+  cleanIdx: number;
+  len: number;
+}
+
 /**
  * Strip expr markers and collect (type, label) pairs, in document order.
  *
@@ -634,21 +648,84 @@ function exprAttrs(attrs: string): Record<string, string> {
  * attribute, i.e. the marker type), so expr gets this dedicated pre-pass. A prosody
  * wrapper's inner words stay in the clean text — only the delimiters are removed —
  * which also keeps streaming safe when an open/close pair is split across chunks.
+ *
+ * Each tag's offset in the original text is reported in `positions`, and every removed
+ * span in `removals`, so {@link splitWithExpr} can map the follow-up native-markup
+ * pass back to original coordinates and merge the two passes in document order.
  */
-function splitExpr(text: string): [string, ExpressiveTag[]] {
+function splitExpr(text: string): {
+  clean: string;
+  tags: ExpressiveTag[];
+  positions: number[];
+  removals: ExprRemoval[];
+} {
   if (!text.includes('<expr') && !text.includes('</expr')) {
-    return [text, []];
+    return { clean: text, tags: [], positions: [], removals: [] };
   }
 
   const tags: ExpressiveTag[] = [];
+  const positions: number[] = [];
+  const removals: ExprRemoval[] = [];
+  let shift = 0;
 
-  let clean = text.replace(EXPR_OPEN_RE, (_m, attrsStr: string) => {
-    const attrs = exprAttrs(attrsStr);
-    tags.push({ type: attrs.type ?? '', value: attrs.label ?? '' });
-    return '';
-  });
-  clean = clean.replace(EXPR_CLOSE_RE, '');
-  return [clean, tags];
+  const clean = text.replace(
+    EXPR_TAG_RE,
+    (m: string, attrsStr: string | undefined, offset: number) => {
+      if (attrsStr !== undefined) {
+        const attrs = exprAttrs(attrsStr);
+        tags.push({ type: attrs.type ?? '', value: attrs.label ?? '' });
+        positions.push(offset);
+      }
+      removals.push({ cleanIdx: offset - shift, len: m.length });
+      shift += m.length;
+      return '';
+    },
+  );
+  return { clean, tags, positions, removals };
+}
+
+/**
+ * Strip expr markers plus the given native markup, merging both passes' tags by their
+ * position in the original text.
+ *
+ * A naive concatenation would list every expr tag before every native/bracket tag,
+ * so a segment opening with a hallucinated native tag (`<emotion value="sad"/>` before
+ * an expr marker) would surface the wrong leading expression via `lk.expression`.
+ */
+function splitWithExpr(
+  text: string,
+  options: { xmlTags: string[]; brackets: boolean },
+): [string, ExpressiveTag[]] {
+  const expr = splitExpr(text);
+  const rawOffsets: number[] = [];
+  const [clean, rawTags] = extractAndStrip(expr.clean, { ...options, offsetsOut: rawOffsets });
+
+  if (expr.tags.length === 0) {
+    return [clean, rawTags.map(([tag, value]) => ({ type: tag, value }))];
+  }
+
+  // map a clean-text offset back to the original text by re-adding the expr spans
+  // removed before it
+  const toOriginal = (cleanPos: number): number => {
+    let pos = cleanPos;
+    for (const r of expr.removals) {
+      if (r.cleanIdx > cleanPos) {
+        break;
+      }
+      pos += r.len;
+    }
+    return pos;
+  };
+
+  const merged = [
+    ...expr.tags.map((tag, i) => ({ tag, pos: expr.positions[i]! })),
+    ...rawTags.map(([type, value], i) => ({
+      tag: { type, value },
+      pos: toOriginal(rawOffsets[i] ?? 0),
+    })),
+  ];
+  merged.sort((a, b) => a.pos - b.pos);
+  return [clean, merged.map((entry) => entry.tag)];
 }
 
 /**
@@ -765,10 +842,8 @@ export function splitMarkup(provider: string, text: string): [string, Expressive
   if (spec === undefined) {
     return [text, []];
   }
-  const [exprClean, exprTags] = splitExpr(text);
   const [xmlTags, brackets] = spec;
-  const [clean, rawTags] = extractAndStrip(exprClean, { xmlTags, brackets });
-  return [clean, [...exprTags, ...rawTags.map(([tag, value]) => ({ type: tag, value }))]];
+  return splitWithExpr(text, { xmlTags, brackets });
 }
 
 /** Strip provider-specific markup tags from text, preserving content. */
@@ -802,9 +877,7 @@ const ALL_MARKUP_TAGS: string[] = [
  * as audio directives — so a universal strip is safe.
  */
 export function splitAllMarkup(text: string): [string, ExpressiveTag[]] {
-  const [exprClean, exprTags] = splitExpr(text);
-  const [clean, rawTags] = extractAndStrip(exprClean, { xmlTags: ALL_MARKUP_TAGS, brackets: true });
-  return [clean, [...exprTags, ...rawTags.map(([tag, value]) => ({ type: tag, value }))]];
+  return splitWithExpr(text, { xmlTags: ALL_MARKUP_TAGS, brackets: true });
 }
 
 /**
@@ -899,7 +972,10 @@ const SELF_CLOSING_TAGS: Record<string, string[]> = {
  */
 export function normalizeMarkup(provider: string, text: string): string {
   if (PROVIDER_MARKUP[provider] !== undefined) {
-    text = text.replace(EXPR_UNCLOSED_RE, '$1/>');
+    text = text.replace(
+      provider === 'cartesia' ? EXPR_UNCLOSED_CARTESIA_RE : EXPR_UNCLOSED_RE,
+      '$1/>',
+    );
   }
   const tags = SELF_CLOSING_TAGS[provider];
   if (!tags || tags.length === 0) {
