@@ -42,6 +42,7 @@ export {
   type KeytermsOptions,
 } from './keyterm_detection.js';
 export {
+  AudioInput,
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,

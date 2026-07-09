@@ -9,18 +9,24 @@ import {
   getJobContext,
   intervalForRetry,
   voice,
+  type RoomInputOptions,
+  type RoomOutputOptions,
 } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
 import type { VideoGrant } from 'livekit-server-sdk';
 import { AccessToken } from 'livekit-server-sdk';
 import { log } from './log.js';
+import { MeetingAudioInput, streamMeetingRelay } from './meeting/audio.js';
+import { MeetingChatRelay } from './meeting/chat.js';
+import type { JoinMeetingResult } from './meeting/room.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 const DEFAULT_API_URL = 'https://lemonslice.com/api/liveai/sessions';
 const SAMPLE_RATE = 16000;
 const AVATAR_AGENT_IDENTITY = 'lemonslice-avatar-agent';
 const AVATAR_AGENT_NAME = 'lemonslice-avatar-agent';
+const MEETING_BROADCAST_IDENTITY = 'lemonslice-meeting-broadcast';
 
 /**
  * Exception thrown when there are errors with the LemonSlice API.
@@ -99,6 +105,11 @@ export interface StartOptions {
   livekitApiSecret?: string;
 }
 
+export interface RoomOptions {
+  inputOptions?: Partial<RoomInputOptions>;
+  outputOptions?: Partial<RoomOutputOptions>;
+}
+
 /**
  * A LemonSlice avatar session.
  *
@@ -133,6 +144,17 @@ export class AvatarSession extends voice.AvatarSession {
   private avatarParticipantIdentity: string;
   private avatarParticipantName: string;
   private connOptions: APIConnectOptions;
+
+  private _sessionId: string | null = null;
+  private agentSession: voice.AgentSession | null = null;
+  private livekitUrl: string | null = null;
+  private livekitApiKey: string | null = null;
+  private livekitApiSecret: string | null = null;
+  private livekitRoom: string | null = null;
+  private meetingBotId: string | null = null;
+  private meetingChat: MeetingChatRelay | null = null;
+  private meetingRelayAbort: AbortController | null = null;
+  private meetingRelayTask: Promise<void> | null = null;
 
   #logger = log();
 
@@ -181,6 +203,10 @@ export class AvatarSession extends voice.AvatarSession {
     return 'lemonslice';
   }
 
+  get sessionId(): string | null {
+    return this._sessionId;
+  }
+
   /**
    * Starts the avatar session and connects it to the agent.
    *
@@ -212,6 +238,12 @@ export class AvatarSession extends voice.AvatarSession {
           'by arguments or environment variables',
       );
     }
+
+    this.agentSession = agentSession;
+    this.livekitUrl = livekitUrl;
+    this.livekitApiKey = livekitApiKey;
+    this.livekitApiSecret = livekitApiSecret;
+    this.livekitRoom = room.name ?? null;
 
     let localParticipantIdentity: string;
     try {
@@ -251,6 +283,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.#logger.debug('starting avatar session');
     const sessionId = await this.startAgent(livekitUrl, livekitToken);
+    this._sessionId = sessionId;
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
@@ -261,6 +294,119 @@ export class AvatarSession extends voice.AvatarSession {
     });
 
     return sessionId;
+  }
+
+  /**
+   * Send this avatar into an external video meeting.
+   *
+   * Supports Zoom, Google Meet, Microsoft Teams, and Webex. Call after start()
+   * and before AgentSession.start().
+   */
+  async joinMeeting(
+    meetingUrl: string,
+    {
+      botName,
+      listenToMeetingChat = true,
+    }: {
+      botName?: string | null;
+      listenToMeetingChat?: boolean;
+    } = {},
+  ): Promise<JoinMeetingResult> {
+    if (!this._sessionId || this.agentSession === null || !this.livekitUrl) {
+      throw new LemonSliceException('call start() before joinMeeting()');
+    }
+    if (this.meetingBotId !== null) {
+      throw new LemonSliceException('already joined a meeting; call leaveMeeting() first');
+    }
+
+    const broadcastToken = await this.mintBroadcastToken();
+    const result = await this.callJoinMeeting(this._sessionId, {
+      meetingUrl,
+      livekitUrl: this.livekitUrl,
+      broadcastToken,
+      botName,
+    });
+
+    const meetingAudio = new MeetingAudioInput();
+    this.agentSession.input.audio = meetingAudio;
+
+    const relayAbort = new AbortController();
+    this.meetingRelayAbort = relayAbort;
+
+    let chatSink: ((payload: string) => void) | undefined;
+    if (listenToMeetingChat) {
+      const chatRelay = new MeetingChatRelay(this.agentSession, { botName });
+      chatRelay.start();
+      this.meetingChat = chatRelay;
+      chatSink = (payload) => chatRelay.submitJson(payload);
+    }
+
+    this.meetingRelayTask = streamMeetingRelay(result.websocketUrl, (payload) => {
+      meetingAudio.submit(payload);
+    }, {
+      stop: relayAbort.signal,
+      chatSink,
+    });
+
+    this.meetingBotId = result.meetingBotId;
+    return result;
+  }
+
+  /** Leave the external meeting and stop the audio and chat relay. */
+  async leaveMeeting(): Promise<void> {
+    const meetingBotId = this.meetingBotId;
+    const sessionId = this._sessionId;
+    if (!meetingBotId || !sessionId) {
+      return;
+    }
+
+    try {
+      await this.callLeaveMeeting(sessionId, meetingBotId);
+    } catch (error) {
+      this.#logger.warn({ error }, 'failed to leave meeting via LemonSlice API');
+    } finally {
+      this.meetingBotId = null;
+
+      if (this.meetingRelayAbort !== null) {
+        this.meetingRelayAbort.abort();
+      }
+      const relayTask = this.meetingRelayTask;
+      if (relayTask !== null) {
+        await relayTask.catch(() => undefined);
+        this.meetingRelayTask = null;
+      }
+
+      if (this.meetingChat !== null) {
+        await this.meetingChat.aclose();
+        this.meetingChat = null;
+      }
+
+      this.meetingRelayAbort = null;
+    }
+  }
+
+  /**
+   * Return room I/O options for AgentSession.start().
+   *
+   * When joinMeeting() has been called, disables LiveKit room audio input and output.
+   * Meeting audio is fed directly into STT instead.
+   */
+  roomOptions(options: RoomOptions = {}): RoomOptions {
+    if (this.meetingBotId !== null) {
+      return {
+        inputOptions: { audioEnabled: false, closeOnDisconnect: false, ...options.inputOptions },
+        outputOptions: { audioEnabled: false, ...options.outputOptions },
+      };
+    }
+    return options;
+  }
+
+  override async aclose(): Promise<void> {
+    try {
+      await this.leaveMeeting();
+    } finally {
+      await super.aclose();
+    }
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<string> {
@@ -334,5 +480,112 @@ export class AvatarSession extends voice.AvatarSession {
     throw new APIConnectionError({
       message: 'Failed to start LemonSlice Avatar Session after all retries',
     });
+  }
+
+  private async callJoinMeeting(
+    sessionId: string,
+    {
+      meetingUrl,
+      livekitUrl,
+      broadcastToken,
+      botName,
+    }: {
+      meetingUrl: string;
+      livekitUrl: string;
+      broadcastToken: string;
+      botName?: string | null;
+    },
+  ): Promise<JoinMeetingResult> {
+    const payload: Record<string, unknown> = {
+      session_id: sessionId,
+      meeting_url: meetingUrl,
+      livekit_url: livekitUrl,
+      broadcast_token: broadcastToken,
+    };
+    if (botName?.trim()) {
+      payload.bot_name = botName.trim();
+    }
+
+    const url = `${this.apiUrl.replace(/\/$/, '')}/${sessionId}/join-meeting`;
+    const data = await this.postMeeting(url, payload);
+    return {
+      websocketUrl: String(data.websocket_url),
+      meetingBotId: String(data.meeting_bot_id),
+    };
+  }
+
+  private async callLeaveMeeting(sessionId: string, meetingBotId: string): Promise<void> {
+    const url = `${this.apiUrl.replace(/\/$/, '')}/${sessionId}/leave-meeting`;
+    await this.postMeeting(url, { meeting_bot_id: meetingBotId });
+  }
+
+  private async postMeeting(
+    url: string,
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': this.apiKey,
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(this.connOptions.timeoutMs),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new APIStatusError({
+            message: 'Server returned an error',
+            options: { statusCode: response.status, body: { error: text } },
+          });
+        }
+
+        return (await response.json()) as Record<string, unknown>;
+      } catch (e) {
+        if (e instanceof APIStatusError && !e.retryable) {
+          throw e;
+        }
+        if (e instanceof APIConnectionError) {
+          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
+        } else {
+          this.#logger.error({ error: e }, 'failed to call lemonslice api');
+        }
+
+        if (i <= this.connOptions.maxRetry - 1) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, intervalForRetry(this.connOptions, i)),
+          );
+        }
+      }
+    }
+
+    throw new APIConnectionError({
+      message: 'Failed to call LemonSlice API after all retries',
+    });
+  }
+
+  private async mintBroadcastToken(): Promise<string> {
+    if (!this.livekitApiKey || !this.livekitApiSecret || !this.livekitRoom) {
+      throw new LemonSliceException('call start() before joinMeeting()');
+    }
+
+    const at = new AccessToken(this.livekitApiKey, this.livekitApiSecret, {
+      identity: MEETING_BROADCAST_IDENTITY,
+      name: MEETING_BROADCAST_IDENTITY,
+      ttl: '4h',
+    });
+
+    at.addGrant({
+      roomJoin: true,
+      room: this.livekitRoom,
+      canSubscribe: true,
+      canPublish: false,
+      canPublishData: false,
+    } as VideoGrant);
+
+    return at.toJwt();
   }
 }
