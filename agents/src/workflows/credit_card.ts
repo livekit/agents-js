@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
-import type { ChatContext, LLM, RealtimeModel, ToolContextEntry } from '../llm/index.js';
-import { Instructions, ToolError, ToolFlag, tool } from '../llm/index.js';
+import type { ChatContext, RealtimeModel, ToolContextEntry } from '../llm/index.js';
+import { Instructions, LLM, ToolError, ToolFlag, tool } from '../llm/index.js';
 import { isToolError } from '../llm/tool_context.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
@@ -122,6 +122,13 @@ interface SubTaskOptions {
   requireConfirmation?: boolean;
   requireExplicitAsk?: boolean;
   extraInstructions?: string;
+  turnDetection?: TurnDetectionMode | null;
+  tools?: readonly ToolContextEntry[];
+  stt?: STT | STTModelString | null;
+  vad?: VAD | null;
+  llm?: LLM | RealtimeModel | LLMModels | null;
+  tts?: TTS | TTSModelString | null;
+  allowInterruptions?: boolean;
 }
 
 function buildSubTaskInstructions(
@@ -152,6 +159,13 @@ function createGetCardNumberTask({
   requireConfirmation,
   requireExplicitAsk = false,
   extraInstructions = '',
+  turnDetection,
+  tools,
+  stt,
+  vad,
+  llm,
+  tts,
+  allowInterruptions,
 }: SubTaskOptions = {}): AgentTask<GetCardNumberResult> {
   let currentCardNumber = '';
 
@@ -255,7 +269,18 @@ function createGetCardNumberTask({
       extraInstructions,
     ),
     chatCtx,
-    tools: [updateCardNumberTool, declineCardCaptureTool, restartCardCollectionTool],
+    turnDetection: turnDetection ?? undefined,
+    tools: [
+      ...(tools ?? []),
+      updateCardNumberTool,
+      declineCardCaptureTool,
+      restartCardCollectionTool,
+    ],
+    stt: stt ?? undefined,
+    vad: vad ?? undefined,
+    llm: llm ?? undefined,
+    tts: tts ?? undefined,
+    allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
         instructions:
@@ -276,6 +301,13 @@ function createGetSecurityCodeTask({
   requireConfirmation,
   requireExplicitAsk = false,
   extraInstructions = '',
+  turnDetection,
+  tools,
+  stt,
+  vad,
+  llm,
+  tts,
+  allowInterruptions,
 }: SubTaskOptions = {}): AgentTask<GetSecurityCodeResult> {
   let currentSecurityCode = '';
 
@@ -360,7 +392,18 @@ function createGetSecurityCodeTask({
       extraInstructions,
     ),
     chatCtx,
-    tools: [updateSecurityCodeTool, declineCardCaptureTool, restartCardCollectionTool],
+    turnDetection: turnDetection ?? undefined,
+    tools: [
+      ...(tools ?? []),
+      updateSecurityCodeTool,
+      declineCardCaptureTool,
+      restartCardCollectionTool,
+    ],
+    stt: stt ?? undefined,
+    vad: vad ?? undefined,
+    llm: llm ?? undefined,
+    tts: tts ?? undefined,
+    allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
         instructions:
@@ -379,6 +422,13 @@ function createGetExpirationDateTask({
   requireConfirmation,
   requireExplicitAsk = false,
   extraInstructions = '',
+  turnDetection,
+  tools,
+  stt,
+  vad,
+  llm,
+  tts,
+  allowInterruptions,
 }: SubTaskOptions = {}): AgentTask<GetExpirationDateResult> {
   let currentExpirationDate = '';
 
@@ -512,7 +562,18 @@ function createGetExpirationDateTask({
       extraInstructions,
     ),
     chatCtx,
-    tools: [updateExpirationDateTool, declineCardCaptureTool, restartCardCollectionTool],
+    turnDetection: turnDetection ?? undefined,
+    tools: [
+      ...(tools ?? []),
+      updateExpirationDateTool,
+      declineCardCaptureTool,
+      restartCardCollectionTool,
+    ],
+    stt: stt ?? undefined,
+    vad: vad ?? undefined,
+    llm: llm ?? undefined,
+    tts: tts ?? undefined,
+    allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
         instructions:
@@ -593,6 +654,19 @@ export function createGetCreditCardTask({
         cardholderExtra = `${extraInstructions}\n\n${cardholderExtra}`;
       }
 
+      // Task-level model/tool overrides must reach the sub-tasks: the outer
+      // placeholder never converses, the sub-tasks do.
+      const subTaskOptions = {
+        requireConfirmation,
+        turnDetection,
+        tools,
+        stt,
+        vad,
+        llm,
+        tts,
+        allowInterruptions,
+      };
+
       while (!task.done) {
         // Order: number first (most natural for the caller to give
         // when asked for "card details"), then expiry and security
@@ -601,12 +675,18 @@ export function createGetCreditCardTask({
         // leaving it for the end avoids the failure mode where the
         // caller's first response (typically the digits) gets crammed
         // into update_name.
-        const taskGroup = new TaskGroup({ chatCtx: ctx });
+        const taskGroup = new TaskGroup({
+          chatCtx: ctx,
+          // TaskGroup summarization requires a standard LLM on the session;
+          // skip it on realtime-model sessions instead of failing after all
+          // card details were collected.
+          summarizeChatCtx: task.session.llm instanceof LLM,
+        });
         taskGroup.add(
           () =>
             createGetCardNumberTask({
+              ...subTaskOptions,
               chatCtx: ctx,
-              requireConfirmation,
               extraInstructions,
             }),
           {
@@ -617,8 +697,8 @@ export function createGetCreditCardTask({
         taskGroup.add(
           () =>
             createGetExpirationDateTask({
+              ...subTaskOptions,
               chatCtx: ctx,
-              requireConfirmation,
               extraInstructions,
             }),
           {
@@ -629,8 +709,8 @@ export function createGetCreditCardTask({
         taskGroup.add(
           () =>
             createGetSecurityCodeTask({
+              ...subTaskOptions,
               chatCtx: ctx,
-              requireConfirmation,
               extraInstructions,
             }),
           {
@@ -641,10 +721,10 @@ export function createGetCreditCardTask({
         taskGroup.add(
           () =>
             createGetNameTask({
+              ...subTaskOptions,
               lastName: true,
               chatCtx: ctx,
               extraInstructions: cardholderExtra,
-              requireConfirmation,
               // The cardholder may differ from the caller or any guest
               // mentioned earlier in chatCtx. Apply IGNORE_ON_ENTER on
               // update_name so the model must produce an asking turn
