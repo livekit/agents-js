@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
@@ -25,6 +26,16 @@ initializeLogger({ pretty: false, level: 'error' });
 
 const summaryXml = (summary: string) =>
   ['<chat_history_summary>', summary, '</chat_history_summary>'].join('\n');
+
+const mixedMarkup =
+  '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+  'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+  '<expr type="prosody" label="whisper">keep it secret</expr>';
+
+const mixedMarkupClean =
+  ' Press [Enter] to see <b>bold</b>, ' +
+  'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+  'keep it secret';
 
 class TrackingFakeLLM extends FakeLLM {
   chatCalls = 0;
@@ -302,6 +313,50 @@ describe('ChatContext.toJSON', () => {
         excludeTimestamp: false,
       }),
     ).toMatchSnapshot('message-properties-full');
+  });
+});
+
+describe('stripExprMarkup and ChatMessage text content', () => {
+  it('stripExprMarkup only touches expr tags', () => {
+    expect(stripExprMarkup(mixedMarkup)).toBe(mixedMarkupClean);
+  });
+
+  it('stripExprMarkup is a noop without expr tags', () => {
+    const text = 'plain text with [brackets] and <sound value="laugh"/>';
+    expect(stripExprMarkup(text)).toBe(text);
+  });
+
+  it('strips expr tags from assistant textContent only', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixedMarkup] });
+    expect(msg.textContent).toBe(mixedMarkupClean);
+    expect(msg.rawTextContent).toBe(mixedMarkup);
+  });
+
+  for (const role of ['user', 'system', 'developer'] as const) {
+    it(`keeps ${role} textContent raw`, () => {
+      const msg = ChatMessage.create({ role, content: [mixedMarkup] });
+      expect(msg.textContent).toBe(mixedMarkup);
+      expect(msg.rawTextContent).toBe(mixedMarkup);
+    });
+  }
+
+  it('returns undefined without text', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup strips expr tags from assistant messages only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixedMarkup] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixedMarkup] });
+
+    const strippedItems = chatCtx.toJSON({ stripMarkup: true }).items;
+    expect(strippedItems[0]).toMatchObject({ content: [mixedMarkup] });
+    expect(strippedItems[1]).toMatchObject({ content: [mixedMarkupClean] });
+
+    const rawItems = chatCtx.toJSON().items;
+    expect(rawItems[1]).toMatchObject({ content: [mixedMarkup] });
   });
 });
 

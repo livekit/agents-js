@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
@@ -357,10 +358,20 @@ export class ChatMessage {
   }
 
   /**
-   * Returns a single string with all text parts of the message joined by new
-   * lines. If no string content is present, returns `null`.
+   * Returns text content with LiveKit expressive `<expr/>` tags removed from assistant messages.
+   * Use {@link rawTextContent} for the exact model-facing content.
    */
   get textContent(): string | undefined {
+    const raw = this.rawTextContent;
+    if (raw === undefined || this.role !== 'assistant') {
+      return raw;
+    }
+
+    return stripExprMarkup(raw);
+  }
+
+  /** Returns the exact text content as generated, joined by new lines. */
+  get rawTextContent(): string | undefined {
     const parts = this.content
       .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))
       .map((c) => (typeof c === 'string' ? c : c.value));
@@ -925,6 +936,7 @@ export class ChatContext {
       excludeTimestamp?: boolean;
       excludeFunctionCall?: boolean;
       excludeConfigUpdate?: boolean;
+      stripMarkup?: boolean;
     } = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): JSONObject {
@@ -934,6 +946,7 @@ export class ChatContext {
       excludeTimestamp = true,
       excludeFunctionCall = false,
       excludeConfigUpdate = false,
+      stripMarkup = false,
     } = options;
 
     const items: ChatItem[] = [];
@@ -972,6 +985,12 @@ export class ChatContext {
           processedItem.content = processedItem.content.filter((c) => {
             return !(typeof c === 'object' && c.type === 'audio_content');
           });
+        }
+
+        if (stripMarkup && processedItem.role === 'assistant') {
+          processedItem.content = processedItem.content.map((c) =>
+            typeof c === 'string' ? stripExprMarkup(c) : c,
+          );
         }
       }
 
@@ -1190,7 +1209,7 @@ export class ChatContext {
           return toXml(item.role, (item.textContent ?? '').trim());
         }
 
-        return functionCallItemToMessage(item).textContent ?? '';
+        return functionCallItemToMessage(item).rawTextContent ?? '';
       })
       .join('\n')
       .trim();

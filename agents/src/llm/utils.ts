@@ -706,6 +706,18 @@ interface DiffOps {
   toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
 }
 
+function isUnchangedChatItem(oldItem: ChatItem | undefined, newItem: ChatItem): boolean {
+  if (!oldItem || oldItem.type !== newItem.type) {
+    return false;
+  }
+
+  if (oldItem.type === 'message' && newItem.type === 'message') {
+    return oldItem.rawTextContent === newItem.rawTextContent;
+  }
+
+  return true;
+}
+
 /**
  * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
  *
@@ -717,6 +729,13 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
   const newIds = newCtx.items.map((item: ChatItem) => item.id);
   const lcsIds = new Set(computeLCS(oldIds, newIds));
+  const oldCtxById = new Map(oldCtx.items.map((item) => [item.id, item]));
+
+  for (const newItem of newCtx.items) {
+    if (lcsIds.has(newItem.id) && !isUnchangedChatItem(oldCtxById.get(newItem.id), newItem)) {
+      lcsIds.delete(newItem.id);
+    }
+  }
 
   const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
   const toCreate: Array<[string | null, string]> = [];

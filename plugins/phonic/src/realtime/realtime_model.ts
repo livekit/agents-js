@@ -369,19 +369,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
       if (item?.type === 'message') {
-        if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
-          this.#logger.debug(`Sending add system message: ${item.textContent}`);
+        if ((item.role === 'system' || item.role === 'developer') && item.rawTextContent) {
+          this.#logger.debug(`Sending add system message: ${item.rawTextContent}`);
           this.socket?.sendAddSystemMessage({
             type: 'add_system_message',
-            system_message: item.textContent,
+            system_message: item.rawTextContent,
           });
           sentAddSystemMessage = true;
         }
 
         // Only treat a user message as text input when it's appended at the tail of the context.
-        if (item.role === 'user' && itemId === lastItemId && item.textContent) {
-          this.#logger.debug(`Received user text input: ${item.textContent}`);
-          this.pendingUserText = item.textContent;
+        if (item.role === 'user' && itemId === lastItemId && item.rawTextContent) {
+          this.#logger.debug(`Received user text input: ${item.rawTextContent}`);
+          this.pendingUserText = item.rawTextContent;
           bufferedUserText = true;
         }
       }
@@ -1011,7 +1011,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
 function chatItemToText(item: llm.ChatItem): string | undefined {
   if (item.type === 'message') {
-    const text = item.textContent?.trim();
+    const text = item.rawTextContent?.trim();
     if (!text) return undefined;
     return `<${item.role}>${text}</${item.role}>`;
   }
