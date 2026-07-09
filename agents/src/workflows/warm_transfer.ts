@@ -66,11 +66,11 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
-   * Message spoken to the human agent before their call is ended when the caller hangs up
-   * mid-transfer (after the human agent answered but before the merge). Set to `null` to end
-   * the call immediately without an announcement.
+   * Instructions used to generate the reply spoken to the human agent before their call is
+   * ended when the caller hangs up mid-transfer (after the human agent answered but before
+   * the merge). Falls back to a built-in instruction when not provided.
    */
-  callerHangupMessage?: string | null;
+  callerHangupInstruction?: string | null;
   /**
    * Instructions for the human agent briefing. Pass a full string to replace the built-in prompt
    * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
@@ -100,8 +100,8 @@ type IoState = {
  * If the caller hangs up before the merge — including while the human agent's phone is
  * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
  * room is torn down (ending the SIP call), and the task completes with a {@link ToolError}.
- * A human agent who already answered hears {@link WarmTransferTaskOptions.callerHangupMessage}
- * before their call is ended.
+ * A human agent who already answered is told the caller left (a reply generated from
+ * {@link WarmTransferTaskOptions.callerHangupInstruction}) before their call is ended.
  *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
@@ -114,7 +114,7 @@ export function createWarmTransferTask({
   dtmf,
   ringingTimeout,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
-  callerHangupMessage = 'Sorry, the caller hung up before the transfer could be completed. Ending the call now.',
+  callerHangupInstruction,
   instructions,
   chatCtx,
   turnDetection,
@@ -234,13 +234,16 @@ export function createWarmTransferTask({
 
   // Announces the caller hangup to the human agent, then hangs up on them by
   // shutting the session down (deleteRoomOnClose ends the SIP call).
-  const notifyHumanAgentOfHangup = async (
-    session: AgentSession,
-    message: string,
-  ): Promise<void> => {
+  const notifyHumanAgentOfHangup = async (session: AgentSession): Promise<void> => {
     try {
       session.interrupt();
-      const handle = session.say(message, { allowInterruptions: false });
+      const handle = session.generateReply({
+        instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+        allowInterruptions: false,
+        // The transfer is already cancelled; the reply must speak, not call
+        // connect_to_caller/decline_transfer.
+        toolChoice: 'none',
+      });
       // Cap the wait so teardown can't hang on a stuck playout.
       await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
     } catch (error) {
@@ -262,10 +265,10 @@ export function createWarmTransferTask({
     // reach and let them know before hanging up, instead of dropping the call
     // on them mid-briefing.
     const session = transferAgentSession;
-    if (session && callerHangupMessage !== null) {
+    if (session) {
       transferAgentSession = null;
       humanAgentRoom = null;
-      void notifyHumanAgentOfHangup(session, callerHangupMessage);
+      void notifyHumanAgentOfHangup(session);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
   };
@@ -652,6 +655,9 @@ function formatConversationHistory(chatCtx?: ChatContext): string {
   }
   return previousConversation;
 }
+
+const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
+Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
 const PERSONA = `# Identity
 
