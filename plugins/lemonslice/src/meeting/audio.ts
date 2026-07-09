@@ -12,6 +12,16 @@ const STT_CHANNELS = 1;
 const INITIAL_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30000;
 
+function toBuffer(data: WebSocket.RawData): Buffer {
+  if (Buffer.isBuffer(data)) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return Buffer.concat(data);
+  }
+  return Buffer.from(data);
+}
+
 function deserializeFrame(payload: Buffer): AudioFrame | null {
   if (payload.length < HEADER_SIZE) {
     return null;
@@ -155,12 +165,12 @@ export async function streamMeetingRelay(
           }
 
           if (isBinary) {
-            audioSink(Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer));
+            audioSink(toBuffer(data));
             return;
           }
 
           if (chatSink !== undefined) {
-            chatSink(typeof data === 'string' ? data : data.toString());
+            chatSink(typeof data === 'string' ? data : toBuffer(data).toString());
           }
         });
 
