@@ -66,6 +66,12 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
+   * Message spoken to the human agent before their call is ended when the caller hangs up
+   * mid-transfer (after the human agent answered but before the merge). Set to `null` to end
+   * the call immediately without an announcement.
+   */
+  callerHangupMessage?: string | null;
+  /**
    * Instructions for the human agent briefing. Pass a full string to replace the built-in prompt
    * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
    * keeping the built-in template and auto-formatted conversation history.
@@ -94,6 +100,8 @@ type IoState = {
  * If the caller hangs up before the merge — including while the human agent's phone is
  * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
  * room is torn down (ending the SIP call), and the task completes with a {@link ToolError}.
+ * A human agent who already answered hears {@link WarmTransferTaskOptions.callerHangupMessage}
+ * before their call is ended.
  *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
@@ -106,6 +114,7 @@ export function createWarmTransferTask({
   dtmf,
   ringingTimeout,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  callerHangupMessage = 'Sorry, the caller hung up before the transfer could be completed. Ending the call now.',
   instructions,
   chatCtx,
   turnDetection,
@@ -223,12 +232,41 @@ export function createWarmTransferTask({
     return false;
   };
 
+  // Announces the caller hangup to the human agent, then hangs up on them by
+  // shutting the session down (deleteRoomOnClose ends the SIP call).
+  const notifyHumanAgentOfHangup = async (
+    session: AgentSession,
+    message: string,
+  ): Promise<void> => {
+    try {
+      session.interrupt();
+      const handle = session.say(message, { allowInterruptions: false });
+      // Cap the wait so teardown can't hang on a stuck playout.
+      await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
+    } catch (error) {
+      logger.warn({ error }, 'failed to notify human agent of caller hangup');
+    } finally {
+      session.shutdown();
+    }
+  };
+
   const cancelForCallerHangup = (participantIdentity?: string): void => {
+    if (task.done) return;
     logger.info(
       { participantIdentity },
       'caller hung up before the transfer completed, cancelling transfer',
     );
     callerHangupFut.resolve();
+
+    // If the human agent already answered, take the session out of setResult's
+    // reach and let them know before hanging up, instead of dropping the call
+    // on them mid-briefing.
+    const session = transferAgentSession;
+    if (session && callerHangupMessage !== null) {
+      transferAgentSession = null;
+      humanAgentRoom = null;
+      void notifyHumanAgentOfHangup(session, callerHangupMessage);
+    }
     setResult(new ToolError('caller hung up before the transfer completed'));
   };
 
