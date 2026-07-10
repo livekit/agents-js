@@ -70,7 +70,7 @@ export function buildToolConfig(
     return {
       toolSpec: {
         name,
-        ...(description ? { description: tool.description } : {}),
+        ...(description ? { description } : {}),
         inputSchema: {
           json: tool.parameters
             ? llm.toJsonSchema(tool.parameters, false, false)

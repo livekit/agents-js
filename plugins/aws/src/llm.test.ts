@@ -106,6 +106,20 @@ describe('AWS Bedrock LLM - buildToolConfig', () => {
 
     expect(toolSpec).not.toHaveProperty('description');
   });
+
+  it('trims a non-empty tool description', () => {
+    const toolCtx = llm.toToolContext({
+      paddedDescription: llm.tool({
+        description: '  Useful description.  ',
+        parameters: z.object({}),
+        execute: async () => 'ok',
+      }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const toolSpec = (buildToolConfig(toolCtx, 'auto', false)?.tools?.[0] as any).toolSpec;
+
+    expect(toolSpec.description).toBe('Useful description.');
+  });
 });
 
 describe('AWS Bedrock LLM - constructor', () => {
