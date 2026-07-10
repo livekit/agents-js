@@ -432,6 +432,32 @@ describe('AWS Provider Format - toChatCtx', () => {
     ]);
   });
 
+  it('should drop images from assistant messages because Bedrock only accepts user images', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Describe the image' });
+    ctx.addMessage({
+      role: 'assistant',
+      content: [
+        'Description',
+        {
+          id: 'img1',
+          type: 'image_content',
+          image: 'data:image/png;base64,ZmFrZS1wbmctYnl0ZXM=',
+          inferenceDetail: 'auto',
+          _cache: {},
+        },
+      ],
+    });
+
+    const [result] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([
+      { role: 'user', content: [{ text: 'Describe the image' }] },
+      { role: 'assistant', content: [{ text: 'Description' }] },
+    ]);
+    expect(serializeImageMock).not.toHaveBeenCalled();
+  });
+
   it('should default to jpeg format when mimeType is missing', async () => {
     serializeImageMock.mockResolvedValue({
       inferenceDetail: 'auto',

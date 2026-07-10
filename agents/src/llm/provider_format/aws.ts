@@ -80,7 +80,13 @@ export async function toChatCtx(
           if (part.trim()) content.push({ text: part });
         } else if (isInstructions(part)) {
           if (part.value.trim()) content.push({ text: part.value });
-        } else if (part && typeof part === 'object' && part.type === 'image_content') {
+        } else if (
+          role === 'user' &&
+          part &&
+          typeof part === 'object' &&
+          part.type === 'image_content'
+        ) {
+          // Bedrock Converse only accepts image blocks in user messages.
           content.push(await toImagePart(part));
         }
         // audio_content is intentionally skipped — Bedrock Converse has no raw audio block
