@@ -25,12 +25,12 @@ export interface GetEmailTaskOptions {
    */
   instructions?: InstructionParts | Instructions | string;
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm the captured email address. Defaults to confirming on
@@ -42,8 +42,6 @@ export interface GetEmailTaskOptions {
    * it can't silently fill one from the chat context during `onEnter`.
    */
   requireExplicitAsk?: boolean;
-  /** @deprecated use `instructions.extra` instead */
-  extraInstructions?: string;
 }
 
 /**
@@ -55,7 +53,7 @@ export function createGetEmailTask({
   instructions,
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -63,7 +61,6 @@ export function createGetEmailTask({
   allowInterruptions,
   requireConfirmation,
   requireExplicitAsk = false,
-  extraInstructions = '',
 }: GetEmailTaskOptions = {}): AgentTask<GetEmailResult> {
   let currentEmail = '';
 
@@ -116,7 +113,7 @@ export function createGetEmailTask({
         if (!task.done) {
           task.complete({ emailAddress: currentEmail });
         }
-        return undefined; // no need to continue the conversation
+        return; // no need to continue the conversation
       }
 
       const confirmTool = buildConfirmTool(email);
@@ -151,28 +148,25 @@ export function createGetEmailTask({
     id: 'get_email_task',
     instructions: resolveWorkflowInstructions({
       instructions,
-      extraInstructions,
       template: INSTRUCTIONS_TEMPLATE,
       defaultPersona: PERSONA,
-      kwargs: {
-        _modality_specific: new Instructions('', {
-          audio: AUDIO_SPECIFIC,
-          text: TEXT_SPECIFIC,
-        }),
-        _confirmation: new Instructions('', {
-          // confirmation is enabled by default for audio, disabled by default for text
-          audio: requireConfirmation !== false ? CONFIRMATION_INSTRUCTION : '',
-          text: requireConfirmation === true ? CONFIRMATION_INSTRUCTION : '',
-        }),
-      },
+      modalitySpecific: new Instructions('', {
+        audio: AUDIO_SPECIFIC,
+        text: TEXT_SPECIFIC,
+      }),
+      confirmation: new Instructions('', {
+        // confirmation is enabled by default for audio, disabled by default for text
+        audio: requireConfirmation !== false ? CONFIRMATION_INSTRUCTION : '',
+        text: requireConfirmation === true ? CONFIRMATION_INSTRUCTION : '',
+      }),
     }),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [...(tools ?? []), updateEmailTool, declineTool],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateEmailTool, declineTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       task.session.generateReply({ instructions: 'Ask the user to provide an email address.' });
@@ -230,11 +224,11 @@ const CONFIRMATION_INSTRUCTION = `Call \`confirm_email_address\` after the user 
 
 const INSTRUCTIONS_TEMPLATE = `{persona}
 
-{_modality_specific}
+{modalitySpecific}
 
 Call \`update_email_address\` at the first opportunity whenever you form a new hypothesis about the email. (before asking any questions or providing any answers.)
 Don't invent new email addresses, stick strictly to what the user said.
-{_confirmation}
+{confirmation}
 If the email is unclear or invalid, or it takes too much back-and-forth, prompt for it in parts: first the part before the '@', then the domain—only if needed.
 
 Ignore unrelated input and avoid going off-topic. Do not generate markdown, greetings, or unnecessary commentary.

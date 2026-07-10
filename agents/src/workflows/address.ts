@@ -25,12 +25,12 @@ export interface GetAddressTaskOptions {
    */
   instructions?: InstructionParts | Instructions | string;
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm the captured address. Defaults to confirming on audio
@@ -42,13 +42,11 @@ export interface GetAddressTaskOptions {
    * can't silently fill one from the chat context during `onEnter`.
    */
   requireExplicitAsk?: boolean;
-  /** @deprecated use `instructions.extra` instead */
-  extraInstructions?: string;
 }
 
 interface UpdateAddressArgs {
-  street_address: string;
-  unit_number: string;
+  streetAddress: string;
+  unitNumber: string;
   locality: string;
   country: string;
 }
@@ -62,7 +60,7 @@ export function createGetAddressTask({
   instructions,
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -70,7 +68,6 @@ export function createGetAddressTask({
   allowInterruptions,
   requireConfirmation,
   requireExplicitAsk = false,
-  extraInstructions = '',
 }: GetAddressTaskOptions = {}): AgentTask<GetAddressResult> {
   let currentAddress = '';
 
@@ -106,12 +103,12 @@ export function createGetAddressTask({
     name: 'update_address',
     description: 'Update the address provided by the user.',
     parameters: z.object({
-      street_address: z
+      streetAddress: z
         .string()
         .describe(
           'Dependent on country, may include fields like house number, street name, block, or district',
         ),
-      unit_number: z
+      unitNumber: z
         .string()
         .describe(
           "The unit number, for example Floor 1 or Apartment 12. If there is no unit number, return ''",
@@ -124,8 +121,10 @@ export function createGetAddressTask({
     // With requireExplicitAsk, the model can't silent-fill from chatCtx during
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
-    execute: async (args: UpdateAddressArgs, { ctx }) => {
-      const { street_address: streetAddress, unit_number: unitNumber, locality, country } = args;
+    execute: async (
+      { streetAddress, unitNumber, locality, country }: UpdateAddressArgs,
+      { ctx },
+    ) => {
       const addressFields = unitNumber.trim()
         ? [streetAddress, unitNumber, locality, country]
         : [streetAddress, locality, country];
@@ -136,7 +135,7 @@ export function createGetAddressTask({
         if (!task.done) {
           task.complete({ address: currentAddress });
         }
-        return undefined;
+        return;
       }
 
       const confirmTool = buildConfirmTool(address);
@@ -171,28 +170,25 @@ export function createGetAddressTask({
     id: 'get_address_task',
     instructions: resolveWorkflowInstructions({
       instructions,
-      extraInstructions,
       template: INSTRUCTIONS_TEMPLATE,
       defaultPersona: PERSONA,
-      kwargs: {
-        _modality_specific: new Instructions('', {
-          audio: AUDIO_SPECIFIC,
-          text: TEXT_SPECIFIC,
-        }),
-        _confirmation: new Instructions('', {
-          // confirmation is enabled by default for audio, disabled by default for text
-          audio: requireConfirmation !== false ? CONFIRMATION_INSTRUCTION : '',
-          text: requireConfirmation === true ? CONFIRMATION_INSTRUCTION : '',
-        }),
-      },
+      modalitySpecific: new Instructions('', {
+        audio: AUDIO_SPECIFIC,
+        text: TEXT_SPECIFIC,
+      }),
+      confirmation: new Instructions('', {
+        // confirmation is enabled by default for audio, disabled by default for text
+        audio: requireConfirmation !== false ? CONFIRMATION_INSTRUCTION : '',
+        text: requireConfirmation === true ? CONFIRMATION_INSTRUCTION : '',
+      }),
     }),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [...(tools ?? []), updateAddressTool, declineTool],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateAddressTool, declineTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       task.session.generateReply({ instructions: 'Ask the user to provide their address.' });
@@ -228,11 +224,11 @@ const PERSONA =
 
 const AUDIO_SPECIFIC = `You will be handling addresses from any country.
 Expect that users will say address in different formats with fields filled like:
-- 'street_address': '450 SOUTH MAIN ST', 'unit_number': 'FLOOR 2', 'locality': 'SALT LAKE CITY UT 84101', 'country': 'UNITED STATES',
-- 'street_address': '123 MAPLE STREET', 'unit_number': 'APARTMENT 10', 'locality': 'OTTAWA ON K1A 0B1', 'country': 'CANADA',
-- 'street_address': 'GUOMAO JIE 3 HAO, CHAOYANG QU', 'unit_number': 'GUOMAO DA SHA 18 LOU 101 SHI', 'locality': 'BEIJING SHI 100000', 'country': 'CHINA',
-- 'street_address': '5 RUE DE L’ANCIENNE COMÉDIE', 'unit_number': 'APP C4', 'locality': '75006 PARIS', 'country': 'FRANCE',
-- 'street_address': 'PLOT 10, NEHRU ROAD', 'unit_number': 'OFFICE 403, 4TH FLOOR', 'locality': 'VILE PARLE (E), MUMBAI MAHARASHTRA 400099', 'country': 'INDIA',
+- 'streetAddress': '450 SOUTH MAIN ST', 'unitNumber': 'FLOOR 2', 'locality': 'SALT LAKE CITY UT 84101', 'country': 'UNITED STATES',
+- 'streetAddress': '123 MAPLE STREET', 'unitNumber': 'APARTMENT 10', 'locality': 'OTTAWA ON K1A 0B1', 'country': 'CANADA',
+- 'streetAddress': 'GUOMAO JIE 3 HAO, CHAOYANG QU', 'unitNumber': 'GUOMAO DA SHA 18 LOU 101 SHI', 'locality': 'BEIJING SHI 100000', 'country': 'CHINA',
+- 'streetAddress': '5 RUE DE L’ANCIENNE COMÉDIE', 'unitNumber': 'APP C4', 'locality': '75006 PARIS', 'country': 'FRANCE',
+- 'streetAddress': 'PLOT 10, NEHRU ROAD', 'unitNumber': 'OFFICE 403, 4TH FLOOR', 'locality': 'VILE PARLE (E), MUMBAI MAHARASHTRA 400099', 'country': 'INDIA',
 Normalize common spoken patterns silently:
 - Convert words like 'dash' and 'apostrophe' into symbols: \`-\`, \`'\`.
 - Convert spelled out numbers like 'six' and 'seven' into numerals: \`6\`, \`7\`.
@@ -255,11 +251,11 @@ const CONFIRMATION_INSTRUCTION = `Call \`confirm_address\` after the user confir
 
 const INSTRUCTIONS_TEMPLATE = `{persona}
 
-{_modality_specific}
+{modalitySpecific}
 
 Call \`update_address\` at the first opportunity whenever you form a new hypothesis about the address. (before asking any questions or providing any answers.)
 Don't invent new addresses, stick strictly to what the user said.
-{_confirmation}
+{confirmation}
 If the address is unclear or invalid, or it takes too much back-and-forth, prompt for it in parts in this order: street address, unit number if applicable, locality, and country.
 
 Ignore unrelated input and avoid going off-topic. Do not generate markdown, greetings, or unnecessary commentary.
