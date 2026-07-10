@@ -354,6 +354,9 @@ export class LLMStream extends llm.LLMStream {
         abortSignal: request.signal,
       });
       requestId = response.$metadata.requestId ?? '';
+      // `timeoutMs` bounds opening the streaming response, not generation time. Keep the
+      // parent abort signal connected, but do not terminate a healthy long-running response.
+      request.clearTimeout();
 
       if (!response.stream) {
         throw new APIStatusError({

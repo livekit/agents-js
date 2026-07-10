@@ -178,6 +178,36 @@ describe('AWS Bedrock LLM - streaming', () => {
     expect(toolCalls[0]?.name).toBe('getWeather');
     expect(toolCalls[0]?.args).toBe('{"location":"Tokyo"}');
   });
+
+  it('does not apply the connection timeout to an established response stream', async () => {
+    const client = {
+      send: async (_command: unknown, { abortSignal }: { abortSignal: AbortSignal }) => ({
+        $metadata: { requestId: 'req_slow_stream' },
+        stream: (async function* () {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (abortSignal.aborted) {
+            const error = new Error('stream aborted');
+            error.name = 'AbortError';
+            throw error;
+          }
+          yield { contentBlockDelta: { delta: { text: 'finished' } } };
+        })(),
+      }),
+    } as unknown as BedrockRuntimeClient;
+    const bedrockLlm = new LLM({ client });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Hi' });
+
+    const chunks = [];
+    for await (const chunk of bedrockLlm.chat({
+      chatCtx,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 5 },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.map((chunk) => chunk.delta?.content ?? '').join('')).toBe('finished');
+  });
 });
 
 describe('AWS Bedrock LLM - mapConverseStreamException', () => {
