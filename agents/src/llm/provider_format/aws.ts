@@ -120,15 +120,18 @@ export async function toChatCtx(
     // same-role messages into adjacent turns that Bedrock-hosted models reject.
     if (nextContent.length === 0) continue;
 
-    // Do not append a tool result to an earlier conversation-only user turn. In the reverse
-    // direction, keep a following user message in the tool-result turn so roles still alternate.
-    // Bedrock ContentBlock arrays allow both block types, whilst several hosted models reject
-    // consecutive user turns.
-    const startsToolResultAfterConversation =
-      role === currentRole &&
-      contentKind === 'tool_result' &&
-      currentContentKind === 'conversation';
-    if (role !== currentRole || startsToolResultAfterConversation) {
+    // Bedrock rejects tool-result and conversation blocks in the same turn. Some hosted models
+    // also reject consecutive same-role turns, so bridge a same-role content-kind boundary with
+    // the smallest non-empty opposite-role turn rather than either mixing or emitting adjacent
+    // user turns.
+    if (role === currentRole && contentKind !== currentContentKind) {
+      flushTurn();
+      messages.push({
+        role: role === 'user' ? 'assistant' : 'user',
+        content: [{ text: '.' }],
+      });
+      currentContentKind = contentKind;
+    } else if (role !== currentRole) {
       flushTurn();
       currentRole = role;
       currentContentKind = contentKind;

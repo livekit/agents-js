@@ -328,7 +328,7 @@ describe('AWS Provider Format - toChatCtx', () => {
     ]);
   });
 
-  it('should keep a following user message in the tool-result turn', async () => {
+  it('should separate a following user message from a tool-result turn with an assistant bridge', async () => {
     const ctx = ChatContext.empty();
     ctx.insert([
       new FunctionCall({
@@ -367,9 +367,10 @@ describe('AWS Provider Format - toChatCtx', () => {
               status: 'success',
             },
           },
-          { text: 'A separate follow-up' },
         ],
       },
+      { role: 'assistant', content: [{ text: '.' }] },
+      { role: 'user', content: [{ text: 'A separate follow-up' }] },
     ]);
   });
 
