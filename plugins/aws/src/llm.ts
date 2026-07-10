@@ -25,6 +25,12 @@ interface AwsFormatData {
   systemMessages: string[] | null;
 }
 
+interface AwsReasoningContentData {
+  reasoningText?: { text: string; signature?: string };
+  /** Base64-encoded so ChatMessage.extra remains JSON serializable. */
+  redactedContent?: string;
+}
+
 /** @public */
 export interface LLMOptions {
   model?: string;
@@ -59,17 +65,20 @@ export function buildToolConfig(
   // member, which defeats direct object-literal assignability checks against `Tool[]` here
   // (the same constraint the sibling google.ts/mistralai.ts adapters hit at this exact
   // ChatContext-to-SDK-type boundary) — build the array in its natural shape and cast once.
-  const tools: Record<string, unknown>[] = llm.sortedToolEntries(toolCtx).map(([name, tool]) => ({
-    toolSpec: {
-      name,
-      description: tool.description || '',
-      inputSchema: {
-        json: tool.parameters
-          ? llm.toJsonSchema(tool.parameters, false, false)
-          : { type: 'object', properties: {} },
+  const tools: Record<string, unknown>[] = llm.sortedToolEntries(toolCtx).map(([name, tool]) => {
+    const description = tool.description.trim();
+    return {
+      toolSpec: {
+        name,
+        ...(description ? { description: tool.description } : {}),
+        inputSchema: {
+          json: tool.parameters
+            ? llm.toJsonSchema(tool.parameters, false, false)
+            : { type: 'object', properties: {} },
+        },
       },
-    },
-  }));
+    };
+  });
 
   if (cacheTools) {
     tools.push({ cachePoint: { type: 'default' } });
@@ -325,31 +334,47 @@ export class LLMStream extends llm.LLMStream {
   protected async run(): Promise<void> {
     let retryable = true;
     let requestId = '';
+
+    // Keep deterministic local formatting/validation failures outside the API retry wrapper.
+    // The base LLMStream will surface unknown errors immediately instead of retrying the same
+    // malformed context as a connection failure.
+    const [messages, extraData] = (await this.chatCtx.toProviderFormat('aws')) as [
+      Record<string, unknown>[],
+      AwsFormatData,
+    ];
+
+    const system: Record<string, unknown>[] = [];
+    if (extraData.systemMessages) {
+      for (const content of extraData.systemMessages) {
+        system.push({ text: content });
+      }
+      if (this.#cacheSystem) {
+        system.push({ cachePoint: { type: 'default' } });
+      }
+    }
+
+    const extraKwargs = { ...this.#extraKwargs };
+    const isPromptArn = /^arn:[^:]+:bedrock:[^:]+:[^:]+:prompt\//.test(this.#model);
+    if (isPromptArn) {
+      // Prompt management owns these fields and rejects a Converse request that supplies them.
+      delete extraKwargs.additionalModelRequestFields;
+      delete extraKwargs.inferenceConfig;
+      delete extraKwargs.system;
+      delete extraKwargs.toolConfig;
+    }
+
+    const input: ConverseStreamCommandInput = {
+      modelId: this.#model,
+      messages: messages as unknown as Message[],
+      ...(!isPromptArn && system.length > 0
+        ? { system: system as unknown as SystemContentBlock[] }
+        : {}),
+      ...extraKwargs,
+    };
+
     const request = createRequestSignal(this.abortController.signal, this.connOptions.timeoutMs);
 
     try {
-      const [messages, extraData] = (await this.chatCtx.toProviderFormat('aws')) as [
-        Record<string, unknown>[],
-        AwsFormatData,
-      ];
-
-      const system: Record<string, unknown>[] = [];
-      if (extraData.systemMessages) {
-        for (const content of extraData.systemMessages) {
-          system.push({ text: content });
-        }
-        if (this.#cacheSystem) {
-          system.push({ cachePoint: { type: 'default' } });
-        }
-      }
-
-      const input: ConverseStreamCommandInput = {
-        modelId: this.#model,
-        messages: messages as unknown as Message[],
-        ...(system.length > 0 ? { system: system as unknown as SystemContentBlock[] } : {}),
-        ...this.#extraKwargs,
-      };
-
       const response = await this.#client.send(new ConverseStreamCommand(input), {
         abortSignal: request.signal,
       });
@@ -368,6 +393,11 @@ export class LLMStream extends llm.LLMStream {
       let toolCallId: string | undefined;
       let fncName: string | undefined;
       let fncRawArgs: string | undefined;
+      let hasTextOutput = false;
+      let reasoningText = '';
+      let reasoningSignature: string | undefined;
+      let reasoningRedactedContent: Uint8Array[] = [];
+      const reasoningContent: AwsReasoningContentData[] = [];
 
       for await (const event of response.stream) {
         if (event.contentBlockStart?.start?.toolUse) {
@@ -384,9 +414,45 @@ export class LLMStream extends llm.LLMStream {
               id: requestId,
               delta: { role: 'assistant', content: delta.text },
             });
+            hasTextOutput = true;
+            retryable = false;
+          } else if (delta.reasoningContent) {
+            const reasoningDelta = delta.reasoningContent;
+            if (reasoningDelta.text !== undefined) reasoningText += reasoningDelta.text;
+            if (reasoningDelta.signature !== undefined) {
+              reasoningSignature = reasoningDelta.signature;
+            }
+            if (reasoningDelta.redactedContent !== undefined) {
+              reasoningRedactedContent.push(reasoningDelta.redactedContent);
+            }
             retryable = false;
           }
         } else if (event.contentBlockStop) {
+          if (reasoningText || reasoningSignature || reasoningRedactedContent.length > 0) {
+            if (reasoningRedactedContent.length > 0) {
+              reasoningContent.push({
+                redactedContent: Buffer.concat(reasoningRedactedContent).toString('base64'),
+              });
+            } else {
+              reasoningContent.push({
+                reasoningText: {
+                  text: reasoningText,
+                  ...(reasoningSignature ? { signature: reasoningSignature } : {}),
+                },
+              });
+            }
+            this.queue.put({
+              id: requestId,
+              delta: {
+                role: 'assistant',
+                extra: { aws: { reasoningContent: [...reasoningContent] } },
+              },
+            });
+            reasoningText = '';
+            reasoningSignature = undefined;
+            reasoningRedactedContent = [];
+          }
+
           if (toolCallId !== undefined) {
             this.queue.put({
               id: requestId,
@@ -397,6 +463,9 @@ export class LLMStream extends llm.LLMStream {
                     callId: toolCallId,
                     name: fncName ?? '',
                     args: fncRawArgs ?? '',
+                    ...(!hasTextOutput && reasoningContent.length > 0
+                      ? { extra: { aws: { reasoningContent: [...reasoningContent] } } }
+                      : {}),
                   }),
                 ],
               },

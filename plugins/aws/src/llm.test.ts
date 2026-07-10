@@ -4,11 +4,22 @@
 import type { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { APIStatusError, llm } from '@livekit/agents';
 import { llm as llmTest } from '@livekit/agents-plugins-test';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { LLM, buildToolConfig, mapConverseStreamException } from './llm.js';
 
 const hasAwsCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
+
+// LLMStream reports terminal errors through the LLM `error` event and its background task also
+// rejects during cleanup. Swallow the one deterministic failure exercised below.
+const swallowExpectedFormatRejection = (reason: unknown) => {
+  if (reason instanceof Error && reason.message.includes('externalUrl images are not supported')) {
+    return;
+  }
+  throw reason;
+};
+beforeAll(() => process.on('unhandledRejection', swallowExpectedFormatRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedFormatRejection));
 
 function fakeClient(
   events: Record<string, unknown>[],
@@ -80,6 +91,20 @@ describe('AWS Bedrock LLM - buildToolConfig', () => {
     expect(toolSpec.description).toBe('Get the weather for a given location.');
     expect(toolSpec.inputSchema.json.type).toBe('object');
     expect(Object.keys(toolSpec.inputSchema.json.properties ?? {})).toEqual(['location']);
+  });
+
+  it('omits a blank tool description', () => {
+    const toolCtx = llm.toToolContext({
+      noDescription: llm.tool({
+        description: '   ',
+        parameters: z.object({}),
+        execute: async () => 'ok',
+      }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const toolSpec = (buildToolConfig(toolCtx, 'auto', false)?.tools?.[0] as any).toolSpec;
+
+    expect(toolSpec).not.toHaveProperty('description');
   });
 });
 
@@ -177,6 +202,173 @@ describe('AWS Bedrock LLM - streaming', () => {
     expect(toolCalls[0]?.callId).toBe('call_1');
     expect(toolCalls[0]?.name).toBe('getWeather');
     expect(toolCalls[0]?.args).toBe('{"location":"Tokyo"}');
+  });
+
+  it('preserves streamed reasoning text and its signature in response extra data', async () => {
+    const bedrockLlm = new LLM({
+      client: fakeClient([
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { reasoningContent: { text: 'Think ' } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { reasoningContent: { text: 'carefully' } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { reasoningContent: { signature: 'signature-1' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { text: 'Answer' } } },
+      ]),
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Question' });
+
+    const response = await bedrockLlm.chat({ chatCtx }).collect();
+
+    expect(response.text).toBe('Answer');
+    expect(response.extra).toEqual({
+      aws: {
+        reasoningContent: [
+          { reasoningText: { text: 'Think carefully', signature: 'signature-1' } },
+        ],
+      },
+    });
+  });
+
+  it('attaches reasoning data to a tool-only response', async () => {
+    const bedrockLlm = new LLM({
+      client: fakeClient([
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { reasoningContent: { text: 'Need a tool' } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: { reasoningContent: { signature: 'tool-signature' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 1,
+            start: { toolUse: { toolUseId: 'call_reasoning', name: 'getWeather' } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 1,
+            delta: { toolUse: { input: '{}' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+      ]),
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Question' });
+
+    const response = await bedrockLlm.chat({ chatCtx }).collect();
+
+    expect(response.toolCalls[0]?.extra).toEqual({
+      aws: {
+        reasoningContent: [{ reasoningText: { text: 'Need a tool', signature: 'tool-signature' } }],
+      },
+    });
+  });
+
+  it('omits prompt-managed request fields when model is a Prompt ARN', async () => {
+    let commandInput: Record<string, unknown> | undefined;
+    const client = {
+      send: async (command: { input: Record<string, unknown> }) => {
+        commandInput = command.input;
+        return {
+          $metadata: { requestId: 'req_prompt' },
+          stream: (async function* () {
+            yield { contentBlockDelta: { delta: { text: 'ok' } } };
+          })(),
+        };
+      },
+    } as unknown as BedrockRuntimeClient;
+    const bedrockLlm = new LLM({
+      model: 'arn:aws:bedrock:us-east-1:123456789012:prompt/ABCDEFGHIJ:1',
+      temperature: 0.2,
+      additionalRequestFields: { reasoning_config: { type: 'enabled' } },
+      cacheSystem: true,
+      client,
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'system', content: 'Managed by the prompt resource' });
+    chatCtx.addMessage({ role: 'user', content: 'Hi' });
+
+    await bedrockLlm
+      .chat({
+        chatCtx,
+        toolCtx: weatherToolCtx(),
+        extraKwargs: {
+          promptVariables: { topic: { text: 'weather' } },
+          system: [{ text: 'must also be omitted' }],
+        },
+      })
+      .collect();
+
+    expect(commandInput).toMatchObject({
+      modelId: 'arn:aws:bedrock:us-east-1:123456789012:prompt/ABCDEFGHIJ:1',
+      promptVariables: { topic: { text: 'weather' } },
+    });
+    expect(commandInput).not.toHaveProperty('additionalModelRequestFields');
+    expect(commandInput).not.toHaveProperty('inferenceConfig');
+    expect(commandInput).not.toHaveProperty('system');
+    expect(commandInput).not.toHaveProperty('toolConfig');
+  });
+
+  it('does not retry deterministic provider-format errors', async () => {
+    let attempts = 0;
+    const client = {
+      send: async () => {
+        attempts += 1;
+        return { $metadata: {}, stream: (async function* () {})() };
+      },
+    } as unknown as BedrockRuntimeClient;
+    const bedrockLlm = new LLM({ client });
+    const emittedError = new Promise<Error>((resolve) => {
+      bedrockLlm.once('error', ({ error }) => resolve(error));
+    });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({
+      role: 'user',
+      content: [
+        {
+          id: 'external-image',
+          type: 'image_content',
+          image: 'https://example.com/image.jpg',
+          inferenceDetail: 'auto',
+          _cache: {},
+        },
+      ],
+    });
+
+    await bedrockLlm
+      .chat({
+        chatCtx,
+        connOptions: { maxRetry: 2, retryIntervalMs: 1, timeoutMs: 1000 },
+      })
+      .collect();
+
+    await expect(emittedError).resolves.toMatchObject({
+      message: expect.stringMatching(/externalUrl images are not supported/),
+    });
+    expect(attempts).toBe(0);
   });
 
   it('does not apply the connection timeout to an established response stream', async () => {

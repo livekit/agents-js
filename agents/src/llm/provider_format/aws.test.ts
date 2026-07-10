@@ -218,6 +218,17 @@ describe('AWS Provider Format - toChatCtx', () => {
     expect(formatData.systemMessages).toBeNull();
   });
 
+  it('should ignore empty opposite-role messages without splitting the active turn', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'First' });
+    ctx.addMessage({ role: 'assistant', content: '   ' });
+    ctx.addMessage({ role: 'user', content: 'Second' });
+
+    const [result] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([{ role: 'user', content: [{ text: 'First' }, { text: 'Second' }] }]);
+  });
+
   it('should map function calls to assistant toolUse blocks and outputs to user toolResult blocks', async () => {
     const ctx = ChatContext.empty();
 
@@ -312,6 +323,86 @@ describe('AWS Provider Format - toChatCtx', () => {
               status: 'error',
             },
           },
+        ],
+      },
+    ]);
+  });
+
+  it('should keep tool results separate from a following user message', async () => {
+    const ctx = ChatContext.empty();
+    ctx.insert([
+      new FunctionCall({
+        id: 'func_separate',
+        callId: 'call_separate',
+        name: 'lookup',
+        args: '{}',
+      }),
+      new FunctionCallOutput({
+        callId: 'call_separate',
+        name: 'lookup',
+        output: 'result',
+        isError: false,
+      }),
+    ]);
+    ctx.addMessage({ role: 'user', content: 'A separate follow-up' });
+
+    const [result] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            toolUse: { toolUseId: 'call_separate', name: 'lookup', input: {} },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            toolResult: {
+              toolUseId: 'call_separate',
+              content: [{ text: 'result' }],
+              status: 'success',
+            },
+          },
+        ],
+      },
+      { role: 'user', content: [{ text: 'A separate follow-up' }] },
+    ]);
+  });
+
+  it('should restore Bedrock reasoning content from provider-specific message data', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'Answer',
+      extra: {
+        aws: {
+          reasoningContent: [
+            { reasoningText: { text: 'Reasoning', signature: 'signature-1' } },
+            { redactedContent: Buffer.from('redacted').toString('base64') },
+          ],
+        },
+      },
+    });
+
+    const [result] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            reasoningContent: {
+              reasoningText: { text: 'Reasoning', signature: 'signature-1' },
+            },
+          },
+          {
+            reasoningContent: { redactedContent: Buffer.from('redacted') },
+          },
+          { text: 'Answer' },
         ],
       },
     ]);

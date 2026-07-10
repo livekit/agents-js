@@ -72,6 +72,77 @@ describe('AWS Transcribe STT - constructor', () => {
     expect(() => new STT({ identifyLanguage: true, languageOptions: 'en-US,es-US' })).not.toThrow();
   });
 
+  it('throws when languageOptions is provided without automatic language identification', () => {
+    expect(() => new STT({ languageOptions: 'en-US,es-US' })).toThrow(
+      /languageOptions requires identifyLanguage or identifyMultipleLanguages/,
+    );
+  });
+
+  it('requires identifyLanguage for preferredLanguage', () => {
+    expect(() => new STT({ preferredLanguage: 'en-US' })).toThrow(
+      /preferredLanguage requires identifyLanguage/,
+    );
+    expect(
+      () =>
+        new STT({
+          identifyMultipleLanguages: true,
+          languageOptions: 'en-US,es-US',
+          preferredLanguage: 'en-US',
+        }),
+    ).toThrow(/preferredLanguage requires identifyLanguage/);
+  });
+
+  it('accepts preferredLanguage with single-language identification', () => {
+    expect(
+      () =>
+        new STT({
+          identifyLanguage: true,
+          languageOptions: 'en-US,es-US',
+          preferredLanguage: 'en-US',
+        }),
+    ).not.toThrow();
+  });
+
+  it('rejects plural vocabulary options for a fixed-language request', () => {
+    expect(() => new STT({ vocabularyNames: 'english,spanish' })).toThrow(
+      /vocabularyNames and vocabularyFilterNames require/,
+    );
+    expect(() => new STT({ vocabularyFilterNames: 'english,spanish' })).toThrow(
+      /vocabularyNames and vocabularyFilterNames require/,
+    );
+  });
+
+  it('accepts plural vocabulary options with automatic language identification', () => {
+    expect(
+      () =>
+        new STT({
+          identifyMultipleLanguages: true,
+          languageOptions: 'en-US,es-US',
+          vocabularyNames: 'english,spanish',
+          vocabularyFilterNames: 'english,spanish',
+        }),
+    ).not.toThrow();
+  });
+
+  it('rejects singular vocabulary options with automatic language identification', () => {
+    expect(
+      () =>
+        new STT({
+          identifyLanguage: true,
+          languageOptions: 'en-US,es-US',
+          vocabularyName: 'english',
+        }),
+    ).toThrow(/vocabularyName and vocabFilterName cannot be used/);
+    expect(
+      () =>
+        new STT({
+          identifyLanguage: true,
+          languageOptions: 'en-US,es-US',
+          vocabFilterName: 'english',
+        }),
+    ).toThrow(/vocabularyName and vocabFilterName cannot be used/);
+  });
+
   it('throws when speaker labels and channel identification are both enabled', () => {
     expect(() => new STT({ showSpeakerLabel: true, enableChannelIdentification: true })).toThrow(
       /mutually exclusive/,

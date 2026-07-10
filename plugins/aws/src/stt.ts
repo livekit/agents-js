@@ -162,6 +162,40 @@ export class STT extends stt.STT {
       );
     }
 
+    if (!identifyLanguage && !identifyMultipleLanguages && opts.languageOptions !== undefined) {
+      throw new Error(
+        'languageOptions requires identifyLanguage or identifyMultipleLanguages to be true',
+      );
+    }
+
+    if (opts.preferredLanguage !== undefined && !identifyLanguage) {
+      throw new Error(
+        'preferredLanguage requires identifyLanguage to be true and cannot be used with ' +
+          'fixed-language or identifyMultipleLanguages requests',
+      );
+    }
+
+    if (
+      !identifyLanguage &&
+      !identifyMultipleLanguages &&
+      (opts.vocabularyNames !== undefined || opts.vocabularyFilterNames !== undefined)
+    ) {
+      throw new Error(
+        'vocabularyNames and vocabularyFilterNames require identifyLanguage or ' +
+          'identifyMultipleLanguages; use vocabularyName or vocabFilterName for a fixed language',
+      );
+    }
+
+    if (
+      (identifyLanguage || identifyMultipleLanguages) &&
+      (opts.vocabularyName !== undefined || opts.vocabFilterName !== undefined)
+    ) {
+      throw new Error(
+        'vocabularyName and vocabFilterName cannot be used with automatic language ' +
+          'identification; use vocabularyNames or vocabularyFilterNames instead',
+      );
+    }
+
     if ((identifyLanguage || identifyMultipleLanguages) && opts.languageModelName) {
       throw new Error(
         'languageModelName cannot be used with identifyLanguage or identifyMultipleLanguages ' +
