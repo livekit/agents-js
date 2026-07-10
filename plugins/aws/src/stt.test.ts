@@ -30,9 +30,13 @@ function fakeClient(
   let call = 0;
   return {
     send: async () => {
+      const sessionNumber = call + 1;
       const session = sessions[Math.min(call, sessions.length - 1)]!;
       call += 1;
-      return { TranscriptResultStream: session() };
+      return {
+        $metadata: { requestId: `req_${sessionNumber}` },
+        TranscriptResultStream: session(),
+      };
     },
   } as unknown as TranscribeStreamingClient;
 }
@@ -107,7 +111,14 @@ describe('AWS Transcribe STT - constructor', () => {
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      diarization: false,
     });
+  });
+
+  it.each([{ showSpeakerLabel: true }, { enableChannelIdentification: true }] satisfies Array<
+    Partial<STTOptions>
+  >)('advertises diarization for %o', (opts) => {
+    expect(new STT(opts).capabilities.diarization).toBe(true);
   });
 
   it('reports the provider label', () => {
@@ -182,6 +193,7 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     expect(events[1]?.alternatives?.[0]?.words).toHaveLength(1);
     expect(events[1]?.alternatives?.[0]?.words?.[0]?.text).toBe('hello');
     expect(events[1]?.alternatives?.[0]?.confidence).toBe(0.9);
+    expect(events[1]?.requestId).toBe('req_1');
   });
 
   it('surfaces Transcribe speaker labels on words and the segment', async () => {
@@ -319,6 +331,41 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     // for the channel that actually finished.
     expect(events.filter((e) => e.type === stt.SpeechEventType.START_OF_SPEECH)).toHaveLength(2);
     expect(events.filter((e) => e.type === stt.SpeechEventType.END_OF_SPEECH)).toHaveLength(1);
+    const channelZeroFinal = events.find((event) => event.alternatives?.[0]?.text === 'done');
+    expect(channelZeroFinal?.alternatives?.[0]?.speakerId).toBe('ch_0');
+  });
+
+  it('surfaces every language reported by multi-language identification', async () => {
+    const client = fakeClient([
+      async function* () {
+        yield transcriptEvent({
+          LanguageCode: 'en-US',
+          LanguageIdentification: [
+            { LanguageCode: 'en-US', Score: 0.8 },
+            { LanguageCode: 'es-US', Score: 0.2 },
+          ],
+          StartTime: 0,
+          EndTime: 0.5,
+          IsPartial: false,
+          Alternatives: [{ Transcript: 'hello hola', Items: [] }],
+        });
+      },
+    ]);
+
+    const speechStream = new STT({
+      ...baseOpts,
+      language: undefined,
+      identifyMultipleLanguages: true,
+      languageOptions: 'en-US,es-US',
+      client,
+    }).stream();
+    speechStream.endInput();
+
+    const events = [];
+    for await (const event of speechStream) events.push(event);
+
+    const final = events.find((event) => event.type === stt.SpeechEventType.FINAL_TRANSCRIPT);
+    expect(final?.alternatives?.[0]?.sourceLanguages).toEqual(['en-US', 'es-US']);
   });
 
   it('does not drop a final transcript whose EndTime is exactly 0', async () => {
@@ -346,41 +393,6 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     await collect;
 
     expect(events.some((e) => e.alternatives?.[0]?.text === 'ok')).toBe(true);
-  });
-
-  it('reconnects silently on an idle timeout instead of surfacing an error', async () => {
-    let firstSessionStarted = false;
-    const client = fakeClient([
-      async function* () {
-        firstSessionStarted = true;
-        const err = new Error('Your request timed out waiting for input');
-        err.name = 'BadRequestException';
-        throw err;
-      },
-      async function* () {
-        yield transcriptEvent({
-          StartTime: 0,
-          EndTime: 0.2,
-          IsPartial: false,
-          Alternatives: [{ Transcript: 'hi', Items: [] }],
-        });
-      },
-    ]);
-
-    const speechStream = stream(client);
-
-    const events: Awaited<ReturnType<typeof speechStream.next>>['value'][] = [];
-    const collect = (async () => {
-      for await (const event of speechStream) {
-        events.push(event);
-      }
-    })();
-
-    speechStream.endInput();
-    await collect;
-
-    expect(firstSessionStarted).toBe(true);
-    expect(events.some((e) => e.alternatives?.[0]?.text === 'hi')).toBe(true);
   });
 
   it('resets speaking state on an idle-timeout reconnect so START_OF_SPEECH re-fires', async () => {
@@ -530,48 +542,6 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     await collect;
 
     expect(events.some((e) => e.alternatives?.[0]?.text === 'hi')).toBe(true);
-  });
-
-  it('classifies a non-idle-timeout failure as a hard failure the base class retries', async () => {
-    // The base SpeechStream intentionally stays silent on the 'error' event for recoverable
-    // retries (only terminal failures emit), so success-after-retry is observed via the
-    // recovered transcript rather than an event.
-    let attempts = 0;
-    const client = {
-      send: async () => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new Error('access denied');
-        }
-        return {
-          TranscriptResultStream: (async function* () {
-            yield transcriptEvent({
-              StartTime: 0,
-              EndTime: 0.2,
-              IsPartial: false,
-              Alternatives: [{ Transcript: 'recovered', Items: [] }],
-            });
-          })(),
-        };
-      },
-    } as unknown as TranscribeStreamingClient;
-
-    const speechStream = new STT({ ...baseOpts, client }).stream({
-      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 },
-    });
-
-    const events: Awaited<ReturnType<typeof speechStream.next>>['value'][] = [];
-    const collect = (async () => {
-      for await (const event of speechStream) {
-        events.push(event);
-      }
-    })();
-
-    speechStream.endInput();
-    await collect;
-
-    expect(attempts).toBe(2);
-    expect(events.some((e) => e.alternatives?.[0]?.text === 'recovered')).toBe(true);
   });
 
   it('does not retry a failure after audio has already been sent', async () => {

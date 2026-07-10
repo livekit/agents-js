@@ -6,12 +6,7 @@ import { APIStatusError, llm } from '@livekit/agents';
 import { llm as llmTest } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import {
-  LLM,
-  buildToolConfig,
-  isRetryableBedrockStatus,
-  mapConverseStreamException,
-} from './llm.js';
+import { LLM, buildToolConfig, mapConverseStreamException } from './llm.js';
 
 const hasAwsCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
 
@@ -259,12 +254,39 @@ describe('AWS Bedrock LLM - mapConverseStreamException', () => {
 });
 
 describe('AWS Bedrock LLM - retry classification', () => {
-  it('retries HTTP 408 model timeouts before any output is emitted', () => {
-    expect(isRetryableBedrockStatus(408, true)).toBe(true);
-  });
+  it('retries an HTTP 408 before output is emitted', async () => {
+    let attempts = 0;
+    const client = {
+      send: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error('model timed out'), {
+            $metadata: { httpStatusCode: 408, requestId: 'req_timeout' },
+          });
+        }
+        return {
+          $metadata: { requestId: 'req_recovered' },
+          stream: (async function* () {
+            yield { contentBlockDelta: { delta: { text: 'recovered' } } };
+          })(),
+        };
+      },
+    } as unknown as BedrockRuntimeClient;
+    const bedrockLlm = new LLM({ client });
+    bedrockLlm.on('error', () => {});
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'user', content: 'Hi' });
 
-  it('does not retry a timeout after output has made the attempt non-retryable', () => {
-    expect(isRetryableBedrockStatus(408, false)).toBe(false);
+    const chunks = [];
+    for await (const chunk of bedrockLlm.chat({
+      chatCtx,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(attempts).toBe(2);
+    expect(chunks.map((chunk) => chunk.delta?.content ?? '').join('')).toBe('recovered');
   });
 });
 

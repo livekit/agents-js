@@ -5,7 +5,10 @@ import { APIConnectionError, APIStatusError } from '@livekit/agents';
 
 export const DEFAULT_REGION = 'us-east-1';
 
-/** Explicit static AWS credentials. When omitted, the AWS SDK v3 default credential chain is used. */
+/**
+ * Explicit static AWS credentials. When omitted, the AWS SDK v3 default credential chain is used.
+ * @public
+ */
 export interface AwsCredentials {
   accessKeyId: string;
   secretAccessKey: string;
@@ -23,6 +26,51 @@ export function resolveRegion(region?: string): string {
 /** Removes `undefined`-valued keys so they aren't sent to AWS SDK calls. */
 export function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
   return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined)) as T;
+}
+
+/** Combines a caller-controlled abort signal with a disposable per-request timeout. */
+export function createRequestSignal(
+  parent: AbortSignal,
+  timeoutMs: number,
+): {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  clearTimeout: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const abortFromParent = () => controller.abort(parent.reason);
+  if (parent.aborted) {
+    abortFromParent();
+  } else {
+    parent.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  let timer =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort(new DOMException('Request timed out', 'TimeoutError'));
+        }, timeoutMs)
+      : undefined;
+  timer?.unref();
+
+  const clearRequestTimeout = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    clearTimeout: clearRequestTimeout,
+    dispose: () => {
+      clearRequestTimeout();
+      parent.removeEventListener('abort', abortFromParent);
+    },
+  };
 }
 
 /** Shape of AWS SDK v3 service exceptions we care about when classifying failures. */

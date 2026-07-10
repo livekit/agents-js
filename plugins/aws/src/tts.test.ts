@@ -58,8 +58,8 @@ describe('AWS Polly TTS - constructor', () => {
 });
 
 describe('AWS Polly TTS - synthesis', () => {
-  it('converts the PCM response into audio frames', async () => {
-    const tts = new TTS({ sampleRate: 16000, client: fakeClient(pcmBytes(1600)) });
+  it('flushes a PCM response shorter than one 100ms frame', async () => {
+    const tts = new TTS({ sampleRate: 16000, client: fakeClient(pcmBytes(800)) });
     const stream = tts.synthesize('hello world');
 
     const events = [];
@@ -67,8 +67,9 @@ describe('AWS Polly TTS - synthesis', () => {
       events.push(event);
     }
 
-    expect(events.length).toBeGreaterThan(0);
+    expect(events).toHaveLength(1);
     expect(events.at(-1)?.final).toBe(true);
+    expect(events.reduce((sum, event) => sum + event.frame.samplesPerChannel, 0)).toBe(800);
     for (const event of events) {
       expect(event.frame.sampleRate).toBe(16000);
       expect(event.frame.channels).toBe(1);

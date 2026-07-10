@@ -7,21 +7,29 @@ import {
   type APIConnectOptions,
   APITimeoutError,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   shortuuid,
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { TTSLanguage, TTSSpeechEngine, TTSTextType } from './models.js';
-import { type AwsCredentials, resolveRegion, stripUndefined, toAwsApiError } from './utils.js';
+import {
+  type AwsCredentials,
+  createRequestSignal,
+  resolveRegion,
+  stripUndefined,
+  toAwsApiError,
+} from './utils.js';
 
 /** Amazon Polly only returns PCM (16-bit little-endian, mono) at these sample rates. */
 const SUPPORTED_PCM_SAMPLE_RATES = [8000, 16000];
 
+/** @public */
 export interface TTSOptions {
   voice: string;
   speechEngine: TTSSpeechEngine;
   textType: TTSTextType;
-  language?: TTSLanguage | string;
+  language?: TTSLanguage;
   sampleRate: number;
   region?: string;
   credentials?: AwsCredentials;
@@ -41,10 +49,12 @@ const defaultTTSOptions: Omit<TTSOptions, 'sampleRate'> = {
  * Audio is requested as raw PCM (16-bit little-endian, mono) since the framework has no mp3
  * decoder. Amazon Polly only supports PCM output at 8000 Hz or 16000 Hz, so `sampleRate` is
  * restricted to those two values.
+ * @public
  */
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #client: PollyClient;
+  #ownsClient: boolean;
   label = 'aws.TTS';
   private abortController = new AbortController();
 
@@ -81,6 +91,7 @@ export class TTS extends tts.TTS {
       sampleRate,
     };
 
+    this.#ownsClient = opts.client === undefined;
     this.#client =
       opts.client ??
       new PollyClient({
@@ -92,7 +103,7 @@ export class TTS extends tts.TTS {
 
   updateOptions(opts: {
     voice?: string;
-    language?: TTSLanguage | string;
+    language?: TTSLanguage;
     speechEngine?: TTSSpeechEngine;
     textType?: TTSTextType;
   }) {
@@ -116,13 +127,16 @@ export class TTS extends tts.TTS {
 
   async close(): Promise<void> {
     this.abortController.abort();
+    if (this.#ownsClient) this.#client.destroy();
   }
 }
 
+/** @public */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'aws.ChunkedStream';
   #client: PollyClient;
   #opts: TTSOptions;
+  #timeoutMs: number;
 
   constructor(
     tts: TTS,
@@ -132,12 +146,15 @@ export class ChunkedStream extends tts.ChunkedStream {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ) {
-    super(text, tts, connOptions, abortSignal);
+    const resolvedConnOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
+    super(text, tts, resolvedConnOptions, abortSignal);
     this.#client = client;
     this.#opts = opts;
+    this.#timeoutMs = resolvedConnOptions.timeoutMs;
   }
 
   protected async run() {
+    const request = createRequestSignal(this.abortSignal, this.#timeoutMs);
     try {
       const input = stripUndefined({
         Text: this.inputText,
@@ -150,7 +167,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       }) as unknown as SynthesizeSpeechCommandInput;
 
       const response = await this.#client.send(new SynthesizeSpeechCommand(input), {
-        abortSignal: this.abortSignal,
+        abortSignal: request.signal,
       });
 
       if (!response.AudioStream) {
@@ -181,6 +198,11 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
       sendLastFrame(requestId, true);
     } catch (error) {
+      if (request.didTimeout()) {
+        throw new APITimeoutError({
+          message: `aws polly tts: request timed out after ${this.#timeoutMs}ms`,
+        });
+      }
       if (error instanceof Error && error.name === 'AbortError') {
         return;
       }
@@ -191,6 +213,8 @@ export class ChunkedStream extends tts.ChunkedStream {
       // Engine, malformed SSML) so non-retryable 4xx inputs are not retried as connection
       // failures by the base ChunkedStream.
       throw toAwsApiError(error, 'aws polly tts');
+    } finally {
+      request.dispose();
     }
   }
 }

@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  LanguageCode,
+  PartialResultsStability,
   Result,
   StartStreamTranscriptionCommandInput,
   AudioStream as TranscribeAudioStream,
   TranscriptEvent,
   TranscriptResultStream,
+  VocabularyFilterMethod,
 } from '@aws-sdk/client-transcribe-streaming';
 import {
   StartStreamTranscriptionCommand,
@@ -15,39 +18,48 @@ import {
 import {
   type APIConnectOptions,
   APIStatusError,
+  APITimeoutError,
   AsyncIterableQueue,
   type AudioBuffer,
+  DEFAULT_API_CONNECT_OPTIONS,
   createTimedString,
   log,
   normalizeLanguage,
   stt,
 } from '@livekit/agents';
-import { type AwsCredentials, resolveRegion, stripUndefined, toAwsApiError } from './utils.js';
+import {
+  type AwsCredentials,
+  createRequestSignal,
+  resolveRegion,
+  stripUndefined,
+  toAwsApiError,
+} from './utils.js';
 
+/** @public */
 export interface STTOptions {
   sampleRate: number;
-  language?: string;
+  language?: LanguageCode;
   region?: string;
   credentials?: AwsCredentials;
   vocabularyName?: string;
   sessionId?: string;
-  vocabFilterMethod?: string;
+  vocabFilterMethod?: VocabularyFilterMethod;
   vocabFilterName?: string;
   showSpeakerLabel?: boolean;
   enableChannelIdentification?: boolean;
   numberOfChannels?: number;
   enablePartialResultsStabilization?: boolean;
-  partialResultsStability?: string;
+  partialResultsStability?: PartialResultsStability;
   languageModelName?: string;
   identifyLanguage?: boolean;
   identifyMultipleLanguages?: boolean;
   /**
    * Comma-separated language codes Amazon Transcribe should consider when automatic
-   * language identification is enabled. Required when {@link identifyLanguage} or
-   * {@link identifyMultipleLanguages} is true (AWS rejects the request without it).
+   * language identification is enabled. Required when {@link STTOptions.identifyLanguage} or
+   * {@link STTOptions.identifyMultipleLanguages} is true (AWS rejects the request without it).
    */
   languageOptions?: string;
-  preferredLanguage?: string;
+  preferredLanguage?: LanguageCode;
   vocabularyNames?: string;
   vocabularyFilterNames?: string;
   client?: TranscribeStreamingClient;
@@ -92,10 +104,12 @@ function isIdleTimeout(error: unknown): boolean {
  * @remarks
  * Streaming only — {@link STT.stream} is the sole recognition entrypoint, matching Amazon
  * Transcribe's streaming-only API surface.
+ * @public
  */
 export class STT extends stt.STT {
   #opts: STTOptions;
   #client: TranscribeStreamingClient;
+  #ownsClient: boolean;
   label = 'aws.STT';
 
   get model(): string {
@@ -116,10 +130,12 @@ export class STT extends stt.STT {
    * `AWS_DEFAULT_REGION`, falling back to `us-east-1`.
    */
   constructor(opts: Partial<STTOptions> = {}) {
+    const enableChannelIdentification = opts.enableChannelIdentification ?? false;
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
+      diarization: Boolean(opts.showSpeakerLabel || enableChannelIdentification),
     });
 
     if (opts.identifyLanguage && opts.identifyMultipleLanguages) {
@@ -130,7 +146,6 @@ export class STT extends stt.STT {
 
     const identifyLanguage = opts.identifyLanguage ?? false;
     const identifyMultipleLanguages = opts.identifyMultipleLanguages ?? false;
-    const enableChannelIdentification = opts.enableChannelIdentification ?? false;
 
     if (opts.showSpeakerLabel && enableChannelIdentification) {
       throw new Error(
@@ -186,6 +201,7 @@ export class STT extends stt.STT {
           : opts.language ?? defaultSTTOptions.language,
     };
 
+    this.#ownsClient = opts.client === undefined;
     this.#client =
       opts.client ??
       new TranscribeStreamingClient({
@@ -195,6 +211,10 @@ export class STT extends stt.STT {
         // internal retries so failures aren't retried twice (matches tts.ts's PollyClient).
         maxAttempts: 1,
       });
+  }
+
+  async close(): Promise<void> {
+    if (this.#ownsClient) this.#client.destroy();
   }
 
   async _recognize(_frame: AudioBuffer, _abortSignal?: AbortSignal): Promise<stt.SpeechEvent> {
@@ -208,9 +228,11 @@ export class STT extends stt.STT {
   }
 }
 
+/** @public */
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #client: TranscribeStreamingClient;
+  #timeoutMs: number;
   #logger = log();
   // Keyed by Transcribe's `ChannelId` (the empty string when channel identification is off,
   // i.e. single-channel audio) so a channel finishing its utterance can't spuriously flip
@@ -226,10 +248,10 @@ export class SpeechStream extends stt.SpeechStream {
   label = 'aws.SpeechStream';
 
   // `this.input` may only ever have a single active consumer (calling `.next()` from more
-  // than one place races for frames). Bedrock's Node HTTP/2 request pipeline can leave an
+  // than one place races for frames). Transcribe's Node HTTP/2 request pipeline can leave an
   // abandoned session's `AudioStream` generator alive as a hidden consumer after a session
-  // fails (the SDK doesn't reliably tear down the request side when the response side
-  // errors), so a single long-lived pump owns `this.input` and feeds a single persistent
+  // fails (the SDK doesn't reliably tear down the request side when the response side errors),
+  // so a single long-lived pump owns `this.input` and feeds a single persistent
   // `#channel` for the lifetime of this stream — the channel itself is never replaced, so
   // no already-buffered frame can ever be orphaned on a session transition. Each session
   // instead reads through a token-guarded wrapper generator: the token is invalidated the
@@ -247,9 +269,11 @@ export class SpeechStream extends stt.SpeechStream {
     client: TranscribeStreamingClient,
     connOptions?: APIConnectOptions,
   ) {
-    super(stt, opts.sampleRate, connOptions);
+    const resolvedConnOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
+    super(stt, opts.sampleRate, resolvedConnOptions);
     this.#opts = opts;
     this.#client = client;
+    this.#timeoutMs = resolvedConnOptions.timeoutMs;
   }
 
   #startPump(): void {
@@ -349,24 +373,39 @@ export class SpeechStream extends stt.SpeechStream {
       VocabularyFilterNames: this.#opts.vocabularyFilterNames,
     }) as unknown as StartStreamTranscriptionCommandInput;
 
-    const response = await this.#client.send(new StartStreamTranscriptionCommand(input), {
-      abortSignal: this.abortSignal,
-    });
+    const request = createRequestSignal(this.abortSignal, this.#timeoutMs);
+    try {
+      const response = await this.#client.send(new StartStreamTranscriptionCommand(input), {
+        abortSignal: request.signal,
+      });
+      // `timeoutMs` bounds opening the long-lived stream, not the stream's total lifetime.
+      request.clearTimeout();
 
-    if (!response.TranscriptResultStream) {
-      throw new Error('aws transcribe stt: no TranscriptResultStream in the response');
-    }
-
-    for await (const event of response.TranscriptResultStream) {
-      if (event.TranscriptEvent) {
-        this.#processTranscriptEvent(event.TranscriptEvent);
-        continue;
+      if (!response.TranscriptResultStream) {
+        throw new Error('aws transcribe stt: no TranscriptResultStream in the response');
       }
 
-      // Amazon Transcribe can deliver service failures as TranscriptResultStream union
-      // members rather than thrown errors. Ignoring them lets the stream end "successfully"
-      // with no transcript and no retry — surface them as API errors instead.
-      this.#throwIfStreamException(event);
+      const requestId = response.$metadata?.requestId;
+      for await (const event of response.TranscriptResultStream) {
+        if (event.TranscriptEvent) {
+          this.#processTranscriptEvent(event.TranscriptEvent, requestId);
+          continue;
+        }
+
+        // Amazon Transcribe can deliver service failures as TranscriptResultStream union
+        // members rather than thrown errors. Ignoring them lets the stream end "successfully"
+        // with no transcript and no retry — surface them as API errors instead.
+        this.#throwIfStreamException(event);
+      }
+    } catch (error) {
+      if (request.didTimeout()) {
+        throw new APITimeoutError({
+          message: `aws transcribe stt: request timed out after ${this.#timeoutMs}ms`,
+        });
+      }
+      throw error;
+    } finally {
+      request.dispose();
     }
   }
 
@@ -465,7 +504,7 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  #processTranscriptEvent(transcriptEvent: TranscriptEvent): void {
+  #processTranscriptEvent(transcriptEvent: TranscriptEvent, requestId?: string): void {
     const results = transcriptEvent.Transcript?.Results;
     if (!results) return;
 
@@ -478,7 +517,7 @@ export class SpeechStream extends stt.SpeechStream {
       const channelKey = result.ChannelId ?? '';
       if (!this.#speakingChannels.has(channelKey)) {
         this.#speakingChannels.add(channelKey);
-        this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+        this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH, requestId });
       }
 
       if (result.EndTime !== undefined) {
@@ -488,13 +527,14 @@ export class SpeechStream extends stt.SpeechStream {
           type: result.IsPartial
             ? stt.SpeechEventType.INTERIM_TRANSCRIPT
             : stt.SpeechEventType.FINAL_TRANSCRIPT,
+          requestId,
           alternatives: [alternative],
         });
       }
 
       if (!result.IsPartial) {
         this.#speakingChannels.delete(channelKey);
-        this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+        this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH, requestId });
       }
     }
   }
@@ -509,9 +549,16 @@ export class SpeechStream extends stt.SpeechStream {
       : 0;
     const detectedLanguage = result.LanguageCode ?? this.#opts.language ?? 'en-US';
 
+    const identifiedLanguages = result.LanguageIdentification?.flatMap(({ LanguageCode }) =>
+      LanguageCode ? [normalizeLanguage(LanguageCode)] : [],
+    );
     const sourceLanguages =
-      (this.#opts.identifyLanguage || this.#opts.identifyMultipleLanguages) && result.LanguageCode
-        ? [normalizeLanguage(result.LanguageCode)]
+      this.#opts.identifyLanguage || this.#opts.identifyMultipleLanguages
+        ? identifiedLanguages?.length
+          ? [...new Set(identifiedLanguages)]
+          : result.LanguageCode
+            ? [normalizeLanguage(result.LanguageCode)]
+            : undefined
         : undefined;
 
     const offset = this.startTimeOffset + this.#connectionTimeOffset;
@@ -525,10 +572,10 @@ export class SpeechStream extends stt.SpeechStream {
         endTime: (item.EndTime ?? 0) + offset,
         confidence: item.Confidence ?? 0,
         startTimeOffset: offset,
-        speakerId: item.Speaker ?? null,
+        speakerId: item.Speaker ?? result.ChannelId ?? null,
       }),
     );
-    const speakerId = words?.find((word) => word.speakerId)?.speakerId ?? null;
+    const speakerId = words?.find((word) => word.speakerId)?.speakerId ?? result.ChannelId ?? null;
 
     return {
       language: normalizeLanguage(detectedLanguage),

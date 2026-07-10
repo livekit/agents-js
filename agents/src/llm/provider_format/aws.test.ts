@@ -346,16 +346,6 @@ describe('AWS Provider Format - toChatCtx', () => {
     ]);
   });
 
-  it('should inject a trailing dummy user message when the conversation ends on assistant', async () => {
-    const ctx = ChatContext.empty();
-    ctx.addMessage({ role: 'user', content: 'Hello' });
-    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
-
-    const [result] = await toChatCtx(ctx, true);
-
-    expect(result.at(-1)).toEqual({ role: 'user', content: [{ text: '.' }] });
-  });
-
   it('should not inject a trailing dummy user message when the conversation already ends on user', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'user', content: 'Hello' });

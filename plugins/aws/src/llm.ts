@@ -13,10 +13,11 @@ import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
+  APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
 } from '@livekit/agents';
-import { type AwsCredentials, resolveRegion } from './utils.js';
+import { type AwsCredentials, createRequestSignal, resolveRegion } from './utils.js';
 
 const DEFAULT_MODEL = 'amazon.nova-2-lite-v1:0';
 
@@ -24,6 +25,7 @@ interface AwsFormatData {
   systemMessages: string[] | null;
 }
 
+/** @public */
 export interface LLMOptions {
   model?: string;
   region?: string;
@@ -43,7 +45,7 @@ export interface LLMOptions {
 /**
  * Builds a Bedrock Converse `ToolConfiguration` from a `ToolContext`, or `undefined` when the
  * turn should carry no tools (no tools registered, or `toolChoice: 'none'` was requested).
- * Exported for unit testing.
+ * Kept module-local to the provider implementation; tests import the source module directly.
  */
 export function buildToolConfig(
   toolCtx: llm.ToolContext | undefined,
@@ -100,7 +102,7 @@ interface ConverseStreamExceptionEvent {
 }
 
 /** Whether a Bedrock HTTP failure can be retried before any output has been emitted. */
-export function isRetryableBedrockStatus(statusCode: number, retryable: boolean): boolean {
+function isRetryableBedrockStatus(statusCode: number, retryable: boolean): boolean {
   return retryable && (statusCode === 408 || statusCode === 429 || statusCode >= 500);
 }
 
@@ -174,10 +176,14 @@ export function mapConverseStreamException(
   return undefined;
 }
 
-/** AWS Bedrock Converse LLM. */
+/**
+ * AWS Bedrock Converse LLM.
+ * @public
+ */
 export class LLM extends llm.LLM {
   #opts;
   #client: BedrockRuntimeClient;
+  #ownsClient: boolean;
 
   label(): string {
     return 'aws.LLM';
@@ -217,6 +223,7 @@ export class LLM extends llm.LLM {
       cacheTools: opts.cacheTools ?? false,
     };
 
+    this.#ownsClient = opts.client === undefined;
     this.#client =
       opts.client ??
       new BedrockRuntimeClient({
@@ -226,6 +233,10 @@ export class LLM extends llm.LLM {
         // internal retries so failures aren't retried twice (matches tts.ts's PollyClient).
         maxAttempts: 1,
       });
+  }
+
+  async aclose(): Promise<void> {
+    if (this.#ownsClient) this.#client.destroy();
   }
 
   chat({
@@ -277,6 +288,7 @@ export class LLM extends llm.LLM {
   }
 }
 
+/** @public */
 export class LLMStream extends llm.LLMStream {
   #client: BedrockRuntimeClient;
   #model: string;
@@ -313,6 +325,7 @@ export class LLMStream extends llm.LLMStream {
   protected async run(): Promise<void> {
     let retryable = true;
     let requestId = '';
+    const request = createRequestSignal(this.abortController.signal, this.connOptions.timeoutMs);
 
     try {
       const [messages, extraData] = (await this.chatCtx.toProviderFormat('aws')) as [
@@ -338,7 +351,7 @@ export class LLMStream extends llm.LLMStream {
       };
 
       const response = await this.#client.send(new ConverseStreamCommand(input), {
-        abortSignal: this.abortController.signal,
+        abortSignal: request.signal,
       });
       requestId = response.$metadata.requestId ?? '';
 
@@ -411,6 +424,13 @@ export class LLMStream extends llm.LLMStream {
         }
       }
     } catch (error: unknown) {
+      if (request.didTimeout()) {
+        throw new APITimeoutError({
+          message: `aws bedrock llm: request timed out after ${this.connOptions.timeoutMs}ms`,
+          options: { retryable },
+        });
+      }
+
       if (error instanceof APIStatusError || error instanceof APIConnectionError) {
         throw error;
       }
@@ -422,7 +442,10 @@ export class LLMStream extends llm.LLMStream {
         return;
       }
 
-      const err = error as { message?: string; $metadata?: { httpStatusCode?: number } };
+      const err = error as {
+        message?: string;
+        $metadata?: { httpStatusCode?: number; requestId?: string };
+      };
       const statusCode = err.$metadata?.httpStatusCode;
 
       if (statusCode !== undefined) {
@@ -431,7 +454,7 @@ export class LLMStream extends llm.LLMStream {
           options: {
             statusCode,
             retryable: isRetryableBedrockStatus(statusCode, retryable),
-            requestId,
+            requestId: err.$metadata?.requestId ?? requestId,
           },
         });
       }
@@ -440,6 +463,8 @@ export class LLMStream extends llm.LLMStream {
         message: `aws bedrock llm: ${err.message ?? String(error)}`,
         options: { retryable },
       });
+    } finally {
+      request.dispose();
     }
   }
 }

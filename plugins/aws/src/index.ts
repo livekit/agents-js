@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export { LLM, LLMStream, type LLMOptions, buildToolConfig } from './llm.js';
+export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
 export { SpeechStream, STT, type STTOptions } from './stt.js';
 export { ChunkedStream, TTS, type TTSOptions } from './tts.js';
-export { type AwsCredentials, DEFAULT_REGION, resolveRegion } from './utils.js';
+export type { AwsCredentials } from './utils.js';
 
 class AwsPlugin extends Plugin {
   constructor() {
