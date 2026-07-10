@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import * as agents from '../index.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { type InferenceClass, LLM } from './llm.js';
+import { describeLiveKitInference } from './test_utils.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -172,5 +174,22 @@ describe('inference.LLM streamed tool calls', () => {
     expect(chunks[0]?.delta?.toolCalls?.[0]?.callId).toBe('call_123');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.name).toBe('saveAnswer');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.args).toBe('{"answer":"yes"}');
+  });
+});
+
+describeLiveKitInference('LiveKit Inference LLM integration', agents, async (harness) => {
+  for (const model of [
+    'google/gemma-4-31b-it',
+    'openai/gpt-4.1-mini',
+    'google/gemini-2.5-flash',
+    'openai/gpt-oss-120b',
+  ] as const) {
+    describe(model, async () => {
+      await harness.llm(new LLM({ model }), false);
+    });
+  }
+
+  describe('openai/gpt-4.1-mini strict tool schema', async () => {
+    await harness.llmStrict(new LLM({ model: 'openai/gpt-4.1-mini', strictToolSchema: true }));
   });
 });
