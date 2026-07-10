@@ -43,7 +43,7 @@ export {
  *
  * @public
  */
-export function vivaFilter(options?: KrispVivaFilterOptions): KrispVivaFilter {
+export function vivaFilter(options?: Partial<KrispVivaFilterOptions>): KrispVivaFilter {
   return new KrispVivaFilter(options);
 }
 
