@@ -38,7 +38,10 @@ export class CLIClient {
       logger.warn('invalid --cli-addr, skipping dev channel');
       return;
     }
-    const host = this.#cliAddr.slice(0, sep);
+    let host = this.#cliAddr.slice(0, sep);
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
+    }
     const port = Number.parseInt(this.#cliAddr.slice(sep + 1), 10);
 
     const socket = createConnection({ host, port }, () => {
