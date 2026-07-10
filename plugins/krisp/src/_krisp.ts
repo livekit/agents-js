@@ -138,8 +138,9 @@ export interface KrispLicenseFrameProcessorOptions {
  * The buffering strategy mirrors the Python plugin: Krisp processes fixed-size
  * chunks (`frameDurationMs` worth of samples) but input frames may arrive at any
  * size, so incoming samples accumulate in {@link inBuf}, are processed one whole
- * chunk at a time, and results queue in {@link outBuf} so each call emits exactly
- * as many samples as it received (zero-padded during the brief warm-up).
+ * chunk at a time, and results queue in {@link outBuf}. Each call emits whatever
+ * processed audio is ready (never zero-padded — see {@link process}), so the
+ * output frame size floats and real audio is never interrupted by silence.
  */
 export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
   private enabled = true;
@@ -293,19 +294,18 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       }
     }
 
-    // Emit exactly as many samples as we received this call. Before the first
-    // full chunk is ready the deficit is zero-padded; samples in and out stay
-    // balanced over time, so there is no drift.
+    // Emit the processed audio that is ready, keeping any surplus buffered for
+    // the next call. We never zero-pad a deficit: doing so injects silence
+    // *between* real audio (which recurs whenever the input frame size isn't a
+    // multiple of the chunk size) and surfaces as audible gaps once frames are
+    // concatenated downstream. Instead the output frame size floats — up to a
+    // full chunk of latency at the start (and an empty frame if the buffer is
+    // momentarily starved), both of which downstream reframing handles fine —
+    // so real audio is never interrupted.
     const n = frame.samplesPerChannel;
-    let out: Int16Array;
-    if (this.outBuf.length >= n) {
-      out = this.outBuf.slice(0, n);
-      this.outBuf = this.outBuf.slice(n);
-    } else {
-      out = new Int16Array(n);
-      out.set(this.outBuf, n - this.outBuf.length);
-      this.outBuf = new Int16Array(0);
-    }
+    const k = Math.min(n, this.outBuf.length);
+    const out = this.outBuf.slice(0, k);
+    this.outBuf = this.outBuf.slice(k);
 
     return new AudioFrame(out, frame.sampleRate, frame.channels, out.length);
   }
