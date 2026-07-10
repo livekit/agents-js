@@ -43,16 +43,21 @@ export class CLIClient {
       host = host.slice(1, -1);
     }
     const port = Number.parseInt(this.#cliAddr.slice(sep + 1), 10);
+    if (Number.isNaN(port) || port < 0 || port > 65535) {
+      logger.warn('invalid port in --cli-addr, skipping dev channel');
+      return;
+    }
 
-    const socket = createConnection({ host, port }, () => {
-      const msg = new AgentDev.AgentDevMessage({
-        message: {
-          case: 'serverInfo',
-          value: new AgentDev.ServerInfo({ agentName: this.#agentName, url: this.#url }),
-        },
+    try {
+      const socket = createConnection({ host, port }, () => {
+        const msg = new AgentDev.AgentDevMessage({
+          message: {
+            case: 'serverInfo',
+            value: new AgentDev.ServerInfo({ agentName: this.#agentName, url: this.#url }),
+          },
+        });
+        this.#sendProto(socket, msg.toBinary());
       });
-      this.#sendProto(socket, msg.toBinary());
-    });
 
     // Best-effort: log and move on if the CLI isn't listening.
     socket.on('error', (err) => {
