@@ -47,7 +47,7 @@ jobs:
             agents-or-tests:
               - 'agents/**'
               - 'plugins/test/**'
-            plugins: 
+            plugins:
               - 'plugins/**'
             examples:
               - 'examples/**'
@@ -57,7 +57,7 @@ jobs:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
-        run: pnpm test agents
+        run: pnpm test agents --silent
       # - name: Test examples
       #   if: (steps.filter.outputs.examples == 'true' || github.event_name == 'push')
       #   env:
