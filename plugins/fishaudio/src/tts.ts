@@ -6,6 +6,7 @@ import {
   APIConnectionError,
   APIStatusError,
   AudioByteStream,
+  ConnectionPool,
   Future,
   log,
   shortuuid,
@@ -24,6 +25,12 @@ const DEFAULT_BASE_URL = 'https://api.fish.audio';
 const NUM_CHANNELS = 1;
 // Fish Audio's default sample rate for raw PCM output.
 const DEFAULT_SAMPLE_RATE = 24000;
+
+// Hold the first N audio chunks before releasing any audio, so playout starts with
+// enough buffered to ride out the gap after Fish's small first chunk. Values <= 1 disable it.
+const PREBUFFER_CHUNKS = 2;
+
+const ttsConnectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 
 export interface TTSOptions {
   apiKey?: string;
@@ -114,6 +121,7 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
 
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
+  #pool: ConnectionPool<WebSocket>;
   label = 'fishaudio.TTS';
 
   constructor(opts: TTSOptions = {}) {
@@ -149,6 +157,14 @@ export class TTS extends tts.TTS {
       volume: opts.volume,
       tokenizer,
     };
+
+    this.#pool = new ConnectionPool<WebSocket>({
+      connectCb: (timeoutMs) => this.#connectWebSocket(timeoutMs),
+      closeCb: async (ws) => closeWebSocket(ws),
+      maxSessionDuration: 300_000,
+      markRefreshedOnGet: true,
+    });
+    ttsConnectionPools.set(this, this.#pool);
   }
 
   get model(): string {
@@ -167,7 +183,12 @@ export class TTS extends tts.TTS {
     speed?: number;
     volume?: number;
   }): void {
-    if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.model !== undefined && opts.model !== this.#opts.model) {
+      this.#opts.model = opts.model;
+      // The model is sent as a connection header at ws-handshake time, not in the
+      // per-request body, so a pooled socket keeps the old model.
+      this.#pool.invalidate();
+    }
     if (opts.voiceId !== undefined) this.#opts.voiceId = opts.voiceId;
     if (opts.latencyMode !== undefined) this.#opts.latencyMode = opts.latencyMode;
     if (opts.chunkLength !== undefined) {
@@ -188,6 +209,27 @@ export class TTS extends tts.TTS {
 
   stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
     return new SynthesizeStream(this, this.#opts, options?.connOptions);
+  }
+
+  prewarm(): void {
+    this.#pool.prewarm();
+  }
+
+  override async close(): Promise<void> {
+    await this.#pool.close();
+    await super.close();
+  }
+
+  async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
+    const wsUrl = `${this.#opts.baseURL.replace(/^http/, 'ws')}/v1/tts/live`;
+    return await connectWebSocket({
+      url: wsUrl,
+      headers: {
+        Authorization: `Bearer ${this.#opts.apiKey}`,
+        model: this.#opts.model,
+      },
+      timeoutMs,
+    });
   }
 }
 
@@ -327,10 +369,12 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'fishaudio.SynthesizeStream';
   #logger = log();
+  #tts: TTS;
   #opts: ResolvedTTSOptions;
 
   constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
+    this.#tts = tts;
     this.#opts = opts;
   }
 
@@ -344,24 +388,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // audio: gaps line up with sentence breaks (where pauses are natural)
     // rather than mid-clause.
     const sentStream = this.#opts.tokenizer.stream();
-
-    const wsUrl = `${this.#opts.baseURL.replace(/^http/, 'ws')}/v1/tts/live`;
-    let ws: WebSocket | undefined;
-    try {
-      ws = await connectWebSocket({
-        url: wsUrl,
-        headers: {
-          Authorization: `Bearer ${this.#opts.apiKey}`,
-          model: this.#opts.model,
-        },
-        timeoutMs: this.connOptions.timeoutMs,
-        abortSignal: this.abortSignal,
-      });
-    } catch (e) {
-      throw new APIConnectionError({
-        message: `Fish Audio websocket connect failed: ${(e as Error).message ?? 'unknown error'}`,
-      });
-    }
 
     const finished = new Future<void>();
 
@@ -381,21 +407,21 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const sendTask = async () => {
+    const sendTask = async (ws: WebSocket) => {
       const startMsg = { event: 'start', request: buildTtsRequest(this.#opts) };
-      ws!.send(Buffer.from(encode(startMsg)));
+      ws.send(Buffer.from(encode(startMsg)));
 
       for await (const ev of sentStream) {
         if (this.abortController.signal.aborted) break;
         const sentence = ev.token;
         if (!sentence) continue;
         this.markStarted();
-        ws!.send(Buffer.from(encode({ event: 'text', text: sentence + ' ' })));
-        ws!.send(Buffer.from(encode({ event: 'flush' })));
+        ws.send(Buffer.from(encode({ event: 'text', text: sentence + ' ' })));
+        ws.send(Buffer.from(encode({ event: 'flush' })));
       }
 
       if (!this.abortController.signal.aborted) {
-        ws!.send(Buffer.from(encode({ event: 'stop' })));
+        ws.send(Buffer.from(encode({ event: 'stop' })));
       }
     };
 
@@ -407,7 +433,40 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const recvTask = async () => {
+    let prebuffering = PREBUFFER_CHUNKS > 1;
+    let chunksSeen = 0;
+    const prebuffer: Buffer[] = [];
+
+    const writeAudio = (audio: Uint8Array) => {
+      for (const f of bstream.write(audio)) {
+        sendLastFrame(false);
+        lastFrame = f;
+      }
+    };
+
+    const pushAudio = (audio: Uint8Array) => {
+      if (prebuffering) {
+        prebuffer.push(Buffer.from(audio));
+        chunksSeen += 1;
+        if (chunksSeen < PREBUFFER_CHUNKS) return;
+        writeAudio(Buffer.concat(prebuffer));
+        prebuffer.length = 0;
+        prebuffering = false;
+        return;
+      }
+      writeAudio(audio);
+    };
+
+    const flushPrebuffer = () => {
+      // Stream ended before PREBUFFER_CHUNKS (short utterance); release held audio.
+      if (prebuffering && prebuffer.length > 0) {
+        writeAudio(Buffer.concat(prebuffer));
+        prebuffer.length = 0;
+      }
+      prebuffering = false;
+    };
+
+    const recvTask = async (ws: WebSocket) => {
       // No per-receive timeout: Fish has natural inter-sentence gaps that can
       // exceed connOptions.timeoutMs when the LLM is slow.
       const onMessage = (raw: RawData) => {
@@ -432,10 +491,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (event === 'audio') {
           const audio = parsed.audio as Uint8Array | undefined;
           if (audio && audio.byteLength > 0) {
-            for (const f of bstream.write(audio)) {
-              sendLastFrame(false);
-              lastFrame = f;
-            }
+            pushAudio(audio);
           }
         } else if (event === 'finish') {
           const reason = parsed.reason as string | undefined;
@@ -448,6 +504,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             );
             return;
           }
+          flushPrebuffer();
           for (const f of bstream.flush()) {
             sendLastFrame(false);
             lastFrame = f;
@@ -480,21 +537,27 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!finished.done) finished.reject(err);
       };
 
-      ws!.on('message', onMessage);
-      ws!.on('close', onClose);
-      ws!.on('error', onError);
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
 
       try {
         await finished.await;
       } finally {
-        ws!.off('message', onMessage);
-        ws!.off('close', onClose);
-        ws!.off('error', onError);
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
       }
     };
 
     try {
-      await Promise.all([inputTask(), sendTask(), recvTask()]);
+      await withPooledConnection(
+        this.#tts,
+        async (ws) => {
+          await Promise.all([inputTask(), sendTask(ws), recvTask(ws)]);
+        },
+        { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
+      );
     } catch (e) {
       if (this.abortSignal.aborted) return;
       if (e instanceof APIStatusError || e instanceof APIConnectionError) {
@@ -505,13 +568,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     } finally {
       if (!sentStream.closed) sentStream.close();
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-      }
     }
   }
 }
@@ -525,7 +581,7 @@ const connectWebSocket = async ({
   url: string;
   headers: Record<string, string>;
   timeoutMs: number;
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
 }): Promise<WebSocket> => {
   const ws = new WebSocket(url, { headers, handshakeTimeout: timeoutMs });
   const fut = new Future<void>();
@@ -536,7 +592,7 @@ const connectWebSocket = async ({
     ws.off('open', onOpen);
     ws.off('error', onError);
     ws.off('close', onClose);
-    abortSignal.removeEventListener('abort', onAbort);
+    abortSignal?.removeEventListener('abort', onAbort);
   };
 
   const onOpen = () => fut.resolve();
@@ -550,7 +606,7 @@ const connectWebSocket = async ({
   ws.on('open', onOpen);
   ws.on('error', onError);
   ws.on('close', onClose);
-  abortSignal.addEventListener('abort', onAbort, { once: true });
+  abortSignal?.addEventListener('abort', onAbort, { once: true });
 
   if (timeoutMs > 0) {
     timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
@@ -561,12 +617,7 @@ const connectWebSocket = async ({
     return ws;
   } catch (e) {
     try {
-      ws.on('error', () => {});
-      if (ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      } else {
-        ws.terminate();
-      }
+      closeWebSocket(ws);
     } catch {
       // ignore
     }
@@ -574,4 +625,61 @@ const connectWebSocket = async ({
   } finally {
     cleanup();
   }
+};
+
+const withPooledConnection = async <R>(
+  ttsInstance: TTS,
+  fn: (ws: WebSocket) => Promise<R>,
+  options?: { timeout?: number; signal?: AbortSignal },
+): Promise<R> => {
+  if (options?.signal?.aborted) throw abortError();
+
+  const pool = ttsConnectionPools.get(ttsInstance);
+  if (!pool) throw new Error('Fish Audio connection pool is not initialized');
+
+  const ws = await pool.get(options?.timeout);
+  let onAbort: (() => void) | undefined;
+
+  try {
+    const result = options?.signal
+      ? await Promise.race([
+          fn(ws),
+          new Promise<never>((_, reject) => {
+            onAbort = () => reject(abortError());
+            options.signal?.addEventListener('abort', onAbort, { once: true });
+          }),
+        ])
+      : await fn(ws);
+
+    if (ws.readyState === WebSocket.OPEN) {
+      pool.put(ws);
+    } else {
+      pool.remove(ws);
+    }
+    return result;
+  } catch (error) {
+    pool.remove(ws);
+    throw error;
+  } finally {
+    if (onAbort) options?.signal?.removeEventListener('abort', onAbort);
+  }
+};
+
+const closeWebSocket = (ws: WebSocket) => {
+  try {
+    ws.on('error', () => {});
+    if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    } else if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+      ws.terminate();
+    }
+  } catch {
+    // ignore
+  }
+};
+
+const abortError = () => {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
 };
