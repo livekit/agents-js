@@ -190,9 +190,12 @@ export class ChunkedStream extends tts.ChunkedStream {
       // to 100ms), otherwise the tail of the synthesized audio is silently dropped. flush()
       // always returns one frame even with nothing buffered (0 samples), so drop it rather
       // than let it become the "final" frame in place of the real last frame from write().
-      const frames = audioByteStream.write(audioBytes);
+      for (const frame of audioByteStream.write(audioBytes)) {
+        sendLastFrame(requestId, false);
+        lastFrame = frame;
+      }
       const remainder = audioByteStream.flush().filter((frame) => frame.samplesPerChannel > 0);
-      for (const frame of [...frames, ...remainder]) {
+      for (const frame of remainder) {
         sendLastFrame(requestId, false);
         lastFrame = frame;
       }

@@ -293,7 +293,9 @@ export class SpeechStream extends stt.SpeechStream {
   // generator that is mid-await requeues its frame for the active session rather than
   // dropping the start of the next utterance.
   #channel = new AsyncIterableQueue<Uint8Array>();
-  #requeuedFrames: Uint8Array[] = [];
+  // At most one frame is ever in flight for a superseded session, since takes are serialised
+  // via `#frameTakeChain` and a requeued frame is drained by the very next take.
+  #requeuedFrame: Uint8Array | undefined;
   #frameTakeChain: Promise<void> = Promise.resolve();
   #pumpStarted = false;
 
@@ -501,15 +503,17 @@ export class SpeechStream extends stt.SpeechStream {
         return outcome;
       }
 
-      if (this.#requeuedFrames.length > 0) {
-        return { value: this.#requeuedFrames.shift()!, done: false };
+      if (this.#requeuedFrame !== undefined) {
+        const value = this.#requeuedFrame;
+        this.#requeuedFrame = undefined;
+        return { value, done: false };
       }
 
       const result = await this.#channel.next();
       // Invalidated while awaiting — stash the frame for the active session instead of dropping it.
       if (!token.active) {
         if (!result.done) {
-          this.#requeuedFrames.push(result.value);
+          this.#requeuedFrame = result.value;
         }
         return outcome;
       }
@@ -586,14 +590,14 @@ export class SpeechStream extends stt.SpeechStream {
     const identifiedLanguages = result.LanguageIdentification?.flatMap(({ LanguageCode }) =>
       LanguageCode ? [normalizeLanguage(LanguageCode)] : [],
     );
-    const sourceLanguages =
-      this.#opts.identifyLanguage || this.#opts.identifyMultipleLanguages
-        ? identifiedLanguages?.length
-          ? [...new Set(identifiedLanguages)]
-          : result.LanguageCode
-            ? [normalizeLanguage(result.LanguageCode)]
-            : undefined
-        : undefined;
+    let sourceLanguages: ReturnType<typeof normalizeLanguage>[] | undefined;
+    if (this.#opts.identifyLanguage || this.#opts.identifyMultipleLanguages) {
+      if (identifiedLanguages?.length) {
+        sourceLanguages = [...new Set(identifiedLanguages)];
+      } else if (result.LanguageCode) {
+        sourceLanguages = [normalizeLanguage(result.LanguageCode)];
+      }
+    }
 
     const offset = this.startTimeOffset + this.#connectionTimeOffset;
 

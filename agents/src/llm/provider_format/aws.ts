@@ -207,10 +207,15 @@ async function toImagePart(image: ImageContent): Promise<Record<string, unknown>
     );
   }
 
+  const bytesCacheKey = 'aws_image_bytes';
+  if (!image._cache[bytesCacheKey]) {
+    image._cache[bytesCacheKey] = Buffer.from(img.base64Data ?? '', 'base64');
+  }
+
   return {
     image: {
       format: imageFormat(img.mimeType),
-      source: { bytes: Buffer.from(img.base64Data ?? '', 'base64') },
+      source: { bytes: image._cache[bytesCacheKey] },
     },
   };
 }

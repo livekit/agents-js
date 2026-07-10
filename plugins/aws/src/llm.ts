@@ -17,7 +17,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
 } from '@livekit/agents';
-import { type AwsCredentials, createRequestSignal, resolveRegion } from './utils.js';
+import { type AwsCredentials, createRequestSignal, resolveRegion, toAwsApiError } from './utils.js';
 
 const DEFAULT_MODEL = 'amazon.nova-2-lite-v1:0';
 
@@ -514,26 +514,13 @@ export class LLMStream extends llm.LLMStream {
         return;
       }
 
-      const err = error as {
-        message?: string;
-        $metadata?: { httpStatusCode?: number; requestId?: string };
-      };
+      const err = error as { $metadata?: { httpStatusCode?: number; requestId?: string } };
       const statusCode = err.$metadata?.httpStatusCode;
 
-      if (statusCode !== undefined) {
-        throw new APIStatusError({
-          message: `aws bedrock llm: ${err.message ?? 'unknown error'}`,
-          options: {
-            statusCode,
-            retryable: isRetryableBedrockStatus(statusCode, retryable),
-            requestId: err.$metadata?.requestId ?? requestId,
-          },
-        });
-      }
-
-      throw new APIConnectionError({
-        message: `aws bedrock llm: ${err.message ?? String(error)}`,
-        options: { retryable },
+      throw toAwsApiError(error, 'aws bedrock llm', {
+        retryable:
+          statusCode !== undefined ? isRetryableBedrockStatus(statusCode, retryable) : retryable,
+        requestId: err.$metadata?.requestId ?? requestId,
       });
     } finally {
       request.dispose();
