@@ -22,7 +22,8 @@ interface InferenceTestHarness {
   ) => Promise<void>;
 }
 
-const hasLiveKitCredentials = () =>
+const shouldRunLiveKitInference = () =>
+  process.env.LIVEKIT_INFERENCE_TESTS === '1' &&
   Boolean(process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET);
 
 export const describeLiveKitInference = (
@@ -30,7 +31,7 @@ export const describeLiveKitInference = (
   agentsModule: object,
   registerTests: (harness: InferenceTestHarness) => Promise<void>,
 ) => {
-  if (hasLiveKitCredentials()) {
+  if (shouldRunLiveKitInference()) {
     describe(name, { timeout: 120_000 }, async () => {
       vi.doMock('@livekit/agents', () => agentsModule);
       // Import the shared harness source directly: declaring the test plugin as an agents
@@ -41,7 +42,7 @@ export const describeLiveKitInference = (
     });
   } else {
     describe(name, () => {
-      it.skip('requires LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET', () => {});
+      it.skip('requires LIVEKIT_INFERENCE_TESTS=1 and LiveKit credentials', () => {});
     });
   }
 };

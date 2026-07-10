@@ -53,11 +53,20 @@ jobs:
               - 'examples/**'
       - name: Test agents
         if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
+        run: pnpm test -- agents --silent
+      - name: Test LiveKit inference
+        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
         env:
+          LIVEKIT_INFERENCE_TESTS: '1'
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
-        run: pnpm test agents --silent
+        run: >-
+          pnpm test --
+          agents/src/inference/llm.test.ts
+          agents/src/inference/stt.test.ts
+          agents/src/inference/tts.test.ts
+          --silent
       # - name: Test examples
       #   if: (steps.filter.outputs.examples == 'true' || github.event_name == 'push')
       #   env:
