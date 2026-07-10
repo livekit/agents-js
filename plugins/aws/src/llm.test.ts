@@ -258,7 +258,7 @@ describe('AWS Bedrock LLM - streaming', () => {
     });
   });
 
-  it('attaches reasoning data to a tool-only response', async () => {
+  it('attaches reasoning data only to the first call in a tool-only response', async () => {
     const bedrockLlm = new LLM({
       client: fakeClient([
         {
@@ -287,6 +287,19 @@ describe('AWS Bedrock LLM - streaming', () => {
           },
         },
         { contentBlockStop: { contentBlockIndex: 1 } },
+        {
+          contentBlockStart: {
+            contentBlockIndex: 2,
+            start: { toolUse: { toolUseId: 'call_second', name: 'getWeather' } },
+          },
+        },
+        {
+          contentBlockDelta: {
+            contentBlockIndex: 2,
+            delta: { toolUse: { input: '{"location":"London"}' } },
+          },
+        },
+        { contentBlockStop: { contentBlockIndex: 2 } },
       ]),
     });
     const chatCtx = new llm.ChatContext();
@@ -299,6 +312,50 @@ describe('AWS Bedrock LLM - streaming', () => {
         reasoningContent: [{ reasoningText: { text: 'Need a tool', signature: 'tool-signature' } }],
       },
     });
+    expect(response.toolCalls[1]?.extra).toEqual({});
+  });
+
+  it.each([
+    ['amazon.nova-2-lite-v1:0', 'success'],
+    ['anthropic.claude-3-5-sonnet-20240620-v1:0', 'success'],
+    ['anthropic.claude-sonnet-4-20250514-v1:0', 'success'],
+    ['meta.llama3-3-70b-instruct-v1:0', undefined],
+  ])('serialises tool-result status for model %s as %s', async (model, expectedStatus) => {
+    let commandInput: Record<string, unknown> | undefined;
+    const client = {
+      send: async (command: { input: Record<string, unknown> }) => {
+        commandInput = command.input;
+        return {
+          $metadata: { requestId: 'req_tool_result_status' },
+          stream: (async function* () {
+            yield { contentBlockDelta: { delta: { text: 'ok' } } };
+          })(),
+        };
+      },
+    } as unknown as BedrockRuntimeClient;
+    const chatCtx = new llm.ChatContext();
+    chatCtx.insert([
+      llm.FunctionCall.create({
+        callId: 'call_status',
+        name: 'getWeather',
+        args: '{"location":"London"}',
+      }),
+      llm.FunctionCallOutput.create({
+        callId: 'call_status',
+        name: 'getWeather',
+        output: 'rainy',
+        isError: false,
+      }),
+    ]);
+
+    await new LLM({ model, client }).chat({ chatCtx, toolCtx: weatherToolCtx() }).collect();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messages = commandInput?.messages as any[];
+    const toolResult = messages
+      .flatMap((message) => message.content)
+      .find((block) => block.toolResult)?.toolResult;
+    expect(toolResult.status).toBe(expectedStatus);
   });
 
   it('omits prompt-managed request fields when model is a Prompt ARN', async () => {

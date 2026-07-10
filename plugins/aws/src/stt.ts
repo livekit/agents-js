@@ -146,6 +146,16 @@ export class STT extends stt.STT {
 
     const identifyLanguage = opts.identifyLanguage ?? false;
     const identifyMultipleLanguages = opts.identifyMultipleLanguages ?? false;
+    if (
+      opts.enablePartialResultsStabilization === false &&
+      opts.partialResultsStability !== undefined
+    ) {
+      throw new Error(
+        'partialResultsStability cannot be set when enablePartialResultsStabilization is false',
+      );
+    }
+    const enablePartialResultsStabilization =
+      opts.enablePartialResultsStabilization ?? opts.partialResultsStability !== undefined;
 
     if (opts.showSpeakerLabel && enableChannelIdentification) {
       throw new Error(
@@ -227,6 +237,7 @@ export class STT extends stt.STT {
       identifyLanguage,
       identifyMultipleLanguages,
       enableChannelIdentification,
+      enablePartialResultsStabilization,
       numberOfChannels,
       // Auto language detection is mutually exclusive with a fixed language code.
       language:

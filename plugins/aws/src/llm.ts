@@ -115,6 +115,29 @@ function isRetryableBedrockStatus(statusCode: number, retryable: boolean): boole
   return retryable && (statusCode === 408 || statusCode === 429 || statusCode >= 500);
 }
 
+function supportsToolResultStatus(model: string): boolean {
+  const normalised = model.toLowerCase();
+  if (normalised.includes('amazon.nova')) return true;
+  return /anthropic\.claude-(?:3(?:[-.:]|$)|[^/:]*-4(?:[-.:]|$))/.test(normalised);
+}
+
+function omitUnsupportedToolResultStatuses(
+  messages: Record<string, unknown>[],
+  model: string,
+): void {
+  if (supportsToolResultStatus(model)) return;
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+      const toolResult = (block as Record<string, unknown>).toolResult;
+      if (!toolResult || typeof toolResult !== 'object' || Array.isArray(toolResult)) continue;
+      delete (toolResult as Record<string, unknown>).status;
+    }
+  }
+}
+
 const CONVERSE_STREAM_EXCEPTIONS: Array<{
   key: keyof ConverseStreamExceptionEvent;
   defaultMessage: string;
@@ -342,6 +365,7 @@ export class LLMStream extends llm.LLMStream {
       Record<string, unknown>[],
       AwsFormatData,
     ];
+    omitUnsupportedToolResultStatuses(messages, this.#model);
 
     const system: Record<string, unknown>[] = [];
     if (extraData.systemMessages) {
@@ -398,6 +422,7 @@ export class LLMStream extends llm.LLMStream {
       let reasoningSignature: string | undefined;
       let reasoningRedactedContent: Uint8Array[] = [];
       const reasoningContent: AwsReasoningContentData[] = [];
+      let reasoningAttachedToToolCall = false;
 
       for await (const event of response.stream) {
         if (event.contentBlockStart?.start?.toolUse) {
@@ -454,6 +479,8 @@ export class LLMStream extends llm.LLMStream {
           }
 
           if (toolCallId !== undefined) {
+            const attachReasoning: boolean =
+              !hasTextOutput && reasoningContent.length > 0 && !reasoningAttachedToToolCall;
             this.queue.put({
               id: requestId,
               delta: {
@@ -463,7 +490,7 @@ export class LLMStream extends llm.LLMStream {
                     callId: toolCallId,
                     name: fncName ?? '',
                     args: fncRawArgs ?? '',
-                    ...(!hasTextOutput && reasoningContent.length > 0
+                    ...(attachReasoning
                       ? { extra: { aws: { reasoningContent: [...reasoningContent] } } }
                       : {}),
                   }),
@@ -471,6 +498,7 @@ export class LLMStream extends llm.LLMStream {
               },
             });
             retryable = false;
+            reasoningAttachedToToolCall ||= attachReasoning;
             toolCallId = undefined;
             fncName = undefined;
             fncRawArgs = undefined;

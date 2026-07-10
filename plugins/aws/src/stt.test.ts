@@ -149,6 +149,43 @@ describe('AWS Transcribe STT - constructor', () => {
     );
   });
 
+  it('rejects partial result stability when stabilisation is explicitly disabled', () => {
+    expect(
+      () =>
+        new STT({
+          enablePartialResultsStabilization: false,
+          partialResultsStability: 'high',
+        }),
+    ).toThrow(/partialResultsStability cannot be set/);
+  });
+
+  it('enables partial result stabilisation when a stability level is supplied', async () => {
+    let commandInput: Record<string, unknown> | undefined;
+    const client = {
+      send: async (command: { input: Record<string, unknown> }) => {
+        commandInput = command.input;
+        return {
+          $metadata: { requestId: 'req_stability' },
+          TranscriptResultStream: (async function* () {})(),
+        };
+      },
+    } as unknown as TranscribeStreamingClient;
+    const speechStream = new STT({
+      sampleRate: 16000,
+      partialResultsStability: 'high',
+      client,
+    }).stream();
+    speechStream.endInput();
+    for await (const _event of speechStream) {
+      // Drain the stream so the command is sent and the session completes.
+    }
+
+    expect(commandInput).toMatchObject({
+      EnablePartialResultsStabilization: true,
+      PartialResultsStability: 'high',
+    });
+  });
+
   it('throws when automatic language identification uses a custom language model', () => {
     expect(
       () =>
