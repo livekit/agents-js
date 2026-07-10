@@ -6,7 +6,12 @@ import { APIStatusError, llm } from '@livekit/agents';
 import { llm as llmTest } from '@livekit/agents-plugins-test';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { LLM, buildToolConfig, mapConverseStreamException } from './llm.js';
+import {
+  LLM,
+  buildToolConfig,
+  isRetryableBedrockStatus,
+  mapConverseStreamException,
+} from './llm.js';
 
 const hasAwsCredentials = Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
 
@@ -250,6 +255,16 @@ describe('AWS Bedrock LLM - mapConverseStreamException', () => {
 
   it('returns undefined for a non-exception event', () => {
     expect(mapConverseStreamException({}, 'req_1', true)).toBeUndefined();
+  });
+});
+
+describe('AWS Bedrock LLM - retry classification', () => {
+  it('retries HTTP 408 model timeouts before any output is emitted', () => {
+    expect(isRetryableBedrockStatus(408, true)).toBe(true);
+  });
+
+  it('does not retry a timeout after output has made the attempt non-retryable', () => {
+    expect(isRetryableBedrockStatus(408, false)).toBe(false);
   });
 });
 

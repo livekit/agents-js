@@ -91,13 +91,70 @@ describe('AWS Provider Format - toChatCtx', () => {
     expect(formatData.systemMessages).toBeNull();
   });
 
-  it('should preserve empty string text content instead of dropping the whole message', async () => {
+  it('should drop empty and whitespace-only text blocks', async () => {
     const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'system', content: '   ' });
     ctx.addMessage({ role: 'user', content: '' });
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        '   ',
+        new Instructions({ audio: 'audio instructions', text: '   ' }).asModality('text'),
+      ],
+    });
+
+    const [result, formatData] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should replace blank tool output with non-empty placeholder text', async () => {
+    const ctx = ChatContext.empty();
+    ctx.insert(
+      new FunctionCall({
+        id: 'func_blank_output',
+        callId: 'call_blank_output',
+        name: 'blank_output',
+        args: '{}',
+      }),
+    );
+    ctx.insert(
+      new FunctionCallOutput({
+        callId: 'call_blank_output',
+        output: '   ',
+        isError: false,
+      }),
+    );
 
     const [result] = await toChatCtx(ctx, false);
 
-    expect(result).toEqual([{ role: 'user', content: [{ text: '' }] }]);
+    expect(result).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            toolUse: {
+              toolUseId: 'call_blank_output',
+              name: 'blank_output',
+              input: {},
+            },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            toolResult: {
+              toolUseId: 'call_blank_output',
+              content: [{ text: '(empty)' }],
+              status: 'success',
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it('should render Instructions as their resolved value', async () => {

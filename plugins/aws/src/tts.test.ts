@@ -93,6 +93,39 @@ describe('AWS Polly TTS - synthesis', () => {
     expect(events[0]?.frame.samplesPerChannel).toBe(1600);
   });
 
+  it('keeps the output queue open across a retryable Polly failure', async () => {
+    let attempts = 0;
+    const client = {
+      send: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error('temporary outage'), {
+            $metadata: { httpStatusCode: 503 },
+          });
+        }
+        return {
+          $metadata: { requestId: 'req_retry' },
+          AudioStream: {
+            transformToByteArray: async () => pcmBytes(1600),
+          },
+        };
+      },
+    } as unknown as PollyClient;
+    const tts = new TTS({ sampleRate: 16000, client });
+    const stream = tts.synthesize('retry me', {
+      maxRetry: 1,
+      retryIntervalMs: 1,
+      timeoutMs: 1000,
+    });
+
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.final).toBe(true);
+  });
+
   // Error classification for Polly failures goes through toAwsApiError (used by
   // ChunkedStream.run). Exercise the mapper directly — driving the full stream
   // would also surface a by-design floating rejection from ThrowsPromise.

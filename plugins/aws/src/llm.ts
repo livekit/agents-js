@@ -99,6 +99,11 @@ interface ConverseStreamExceptionEvent {
   serviceUnavailableException?: ConverseStreamException;
 }
 
+/** Whether a Bedrock HTTP failure can be retried before any output has been emitted. */
+export function isRetryableBedrockStatus(statusCode: number, retryable: boolean): boolean {
+  return retryable && (statusCode === 408 || statusCode === 429 || statusCode >= 500);
+}
+
 const CONVERSE_STREAM_EXCEPTIONS: Array<{
   key: keyof ConverseStreamExceptionEvent;
   defaultMessage: string;
@@ -425,7 +430,7 @@ export class LLMStream extends llm.LLMStream {
           message: `aws bedrock llm: ${err.message ?? 'unknown error'}`,
           options: {
             statusCode,
-            retryable: retryable && (statusCode === 429 || statusCode >= 500),
+            retryable: isRetryableBedrockStatus(statusCode, retryable),
             requestId,
           },
         });

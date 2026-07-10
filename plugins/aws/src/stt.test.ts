@@ -68,6 +68,23 @@ describe('AWS Transcribe STT - constructor', () => {
     expect(() => new STT({ identifyLanguage: true, languageOptions: 'en-US,es-US' })).not.toThrow();
   });
 
+  it('throws when speaker labels and channel identification are both enabled', () => {
+    expect(() => new STT({ showSpeakerLabel: true, enableChannelIdentification: true })).toThrow(
+      /mutually exclusive/,
+    );
+  });
+
+  it('throws when automatic language identification uses a custom language model', () => {
+    expect(
+      () =>
+        new STT({
+          identifyLanguage: true,
+          languageOptions: 'en-US,es-US',
+          languageModelName: 'my-custom-model',
+        }),
+    ).toThrow(/languageModelName cannot be used/);
+  });
+
   it('defaults numberOfChannels to 2 when enableChannelIdentification is set', () => {
     expect(() => new STT({ enableChannelIdentification: true })).not.toThrow();
   });
@@ -216,7 +233,10 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
     const alt = events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)
       ?.alternatives?.[0];
     expect(alt?.speakerId).toBe('spk_0');
-    expect(alt?.words?.map((w) => w.speakerId)).toEqual(['spk_0', 'spk_0']);
+    expect(alt?.words?.map((w: { speakerId?: string | null }) => w.speakerId)).toEqual([
+      'spk_0',
+      'spk_0',
+    ]);
   });
 
   it('emits START_OF_SPEECH for every utterance, not just the first in the session', async () => {
@@ -552,6 +572,44 @@ describe('AWS Transcribe STT - SpeechStream event mapping', () => {
 
     expect(attempts).toBe(2);
     expect(events.some((e) => e.alternatives?.[0]?.text === 'recovered')).toBe(true);
+  });
+
+  it('does not retry a failure after audio has already been sent', async () => {
+    let attempts = 0;
+    const client = {
+      send: async (command: {
+        input: { AudioStream: AsyncIterable<{ AudioEvent?: { AudioChunk?: Uint8Array } }> };
+      }) => {
+        attempts += 1;
+        return {
+          TranscriptResultStream: (async function* () {
+            for await (const event of command.input.AudioStream) {
+              if ((event.AudioEvent?.AudioChunk?.byteLength ?? 0) > 0) break;
+            }
+            throw new Error('connection reset after audio');
+          })(),
+        };
+      },
+    } as unknown as TranscribeStreamingClient;
+
+    const sttInstance = new STT({ ...baseOpts, client });
+    const errors: APIError[] = [];
+    sttInstance.on('error', ({ error }) => {
+      if (error instanceof APIError) errors.push(error);
+    });
+    const speechStream = sttInstance.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+
+    speechStream.pushFrame(new AudioFrame(new Int16Array([1, 2, 3, 4]), 16000, 1, 4));
+    speechStream.endInput();
+    for await (const _event of speechStream) {
+      // Drain until the terminal error closes the output queue.
+    }
+
+    expect(attempts).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.retryable).toBe(false);
   });
 
   it('resets speaking state across a hard-failure retry so START_OF_SPEECH re-fires', async () => {

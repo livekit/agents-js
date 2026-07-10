@@ -39,15 +39,32 @@ interface AwsSdkErrorLike {
 /**
  * Maps an AWS SDK exception (or already-classified framework error) into an
  * {@link APIStatusError} when an HTTP status is present, otherwise an
- * {@link APIConnectionError}. Passes through existing API errors unchanged.
+ * {@link APIConnectionError}. Passes through existing API errors unchanged unless an explicit
+ * retryability override is provided.
  */
 export function toAwsApiError(
   error: unknown,
   prefix: string,
   options?: { retryable?: boolean; requestId?: string | null },
 ): APIConnectionError | APIStatusError {
-  if (error instanceof APIStatusError || error instanceof APIConnectionError) {
-    return error;
+  if (error instanceof APIStatusError) {
+    if (options?.retryable === undefined) return error;
+    return new APIStatusError({
+      message: error.message,
+      options: {
+        statusCode: error.statusCode,
+        requestId: options.requestId ?? error.requestId,
+        body: error.body,
+        retryable: options.retryable,
+      },
+    });
+  }
+  if (error instanceof APIConnectionError) {
+    if (options?.retryable === undefined) return error;
+    return new APIConnectionError({
+      message: error.message,
+      options: { retryable: options.retryable },
+    });
   }
 
   const err = error as AwsSdkErrorLike;

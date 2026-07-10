@@ -48,7 +48,7 @@ export async function toChatCtx(
       // Always exclude system/developer messages from the regular role mapping below, even
       // when they carry no usable text (e.g. image-only content) — they must never be
       // reattributed to the user/assistant turn merge.
-      if (msg.textContent) {
+      if (msg.textContent?.trim()) {
         systemMessages.push(msg.textContent);
       }
       continue;
@@ -77,9 +77,9 @@ export async function toChatCtx(
     if (msg.type === 'message') {
       for (const part of msg.content) {
         if (typeof part === 'string') {
-          content.push({ text: part });
+          if (part.trim()) content.push({ text: part });
         } else if (isInstructions(part)) {
-          content.push({ text: part.value });
+          if (part.value.trim()) content.push({ text: part.value });
         } else if (part && typeof part === 'object' && part.type === 'image_content') {
           content.push(await toImagePart(part));
         }
@@ -97,7 +97,7 @@ export async function toChatCtx(
       content.push({
         toolResult: {
           toolUseId: msg.callId,
-          content: [{ text: msg.output }],
+          content: [{ text: msg.output.trim() ? msg.output : '(empty)' }],
           status: msg.isError ? 'error' : 'success',
         },
       });

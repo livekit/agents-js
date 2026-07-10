@@ -191,8 +191,6 @@ export class ChunkedStream extends tts.ChunkedStream {
       // Engine, malformed SSML) so non-retryable 4xx inputs are not retried as connection
       // failures by the base ChunkedStream.
       throw toAwsApiError(error, 'aws polly tts');
-    } finally {
-      this.queue.close();
     }
   }
 }

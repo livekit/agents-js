@@ -74,6 +74,7 @@ const defaultSTTOptions: Pick<STTOptions, 'sampleRate' | 'language'> = {
 /** Invalidated the instant its session ends, so a superseded audio generator stops pulling. */
 interface SessionToken {
   active: boolean;
+  audioSent: boolean;
 }
 
 /** Amazon Transcribe reports this after ~15s of stream inactivity; it's not a hard failure. */
@@ -131,12 +132,25 @@ export class STT extends stt.STT {
     const identifyMultipleLanguages = opts.identifyMultipleLanguages ?? false;
     const enableChannelIdentification = opts.enableChannelIdentification ?? false;
 
+    if (opts.showSpeakerLabel && enableChannelIdentification) {
+      throw new Error(
+        'showSpeakerLabel and enableChannelIdentification are mutually exclusive; set only one to true',
+      );
+    }
+
     // StartStreamTranscription requires LanguageOptions whenever either identify flag is set;
     // without it AWS returns BadRequest, so fail fast at construction with a clear message.
     if ((identifyLanguage || identifyMultipleLanguages) && !opts.languageOptions) {
       throw new Error(
         'languageOptions is required when identifyLanguage or identifyMultipleLanguages is true ' +
           '(comma-separated language codes Amazon Transcribe should consider, e.g. "en-US,es-US")',
+      );
+    }
+
+    if ((identifyLanguage || identifyMultipleLanguages) && opts.languageModelName) {
+      throw new Error(
+        'languageModelName cannot be used with identifyLanguage or identifyMultipleLanguages ' +
+          '(Amazon Transcribe streaming language identification does not support custom language models)',
       );
     }
 
@@ -265,7 +279,7 @@ export class SpeechStream extends stt.SpeechStream {
     // was scheduled (e.g. a very short utterance) — otherwise the final transcript would
     // never be requested.
     for (;;) {
-      const token: SessionToken = { active: true };
+      const token: SessionToken = { active: true, audioSent: false };
       try {
         await this.#runSession(this.#audioStreamGenerator(token));
       } catch (error) {
@@ -295,7 +309,12 @@ export class SpeechStream extends stt.SpeechStream {
         }
         // Preserve APIStatusError (incl. non-retryable 4xx) so the base SpeechStream does not
         // treat client errors as retryable connection failures.
-        throw toAwsApiError(error, 'aws transcribe stt');
+        // Once AWS has consumed audio, retrying run() cannot replay those frames from the
+        // persistent channel. Treat the failure as terminal instead of letting a retry open a
+        // new session that can complete successfully without ever transcribing the lost audio.
+        throw toAwsApiError(error, 'aws transcribe stt', {
+          retryable: !token.audioSent,
+        });
       }
 
       // #runSession only returns without throwing once its audio generator drains
@@ -395,7 +414,7 @@ export class SpeechStream extends stt.SpeechStream {
    * was dequeued after the token was invalidated so reconnects do not clip the next utterance.
    */
   async #takeFrame(token: SessionToken): Promise<IteratorResult<Uint8Array>> {
-    let outcome: IteratorResult<Uint8Array> = { value: undefined, done: true };
+    const outcome: IteratorResult<Uint8Array> = { value: undefined, done: true };
 
     const previous = this.#frameTakeChain;
     let release!: () => void;
@@ -434,6 +453,9 @@ export class SpeechStream extends stt.SpeechStream {
       const result = await this.#takeFrame(token);
       if (!token.active) return;
       if (result.done) break;
+      if (result.value.byteLength > 0) {
+        token.audioSent = true;
+      }
       yield { AudioEvent: { AudioChunk: result.value } };
     }
 
