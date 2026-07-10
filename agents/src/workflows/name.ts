@@ -27,8 +27,8 @@ export interface GetNameTaskOptions {
   /** Collect the user's middle name. Defaults to false. */
   middleName?: boolean;
   /**
-   * Order in which to collect the name parts, using `{first_name}`, `{middle_name}` and
-   * `{last_name}` placeholders. Defaults to the enabled parts in first/middle/last order.
+   * Order in which to collect the name parts, using `{firstName}`, `{middleName}` and
+   * `{lastName}` placeholders. Defaults to the enabled parts in first/middle/last order.
    */
   nameFormat?: string;
   /** Ask the user to verify the spelling of the captured name. Defaults to false. */
@@ -36,12 +36,12 @@ export interface GetNameTaskOptions {
   /** Extra instructions appended to the built-in prompt for domain-specific context. */
   extraInstructions?: string;
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm the captured name. Defaults to confirming on audio
@@ -56,9 +56,9 @@ export interface GetNameTaskOptions {
 }
 
 interface UpdateNameArgs {
-  first_name?: string | null;
-  middle_name?: string | null;
-  last_name?: string | null;
+  firstName?: string | null;
+  middleName?: string | null;
+  lastName?: string | null;
 }
 
 function cleanNameArg(value: string | null | undefined): string | undefined {
@@ -87,12 +87,12 @@ function renderNameFormat(
   parts: { firstName: string; middleName: string; lastName: string },
 ): string {
   const replacements: Record<string, string> = {
-    first_name: parts.firstName,
-    middle_name: parts.middleName,
-    last_name: parts.lastName,
+    firstName: parts.firstName,
+    middleName: parts.middleName,
+    lastName: parts.lastName,
   };
   return nameFormat
-    .replace(/\{(first_name|middle_name|last_name)\}/g, (_match, key: string) => {
+    .replace(/\{(firstName|middleName|lastName)\}/g, (_match, key: string) => {
       return replacements[key] ?? '';
     })
     .trim();
@@ -112,7 +112,7 @@ export function createGetNameTask({
   extraInstructions = '',
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -130,9 +130,9 @@ export function createGetNameTask({
     resolvedNameFormat = nameFormat;
   } else {
     const parts: string[] = [];
-    if (firstName) parts.push('{first_name}');
-    if (middleName) parts.push('{middle_name}');
-    if (lastName) parts.push('{last_name}');
+    if (firstName) parts.push('{firstName}');
+    if (middleName) parts.push('{middleName}');
+    if (lastName) parts.push('{lastName}');
     resolvedNameFormat = parts.join(' ');
   }
 
@@ -188,21 +188,21 @@ export function createGetNameTask({
     name: 'update_name',
     description: 'Update the name provided by the user.',
     parameters: z.object({
-      first_name: z.string().nullable().optional().describe("The user's first name."),
-      middle_name: z
+      firstName: z.string().nullable().optional().describe("The user's first name."),
+      middleName: z
         .string()
         .nullable()
         .optional()
         .describe("The user's middle name, if collected."),
-      last_name: z.string().nullable().optional().describe("The user's last name, if collected."),
+      lastName: z.string().nullable().optional().describe("The user's last name, if collected."),
     }),
     // With requireExplicitAsk, the model can't silent-fill from chatCtx during
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
     execute: async (args: UpdateNameArgs, { ctx }) => {
-      const cleanedFirst = cleanNameArg(args.first_name);
-      const cleanedMiddle = cleanNameArg(args.middle_name);
-      const cleanedLast = cleanNameArg(args.last_name);
+      const cleanedFirst = cleanNameArg(args.firstName);
+      const cleanedMiddle = cleanNameArg(args.middleName);
+      const cleanedLast = cleanNameArg(args.lastName);
 
       const errors: string[] = [];
       if (firstName && !cleanedFirst?.trim()) {
@@ -249,7 +249,7 @@ export function createGetNameTask({
         if (!task.done) {
           task.complete(buildResult());
         }
-        return undefined;
+        return;
       }
 
       const confirmTool = buildConfirmTool({
@@ -296,27 +296,27 @@ export function createGetNameTask({
     id: 'get_name_task',
     instructions: new Instructions('', {
       audio: safeRender(BASE_INSTRUCTIONS, {
-        name_format: resolvedNameFormat,
-        modality_specific: AUDIO_SPECIFIC,
-        spelling_instructions: spellingInstructions,
-        confirmation_instructions: requireConfirmation !== false ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        nameFormat: resolvedNameFormat,
+        modalitySpecific: AUDIO_SPECIFIC,
+        spellingInstructions,
+        confirmationInstructions: requireConfirmation !== false ? confirmationInstructions : '',
+        extraInstructions,
       }),
       text: safeRender(BASE_INSTRUCTIONS, {
-        name_format: resolvedNameFormat,
-        modality_specific: TEXT_SPECIFIC,
-        spelling_instructions: spellingInstructions,
-        confirmation_instructions: requireConfirmation === true ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        nameFormat: resolvedNameFormat,
+        modalitySpecific: TEXT_SPECIFIC,
+        spellingInstructions,
+        confirmationInstructions: requireConfirmation === true ? confirmationInstructions : '',
+        extraInstructions,
       }),
     }),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [...(tools ?? []), updateNameTool, declineTool],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateNameTool, declineTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       task.session.generateReply({
@@ -360,16 +360,16 @@ export class GetNameTask extends AgentTask<GetNameResult> {
 
 const BASE_INSTRUCTIONS = `
 You are only a single step in a broader system, responsible solely for capturing the user's name.
-You need to naturally collect the name parts in this order: {name_format}.
-{modality_specific}
-{spelling_instructions}Call \`update_name\` at the first opportunity whenever you form a new hypothesis about the name. (before asking any questions or providing any answers.)
+You need to naturally collect the name parts in this order: {nameFormat}.
+{modalitySpecific}
+{spellingInstructions}Call \`update_name\` at the first opportunity whenever you form a new hypothesis about the name. (before asking any questions or providing any answers.)
 Don't invent names, stick strictly to what the user said.
-{confirmation_instructions}
+{confirmationInstructions}
 If the name is unclear or it takes too much back-and-forth, prompt for each name part separately.
 Ignore unrelated input and avoid going off-topic. Do not generate markdown, greetings, or unnecessary commentary.
 Avoid verbosity by not sharing example names or spellings unless prompted to do so. Do not deviate from the goal of collecting the user's name.
 Always explicitly invoke a tool when applicable. Do not simulate tool usage, no real action is taken unless the tool is explicitly called.\
-{extra_instructions}
+{extraInstructions}
 `;
 
 const AUDIO_SPECIFIC = `

@@ -23,12 +23,12 @@ export interface GetPhoneNumberTaskOptions {
   /** Extra instructions appended to the built-in prompt for domain-specific context. */
   extraInstructions?: string;
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm the captured phone number. Defaults to confirming on
@@ -51,7 +51,7 @@ export function createGetPhoneNumberTask({
   extraInstructions = '',
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -95,14 +95,14 @@ export function createGetPhoneNumberTask({
     name: 'update_phone_number',
     description: 'Update the phone number provided by the user.',
     parameters: z.object({
-      phone_number: z
+      phoneNumber: z
         .string()
         .describe('The phone number provided by the user, digits only with optional leading +'),
     }),
     // With requireExplicitAsk, the model can't silent-fill from chatCtx during
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
-    execute: async ({ phone_number: phoneNumber }: { phone_number: string }, { ctx }) => {
+    execute: async ({ phoneNumber }: { phoneNumber: string }, { ctx }) => {
       const cleaned = phoneNumber.trim().replace(/[\s\-().]+/g, '');
 
       if (!PHONE_REGEX.test(cleaned)) {
@@ -115,7 +115,7 @@ export function createGetPhoneNumberTask({
         if (!task.done) {
           task.complete({ phoneNumber: currentPhoneNumber });
         }
-        return undefined; // no need to continue the conversation
+        return; // no need to continue the conversation
       }
 
       const confirmTool = buildConfirmTool(cleaned);
@@ -150,23 +150,23 @@ export function createGetPhoneNumberTask({
     id: 'get_phone_number_task',
     instructions: new Instructions('', {
       audio: safeRender(BASE_INSTRUCTIONS, {
-        modality_specific: AUDIO_SPECIFIC,
-        confirmation_instructions: requireConfirmation !== false ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        modalitySpecific: AUDIO_SPECIFIC,
+        confirmationInstructions: requireConfirmation !== false ? confirmationInstructions : '',
+        extraInstructions,
       }),
       text: safeRender(BASE_INSTRUCTIONS, {
-        modality_specific: TEXT_SPECIFIC,
-        confirmation_instructions: requireConfirmation === true ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        modalitySpecific: TEXT_SPECIFIC,
+        confirmationInstructions: requireConfirmation === true ? confirmationInstructions : '',
+        extraInstructions,
       }),
     }),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [...(tools ?? []), updatePhoneNumberTool, declineTool],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updatePhoneNumberTool, declineTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       task.session.generateReply({ instructions: 'Ask the user to provide their phone number.' });
@@ -198,16 +198,16 @@ export class GetPhoneNumberTask extends AgentTask<GetPhoneNumberResult> {
 
 const BASE_INSTRUCTIONS = `
 You are only a single step in a broader system, responsible solely for capturing a phone number.
-{modality_specific}
+{modalitySpecific}
 Call \`update_phone_number\` at the first opportunity whenever you form a new hypothesis about the phone number. (before asking any questions or providing any answers.)
 Don't invent phone numbers, stick strictly to what the user said.
-{confirmation_instructions}
+{confirmationInstructions}
 If the number is unclear or invalid, or it takes too much back-and-forth, prompt for it in parts: first the area code, then the remaining digits.
 Never repeat the phone number back to the user as a single block of digits. Read it back in groups.
 Ignore unrelated input and avoid going off-topic. Do not generate markdown, greetings, or unnecessary commentary.
 Avoid verbosity by not sharing example phone numbers or formats unless prompted to do so. Do not deviate from the goal of collecting the user's phone number.
 Always explicitly invoke a tool when applicable. Do not simulate tool usage, no real action is taken unless the tool is explicitly called.\
-{extra_instructions}
+{extraInstructions}
 `;
 
 const AUDIO_SPECIFIC = `

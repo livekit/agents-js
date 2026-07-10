@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Instructions, isInstructions } from '../llm/chat_context.js';
-import { log } from '../log.js';
 
 /**
  * Customizable instruction sections for built-in workflow tasks.
@@ -27,17 +26,14 @@ export interface InstructionParts {
  */
 export function resolveWorkflowInstructions(options: {
   instructions?: InstructionParts | Instructions | string;
-  /** @deprecated legacy `extraInstructions` option, ignored when `instructions` is provided. */
-  extraInstructions?: string;
   template: string;
   defaultPersona: string;
-  kwargs?: Record<string, unknown>;
+  /** Fills the template's `{modalitySpecific}` slot with per-modality (audio/text) guidance. */
+  modalitySpecific: Instructions;
+  /** Fills the template's `{confirmation}` slot with the per-modality confirmation instruction. */
+  confirmation: Instructions;
 }): string | Instructions {
-  const { instructions, extraInstructions = '', template, defaultPersona, kwargs = {} } = options;
-
-  if (instructions !== undefined && extraInstructions) {
-    log().warn('`extraInstructions` will be ignored when `instructions` is provided');
-  }
+  const { instructions, template, defaultPersona, modalitySpecific, confirmation } = options;
 
   // A full instruction string or Instructions replaces the built-in prompt entirely.
   if (typeof instructions === 'string' || isInstructions(instructions)) {
@@ -45,12 +41,13 @@ export function resolveWorkflowInstructions(options: {
   }
 
   // No instructions or an `InstructionParts` override: fill the built-in template.
-  const parts: InstructionParts = instructions ?? { extra: extraInstructions };
+  // Unset preserves the built-in default; an explicit empty string removes the section.
+  const parts: InstructionParts = instructions ?? {};
   return Instructions.resolveTemplate(template, {
-    // Unset preserves the built-in default; an explicit empty string removes the section.
-    persona: parts.persona !== undefined ? parts.persona : defaultPersona,
-    extra: parts.extra !== undefined ? parts.extra : '',
-    ...kwargs,
+    persona: parts.persona ?? defaultPersona,
+    extra: parts.extra ?? '',
+    modalitySpecific,
+    confirmation,
   });
 }
 

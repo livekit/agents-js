@@ -122,12 +122,12 @@ interface SubTaskOptions {
   requireConfirmation?: boolean;
   requireExplicitAsk?: boolean;
   extraInstructions?: string;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
 }
 
@@ -143,13 +143,13 @@ function buildSubTaskInstructions(
   return new Instructions('', {
     audio:
       safeRender(baseInstructions, {
-        modality_specific: audioSpecific,
-        confirmation_instructions: requireConfirmation !== false ? confirmationInstructions : '',
+        modalitySpecific: audioSpecific,
+        confirmationInstructions: requireConfirmation !== false ? confirmationInstructions : '',
       }) + extraSuffix,
     text:
       safeRender(baseInstructions, {
-        modality_specific: textSpecific,
-        confirmation_instructions: requireConfirmation === true ? confirmationInstructions : '',
+        modalitySpecific: textSpecific,
+        confirmationInstructions: requireConfirmation === true ? confirmationInstructions : '',
       }) + extraSuffix,
   });
 }
@@ -160,7 +160,7 @@ function createGetCardNumberTask({
   requireExplicitAsk = false,
   extraInstructions = '',
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -181,11 +181,9 @@ function createGetCardNumberTask({
       name: 'confirm_card_number',
       description: 'Call after the user repeats their card number for confirmation.',
       parameters: z.object({
-        repeated_card_number: z
-          .string()
-          .describe('The card number repeated by the user as a string'),
+        repeatedCardNumber: z.string().describe('The card number repeated by the user as a string'),
       }),
-      execute: async ({ repeated_card_number: repeatedCardNumber }) => {
+      execute: async ({ repeatedCardNumber }) => {
         repeatedCardNumber = repeatedCardNumber.replace(/\D/g, '');
         if (repeatedCardNumber !== cardNumber) {
           task.session.generateReply({
@@ -213,21 +211,21 @@ function createGetCardNumberTask({
     description:
       "Call to record the user's card number. Only call once the entire number has been given, do not call in increments.",
     parameters: z.object({
-      card_number: z
+      cardNumber: z
         .string()
         .describe('The credit card number as a string with no dashes or spaces'),
     }),
     // With requireExplicitAsk, the model can't silent-fill from chatCtx during
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
-    execute: async ({ card_number: rawCardNumber }: { card_number: string }, { ctx }) => {
+    execute: async ({ cardNumber: rawCardNumber }: { cardNumber: string }, { ctx }) => {
       const cardNumber = rawCardNumber.replace(/\D/g, '');
       if (cardNumber.length < 13 || cardNumber.length > 19) {
         task.session.generateReply({
           instructions:
             'The length of the card number is invalid, ask the user to repeat their card number.',
         });
-        return undefined;
+        return;
       }
 
       currentCardNumber = cardNumber;
@@ -244,7 +242,7 @@ function createGetCardNumberTask({
             task.complete({ issuer, cardNumber: currentCardNumber });
           }
         }
-        return undefined;
+        return;
       }
 
       const confirmTool = buildConfirmTool(cardNumber);
@@ -269,17 +267,12 @@ function createGetCardNumberTask({
       extraInstructions,
     ),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [
-      ...(tools ?? []),
-      updateCardNumberTool,
-      declineCardCaptureTool,
-      restartCardCollectionTool,
-    ],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateCardNumberTool, declineCardCaptureTool, restartCardCollectionTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
@@ -302,7 +295,7 @@ function createGetSecurityCodeTask({
   requireExplicitAsk = false,
   extraInstructions = '',
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -323,9 +316,9 @@ function createGetSecurityCodeTask({
       name: 'confirm_security_code',
       description: 'Call after the user repeats their security code for confirmation.',
       parameters: z.object({
-        repeated_security_code: z.string().describe('The security code repeated by the user'),
+        repeatedSecurityCode: z.string().describe('The security code repeated by the user'),
       }),
-      execute: async ({ repeated_security_code: repeatedSecurityCode }) => {
+      execute: async ({ repeatedSecurityCode }) => {
         if (repeatedSecurityCode.trim() !== securityCode) {
           task.session.generateReply({
             instructions: 'The repeated security code does not match, ask the user to try again.',
@@ -343,21 +336,21 @@ function createGetSecurityCodeTask({
     name: 'update_security_code',
     description: "Call to update the card's security code.",
     parameters: z.object({
-      security_code: z
+      securityCode: z
         .string()
         .describe("The card's security code (3-4 digits, may have leading zeros)."),
     }),
     // With requireExplicitAsk, the model can't silent-fill from chatCtx during
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
-    execute: async ({ security_code: securityCode }: { security_code: string }, { ctx }) => {
+    execute: async ({ securityCode }: { securityCode: string }, { ctx }) => {
       const stripped = securityCode.trim();
       if (!/^\d+$/.test(stripped) || stripped.length < 3 || stripped.length > 4) {
         task.session.generateReply({
           instructions:
             "The security code's length is invalid, ask the user to repeat or to provide a new card and start over.",
         });
-        return undefined;
+        return;
       }
 
       currentSecurityCode = stripped;
@@ -366,7 +359,7 @@ function createGetSecurityCodeTask({
         if (!task.done) {
           task.complete({ securityCode: currentSecurityCode });
         }
-        return undefined;
+        return;
       }
 
       const confirmTool = buildConfirmTool(stripped);
@@ -392,17 +385,12 @@ function createGetSecurityCodeTask({
       extraInstructions,
     ),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [
-      ...(tools ?? []),
-      updateSecurityCodeTool,
-      declineCardCaptureTool,
-      restartCardCollectionTool,
-    ],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateSecurityCodeTool, declineCardCaptureTool, restartCardCollectionTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
@@ -423,7 +411,7 @@ function createGetExpirationDateTask({
   requireExplicitAsk = false,
   extraInstructions = '',
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -455,19 +443,19 @@ function createGetExpirationDateTask({
       name: 'confirm_expiration_date',
       description: 'Call after the user repeats their expiration date for confirmation.',
       parameters: z.object({
-        repeated_expiration_month: z
+        repeatedExpirationMonth: z
           .number()
           .int()
           .describe('The expiration month repeated by the user'),
-        repeated_expiration_year: z
+        repeatedExpirationYear: z
           .number()
           .int()
           .describe('The expiration year repeated by the user'),
       }),
-      execute: async ({ repeated_expiration_month, repeated_expiration_year }) => {
+      execute: async ({ repeatedExpirationMonth, repeatedExpirationYear }) => {
         if (
-          repeated_expiration_month !== expirationMonth ||
-          repeated_expiration_year !== expirationYear
+          repeatedExpirationMonth !== expirationMonth ||
+          repeatedExpirationYear !== expirationYear
         ) {
           task.session.generateReply({
             instructions: 'The repeated expiration date does not match, ask the user to try again.',
@@ -487,11 +475,11 @@ function createGetExpirationDateTask({
     description:
       "Call to update the card's expiration date. Collect both the numerical month and year.",
     parameters: z.object({
-      expiration_month: z
+      expirationMonth: z
         .number()
         .int()
         .describe("The numerical expiration month of the card, example: '04' for April"),
-      expiration_year: z
+      expirationYear: z
         .number()
         .int()
         .describe(
@@ -502,10 +490,7 @@ function createGetExpirationDateTask({
     // onEnter — it must produce an asking utterance first.
     flags: requireExplicitAsk ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
     execute: async (
-      {
-        expiration_month: expirationMonth,
-        expiration_year: expirationYear,
-      }: { expiration_month: number; expiration_year: number },
+      { expirationMonth, expirationYear }: { expirationMonth: number; expirationYear: number },
       { ctx },
     ) => {
       if (expirationMonth < 1 || expirationMonth > 12) {
@@ -513,21 +498,21 @@ function createGetExpirationDateTask({
           instructions:
             'The expiration month is invalid, ask the user to repeat the expiration month.',
         });
-        return undefined;
+        return;
       }
       if (expirationYear < 0 || expirationYear > 99) {
         task.session.generateReply({
           instructions:
             'The expiration year is invalid, ask the user to repeat the expiration year.',
         });
-        return undefined;
+        return;
       }
       if (isExpired(expirationMonth, expirationYear)) {
         task.session.generateReply({
           instructions:
             'The expiration date is in the past, the card is expired. Ask the user to provide another card.',
         });
-        return undefined;
+        return;
       }
 
       currentExpirationDate = `${String(expirationMonth).padStart(2, '0')}/${String(expirationYear).padStart(2, '0')}`;
@@ -536,7 +521,7 @@ function createGetExpirationDateTask({
         if (!task.done) {
           task.complete({ date: currentExpirationDate });
         }
-        return undefined;
+        return;
       }
 
       const confirmTool = buildConfirmTool(expirationMonth, expirationYear);
@@ -562,17 +547,12 @@ function createGetExpirationDateTask({
       extraInstructions,
     ),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [
-      ...(tools ?? []),
-      updateExpirationDateTool,
-      declineCardCaptureTool,
-      restartCardCollectionTool,
-    ],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateExpirationDateTool, declineCardCaptureTool, restartCardCollectionTool],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       await task.session.generateReply({
@@ -589,12 +569,12 @@ function createGetExpirationDateTask({
 
 export interface GetCreditCardTaskOptions {
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm each captured card detail. Defaults to confirming on
@@ -614,7 +594,7 @@ export interface GetCreditCardTaskOptions {
 export function createGetCreditCardTask({
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -627,12 +607,12 @@ export function createGetCreditCardTask({
     id: 'get_credit_card_task',
     instructions: '*none*',
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: tools ?? [],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools,
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       // Pass chatCtx into both the TaskGroup AND every sub-task. The
@@ -797,12 +777,12 @@ export class GetCreditCardTask extends AgentTask<GetCreditCardResult> {
 const CARD_NUMBER_BASE_INSTRUCTIONS = `
 You are a single step in a broader process of collecting credit card information.
 You are solely responsible for collecting the credit card number.
-{modality_specific}
+{modalitySpecific}
 If the user refuses to provide a credit card number, call decline_card_capture().
 If the user wishes to start over the credit card collection process, call restart_card_collection().
 Avoid listing out questions with bullet points or numbers, use a natural conversational tone.
 Never repeat any sensitive information, such as the user's credit card number, back to the user.
-{confirmation_instructions}
+{confirmationInstructions}
 `;
 
 const CARD_NUMBER_AUDIO_SPECIFIC = `
@@ -818,12 +798,12 @@ Handle input as typed text. Users may type the number with or without spaces or 
 const SECURITY_CODE_BASE_INSTRUCTIONS = `
 You are a single step in a broader process of collecting credit card information.
 You are solely responsible for collecting the user's card's security code.
-{modality_specific}
+{modalitySpecific}
 If the user refuses to provide a code, call decline_card_capture().
 If the user wishes to start over the card collection process, call restart_card_collection().
 Avoid listing out questions with bullet points or numbers, use a natural conversational tone.
 Never repeat any sensitive information, such as the user's security code, back to the user.
-{confirmation_instructions}
+{confirmationInstructions}
 `;
 
 const SECURITY_CODE_AUDIO_SPECIFIC = `
@@ -839,12 +819,12 @@ Handle input as typed text. Users will type the security code directly.
 const EXPIRATION_DATE_BASE_INSTRUCTIONS = `
 You are a single step in a broader process of collecting credit card information.
 You are solely responsible for collecting the user's card's expiration date.
-{modality_specific}
+{modalitySpecific}
 If the user refuses to provide a date, call decline_card_capture().
 If the user wishes to start over the card collection process, call restart_card_collection().
 Avoid listing out questions with bullet points or numbers, use a natural conversational tone.
 Never repeat any sensitive information, such as the user's expiration date, back to the user.
-{confirmation_instructions}
+{confirmationInstructions}
 `;
 
 const EXPIRATION_DATE_AUDIO_SPECIFIC = `

@@ -37,12 +37,12 @@ export interface GetDOBTaskOptions {
   /** Also capture the (optional) time of birth. Defaults to false. */
   includeTime?: boolean;
   chatCtx?: ChatContext;
-  turnDetection?: TurnDetectionMode | null;
+  turnDetection?: TurnDetectionMode;
   tools?: readonly ToolContextEntry[];
-  stt?: STT | STTModelString | null;
-  vad?: VAD | null;
-  llm?: LLM | RealtimeModel | LLMModels | null;
-  tts?: TTS | TTSModelString | null;
+  stt?: STT | STTModelString;
+  vad?: VAD;
+  llm?: LLM | RealtimeModel | LLMModels;
+  tts?: TTS | TTSModelString;
   allowInterruptions?: boolean;
   /**
    * Whether to ask the user to confirm the captured date of birth. Defaults to confirming on
@@ -106,7 +106,7 @@ export function createGetDOBTask({
   includeTime = false,
   chatCtx,
   turnDetection,
-  tools,
+  tools = [],
   stt,
   vad,
   llm,
@@ -236,7 +236,7 @@ export function createGetDOBTask({
         if (!task.done) {
           task.complete(buildResult(currentDob));
         }
-        return undefined;
+        return;
       }
 
       await injectConfirmTool();
@@ -274,7 +274,7 @@ export function createGetDOBTask({
         if (!task.done) {
           task.complete(buildResult(currentDob));
         }
-        return undefined;
+        return;
       }
 
       if (confirmationRequired(ctx)) {
@@ -319,25 +319,25 @@ export function createGetDOBTask({
     id: 'get_dob_task',
     instructions: new Instructions('', {
       audio: safeRender(BASE_INSTRUCTIONS, {
-        modality_specific: AUDIO_SPECIFIC,
-        time_instructions: timeInstructions,
-        confirmation_instructions: requireConfirmation !== false ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        modalitySpecific: AUDIO_SPECIFIC,
+        timeInstructions,
+        confirmationInstructions: requireConfirmation !== false ? confirmationInstructions : '',
+        extraInstructions,
       }),
       text: safeRender(BASE_INSTRUCTIONS, {
-        modality_specific: TEXT_SPECIFIC,
-        time_instructions: timeInstructions,
-        confirmation_instructions: requireConfirmation === true ? confirmationInstructions : '',
-        extra_instructions: extraInstructions,
+        modalitySpecific: TEXT_SPECIFIC,
+        timeInstructions,
+        confirmationInstructions: requireConfirmation === true ? confirmationInstructions : '',
+        extraInstructions,
       }),
     }),
     chatCtx,
-    turnDetection: turnDetection ?? undefined,
-    tools: [...(tools ?? []), updateDobTool, declineTool, ...(includeTime ? [updateTimeTool] : [])],
-    stt: stt ?? undefined,
-    vad: vad ?? undefined,
-    llm: llm ?? undefined,
-    tts: tts ?? undefined,
+    turnDetection,
+    tools: [...tools, updateDobTool, declineTool, ...(includeTime ? [updateTimeTool] : [])],
+    stt,
+    vad,
+    llm,
+    tts,
     allowInterruptions,
     onEnter: async () => {
       const prompt = includeTime
@@ -372,16 +372,16 @@ export class GetDOBTask extends AgentTask<GetDOBResult> {
 
 const BASE_INSTRUCTIONS = `
 You are only a single step in a broader system, responsible solely for capturing a date of birth.
-{modality_specific}
-{time_instructions}Call \`update_dob\` at the first opportunity whenever you form a new hypothesis about the date of birth. (before asking any questions or providing any answers.)
+{modalitySpecific}
+{timeInstructions}Call \`update_dob\` at the first opportunity whenever you form a new hypothesis about the date of birth. (before asking any questions or providing any answers.)
 Don't invent dates, stick strictly to what the user said.
-{confirmation_instructions}
+{confirmationInstructions}
 When reading back dates, use a natural spoken format like 'January fifteenth, nineteen ninety'.
 If the date is unclear or invalid, or it takes too much back-and-forth, prompt for it in parts: first the month, then the day, then the year.
 Ignore unrelated input and avoid going off-topic. Do not generate markdown, greetings, or unnecessary commentary.
 Avoid verbosity by not sharing example dates or formats unless prompted to do so. Do not deviate from the goal of collecting the user's birthday.
 Always explicitly invoke a tool when applicable. Do not simulate tool usage, no real action is taken unless the tool is explicitly called.\
-{extra_instructions}
+{extraInstructions}
 `;
 
 const AUDIO_SPECIFIC = `
