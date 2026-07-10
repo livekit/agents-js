@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeEach, describe, it, vi } from 'vitest';
+import { describe, it, vi } from 'vitest';
 import type { LLM } from '../llm/llm.js';
-import { initializeLogger } from '../log.js';
 import type { STT } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
@@ -33,9 +32,6 @@ export const describeLiveKitInference = (
 ) => {
   if (hasLiveKitCredentials()) {
     describe(name, { timeout: 120_000 }, async () => {
-      beforeEach(() => {
-        initializeLogger({ level: 'silent', pretty: false });
-      });
       vi.doMock('@livekit/agents', () => agentsModule);
       // Import the shared harness source directly: declaring the test plugin as an agents
       // dependency would create a workspace cycle because the plugin already depends on agents.
