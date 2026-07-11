@@ -139,7 +139,7 @@ export class ResponsesWebSocket {
 
     const channel = stream.createStreamChannel<WsServerEvent>();
     this.#outputQueue.push(channel);
-    this.#ws.send(JSON.stringify(payload));
+    this.#ws.send(JSON.stringify(payload, omitNullishObjectFields));
     return channel;
   }
 
@@ -544,7 +544,7 @@ export class WSLLMStream extends llm.LLMStream {
    * (`previous_response_not_found`), throws for all other errors.
    */
   #handleError(event: WsServerEvent & { type: 'error' }, conn: ResponsesWebSocket): boolean {
-    const code = event.error?.code;
+    const code = event.error?.code ?? event.code;
 
     if (code === 'previous_response_not_found') {
       // The server-side in-memory cache was evicted (e.g. after a failed turn
@@ -692,6 +692,12 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
       );
     });
   });
+}
+
+function omitNullishObjectFields(_key: string, value: unknown): unknown {
+  // Responses WS requests bypass the OpenAI SDK serializer, so omit unset
+  // optional fields here instead of sending explicit nulls the API rejects.
+  return value === null || value === undefined ? undefined : value;
 }
 
 function getWebSocketStateLabel(readyState: number): string {
