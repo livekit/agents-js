@@ -139,7 +139,7 @@ export class ResponsesWebSocket {
 
     const channel = stream.createStreamChannel<WsServerEvent>();
     this.#outputQueue.push(channel);
-    this.#ws.send(JSON.stringify(payload, omitNullishObjectFields));
+    this.#ws.send(JSON.stringify(payload));
     return channel;
   }
 
@@ -692,12 +692,6 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
       );
     });
   });
-}
-
-function omitNullishObjectFields(_key: string, value: unknown): unknown {
-  // Responses WS requests bypass the OpenAI SDK serializer, so omit unset
-  // optional fields here instead of sending explicit nulls the API rejects.
-  return value === null || value === undefined ? undefined : value;
 }
 
 function getWebSocketStateLabel(readyState: number): string {
