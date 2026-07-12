@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-bey
 
+## 1.5.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @livekit/agents@1.5.2
+
 ## 1.5.1
 
 ### Patch Changes

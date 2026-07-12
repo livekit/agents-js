@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-openai
 
+## 1.5.2
+
+### Patch Changes
+
+- Handle top-level `code` and `param` fields on OpenAI Responses WebSocket error frames so request-validation errors surface cleanly and error-code routing (e.g. retry on `previous_response_not_found`) works for top-level codes. - [#2024](https://github.com/livekit/agents-js/pull/2024) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies []:
+  - @livekit/agents@1.5.2
+
 ## 1.5.1
 
 ### Patch Changes
