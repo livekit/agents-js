@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-phonic
 
+## 1.5.2
+
+### Patch Changes
+
+- Add `additionalParams` support to the Phonic realtime model. - [#2021](https://github.com/livekit/agents-js/pull/2021) ([@qionghuang6](https://github.com/qionghuang6))
+
+- Updated dependencies []:
+  - @livekit/agents@1.5.2
+
 ## 1.5.1
 
 ### Patch Changes
