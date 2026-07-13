@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-soniox': minor
+'@livekit/agents-plugin-soniox': patch
 ---
 
 Add Soniox endpoint latency adjustment level STT option.
