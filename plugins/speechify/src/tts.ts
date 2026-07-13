@@ -244,6 +244,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const requestId = shortuuid();
       const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
 
+      this.markStarted();
       const response = await this.#tts.client.audio.speech(buildSpeechRequest(text, this.#opts), {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.connOptions.timeoutMs / 1000,
