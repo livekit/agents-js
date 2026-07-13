@@ -30,7 +30,7 @@ export interface TTSOptions {
   language?: string;
   loudnessNormalization?: boolean;
   textNormalization?: boolean;
-  apiKey?: string;
+  token?: string;
   baseUrl?: string;
   client?: SpeechifyClient;
   tokenizer?: tokenize.SentenceTokenizer;
@@ -47,9 +47,7 @@ const buildSpeechRequest = (text: string, opts: TTSOptions): Speechify.GetSpeech
     input: text,
     voice_id: opts.voiceId,
   };
-  // The SDK's Model union can lag newly released models; TTSModels is the
-  // plugin's source of truth and the API accepts the value.
-  if (opts.model) request.model = opts.model as Speechify.GetSpeechRequest.Model;
+  if (opts.model) request.model = opts.model;
   if (opts.language) request.language = opts.language;
   if (opts.loudnessNormalization !== undefined || opts.textNormalization !== undefined) {
     request.options = {
@@ -80,9 +78,9 @@ export class TTS extends tts.TTS {
    * Create a new instance of Speechify TTS.
    *
    * @remarks
-   * `apiKey` must be set, either via the constructor or the `SPEECHIFY_API_KEY`
+   * `token` must be set, either via the constructor or the `SPEECHIFY_API_KEY`
    * environment variable. Pass a preconfigured `client` to reuse an existing
-   * `SpeechifyClient` (in which case `apiKey`/`baseUrl` are ignored).
+   * `SpeechifyClient` (in which case `token`/`baseUrl` are ignored).
    *
    * Synthesis uses the Speechify `/audio/speech` endpoint, which returns raw PCM
    * (24 kHz mono) plus word-level speech marks. `stream()` chunks input into
@@ -103,13 +101,13 @@ export class TTS extends tts.TTS {
     if (merged.client) {
       this.#client = merged.client;
     } else {
-      const apiKey = merged.apiKey ?? process.env.SPEECHIFY_API_KEY;
-      if (!apiKey) {
+      const token = merged.token ?? process.env.SPEECHIFY_API_KEY;
+      if (!token) {
         throw new Error(
           'Speechify API key is required, whether as an argument or as $SPEECHIFY_API_KEY',
         );
       }
-      this.#client = new SpeechifyClient({ apiKey, baseUrl: merged.baseUrl });
+      this.#client = new SpeechifyClient({ token, baseUrl: merged.baseUrl });
     }
   }
 
@@ -133,7 +131,7 @@ export class TTS extends tts.TTS {
     return this.#tokenizer;
   }
 
-  updateOptions(opts: Partial<Omit<TTSOptions, 'client' | 'apiKey' | 'baseUrl' | 'tokenizer'>>) {
+  updateOptions(opts: Partial<Omit<TTSOptions, 'client' | 'token' | 'baseUrl' | 'tokenizer'>>) {
     this.#opts = { ...this.#opts, ...opts };
   }
 

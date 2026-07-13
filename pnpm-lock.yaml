@@ -1330,8 +1330,8 @@ importers:
   plugins/speechify:
     dependencies:
       '@speechify/api':
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^3.0.1
+        version: 3.0.1
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -2741,8 +2741,8 @@ packages:
   '@rushstack/ts-command-line@4.21.0':
     resolution: {integrity: sha512-z38FLUCn8M9FQf19gJ9eltdwkvc47PxvJmVZS6aKwbBAa3Pis3r3A+ZcBCVPNb9h/Tbga+i0tHdzoSGUoji9GQ==}
 
-  '@speechify/api@2.0.0':
-    resolution: {integrity: sha512-GYIYO/B0bRArg9e4ljLxHL/ZG27p7X68UGu6bvEqBk0I8CSpqPKHO+rsGGJR+oIRzXZpR5LVNcS6RPN0ljnvNw==}
+  '@speechify/api@3.0.1':
+    resolution: {integrity: sha512-bEqbyvwGW0A/cgq+ZsQJVP3Hm4/0Bm1sniVtPLBh7vDNG2f/YY8y8sweWojoUnhIeIAL6bHBde43+VZLA2MYpA==}
     engines: {node: '>=18.0.0'}
 
   '@standard-schema/spec@1.1.0':
@@ -6553,7 +6553,7 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  '@speechify/api@2.0.0': {}
+  '@speechify/api@3.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 

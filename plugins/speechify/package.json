@@ -43,7 +43,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@speechify/api": "^2.0.0"
+    "@speechify/api": "^3.0.1"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
