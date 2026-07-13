@@ -544,7 +544,7 @@ export class WSLLMStream extends llm.LLMStream {
    * (`previous_response_not_found`), throws for all other errors.
    */
   #handleError(event: WsServerEvent & { type: 'error' }, conn: ResponsesWebSocket): boolean {
-    const code = event.error?.code;
+    const code = event.error?.code ?? event.code;
 
     if (code === 'previous_response_not_found') {
       // The server-side in-memory cache was evicted (e.g. after a failed turn
