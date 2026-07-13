@@ -236,7 +236,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
       sentenceStream.endInput();
-      sentenceStream.close();
     };
 
     const synthesizeSentence = async (text: string) => {
