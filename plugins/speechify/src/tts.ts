@@ -205,7 +205,6 @@ export class ChunkedStream extends tts.ChunkedStream {
       putFrames(bstream.flush());
       this.queue.close();
     } catch (e) {
-      if (!this.queue.closed) this.queue.close();
       if (this.abortSignal.aborted) return;
       throw toError(e);
     }
@@ -289,7 +288,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     try {
       await Promise.all([forwardInput(), consume()]);
     } catch (e) {
-      if (!this.queue.closed) this.queue.close();
       if (this.abortSignal.aborted) return;
       throw toError(e);
     }
