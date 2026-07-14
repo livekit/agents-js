@@ -7,6 +7,7 @@ import type * as api_proto from './api_proto.js';
 import {
   RealtimeModel,
   RealtimeSession,
+  isFatalError,
   livekitItemToOpenAIItem,
   processBaseURL,
 } from './realtime_model.js';
@@ -26,6 +27,8 @@ type RealtimeSessionInternals = {
 
 type ResponseDoneSessionInternals = {
   handleResponseDone: (event: api_proto.ResponseDoneEvent) => void;
+  handleResponseDoneButNotComplete: (event: api_proto.ResponseDoneEvent) => void;
+  handleError: (event: api_proto.ErrorEvent) => void;
   on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
   currentGeneration: {
     messageChannel: stream.StreamChannel<llm.MessageGeneration>;
@@ -35,6 +38,11 @@ type ResponseDoneSessionInternals = {
     _createdTimestamp: number;
     _firstTokenTimestamp?: number;
   };
+};
+
+type ErrorSessionInternals = {
+  handleError: (event: api_proto.ErrorEvent) => void;
+  on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
 };
 
 function createSessionForTest(): RealtimeSessionInternals {
@@ -174,6 +182,149 @@ describe('RealtimeSession response.done status handling', () => {
         },
       }),
     ).not.toThrow();
+  });
+});
+
+describe('RealtimeSession fatal error handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createErrorSession(): ErrorSessionInternals {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    return model.session() as unknown as ErrorSessionInternals;
+  }
+
+  function createResponseDoneSession(): ResponseDoneSessionInternals {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    return model.session() as unknown as ResponseDoneSessionInternals;
+  }
+
+  it('matches known fatal error codes', () => {
+    expect(isFatalError({ code: 'insufficient_quota' })).toBe(true);
+    expect(isFatalError({ code: undefined, type: 'invalid_api_key' })).toBe(true);
+    expect(isFatalError({ code: 'server_error' })).toBe(false);
+    expect(isFatalError({})).toBe(false);
+    expect(isFatalError(null)).toBe(false);
+  });
+
+  it('raises non-retryable APIError on fatal server error events', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    expect(() =>
+      session.handleError({
+        type: 'error',
+        event_id: 'evt_quota',
+        error: {
+          type: 'invalid_request_error',
+          code: 'insufficient_quota',
+          message: 'quota exceeded',
+          param: '',
+          event_id: 'evt_quota',
+        },
+      }),
+    ).toThrow(APIError);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('emits transient server error events as recoverable', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_server_error',
+      error: {
+        type: 'server_error',
+        code: 'server_error',
+        message: 'server hiccup',
+        param: '',
+        event_id: 'evt_server_error',
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
+  });
+
+  it('ignores cancellation failed server error events', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_cancel_failed',
+      error: {
+        type: 'invalid_request_error',
+        message: 'Cancellation failed: no response',
+        param: '',
+        event_id: 'evt_cancel_failed',
+      },
+    });
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('raises non-retryable APIError on fatal response.done failures', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    expect(() =>
+      session.handleResponseDoneButNotComplete({
+        type: 'response.done',
+        event_id: 'evt_response_failed',
+        response: {
+          id: 'resp_failed',
+          object: 'realtime.response',
+          status: 'failed',
+          status_details: {
+            type: 'failed',
+            error: {
+              code: 'insufficient_quota',
+              message: 'quota exceeded',
+            },
+          },
+          output: [],
+        },
+      }),
+    ).toThrow(APIError);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('emits transient response.done failures as recoverable', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleResponseDoneButNotComplete({
+      type: 'response.done',
+      event_id: 'evt_response_failed',
+      response: {
+        id: 'resp_failed',
+        object: 'realtime.response',
+        status: 'failed',
+        status_details: {
+          type: 'failed',
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'rate limited',
+          },
+        },
+        output: [],
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
   });
 });
 
