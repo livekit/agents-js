@@ -248,7 +248,7 @@ export class RealtimeModel extends llm.RealtimeModel {
    * @param apiKey - Azure OpenAI API key. If undefined, will attempt to read from the environment variable AZURE_OPENAI_API_KEY.
    * @param entraToken - Azure Entra authentication token. Required if not using API key authentication.
    * @param baseURL - Base URL for the API endpoint. If undefined, constructed from the azure_endpoint.
-   * @param voice - Voice setting for audio outputs. Defaults to "alloy".
+   * @param voice - Voice setting for audio outputs. Defaults to "marin".
    * @param inputAudioTranscription - Options for transcribing input audio. Defaults to @see DEFAULT_INPUT_AUDIO_TRANSCRIPTION.
    * @param inputAudioNoiseReduction - Options for noise reduction. Defaults to undefined.
    * @param turnDetection - Options for server-based voice activity detection (VAD). Defaults to @see DEFAULT_SERVER_VAD_OPTIONS.
@@ -266,7 +266,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     apiKey,
     entraToken,
     baseURL,
-    voice = 'alloy',
+    voice = 'marin',
     temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
     inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
     inputAudioNoiseReduction,

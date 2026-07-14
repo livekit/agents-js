@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
@@ -10,6 +9,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
+import { configureFfmpeg } from '../../ffmpeg.js';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -25,7 +25,7 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { createSilenceFrame } from '../utils.js';
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+configureFfmpeg();
 
 const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;

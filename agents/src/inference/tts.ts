@@ -138,6 +138,8 @@ export interface InworldOptions {
 export interface XaiTTSOptions {
   /** Output bit rate in bits per second. */
   bit_rate?: 32000 | 64000 | 96000 | 128000 | 192000;
+  /** Speaking-rate multiplier. Default: 1.0. */
+  speed?: number;
 }
 
 type _TTSModels =

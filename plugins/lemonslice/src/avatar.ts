@@ -14,6 +14,8 @@ import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
 import type { VideoGrant } from 'livekit-server-sdk';
 import { AccessToken } from 'livekit-server-sdk';
+import { readFileSync } from 'node:fs';
+import { extname } from 'node:path';
 import { log } from './log.js';
 
 const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
@@ -38,14 +40,24 @@ export class LemonSliceException extends Error {
 export interface AvatarSessionOptions {
   /**
    * The ID of the LemonSlice agent to add to the session.
-   * Either agentId or agentImageUrl must be provided.
+   * Exactly one of agentId, agentImageUrl, or agentImage must be provided.
    */
   agentId?: string | null;
   /**
    * The URL of the image to use as the agent's avatar.
-   * Either agentId or agentImageUrl must be provided.
+   * Exactly one of agentId, agentImageUrl, or agentImage must be provided.
    */
   agentImageUrl?: string | null;
+  /**
+   * A local image file path or Buffer to upload as the agent's avatar.
+   * Exactly one of agentId, agentImageUrl, or agentImage must be provided.
+   */
+  agentImage?: string | Buffer | null;
+  /**
+   * MIME type for the agentImage when provided as a Buffer (e.g. 'image/png').
+   * Defaults to 'image/png'.
+   */
+  agentImageMimeType?: string;
   /**
    * A prompt that subtly influences the avatar's movements and expressions.
    */
@@ -125,6 +137,8 @@ export interface StartOptions {
 export class AvatarSession extends voice.AvatarSession {
   private agentId: string | null;
   private agentImageUrl: string | null;
+  private agentImageBytes: Buffer | null;
+  private agentImageMimeType: string;
   private agentPrompt: string | null;
   private idleTimeout: number | null;
   private extraPayload: Record<string, unknown> | null;
@@ -147,11 +161,30 @@ export class AvatarSession extends voice.AvatarSession {
     this.agentId = options.agentId ?? null;
     this.agentImageUrl = options.agentImageUrl ?? null;
 
-    if (!this.agentId && !this.agentImageUrl) {
-      throw new LemonSliceException('Missing agentId or agentImageUrl');
+    const sourceCount = [this.agentId, this.agentImageUrl, options.agentImage].filter(
+      Boolean,
+    ).length;
+    if (sourceCount === 0) {
+      throw new LemonSliceException('Missing one of agentId, agentImageUrl, or agentImage');
     }
-    if (this.agentId && this.agentImageUrl) {
-      throw new LemonSliceException('Only one of agentId or agentImageUrl can be provided');
+    if (sourceCount > 1) {
+      throw new LemonSliceException(
+        'Only one of agentId, agentImageUrl, or agentImage can be provided',
+      );
+    }
+
+    this.agentImageMimeType = 'image/png';
+    if (options.agentImage) {
+      if (typeof options.agentImage === 'string') {
+        this.agentImageMimeType = mimeTypeFromExtension(extname(options.agentImage));
+        this.agentImageBytes = readFileSync(options.agentImage);
+      } else {
+        this.agentImageMimeType = options.agentImageMimeType ?? 'image/png';
+        validateMimeType(this.agentImageMimeType);
+        this.agentImageBytes = options.agentImage;
+      }
+    } else {
+      this.agentImageBytes = null;
     }
 
     this.agentPrompt = options.agentPrompt ?? null;
@@ -294,13 +327,29 @@ export class AvatarSession extends voice.AvatarSession {
           Object.assign(payload, this.extraPayload);
         }
 
+        const headers: Record<string, string> = {
+          'X-API-Key': this.apiKey,
+        };
+        let body: BodyInit;
+
+        if (this.agentImageBytes) {
+          const formData = new FormData();
+          formData.append('payload', JSON.stringify(payload));
+          formData.append(
+            'image',
+            new Blob([new Uint8Array(this.agentImageBytes)], { type: this.agentImageMimeType }),
+            `image${extensionFromMimeType(this.agentImageMimeType)}`,
+          );
+          body = formData;
+        } else {
+          headers['Content-Type'] = 'application/json';
+          body = JSON.stringify(payload);
+        }
+
         const response = await fetch(this.apiUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': this.apiKey,
-          },
-          body: JSON.stringify(payload),
+          headers,
+          body,
           signal: AbortSignal.timeout(this.connOptions.timeoutMs),
         });
 
@@ -335,4 +384,38 @@ export class AvatarSession extends voice.AvatarSession {
       message: 'Failed to start LemonSlice Avatar Session after all retries',
     });
   }
+}
+
+const MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+
+const SUPPORTED_MIME_TYPES = new Set(Object.values(MIME_TYPES));
+
+function mimeTypeFromExtension(ext: string): string {
+  const mime = MIME_TYPES[ext.toLowerCase()];
+  if (!mime) {
+    throw new LemonSliceException(
+      `Unsupported image extension '${ext}'. Supported: ${Object.keys(MIME_TYPES).join(', ')}`,
+    );
+  }
+  return mime;
+}
+
+function validateMimeType(mime: string): void {
+  if (!SUPPORTED_MIME_TYPES.has(mime)) {
+    throw new LemonSliceException(
+      `Unsupported MIME type '${mime}'. Supported: ${[...SUPPORTED_MIME_TYPES].join(', ')}`,
+    );
+  }
+}
+
+function extensionFromMimeType(mime: string): string {
+  for (const [ext, type] of Object.entries(MIME_TYPES)) {
+    if (type === mime) return ext;
+  }
+  return '.png';
 }

@@ -18,6 +18,7 @@ export {
   Toolset,
   toToolContext,
   type AgentHandoff,
+  type AnonFunctionTool,
   type DuplicateMode,
   type FunctionTool,
   type Tool,
