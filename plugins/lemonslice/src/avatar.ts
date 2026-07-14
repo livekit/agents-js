@@ -8,6 +8,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   getJobContext,
   intervalForRetry,
+  toSnakeCaseDeep,
   voice,
 } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
@@ -59,9 +60,13 @@ export interface AvatarSessionOptions {
    */
   agentImageMimeType?: string;
   /**
-   * A prompt that subtly influences the avatar's movements and expressions.
+   * A prompt that subtly influences the avatar's movements and expressions while responding.
    */
   agentPrompt?: string | null;
+  /**
+   * A prompt that subtly influences the avatar's movements and expressions while idle.
+   */
+  agentIdlePrompt?: string | null;
   /**
    * The idle timeout, in seconds. Defaults to 60 seconds.
    */
@@ -140,6 +145,7 @@ export class AvatarSession extends voice.AvatarSession {
   private agentImageBytes: Buffer | null;
   private agentImageMimeType: string;
   private agentPrompt: string | null;
+  private agentIdlePrompt: string | null;
   private idleTimeout: number | null;
   private extraPayload: Record<string, unknown> | null;
   private apiUrl: string;
@@ -148,6 +154,7 @@ export class AvatarSession extends voice.AvatarSession {
   private avatarParticipantName: string;
   private connOptions: APIConnectOptions;
 
+  #sessionId: string | null = null;
   #logger = log();
 
   /**
@@ -188,6 +195,7 @@ export class AvatarSession extends voice.AvatarSession {
     }
 
     this.agentPrompt = options.agentPrompt ?? null;
+    this.agentIdlePrompt = options.agentIdlePrompt ?? null;
     this.idleTimeout = options.idleTimeout ?? null;
     this.extraPayload = options.extraPayload ?? null;
 
@@ -212,6 +220,11 @@ export class AvatarSession extends voice.AvatarSession {
 
   override get provider(): string {
     return 'lemonslice';
+  }
+
+  /** The LemonSlice session ID, set after {@link start} completes. */
+  get sessionId(): string | null {
+    return this.#sessionId;
   }
 
   /**
@@ -247,13 +260,15 @@ export class AvatarSession extends voice.AvatarSession {
     }
 
     let localParticipantIdentity: string;
-    try {
-      const jobCtx = getJobContext();
+    let livekitSessionId: string | undefined;
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
       localParticipantIdentity = jobCtx.agent?.identity || '';
       if (!localParticipantIdentity && room.localParticipant) {
         localParticipantIdentity = room.localParticipant.identity;
       }
-    } catch {
+      livekitSessionId = jobCtx.job.room?.sid;
+    } else {
       if (!room.isConnected || !room.localParticipant) {
         throw new LemonSliceException('failed to get local participant identity');
       }
@@ -283,7 +298,8 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitToken = await at.toJwt();
 
     this.#logger.debug('starting avatar session');
-    const sessionId = await this.startAgent(livekitUrl, livekitToken);
+    const sessionId = await this.startAgent(livekitUrl, livekitToken, livekitSessionId);
+    this.#sessionId = sessionId;
 
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
@@ -296,7 +312,11 @@ export class AvatarSession extends voice.AvatarSession {
     return sessionId;
   }
 
-  private async startAgent(livekitUrl: string, livekitToken: string): Promise<string> {
+  private async startAgent(
+    livekitUrl: string,
+    livekitToken: string,
+    livekitSessionId?: string,
+  ): Promise<string> {
     for (let i = 0; i <= this.connOptions.maxRetry; i++) {
       try {
         const payload: Record<string, any> = {
@@ -306,6 +326,10 @@ export class AvatarSession extends voice.AvatarSession {
             livekit_token: livekitToken,
           },
         };
+
+        if (livekitSessionId) {
+          payload.properties.livekit_session_id = livekitSessionId;
+        }
 
         if (this.agentId) {
           payload.agent_id = this.agentId;
@@ -319,12 +343,16 @@ export class AvatarSession extends voice.AvatarSession {
           payload.agent_prompt = this.agentPrompt;
         }
 
+        if (this.agentIdlePrompt) {
+          payload.agent_idle_prompt = this.agentIdlePrompt;
+        }
+
         if (this.idleTimeout !== null) {
           payload.idle_timeout = this.idleTimeout;
         }
 
         if (this.extraPayload) {
-          Object.assign(payload, this.extraPayload);
+          Object.assign(payload, toSnakeCaseDeep(this.extraPayload) as Record<string, unknown>);
         }
 
         const headers: Record<string, string> = {
