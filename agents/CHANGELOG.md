@@ -1,5 +1,41 @@
 # @livekit/agents
 
+## 1.5.2
+
+## 1.5.1
+
+### Patch Changes
+
+- Replace @ffmpeg-installer/ffmpeg with @livekit/av, LiveKit's own minimal LGPL FFmpeg build shipped as platform-specific npm packages. - [#1999](https://github.com/livekit/agents-js/pull/1999) ([@u9g](https://github.com/u9g))
+
+- Conversation-aware STT recognition (keyterms + chat context), ported from python livekit-agents PR #6039. Adds `keytermsOptions` on `AgentSession` with static `keyterms` and LLM-based `keytermDetection` (confirmation-gated), new `STTCapabilities.keyterms`/`chatContext` flags with `_updateSessionKeyterms()`/`_pushConversationItem()` hooks (forwarded by the fallback and stream adapters), keyterm support for deepgram (v1/v2), assemblyai, and livekit inference STT, and native conversation-context carryover (`agentContextCarryover`) for assemblyai u3-rt-pro. - [#1967](https://github.com/livekit/agents-js/pull/1967) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Disable OpenAI SDK retries for LiveKit inference and OpenAI SDK-based plugin requests. - [#1981](https://github.com/livekit/agents-js/pull/1981) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Export the `AnonFunctionTool` type so callers can annotate return types for name-less `tool()` factories used in object-map tool registration. - [#2014](https://github.com/livekit/agents-js/pull/2014) ([@jonh-1](https://github.com/jonh-1))
+
+- Fix duplicated user chat items in observability: a superseding EOU bounce created while an earlier bounce was mid-commit could fire after the transcript was already committed and cleared, committing a second empty user turn with stale metrics. The transcript guard is now re-checked at fire time. Also, session-report chat items now only upload string content (matching Python), so non-string content can no longer render as garbage in the dashboard. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix TTS TTFB attribution: `tts_node` TTFB is now anchored on the time the first sentence is sent to the TTS provider instead of the time the first LLM token arrives, so upstream text generation and tokenization latency is no longer counted as TTS latency. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `session.run()` stalling or racing the activity transition when an AgentTask handoff is triggered by a speech that predates the run (e.g. created in `onEnter`): the blocked handoff tasks are now watched by the active run for the duration of the transition. - [#1961](https://github.com/livekit/agents-js/pull/1961) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add output retries for AgentSession.run structured outputs. - [#1978](https://github.com/livekit/agents-js/pull/1978) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- implement CLI serverInfo protocol - [#2015](https://github.com/livekit/agents-js/pull/2015) ([@davidzhao](https://github.com/davidzhao))
+
+- Tighten audio EOT cancellation to rely on speech activity start events. - [#1939](https://github.com/livekit/agents-js/pull/1939) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Trim the chat context recorded on the `eou_detection` span to the last 6 items and exclude function calls, instructions, empty messages, handoffs, and config updates (matching Python), so the span no longer re-emits the whole conversation on every end-of-turn inference. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(deps): update @livekit/rtc-node to 0.13.31 - [#1992](https://github.com/livekit/agents-js/pull/1992) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Fixes AudioSource.waitForPlayout resolving early with audio still queued (livekit/node-sdks#693).
+
+- fix(workflows): cancel a warm transfer when the caller hangs up before the merge. `WarmTransferTask` now watches the caller room from `onEnter`: if the caller disconnects while the human agent's phone is still ringing or during the briefing, the pending SIP dial is aborted, the human agent room is torn down (ending the call), and the task completes with a `ToolError` — instead of the human agent being connected into an empty room. A human agent who already answered is told the caller left — a reply generated from the new `callerHangupInstruction` option (built-in default when not provided) — before their call is ended. - [#2008](https://github.com/livekit/agents-js/pull/2008) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(example): update otel trace example - [#1864](https://github.com/livekit/agents-js/pull/1864) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.5.0
 
 ### Minor Changes
