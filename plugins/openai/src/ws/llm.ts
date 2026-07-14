@@ -36,12 +36,11 @@ const WS_MAX_SESSION_DURATION = 3_600_000;
 /**
  * Build the Responses-API WebSocket URL.
  *
- * Includes the model on the upgrade URL so OpenAI-compatible gateways
+ * Includes the model on the upgrade URL for OpenAI-compatible gateways
  * (which can only see the URL at the WebSocket upgrade, not the subsequent
- * `response.create` frame) can route by model. Mirrors the existing
- * convention in `realtime/realtime_model.ts` for the conversational
- * Realtime API. OpenAI's native endpoint accepts and ignores the
- * parameter, so this is a no-op for direct connections.
+ * `response.create` frame) so they can route by model. OpenAI's native
+ * endpoint gets the model in the `response.create` frame, so the query
+ * parameter is intentionally omitted for direct connections.
  *
  * The scheme of `baseURL` is respected: `http://` maps to `ws://`
  * and `https://` maps to `wss://`.
@@ -49,11 +48,16 @@ const WS_MAX_SESSION_DURATION = 3_600_000;
  * @internal
  */
 export function buildResponsesWsUrl(baseURL: string | undefined, model: string): string {
-  const base = baseURL
-    ? `${baseURL.replace(/^http(s?):/, 'ws$1:').replace(/\/+$/, '')}/responses`
+  const normalizedBaseURL = baseURL?.replace(/^http(s?):/, 'ws$1:').replace(/\/+$/, '');
+  const base = normalizedBaseURL
+    ? normalizedBaseURL.endsWith('/responses')
+      ? normalizedBaseURL
+      : `${normalizedBaseURL}/responses`
     : OPENAI_RESPONSES_WS_URL;
   const url = new URL(base);
-  url.searchParams.set('model', model);
+  if (url.hostname !== 'api.openai.com') {
+    url.searchParams.set('model', model);
+  }
   return url.toString();
 }
 
