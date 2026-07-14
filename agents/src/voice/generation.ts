@@ -13,7 +13,7 @@ import {
   ChatMessage,
   FunctionCall,
   FunctionCallOutput,
-  isInstructions,
+  renderInstructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
@@ -401,19 +401,24 @@ export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
  * Update the instruction message in the chat context or insert a new one if missing.
  *
  * This function looks for an existing instruction message in the chat context using the identifier
- * 'INSTRUCTIONS_MESSAGE_ID'.
+ * 'INSTRUCTIONS_MESSAGE_ID'. Instructions are resolved to a plain string using the given modality
+ * before storage.
  *
  * @param options - The options for updating the instructions.
  * @param options.chatCtx - The chat context to update.
  * @param options.instructions - The instructions to add.
  * @param options.addIfMissing - Whether to add the instructions if they are missing.
+ * @param options.modality - The modality used to render {@link Instructions} (default `'audio'`).
  */
 export function updateInstructions(options: {
   chatCtx: ChatContext;
   instructions: string | Instructions;
   addIfMissing: boolean;
+  modality?: 'audio' | 'text';
 }) {
-  const { chatCtx, instructions, addIfMissing } = options;
+  const { chatCtx, instructions, addIfMissing, modality = 'audio' } = options;
+
+  const text = renderInstructions(instructions, modality);
 
   const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
   if (idx !== undefined) {
@@ -422,7 +427,7 @@ export function updateInstructions(options: {
       chatCtx.items[idx] = ChatMessage.create({
         id: INSTRUCTIONS_MESSAGE_ID,
         role: 'system',
-        content: [instructions],
+        content: [text],
         createdAt: chatCtx.items[idx]!.createdAt,
       });
     } else {
@@ -434,47 +439,10 @@ export function updateInstructions(options: {
       ChatMessage.create({
         id: INSTRUCTIONS_MESSAGE_ID,
         role: 'system',
-        content: [instructions],
+        content: [text],
       }),
     );
   }
-}
-
-/**
- * Apply the correct {@link Instructions} variant for the turn's input modality.
- *
- * Locates the instructions message (by {@link INSTRUCTIONS_MESSAGE_ID}) and,
- * if its content contains any {@link Instructions} entries, rebuilds the
- * message so each Instructions renders as the chosen variant. No-op when no
- * modality-aware instructions are present.
- */
-export function applyInstructionsModality(
-  chatCtx: ChatContext,
-  options: { modality: 'audio' | 'text' },
-) {
-  const { modality } = options;
-  const idx = chatCtx.indexById(INSTRUCTIONS_MESSAGE_ID);
-  if (idx === undefined) return;
-
-  const item = chatCtx.items[idx]!;
-  if (item.type !== 'message') return;
-
-  const hasModalitySpecific = item.content.some((c) => isInstructions(c));
-  if (!hasModalitySpecific) return;
-
-  // ChatContext.copy shadows the original item; create a new instance so the
-  // base context's content isn't mutated when the same Instructions is reused
-  // across turns.
-  chatCtx.items[idx] = ChatMessage.create({
-    id: item.id,
-    role: item.role,
-    content: item.content.map((c) => (isInstructions(c) ? c.asModality(modality) : c)),
-    interrupted: item.interrupted,
-    createdAt: item.createdAt,
-    transcriptConfidence: item.transcriptConfidence,
-    metrics: item.metrics,
-    extra: item.extra,
-  });
 }
 
 export function performLLMInference(

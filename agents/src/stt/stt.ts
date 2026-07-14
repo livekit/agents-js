@@ -288,6 +288,27 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
 }
 
 /**
+ * Interface for STT context models that can generate LLM instructions.
+ *
+ * STT plugins that provide speaker metadata should implement this interface
+ * on their context model so the expressive system can auto-inject
+ * speaker context into the LLM.
+ */
+export interface SpeakerContext {
+  toInstructions(): string;
+}
+
+/** Duck-typed check for {@link SpeakerContext} (structural, like Python's runtime Protocol). */
+export function isSpeakerContext(value: unknown): value is SpeakerContext {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'toInstructions' in value &&
+    typeof (value as { toInstructions: unknown }).toInstructions === 'function'
+  );
+}
+
+/**
  * An instance of a speech-to-text stream, as an asynchronous iterable iterator.
  *
  * @example Looping through frames
@@ -317,6 +338,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
+  private _context?: object;
 
   protected abortController = new AbortController();
 
@@ -461,6 +483,21 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /**
+   * Persistent speaker metadata updated by the STT plugin during recognition.
+   *
+   * STT plugins set this to a context object (e.g. a voice profile with
+   * emotion, gender, etc.) as they learn about the speaker over the life of the
+   * stream. Accessible via `agent.audioRecognition.sttContext`.
+   */
+  get context(): object | undefined {
+    return this._context;
+  }
+
+  set context(value: object | undefined) {
+    this._context = value;
   }
 
   get startTimeOffset(): number {

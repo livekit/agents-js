@@ -8,7 +8,7 @@ import {
   SlotUnavailableError,
   createAvailableSlot,
   getUniqueHash,
-} from './calendar_api.js';
+} from './calendar_api.ts';
 
 describe('Calendar API', () => {
   describe('createAvailableSlot', () => {

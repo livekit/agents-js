@@ -19,8 +19,8 @@
 import { initializeLogger, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
 import { afterAll, beforeAll, describe, it } from 'vitest';
-import { type AvailableSlot, FakeCalendar, createAvailableSlot } from './calendar_api.js';
-import { FrontDeskAgent, type Userdata } from './frontdesk_agent.js';
+import { type AvailableSlot, FakeCalendar, createAvailableSlot } from './calendar_api.ts';
+import { FrontDeskAgent, type Userdata } from './frontdesk_agent.ts';
 
 initializeLogger({ pretty: false, level: 'warn' });
 

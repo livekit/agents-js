@@ -671,6 +671,47 @@ export function shortuuid(prefix: string = ''): string {
   return `${prefix}${randomUUID().slice(0, 12)}`;
 }
 
+/**
+ * Fill `template` placeholders from `data`.
+ *
+ * Placeholders use `{name}` syntax with dotted access into nested objects
+ * (e.g. `{tts.markup.llm_instructions}`). Missing paths log an error and
+ * become empty strings. `null`/`undefined` values also become empty strings.
+ */
+export function safeRender(template: string, data: Record<string, unknown>): string {
+  const collectPaths = (d: Record<string, unknown>, prefix = ''): string[] => {
+    const paths: string[] = [];
+    for (const [k, v] of Object.entries(d)) {
+      const full = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        paths.push(...collectPaths(v as Record<string, unknown>, full));
+      } else {
+        paths.push(full);
+      }
+    }
+    return paths;
+  };
+
+  return template.replace(/\{([\w.]+)\}/g, (_match, path: string) => {
+    let value: unknown = data;
+    for (const key of path.split('.')) {
+      if (value !== null && typeof value === 'object' && key in (value as object)) {
+        value = (value as Record<string, unknown>)[key];
+      } else {
+        value = undefined;
+        break;
+      }
+    }
+    if (value === undefined) {
+      log().error(
+        `template placeholder '{${path}}' has no value (available: ${collectPaths(data).join(', ')})`,
+      );
+      return '';
+    }
+    return value === null ? '' : String(value);
+  });
+}
+
 const READONLY_SYMBOL = Symbol('Readonly');
 
 const MUTATION_METHODS = [

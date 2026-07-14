@@ -7,6 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
+import { splitAllMarkup } from '../../tts/_provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -435,6 +436,14 @@ class SegmentSynchronizerImpl {
       const forwardedWord = this.textData.pushedText.slice(pushedTextCursor, wordEnd);
       pushedTextCursor = wordEnd;
 
+      // forward the raw token (the room output strips markup and surfaces the
+      // expression downstream), but pace against the visible text only so a
+      // markup-only token adds no delay
+      const [strippedWord] = splitAllMarkup(word);
+      const cleanWords = this.options.splitWords(strippedWord);
+      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : strippedWord;
+      const wordHyphens = cleanWord ? this.options.hyphenateWord(cleanWord).length : 0;
+
       if (this.playbackCompleted) {
         this.outputStreamWriter.write(
           createTimedString({
@@ -442,16 +451,11 @@ class SegmentSynchronizerImpl {
             endTime: this.synchronizedElapsedSeconds(),
           }),
         );
-        const cleanWords = this.options.splitWords(word);
-        const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-        this.textData.forwardedHyphens += this.options.hyphenateWord(cleanWord).length;
+        this.textData.forwardedHyphens += wordHyphens;
         this.textData.forwardedText += forwardedWord;
         continue;
       }
 
-      const cleanWords = this.options.splitWords(word);
-      const cleanWord = cleanWords.length > 0 ? cleanWords[0]![0] : word;
-      const wordHyphens = this.options.hyphenateWord(cleanWord).length;
       const elapsedSeconds = this.synchronizedElapsedSeconds()!;
 
       let dHyphens = 0;

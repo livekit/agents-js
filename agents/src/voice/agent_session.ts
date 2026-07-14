@@ -27,12 +27,7 @@ import {
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
-import {
-  AgentHandoffItem,
-  ChatContext,
-  ChatMessage,
-  type Instructions,
-} from '../llm/chat_context.js';
+import { AgentHandoffItem, ChatContext, ChatMessage, Instructions } from '../llm/chat_context.js';
 import type {
   LLM,
   RealtimeModel,
@@ -97,6 +92,7 @@ import {
   type KeytermsOptions,
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
+import type { Preset } from './presets.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -179,6 +175,35 @@ export function resolveRecordingOptions(
   return { ...RECORDING_ALL_ON, ...record };
 }
 
+/**
+ * Configuration for the expressive pipeline.
+ *
+ * Controls how TTS markup instructions are injected into the LLM when expressive is
+ * enabled. All keys are optional; common shapes:
+ *
+ * - `{ preset: Preset.CASUAL }` — a domain preset, resolved to the active
+ *   TTS provider's tuned tags (see `voice/presets`). Prefer the `presets.*` constants.
+ * - `{ preset: ..., ttsInstructionsAppend: '...' }` — a preset plus your own
+ *   rules appended after it resolves.
+ * - `{ ttsInstructionsTemplate: '...' }` — a fully custom prompt.
+ *
+ * Any explicit template overrides the corresponding part of the resolved preset; unset
+ * parts fall back to the resolved preset (or the provider-agnostic default).
+ */
+export interface ExpressiveOptions {
+  preset?: Preset;
+  ttsInstructionsTemplate?: Instructions | string;
+  ttsInstructionsAppend?: string;
+}
+
+export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
+  ttsInstructionsTemplate: new Instructions(
+    'You can control how you speak using the following formatting tags. ' +
+      'Use them when appropriate to make your speech more expressive and natural:\n\n' +
+      '{tts.markup.llm_instructions}',
+  ),
+};
+
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
@@ -187,6 +212,7 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   ttsReadIdleTimeout: number;
   forwardAudioIdleTimeout: number;
   ttsTextTransforms: readonly TextTransform[] | null;
+  expressive: boolean | ExpressiveOptions;
 }
 
 export const defaultAgentSessionOptions = {
@@ -198,6 +224,7 @@ export const defaultAgentSessionOptions = {
   turnHandling: {},
   useTtsAlignedTranscript: true,
   ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+  expressive: false,
 } as const satisfies AgentSessionOptions;
 
 /** @deprecated {@link VoiceOptions} has been flattened onto to {@link AgentSessionOptions} */
@@ -323,6 +350,16 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * and `filter_emoji`; pass `null` to disable text transforms.
    */
   ttsTextTransforms?: readonly TextTransform[] | null;
+
+  /**
+   * Enable the expressive pipeline: the LLM is instructed to emit the active TTS
+   * provider's markup tags (emotion/expression/pauses/...), the tags are converted
+   * to the provider's native syntax before synthesis, and stripped from the room
+   * transcript. Pass `true` for the provider-agnostic default prompt, or an
+   * {@link ExpressiveOptions} (e.g. a `presets.*` constant) to tune it.
+   * @defaultValue false
+   */
+  expressive?: boolean | ExpressiveOptions;
 };
 
 export type AgentSessionUpdateOptions = {

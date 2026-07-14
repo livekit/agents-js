@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { BufferedSentenceStream, BufferedWordStream } from '../token_stream.js';
+import { BufferedSentenceStream, BufferedWordStream, xmlWrapTokenizer } from '../token_stream.js';
 import * as tokenizer from '../tokenizer.js';
 import { hyphenator } from './hyphenator.js';
 import { splitParagraphs } from './paragraph.js';
@@ -10,9 +10,34 @@ import { splitWords } from './word.js';
 
 interface TokenizerOptions {
   language: string;
+  /**
+   * Minimum length for a span to be treated as its own sentence; shorter spans
+   * are merged forward into the next one.
+   */
   minSentenceLength: number;
+  /** Minimum buffered text before the stream emits. */
   streamContextLength: number;
+  /** Keep original whitespace/formatting in emitted tokens. */
   retainFormat: boolean;
+  /**
+   * Hard cap on emitted token length; a token is flushed before appending a
+   * sentence that would exceed it.
+   */
+  maxTokenLength?: number;
+  /**
+   * Minimum length a token must reach before it is emitted. Sentences are
+   * batched together until the running token reaches this length, so raising
+   * it (e.g. toward `maxTokenLength`) yields larger, fewer chunks. Defaults to
+   * `minSentenceLength` (per-sentence emission).
+   */
+  minTokenLength?: number;
+  /**
+   * Treat XML markup as atomic — never split a tag across tokens and keep tags
+   * attached to the following sentence. Only enable when the input actually
+   * carries markup (e.g. expressive TTS): a stray "<" in plain text can
+   * otherwise hold back streaming until flush.
+   */
+  xmlAware?: boolean;
 }
 
 const defaultTokenizerOptions: TokenizerOptions = {
@@ -35,7 +60,12 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tokenize(text: string, language?: string): string[] {
-    return splitSentences(text, this.#config.minSentenceLength).map((tok) => tok[0]);
+    let tokenizeFunc = (t: string) =>
+      splitSentences(t, this.#config.minSentenceLength, this.#config.retainFormat);
+    if (this.#config.xmlAware) {
+      tokenizeFunc = xmlWrapTokenizer(tokenizeFunc) as typeof tokenizeFunc;
+    }
+    return tokenizeFunc(text).map((tok) => (Array.isArray(tok) ? tok[0] : tok));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -43,8 +73,12 @@ export class SentenceTokenizer extends tokenizer.SentenceTokenizer {
     return new BufferedSentenceStream(
       (text: string) =>
         splitSentences(text, this.#config.minSentenceLength, this.#config.retainFormat),
-      this.#config.minSentenceLength,
+      this.#config.minTokenLength ?? this.#config.minSentenceLength,
       this.#config.streamContextLength,
+      {
+        maxTokenLength: this.#config.maxTokenLength,
+        xmlAware: this.#config.xmlAware,
+      },
     );
   }
 }

@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as openai from '@livekit/agents-plugin-openai';
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  defineAgent,
+  inference,
+  llm,
+  log,
+  voice,
+} from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -15,7 +21,7 @@ import {
   FakeCalendar,
   SlotUnavailableError,
   getUniqueHash,
-} from './calendar_api.js';
+} from './calendar_api.ts';
 
 export interface Userdata {
   cal: Calendar;
@@ -35,17 +41,35 @@ export class FrontDeskAgent extends voice.Agent {
     });
 
     const instructions =
-      `You are Front-Desk, a helpful and efficient voice assistant. ` +
-      `Today is ${today}. Your main goal is to schedule an appointment for the user. ` +
-      `This is a voice conversation — speak naturally, clearly, and concisely. ` +
-      `When the user says hello or greets you, don't just respond with a greeting — use it as an opportunity to move things forward. ` +
-      `For example, follow up with a helpful question like: 'Would you like to book a time?' ` +
-      `When asked for availability, call list_available_slots and offer a few clear, simple options. ` +
-      `Say things like 'Monday at 2 PM' — avoid timezones, timestamps, and avoid saying 'AM' or 'PM'. ` +
-      `Use natural phrases like 'in the morning' or 'in the evening', and don't mention the year unless it's different from the current one. ` +
-      `Offer a few options at a time, pause for a response, then guide the user to confirm. ` +
-      `If the time is no longer available, let them know gently and offer the next options. ` +
-      `Always keep the conversation flowing — be proactive, human, and focused on helping the user schedule with ease.`;
+      // Outcome — what a great interaction looks like.
+      `You are Front-Desk, a helpful and efficient voice assistant. Today is ${today}. ` +
+      `A great interaction ends with the user booked into an appointment slot that works ` +
+      `for them, reached through a warm, flowing conversation with as little ` +
+      `back-and-forth as possible. ` +
+      // Voice & personality — keep it short and human.
+      `Your output is synthesized directly to speech, so produce a natural verbatim ` +
+      `transcript, not polished text. Start responses with real reactions (oh, hmm, ah) ` +
+      `and fillers (um, uh, like) rather than "Absolutely" or "Certainly", with ` +
+      `mid-sentence fillers (like, you know, I mean) where they'd naturally fall. Mirror ` +
+      `the user's formality: if they're casual, use informal phrasing (gotcha, alright, ` +
+      `gonna, kinda, lemme, yeah); if they're more formal, keep your speech cleaner. Vary ` +
+      `your openers across turns — if you opened the last turn with 'gotcha', pick ` +
+      `'alright' or 'okay' this turn; don't repeat the same opener back-to-back. ` +
+      // How to work — be proactive, acknowledge before acting, stop when you can move forward.
+      `Be proactive: when the user greets you, use it to move things forward (e.g. ` +
+      `'Would you like to book a time?') rather than just greeting back. Before a tool ` +
+      `call that takes a moment, give a brief spoken acknowledgment so there's no dead ` +
+      `air. After each result, check whether you can now move the user toward a booking: ` +
+      `if so, do it; if you're missing something, ask for just that. ` +
+      // Speaking about times — constraints that keep it natural over voice.
+      `When talking about availability, call list_available_slots and offer a few clear ` +
+      `options at a time, then pause for a response and guide the user to confirm. Say ` +
+      `times like 'Monday at 2' — avoid timezones, timestamps, and the words 'AM'/'PM'; ` +
+      `use natural phrases like 'in the morning' or 'in the evening', and don't mention ` +
+      `the year unless it differs from the current one. When listing several times in the ` +
+      `same window, group them ('in the evening at 4, 5, or 6') instead of repeating the ` +
+      `time-of-day qualifier on each slot. If a chosen time is no longer available, let ` +
+      `them know gently and offer the next options.`;
 
     super({
       instructions,
@@ -185,6 +209,24 @@ You must infer the appropriate range implicitly from the conversational context 
 
     this.tz = options.timezone;
   }
+
+  async onEnter(): Promise<void> {
+    const hour = Number(
+      new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        hour12: false,
+        timeZone: this.tz,
+      }).format(new Date()),
+    );
+    const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+    await this.session.generateReply({
+      instructions:
+        `Say hello and welcome to the caller — it's currently ${timeOfDay} their time. ` +
+        `You're the front desk of an office and you're here to help them schedule a visit. ` +
+        `Invite them to book an appointment to visit, and ask what time works. ` +
+        `Keep it warm and brief.`,
+    });
+  }
 }
 
 export default defineAgent({
@@ -209,15 +251,46 @@ export default defineAgent({
     const userdata: Userdata = { cal };
 
     const session = new voice.AgentSession({
-      stt: new deepgram.STT(),
-      llm: new openai.LLM({
-        model: 'gpt-4.1',
+      stt: new inference.STT({ model: 'deepgram/nova-3' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
+      tts: new inference.TTS({
+        model: 'inworld/inworld-tts-2',
+        voice: 'Nadia',
+        modelOptions: { delivery_mode: 'CREATIVE', speaking_rate: 1.1 },
       }),
-      tts: new elevenlabs.TTS(),
+      expressive: voice.presets.CUSTOMER_SERVICE,
       userData: userdata,
-      voiceOptions: {
-        maxToolSteps: 1,
-      },
+      maxToolSteps: 1,
+      // Flip userState to "away" after 10s of mutual silence so we can
+      // check whether they're still there (default is 15s).
+      userAwayTimeout: 10.0,
+    });
+
+    const logger = log();
+    let idleNudge: AbortController | null = null;
+
+    const nudgeWhileIdle = async (signal: AbortSignal) => {
+      // Nudge every 10s until the user speaks again — speaking flips
+      // userState out of "away", which aborts this loop below.
+      while (!signal.aborted) {
+        logger.info("user idle — checking if they're still there");
+        await session.generateReply({
+          instructions: "The user has been idle, see if they're still there",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+    };
+
+    session.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
+      if (ev.newState === 'away') {
+        if (idleNudge === null) {
+          idleNudge = new AbortController();
+          void nudgeWhileIdle(idleNudge.signal);
+        }
+      } else if (idleNudge !== null) {
+        idleNudge.abort();
+        idleNudge = null;
+      }
     });
 
     await session.start({
@@ -227,8 +300,6 @@ export default defineAgent({
         noiseCancellation: BackgroundVoiceCancellation(),
       },
     });
-
-    await session.say('Hello, I can help you schedule an appointment!');
   },
 });
 

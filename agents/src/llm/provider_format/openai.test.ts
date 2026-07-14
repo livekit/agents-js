@@ -56,20 +56,24 @@ describe('toChatCtx', () => {
   });
 
   it('should render Instructions as their resolved value', async () => {
+    // Instructions are resolved to a plain string before storage in the chat context
     const ctx = ChatContext.empty();
     ctx.addMessage({
       role: 'system',
       content: [
-        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
-          'text',
-        ),
+        new Instructions('common instructions', { text: 'text instructions' }).render({
+          modality: 'text',
+        }),
       ],
     });
     ctx.addMessage({ role: 'user', content: 'Hello' });
 
     const result = await toChatCtx(ctx);
 
-    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
+    expect(result[0]).toEqual({
+      role: 'system',
+      content: 'common instructions\n\ntext instructions',
+    });
   });
 
   it('should handle multi-line text content', async () => {
@@ -758,20 +762,24 @@ describe('toResponsesChatCtx', () => {
   });
 
   it('should render Instructions as their resolved value', async () => {
+    // Instructions are resolved to a plain string before storage in the chat context
     const ctx = ChatContext.empty();
     ctx.addMessage({
       role: 'system',
       content: [
-        new Instructions({ audio: 'audio instructions', text: 'text instructions' }).asModality(
-          'text',
-        ),
+        new Instructions('common instructions', { text: 'text instructions' }).render({
+          modality: 'text',
+        }),
       ],
     });
     ctx.addMessage({ role: 'user', content: 'Hello' });
 
     const result = await toResponsesChatCtx(ctx);
 
-    expect(result[0]).toEqual({ role: 'system', content: 'text instructions' });
+    expect(result[0]).toEqual({
+      role: 'system',
+      content: 'common instructions\n\ntext instructions',
+    });
   });
 
   it('should handle multi-line text content', async () => {
