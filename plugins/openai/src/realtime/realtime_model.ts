@@ -86,6 +86,22 @@ class DiscardedGeneration {
   readonly discarded = true;
 }
 
+// These server-side errors cannot be fixed by reconnecting; retrying only loops forever.
+const FATAL_ERROR_CODES = new Set([
+  'insufficient_quota',
+  'invalid_api_key',
+  'account_deactivated',
+  'billing_hard_limit_reached',
+]);
+
+/** @internal Exported for testing purposes */
+export function isFatalError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const { code, type } = error as { code?: unknown; type?: unknown };
+  const errorCode = typeof code === 'string' && code.length > 0 ? code : type;
+  return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
+}
+
 class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
@@ -969,6 +985,41 @@ export class RealtimeSession extends llm.RealtimeSession {
     return untypedEvent;
   }
 
+  private closeCurrentGeneration(reason: string): void {
+    if (this.currentGeneration instanceof DiscardedGeneration) {
+      this.currentGeneration = undefined;
+      return;
+    }
+
+    if (!this.currentGeneration) return;
+
+    for (const gen of this.currentGeneration.messages.values()) {
+      gen.textChannel.close();
+      gen.audioChannel.close();
+      if (!gen.modalities.done) {
+        gen.modalities.resolve(this._options.modalities);
+      }
+    }
+    this.currentGeneration.messages.clear();
+    this.currentGeneration.messageChannel.close();
+    this.currentGeneration.functionChannel.close();
+    if (!this.currentGeneration._doneFut.done) {
+      this.currentGeneration._doneFut.resolve();
+    }
+    this.#logger.warn(`In-progress generation discarded due to ${reason}`);
+    this.currentGeneration = undefined;
+  }
+
+  private rejectResponseCreatedFutures(reason: string): void {
+    for (const handle of Object.values(this.responseCreatedFutures)) {
+      if (!handle.doneFut.done) {
+        handle.doneFut.reject(new Error(reason));
+      }
+      if (handle.timeout) clearTimeout(handle.timeout);
+    }
+    this.responseCreatedFutures = {};
+  }
+
   private async createWsConn(): Promise<WebSocket> {
     const headers: Record<string, string> = {
       'User-Agent': 'LiveKit-Agents-JS',
@@ -1056,14 +1107,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       this.itemDeleteFutures = {};
 
-      for (const handle of Object.values(this.responseCreatedFutures)) {
-        if (!handle.doneFut.done) {
-          handle.doneFut.reject(new Error('Session reconnected'));
-        }
-        if (handle.timeout) clearTimeout(handle.timeout);
-      }
-      this.responseCreatedFutures = {};
+      this.rejectResponseCreatedFutures('Session reconnected');
       this.discardedEventIds.clear();
+      this.closeCurrentGeneration('session reconnection');
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
@@ -1111,61 +1157,66 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     reconnecting = false;
-    while (!this.#closed && !signal.aborted) {
-      this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
-      wsConn = await this.createWsConn();
-      if (signal.aborted) break;
-
-      try {
-        if (reconnecting) {
-          await reconnect();
-          if (signal.aborted) break;
-          numRetries = 0;
-        }
-
-        await this.runWs(wsConn);
+    try {
+      while (!this.#closed && !signal.aborted) {
+        this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
+        wsConn = await this.createWsConn();
         if (signal.aborted) break;
-      } catch (error) {
-        if (!isAPIError(error)) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw error;
-        }
 
-        if (maxRetries === 0 || !error.retryable) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw error;
-        }
+        try {
+          if (reconnecting) {
+            await reconnect();
+            if (signal.aborted) break;
+            numRetries = 0;
+          }
 
-        if (numRetries === maxRetries) {
-          this.emitError({ error: error as Error, recoverable: false });
-          throw new APIConnectionError({
-            message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
-            options: {
-              body: error,
-              retryable: false,
+          await this.runWs(wsConn);
+          if (signal.aborted) break;
+        } catch (error) {
+          if (!isAPIError(error)) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw error;
+          }
+
+          if (maxRetries === 0 || !error.retryable) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw error;
+          }
+
+          if (numRetries === maxRetries) {
+            this.emitError({ error: error as Error, recoverable: false });
+            throw new APIConnectionError({
+              message: `OpenAI Realtime API connection failed after ${numRetries} attempts`,
+              options: {
+                body: error,
+                retryable: false,
+              },
+            });
+          }
+
+          this.emitError({ error: error as Error, recoverable: true });
+          const retryInterval =
+            numRetries === 0
+              ? DEFAULT_FIRST_RETRY_INTERVAL_MS
+              : this._options.connOptions.retryIntervalMs;
+          this.#logger.warn(
+            {
+              attempt: numRetries,
+              maxRetries,
+              error,
             },
-          });
+            `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
+          );
+
+          await delay(retryInterval);
+          numRetries++;
         }
 
-        this.emitError({ error: error as Error, recoverable: true });
-        const retryInterval =
-          numRetries === 0
-            ? DEFAULT_FIRST_RETRY_INTERVAL_MS
-            : this._options.connOptions.retryIntervalMs;
-        this.#logger.warn(
-          {
-            attempt: numRetries,
-            maxRetries,
-            error,
-          },
-          `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
-        );
-
-        await delay(retryInterval);
-        numRetries++;
+        reconnecting = true;
       }
-
-      reconnecting = true;
+    } finally {
+      this.closeCurrentGeneration('session close');
+      this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
 
@@ -1216,79 +1267,88 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
       }
 
-      switch (event.type) {
-        case 'input_audio_buffer.speech_started':
-          this.handleInputAudioBufferSpeechStarted(event);
-          break;
-        case 'input_audio_buffer.speech_stopped':
-          this.handleInputAudioBufferSpeechStopped(event);
-          break;
-        case 'response.created':
-          this.handleResponseCreated(event);
-          break;
-        case 'response.output_item.added':
-          this.handleResponseOutputItemAdded(event);
-          break;
-        case 'conversation.item.added':
-        case 'conversation.item.created': // Beta: kept for backward compatibility
-          this.handleConversationItemCreated(event);
-          break;
-        case 'conversation.item.deleted':
-          this.handleConversationItemDeleted(event);
-          break;
-        case 'conversation.item.input_audio_transcription.delta':
-          this.handleConversationItemInputAudioTranscriptionDelta(event);
-          break;
-        case 'conversation.item.input_audio_transcription.completed':
-          this.handleConversationItemInputAudioTranscriptionCompleted(event);
-          break;
-        case 'conversation.item.input_audio_transcription.failed':
-          this.handleConversationItemInputAudioTranscriptionFailed(event);
-          break;
-        case 'response.content_part.added':
-          this.handleResponseContentPartAdded(event);
-          break;
-        case 'response.content_part.done':
-          this.handleResponseContentPartDone(event);
-          break;
-        case 'response.output_text.delta':
-        case 'response.text.delta': // Beta: kept for backward compatibility
-          this.handleResponseTextDelta(event);
-          break;
-        case 'response.output_text.done':
-        case 'response.text.done': // Beta: kept for backward compatibility
-          this.handleResponseTextDone(event);
-          break;
-        case 'response.output_audio_transcript.delta':
-        case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
-          this.handleResponseAudioTranscriptDelta(event);
-          break;
-        case 'response.output_audio.delta':
-        case 'response.audio.delta': // Beta: kept for backward compatibility
-          this.handleResponseAudioDelta(event);
-          break;
-        case 'response.output_audio_transcript.done':
-        case 'response.audio_transcript.done': // Beta: kept for backward compatibility
-          this.handleResponseAudioTranscriptDone(event);
-          break;
-        case 'response.output_audio.done':
-        case 'response.audio.done': // Beta: kept for backward compatibility
-          this.handleResponseAudioDone(event);
-          break;
-        case 'response.output_item.done':
-          this.handleResponseOutputItemDone(event);
-          break;
-        case 'response.done':
-          this.handleResponseDone(event);
-          break;
-        case 'error':
-          this.handleError(event);
-          break;
-        default:
-          if (lkOaiDebug) {
-            this.#logger.debug(`unhandled event: ${event.type}`);
-          }
-          break;
+      try {
+        switch (event.type) {
+          case 'input_audio_buffer.speech_started':
+            this.handleInputAudioBufferSpeechStarted(event);
+            break;
+          case 'input_audio_buffer.speech_stopped':
+            this.handleInputAudioBufferSpeechStopped(event);
+            break;
+          case 'response.created':
+            this.handleResponseCreated(event);
+            break;
+          case 'response.output_item.added':
+            this.handleResponseOutputItemAdded(event);
+            break;
+          case 'conversation.item.added':
+          case 'conversation.item.created': // Beta: kept for backward compatibility
+            this.handleConversationItemCreated(event);
+            break;
+          case 'conversation.item.deleted':
+            this.handleConversationItemDeleted(event);
+            break;
+          case 'conversation.item.input_audio_transcription.delta':
+            this.handleConversationItemInputAudioTranscriptionDelta(event);
+            break;
+          case 'conversation.item.input_audio_transcription.completed':
+            this.handleConversationItemInputAudioTranscriptionCompleted(event);
+            break;
+          case 'conversation.item.input_audio_transcription.failed':
+            this.handleConversationItemInputAudioTranscriptionFailed(event);
+            break;
+          case 'response.content_part.added':
+            this.handleResponseContentPartAdded(event);
+            break;
+          case 'response.content_part.done':
+            this.handleResponseContentPartDone(event);
+            break;
+          case 'response.output_text.delta':
+          case 'response.text.delta': // Beta: kept for backward compatibility
+            this.handleResponseTextDelta(event);
+            break;
+          case 'response.output_text.done':
+          case 'response.text.done': // Beta: kept for backward compatibility
+            this.handleResponseTextDone(event);
+            break;
+          case 'response.output_audio_transcript.delta':
+          case 'response.audio_transcript.delta': // Beta: kept for backward compatibility
+            this.handleResponseAudioTranscriptDelta(event);
+            break;
+          case 'response.output_audio.delta':
+          case 'response.audio.delta': // Beta: kept for backward compatibility
+            this.handleResponseAudioDelta(event);
+            break;
+          case 'response.output_audio_transcript.done':
+          case 'response.audio_transcript.done': // Beta: kept for backward compatibility
+            this.handleResponseAudioTranscriptDone(event);
+            break;
+          case 'response.output_audio.done':
+          case 'response.audio.done': // Beta: kept for backward compatibility
+            this.handleResponseAudioDone(event);
+            break;
+          case 'response.output_item.done':
+            this.handleResponseOutputItemDone(event);
+            break;
+          case 'response.done':
+            this.handleResponseDone(event);
+            break;
+          case 'error':
+            this.handleError(event);
+            break;
+          default:
+            if (lkOaiDebug) {
+              this.#logger.debug(`unhandled event: ${event.type}`);
+            }
+            break;
+        }
+      } catch (error) {
+        if (isAPIError(error) && !error.retryable) {
+          wsCloseFuture.resolve(error);
+          wsConn.close();
+          return;
+        }
+        this.#logger.error({ error, event }, 'Failed to handle OpenAI Realtime API event');
       }
     };
 
@@ -1338,13 +1398,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     await this.#task;
 
     // Clean up pending futures to prevent memory leaks
-    for (const handle of Object.values(this.responseCreatedFutures)) {
-      if (!handle.doneFut.done) {
-        handle.doneFut.reject(new Error('Session closed'));
-      }
-      if (handle.timeout) clearTimeout(handle.timeout);
-    }
-    this.responseCreatedFutures = {};
+    this.rejectResponseCreatedFutures('Session closed');
 
     for (const fut of Object.values(this.itemCreateFutures)) {
       if (!fut.done) {
@@ -1363,24 +1417,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.inputTranscriptAccumulators.clear();
 
     // Clean up current generation if exists
-    if (this.currentGeneration instanceof DiscardedGeneration) {
-      this.currentGeneration = undefined;
-    } else if (this.currentGeneration) {
-      for (const gen of this.currentGeneration.messages.values()) {
-        gen.textChannel.close();
-        gen.audioChannel.close();
-        if (!gen.modalities.done) {
-          gen.modalities.resolve(this._options.modalities);
-        }
-      }
-      this.currentGeneration.messages.clear();
-      this.currentGeneration.messageChannel.close();
-      this.currentGeneration.functionChannel.close();
-      if (!this.currentGeneration._doneFut.done) {
-        this.currentGeneration._doneFut.resolve();
-      }
-      this.currentGeneration = undefined;
-    }
+    this.closeCurrentGeneration('Session closed');
 
     // Clear the message queue
     this.messageChannel.items.length = 0;
@@ -1924,13 +1961,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
       const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
 
-      this.emitError({
-        error: new APIError(`OpenAI Realtime API response failed with error type: ${errorType}`, {
+      const recoverable = !isFatalError(errorBody);
+      const error = new APIError(
+        `OpenAI Realtime API response failed with error type: ${errorType}`,
+        {
           body: errorBody ?? null,
-          retryable: true,
-        }),
-        recoverable: true,
-      });
+          retryable: recoverable,
+        },
+      );
+      if (!recoverable) {
+        throw error;
+      }
+      this.emitError({ error, recoverable: true });
     } else if (event.response.status === 'cancelled' || event.response.status === 'incomplete') {
       let statusType: string | undefined;
       let statusReason: string | undefined;
@@ -1974,13 +2016,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     }
 
-    this.emitError({
-      error: new APIError(event.error.message, {
-        body: event.error,
-        retryable: true,
-      }),
-      recoverable: true,
+    const recoverable = !isFatalError(event.error);
+    const error = new APIError(event.error.message, {
+      body: event.error,
+      retryable: recoverable,
     });
+    if (!recoverable) {
+      throw error;
+    }
+    this.emitError({ error, recoverable: true });
   }
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
