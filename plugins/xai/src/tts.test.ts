@@ -80,4 +80,48 @@ describe('xAI TTS websocket pool', () => {
       await closeWebSocketServer(wss);
     }
   });
+
+  it('synthesizes multiple flushed segments over one connection', async () => {
+    const { wss, url } = await startWebSocketServer();
+    const audio = Buffer.alloc(4_800).toString('base64');
+    let connectionCount = 0;
+
+    wss.on('connection', (ws) => {
+      connectionCount++;
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (message.type === 'text.done') {
+          ws.send(JSON.stringify({ type: 'audio.delta', delta: audio }));
+          ws.send(JSON.stringify({ type: 'audio.done' }));
+        }
+      });
+    });
+
+    const xai = new TTS({ apiKey: 'test-key' });
+    vi.spyOn(xai, 'connectWs').mockImplementation(async () => {
+      const ws = new WebSocket(url);
+      await once(ws, 'open');
+      return ws;
+    });
+
+    const stream = xai.stream();
+    try {
+      stream.pushText('first segment');
+      stream.flush();
+      stream.pushText('second segment');
+      stream.endInput();
+
+      let finalFrames = 0;
+      for await (const event of stream) {
+        if (event.final) finalFrames++;
+      }
+
+      expect(finalFrames).toBe(2);
+      expect(connectionCount).toBe(1);
+    } finally {
+      stream.close();
+      await xai.close();
+      await closeWebSocketServer(wss);
+    }
+  });
 });
