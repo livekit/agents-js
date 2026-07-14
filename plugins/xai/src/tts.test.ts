@@ -128,7 +128,8 @@ describe('xAI TTS websocket pool', () => {
 
       let finalFrames = 0;
       for await (const event of stream) {
-        if (event !== tts.SynthesizeStream.END_OF_STREAM && event.final) finalFrames++;
+        if (event === tts.SynthesizeStream.END_OF_STREAM) continue;
+        if (event.final) finalFrames++;
       }
 
       expect(finalFrames).toBe(2);
