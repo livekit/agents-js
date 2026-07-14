@@ -292,7 +292,7 @@ export class LLM extends llm.LLM {
       if (functionCallingConfig !== undefined || mixed) {
         extras.toolConfig = {
           ...(extras.toolConfig ?? {}),
-          functionCallingConfig,
+          ...(functionCallingConfig !== undefined ? { functionCallingConfig } : {}),
           includeServerSideToolInvocations: mixed || undefined,
         };
       }

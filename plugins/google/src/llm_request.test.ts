@@ -112,6 +112,23 @@ describe('Google mixed tools request construction', () => {
     expect(config.toolConfig?.functionCallingConfig?.mode).toBe(FunctionCallingConfigMode.AUTO);
   });
 
+  it('preserves extraKwargs function calling config for mixed tools', async () => {
+    const google = new LLM({ model: 'gemini-3-flash-preview', apiKey: 'test' });
+    const functionCallingConfig = {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: ['get_weather'],
+    };
+    const config = await captureConfig(google, {
+      toolCtx: [weatherTool(), new GoogleSearch()],
+      extraKwargs: {
+        toolConfig: { functionCallingConfig },
+      },
+    });
+
+    expect(config.toolConfig?.functionCallingConfig).toEqual(functionCallingConfig);
+    expect(serverSideEnabled(config)).toBe(true);
+  });
+
   it.each([
     {
       toolChoice: 'required' as const,
