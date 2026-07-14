@@ -34,6 +34,21 @@ async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
 
+describe('xAI TTS', () => {
+  it('reports its streaming capabilities and provider metadata', async () => {
+    const xai = new TTS({ apiKey: 'test-key' });
+    try {
+      expect(xai.capabilities.streaming).toBe(true);
+      expect(xai.sampleRate).toBe(24_000);
+      expect(xai.numChannels).toBe(1);
+      expect(xai.provider).toBe('xAI');
+      expect(xai.model).toBe('unknown');
+    } finally {
+      await xai.close();
+    }
+  });
+});
+
 describe('xAI TTS websocket pool', () => {
   it('reuses fresh connections and rotates them after 1800 seconds', async () => {
     const { wss, url } = await startWebSocketServer();
