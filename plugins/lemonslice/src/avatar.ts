@@ -219,8 +219,8 @@ export class AvatarSession extends voice.AvatarSession {
    *
    * This method:
    * 1. Creates a LiveKit token for the avatar participant
-   * 2. Calls the LemonSlice API to start the avatar session
-   * 3. Configures the agent's audio output to stream to the avatar
+   * 2. Configures the agent's audio output to stream to the avatar
+   * 3. Calls the LemonSlice API to start the avatar session
    *
    * @param agentSession - The agent session to connect to the avatar
    * @param room - The LiveKit room where the avatar will join
@@ -282,9 +282,8 @@ export class AvatarSession extends voice.AvatarSession {
 
     const livekitToken = await at.toJwt();
 
-    this.#logger.debug('starting avatar session');
-    const sessionId = await this.startAgent(livekitUrl, livekitToken);
-
+    // Bind audio output before the upstream HTTP call so subsequent generations route to
+    // the avatar identity while DataStreamAudioOutput waits for the video track.
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
       destinationIdentity: this.avatarIdentity,
@@ -292,6 +291,9 @@ export class AvatarSession extends voice.AvatarSession {
       waitRemoteTrack: TrackKind.KIND_VIDEO,
       waitPlaybackStart: true,
     });
+
+    this.#logger.debug('starting avatar session');
+    const sessionId = await this.startAgent(livekitUrl, livekitToken);
 
     return sessionId;
   }
