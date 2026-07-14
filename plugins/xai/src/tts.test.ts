@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger } from '@livekit/agents';
+import { initializeLogger, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -113,7 +113,7 @@ describe('xAI TTS websocket pool', () => {
 
       let finalFrames = 0;
       for await (const event of stream) {
-        if (event.final) finalFrames++;
+        if (event !== tts.SynthesizeStream.END_OF_STREAM && event.final) finalFrames++;
       }
 
       expect(finalFrames).toBe(2);
