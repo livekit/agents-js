@@ -57,6 +57,8 @@ export interface STTOptions {
   serverVad?: VADOptions | null;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;
+  model?: ElevenLabsSTTModels | string;
+  /** @deprecated Use `model` instead. */
   modelId?: ElevenLabsSTTModels | string;
   keyterms?: string[];
   noVerbatim?: boolean;
@@ -192,20 +194,30 @@ export class STT extends stt.STT {
   label = 'elevenlabs.STT';
 
   constructor(opts: STTOptions = {}) {
-    let modelId = opts.modelId;
-    if (opts.useRealtime !== undefined) {
-      if (modelId !== undefined) {
+    let model = opts.model;
+    if (opts.modelId !== undefined) {
+      if (model !== undefined) {
         log().warn(
-          'both `useRealtime` and `modelId` parameters are provided. `useRealtime` will be ignored.',
+          'both `model` and `modelId` parameters are provided. `modelId` will be ignored.',
+        );
+      } else {
+        log().warn('`modelId` parameter is deprecated, use `model` instead.');
+        model = opts.modelId;
+      }
+    }
+    if (opts.useRealtime !== undefined) {
+      if (model !== undefined) {
+        log().warn(
+          'both `useRealtime` and `model` parameters are provided. `useRealtime` will be ignored.',
         );
       } else {
         log().warn(
-          '`useRealtime` parameter is deprecated. Specify a realtime modelId to enable streaming. Defaulting modelId to one based on useRealtime parameter.',
+          '`useRealtime` parameter is deprecated. Specify a realtime model to enable streaming. Defaulting model to one based on useRealtime parameter.',
         );
-        modelId = opts.useRealtime ? 'scribe_v2_realtime' : 'scribe_v1';
+        model = opts.useRealtime ? 'scribe_v2_realtime' : 'scribe_v1';
       }
     }
-    modelId = modelId ?? 'scribe_v1';
+    const modelId = model ?? 'scribe_v1';
     const useRealtime = modelId === 'scribe_v2_realtime';
 
     if (!useRealtime && opts.serverVad !== undefined) {

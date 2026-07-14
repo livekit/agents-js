@@ -57,7 +57,7 @@ Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 | `agentPrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while responding. |
 | `agentIdlePrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while idle. |
 | `idleTimeout` | `number` | The idle timeout, in seconds. |
-| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. Keys are converted from camelCase to snake_case; existing snake_case keys are unchanged. |
+| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. Keys are automatically converted from camelCase to snake_case |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
 | `avatarParticipantIdentity` | `string` | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |

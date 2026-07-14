@@ -7,6 +7,7 @@ import type { STTMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Task, cancelAndWait } from '../utils.js';
 import type { VAD } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { StreamAdapter } from './stream_adapter.js';
 import {
   STT,
@@ -139,6 +140,8 @@ export class FallbackAdapter extends STT {
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
+      keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
+      chatContext: wrapped.some((s) => !!s.capabilities.chatContext),
     });
 
     this.sttInstances = wrapped;
@@ -184,6 +187,20 @@ export class FallbackAdapter extends STT {
    */
   get status(): STTStatus[] {
     return this._status;
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    // forward to every underlying STT; unsupported ones warn-and-skip internally
+    for (const sttInstance of this.sttInstances) {
+      sttInstance._updateSessionKeyterms(keyterms);
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    // forward to every underlying STT; unsupported ones warn-and-skip internally
+    for (const sttInstance of this.sttInstances) {
+      sttInstance._pushConversationItem(ev);
+    }
   }
 
   private setupEventForwarding(): void {

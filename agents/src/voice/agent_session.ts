@@ -92,12 +92,17 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import {
+  KeytermDetector,
+  type KeytermsOptions,
+  resolveKeytermsOptions,
+} from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { RunResult } from './testing/run_result.js';
+import { type RunOutputOptions, RunResult } from './testing/run_result.js';
 import {
   type AsyncToolOptions,
   type ToolHandlingOptions,
@@ -304,6 +309,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    */
   turnHandling?: Partial<TurnHandlingOptions>;
 
+  /**
+   * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
+   * (LLM extraction). Applies to STTs that accept a term list; on others it warns
+   * and is ignored.
+   */
+  keytermsOptions?: KeytermsOptions;
+
   useTtsAlignedTranscript?: boolean;
 
   /**
@@ -335,6 +347,12 @@ export type AgentSessionUpdateOptions = {
    * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
    */
   turnDetection?: TurnDetectionMode | null;
+
+  /**
+   * Replace the user-defined keyterms applied to the STT. Auto-detected keyterms
+   * are left untouched.
+   */
+  keyterms?: string[];
 };
 
 type ActivityTransitionOptions = {
@@ -407,6 +425,9 @@ export class AgentSession<
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+
+  /** @internal */
+  readonly _keytermDetector: KeytermDetector;
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -551,6 +572,13 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+
+    const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
+    this._keytermDetector = new KeytermDetector({
+      staticKeyterms: keytermsOptions.keyterms,
+      options: keytermsOptions.keytermDetection,
+    });
+
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
@@ -593,6 +621,11 @@ export class AgentSession<
 
   get history(): ChatContext {
     return this._chatCtx;
+  }
+
+  /** The effective keyterms (user-defined + auto-detected) currently applied to the STT. */
+  get keyterms(): string[] {
+    return this._keytermDetector.keyterms;
   }
 
   /** Connection options for STT, LLM, and TTS. */
@@ -993,6 +1026,10 @@ export class AgentSession<
   }
 
   updateOptions(options: AgentSessionUpdateOptions): void {
+    if (options.keyterms !== undefined) {
+      this._keytermDetector.setStaticKeyterms(options.keyterms);
+    }
+
     const endpointing = options.turnHandling?.endpointing;
     const turnDetection =
       options.turnHandling?.turnDetection !== undefined
@@ -1113,17 +1150,23 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input and optional output type
+   * @param options - Run options including user input and optional output type.
+   *   When `outputType` is set and the turn ends without structured output, the
+   *   run re-prompts the model up to `outputOptions.maxRetries` times (default 2)
+   *   before rejecting with `UnexpectedModelBehavior`. Pass `outputOptions: null`
+   *   to disable retries entirely.
    * @returns A RunResult that resolves when the agent finishes responding
    */
   run<T = unknown>({
     userInput,
     inputModality,
     outputType,
+    outputOptions,
   }: {
     userInput: string;
     inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
+    outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
@@ -1132,6 +1175,8 @@ export class AgentSession<
     const runState = new RunResult<T>({
       userInput,
       outputType,
+      outputOptions,
+      session: this,
     });
 
     this._globalRunState = runState;

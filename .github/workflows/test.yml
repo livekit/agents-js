@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Tests run for all PRs including community contributions from forks.
-# Note: Current tests don't require secrets. If plugin tests are re-enabled,
-# we would need to use workflow_run pattern for privileged operations.
+# Tests run for relevant PRs, including community contributions from forks.
+# Credentialed inference tests skip when repository secrets are unavailable.
 
 name: Test
 on:
@@ -12,6 +11,14 @@ on:
     branches: [next, main, 0.x]
   pull_request:
     branches: [next, main, 0.x]
+    paths:
+      - '.github/workflows/test.yml'
+      - 'agents/**'
+      - 'package.json'
+      - 'plugins/test/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'turbo.json'
 
 jobs:
   build:
@@ -39,21 +46,20 @@ jobs:
             turbo-${{ runner.os }}-node20-
       - name: Build
         run: pnpm build
-      - name: Check which tests to run
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
-        id: filter
-        with:
-          filters: |
-            agents-or-tests:
-              - 'agents/**'
-              - 'plugins/test/**'
-            plugins: 
-              - 'plugins/**'
-            examples:
-              - 'examples/**'
       - name: Test agents
-        if: steps.filter.outputs.agents-or-tests == 'true' || github.event_name == 'push'
-        run: pnpm test agents
+        run: pnpm test -- agents --silent
+      - name: Test LiveKit inference
+        env:
+          LIVEKIT_INFERENCE_TESTS: '1'
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+        run: >-
+          pnpm test --
+          agents/src/inference/llm.test.ts
+          agents/src/inference/stt.test.ts
+          agents/src/inference/tts.test.ts
+          --silent
       # - name: Test examples
       #   if: (steps.filter.outputs.examples == 'true' || github.event_name == 'push')
       #   env:

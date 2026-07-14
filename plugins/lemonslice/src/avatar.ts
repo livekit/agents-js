@@ -374,6 +374,25 @@ export class AvatarSession extends voice.AvatarSession {
           body = JSON.stringify(payload);
         }
 
+        const headers: Record<string, string> = {
+          'X-API-Key': this.apiKey,
+        };
+        let body: BodyInit;
+
+        if (this.agentImageBytes) {
+          const formData = new FormData();
+          formData.append('payload', JSON.stringify(payload));
+          formData.append(
+            'image',
+            new Blob([new Uint8Array(this.agentImageBytes)], { type: this.agentImageMimeType }),
+            `image${extensionFromMimeType(this.agentImageMimeType)}`,
+          );
+          body = formData;
+        } else {
+          headers['Content-Type'] = 'application/json';
+          body = JSON.stringify(payload);
+        }
+
         const response = await fetch(this.apiUrl, {
           method: 'POST',
           headers,

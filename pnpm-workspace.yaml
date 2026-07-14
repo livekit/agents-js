@@ -18,6 +18,6 @@ minimumReleaseAgeExclude:
   - "@opentelemetry/core@2.8.0"
 
 catalog:
-  '@livekit/rtc-node': ^0.13.30
+  '@livekit/rtc-node': ^0.13.31
   ws: ^8.18.0
   '@types/ws': ^8.5.10
