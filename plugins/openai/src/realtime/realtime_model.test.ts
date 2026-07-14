@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { APIError, Future, Task, llm, stream } from '@livekit/agents';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
 import type * as api_proto from './api_proto.js';
 import {
   RealtimeModel,
@@ -207,9 +209,66 @@ describe('RealtimeSession fatal error handling', () => {
   it('matches known fatal error codes', () => {
     expect(isFatalError({ code: 'insufficient_quota' })).toBe(true);
     expect(isFatalError({ code: undefined, type: 'invalid_api_key' })).toBe(true);
+    expect(isFatalError({ code: '', type: 'invalid_api_key' })).toBe(true);
     expect(isFatalError({ code: 'server_error' })).toBe(false);
     expect(isFatalError({})).toBe(false);
     expect(isFatalError(null)).toBe(false);
+  });
+
+  it('stops the websocket session after a fatal server error', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+
+    const address = server.address();
+    if (typeof address === 'string' || address === null) {
+      throw new Error('expected websocket server to listen on a TCP port');
+    }
+
+    let connectionCount = 0;
+    server.on('connection', (socket) => {
+      connectionCount++;
+      socket.on('message', (data) => {
+        const event = JSON.parse(data.toString()) as { type?: string };
+        if (event.type !== 'response.create') return;
+
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            event_id: 'evt_quota',
+            error: {
+              type: 'invalid_request_error',
+              code: 'insufficient_quota',
+              message: 'quota exceeded',
+              param: '',
+            },
+          }),
+        );
+      });
+    });
+
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+    });
+    const session = model.session();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    try {
+      await expect(session.generateReply()).rejects.toThrow('Realtime session closed');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.recoverable).toBe(false);
+      expect(errors[0]!.error).toBeInstanceOf(APIError);
+      expect((errors[0]!.error as APIError).retryable).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(connectionCount).toBe(1);
+    } finally {
+      await session.close().catch(() => undefined);
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it('raises non-retryable APIError on fatal server error events', () => {

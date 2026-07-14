@@ -98,7 +98,7 @@ const FATAL_ERROR_CODES = new Set([
 export function isFatalError(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
   const { code, type } = error as { code?: unknown; type?: unknown };
-  const errorCode = typeof code === 'string' ? code : type;
+  const errorCode = typeof code === 'string' && code.length > 0 ? code : type;
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
@@ -985,7 +985,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return untypedEvent;
   }
 
-  private closeCurrentGeneration(reason: string, rejectDoneFut = false): void {
+  private closeCurrentGeneration(reason: string): void {
     if (this.currentGeneration instanceof DiscardedGeneration) {
       this.currentGeneration = undefined;
       return;
@@ -1004,12 +1004,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration.messageChannel.close();
     this.currentGeneration.functionChannel.close();
     if (!this.currentGeneration._doneFut.done) {
-      if (rejectDoneFut) {
-        this.currentGeneration._doneFut.reject(new Error(reason));
-      } else {
-        this.currentGeneration._doneFut.resolve();
-      }
+      this.currentGeneration._doneFut.resolve();
     }
+    this.#logger.warn(`In-progress generation discarded due to ${reason}`);
     this.currentGeneration = undefined;
   }
 
@@ -1112,7 +1109,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.rejectResponseCreatedFutures('Session reconnected');
       this.discardedEventIds.clear();
-      this.closeCurrentGeneration('Session reconnected', true);
+      this.closeCurrentGeneration('session reconnection');
 
       // Clear audio-capable item tracking - restored items are text-only on the server
       this.audioCapableItemIds.clear();
@@ -1218,7 +1215,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         reconnecting = true;
       }
     } finally {
-      this.closeCurrentGeneration('Realtime session closed', true);
+      this.closeCurrentGeneration('session close');
       this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
