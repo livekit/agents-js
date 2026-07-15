@@ -24,6 +24,7 @@ import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import type { SpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -110,6 +111,24 @@ class GreetingAgent extends Agent {
   }
 }
 
+class CleanupFailureAgent extends Agent {
+  speech?: SpeechHandle;
+
+  constructor() {
+    super({
+      instructions: 'Test cleanup failure isolation.',
+      tools: createTools(),
+    });
+  }
+
+  async onEnter(): Promise<void> {
+    this.speech = this.session.generateReply({
+      userInput: 'greeting',
+      toolChoice: 'none',
+    });
+  }
+}
+
 class RecordingLLM extends FakeLLM {
   readonly toolSnapshots: string[][] = [];
 
@@ -140,16 +159,27 @@ class RecordingLLM extends FakeLLM {
   }
 }
 
+type RealtimeFailureOptions = {
+  rejectFilteredUpdate?: boolean;
+  generationError?: Error;
+  emptyGeneration?: boolean;
+  throwToolChoiceRestore?: boolean;
+  throwToolRestore?: 'before' | 'after';
+};
+
 class RecordingRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
-  private readonly rejectFilteredUpdate: boolean;
+  private readonly failureOptions: RealtimeFailureOptions;
+  private temporaryToolsApplied = false;
   readonly toolSnapshots: string[][] = [];
   rejectedTemporaryUpdates = 0;
+  toolChoiceRestorationAttempts = 0;
+  toolRestorationAttempts = 0;
 
-  constructor(model: RealtimeModel, rejectFilteredUpdate = false) {
+  constructor(model: RealtimeModel, failureOptions: RealtimeFailureOptions = {}) {
     super(model);
-    this.rejectFilteredUpdate = rejectFilteredUpdate;
+    this.failureOptions = failureOptions;
   }
 
   get chatCtx(): ChatContext {
@@ -167,25 +197,47 @@ class RecordingRealtimeSession extends RealtimeSession {
   }
 
   async updateTools(tools: ToolContext): Promise<void> {
+    const isFilteredUpdate = !toolNames(tools).includes('ignored_nested');
+    const isRestoration = this.temporaryToolsApplied && !isFilteredUpdate;
+    if (isRestoration) {
+      this.toolRestorationAttempts++;
+      if (this.failureOptions.throwToolRestore === 'before') {
+        throw new Error('tool restoration failure');
+      }
+    }
+
     this._tools = tools.copy();
+    this.temporaryToolsApplied = isFilteredUpdate;
+
+    if (isRestoration && this.failureOptions.throwToolRestore === 'after') {
+      throw new Error('tool restoration failure after apply');
+    }
     if (
-      this.rejectFilteredUpdate &&
+      this.failureOptions.rejectFilteredUpdate &&
       this.rejectedTemporaryUpdates === 0 &&
-      !toolNames(this._tools).includes('ignored_nested')
+      isFilteredUpdate
     ) {
       this.rejectedTemporaryUpdates++;
       throw new Error('temporary realtime tools rejected after mutation');
     }
   }
 
-  updateOptions(_options: { toolChoice?: ToolChoice | null }): void {}
+  updateOptions(options: { toolChoice?: ToolChoice | null }): void {
+    if (options.toolChoice !== 'none' && this.failureOptions.throwToolChoiceRestore) {
+      this.toolChoiceRestorationAttempts++;
+      throw new Error('tool-choice restoration failure');
+    }
+  }
 
   pushAudio(_frame: AudioFrame): void {}
 
   async generateReply(): Promise<GenerationCreatedEvent> {
     this.toolSnapshots.push(toolNames(this._tools));
+    if (this.failureOptions.generationError) {
+      throw this.failureOptions.generationError;
+    }
     const functionStream =
-      this.toolSnapshots.length === 1
+      !this.failureOptions.emptyGeneration && this.toolSnapshots.length === 1
         ? oneItemStream(
             FunctionCall.create({
               callId: 'allowed-call',
@@ -213,7 +265,7 @@ class RecordingRealtimeSession extends RealtimeSession {
 class RecordingRealtimeModel extends RealtimeModel {
   readonly recordingSession: RecordingRealtimeSession;
 
-  constructor(rejectFilteredUpdate = false) {
+  constructor(failureOptions: RealtimeFailureOptions = {}) {
     const capabilities: RealtimeCapabilities = {
       messageTruncation: false,
       turnDetection: false,
@@ -227,7 +279,7 @@ class RecordingRealtimeModel extends RealtimeModel {
       perResponseToolChoice: false,
     };
     super(capabilities);
-    this.recordingSession = new RecordingRealtimeSession(this, rejectFilteredUpdate);
+    this.recordingSession = new RecordingRealtimeSession(this, failureOptions);
   }
 
   get model(): string {
@@ -294,7 +346,7 @@ describe('AgentSession IGNORE_ON_ENTER tool filtering', () => {
   });
 
   it('restores realtime tools when the temporary provider update mutates then rejects', async () => {
-    const llm = new RecordingRealtimeModel(true);
+    const llm = new RecordingRealtimeModel({ rejectFilteredUpdate: true });
     const session = new AgentSession({ llm });
 
     try {
@@ -320,6 +372,79 @@ describe('AgentSession IGNORE_ON_ENTER tool filtering', () => {
         EXPECTED_USER_TURN_TOOLS,
         EXPECTED_USER_TURN_TOOLS,
       ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('restores tools and preserves the primary failure when tool-choice cleanup throws', async () => {
+    const primaryError = new Error('primary generation failure');
+    const llm = new RecordingRealtimeModel({
+      generationError: primaryError,
+      throwToolChoiceRestore: true,
+    });
+    const agent = new CleanupFailureAgent();
+    const session = new AgentSession({ llm });
+
+    try {
+      await session.start({ agent });
+      await vi.waitFor(() => expect(agent.speech?._tasks).toHaveLength(1));
+      const speechTask = agent.speech?._tasks[0];
+      if (!speechTask) {
+        throw new Error('expected greeting speech task');
+      }
+      await expect(speechTask.result).rejects.toBe(primaryError);
+      expect(llm.recordingSession.toolChoiceRestorationAttempts).toBe(1);
+      expect(llm.recordingSession.toolRestorationAttempts).toBe(1);
+      expect(toolNames(llm.recordingSession.tools)).toEqual(EXPECTED_USER_TURN_TOOLS);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('preserves the primary failure when tool restoration throws', async () => {
+    const primaryError = new Error('primary generation failure');
+    const llm = new RecordingRealtimeModel({
+      generationError: primaryError,
+      throwToolRestore: 'before',
+    });
+    const agent = new CleanupFailureAgent();
+    const session = new AgentSession({ llm });
+
+    try {
+      await session.start({ agent });
+      await vi.waitFor(() => expect(agent.speech?._tasks).toHaveLength(1));
+      const speechTask = agent.speech?._tasks[0];
+      if (!speechTask) {
+        throw new Error('expected greeting speech task');
+      }
+      await expect(speechTask.result).rejects.toBe(primaryError);
+      expect(llm.recordingSession.toolRestorationAttempts).toBe(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('contains successful-path cleanup failures and restores tools when possible', async () => {
+    const llm = new RecordingRealtimeModel({
+      emptyGeneration: true,
+      throwToolChoiceRestore: true,
+      throwToolRestore: 'after',
+    });
+    const agent = new CleanupFailureAgent();
+    const session = new AgentSession({ llm });
+
+    try {
+      await session.start({ agent });
+      await vi.waitFor(() => expect(agent.speech?._tasks).toHaveLength(1));
+      const speechTask = agent.speech?._tasks[0];
+      if (!speechTask) {
+        throw new Error('expected greeting speech task');
+      }
+      await expect(speechTask.result).resolves.toBeUndefined();
+      expect(llm.recordingSession.toolChoiceRestorationAttempts).toBe(1);
+      expect(llm.recordingSession.toolRestorationAttempts).toBe(1);
+      expect(toolNames(llm.recordingSession.tools)).toEqual(EXPECTED_USER_TURN_TOOLS);
     } finally {
       await session.close();
     }

@@ -3952,10 +3952,18 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
-        this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+        try {
+          this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+        } catch (error) {
+          this.logger.error({ error }, 'failed to reset tool_choice');
+        }
       }
       if (originalTools !== undefined) {
-        await this.realtimeSession.updateTools(originalTools);
+        try {
+          await this.realtimeSession.updateTools(originalTools);
+        } catch (error) {
+          this.logger.error({ error }, 'failed to reset tools');
+        }
       }
     }
   }
