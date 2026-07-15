@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
 import type { FunctionDeclaration, Schema } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
 import { GeminiTool, type LLMTools } from './tools.js';
 
@@ -164,18 +164,20 @@ export function toToolsConfig({
   toolCtx,
   geminiTools,
   toolBehavior,
-  onlySingleType = false,
+  allowMixedTools = true,
 }: {
   toolCtx?: llm.ToolContext;
   geminiTools?: LLMTools;
   toolBehavior?: types.Behavior;
-  onlySingleType?: boolean;
-}): types.Tool[] | undefined {
+  allowMixedTools?: boolean;
+}): [types.Tool[] | undefined, boolean] {
   const tools: types.Tool[] = [];
+  let hasFunctionTools = false;
 
   if (toolCtx) {
     const functionDeclarations = toFunctionDeclarations(toolCtx);
     if (functionDeclarations.length > 0) {
+      hasFunctionTools = true;
       tools.push({
         functionDeclarations:
           toolBehavior !== undefined
@@ -188,23 +190,28 @@ export function toToolsConfig({
     }
   }
 
-  // Some Google LLMs do not support multiple tool types (either function tools or builtin tools).
-  // Short-circuit before adding provider tools, matching Python `create_tools_config`.
-  if (onlySingleType && tools.length > 0) {
-    return tools;
-  }
-
+  const providerTools: types.Tool[] = [];
   if (geminiTools !== undefined) {
-    tools.push(geminiTools);
+    providerTools.push(geminiTools);
   }
 
-  if (toolCtx) {
+  if (toolCtx !== undefined) {
     for (const tool of toolCtx.providerTools) {
       if (tool instanceof GeminiTool) {
-        tools.push(tool.toToolConfig());
+        providerTools.push(tool.toToolConfig());
       }
     }
   }
 
-  return tools.length > 0 ? tools : undefined;
+  // generateContent only supports combining built-in tools with function tools on the
+  // Gemini 3 Developer API: https://ai.google.dev/gemini-api/docs/tool-combination
+  if (hasFunctionTools && providerTools.length > 0 && !allowMixedTools) {
+    log().warn(
+      'ignoring provider tools; combining them with function tools requires the Gemini 3 Developer API (Vertex AI is not supported)',
+    );
+    return [tools.length > 0 ? tools : undefined, false];
+  }
+
+  tools.push(...providerTools);
+  return [tools.length > 0 ? tools : undefined, hasFunctionTools && providerTools.length > 0];
 }
