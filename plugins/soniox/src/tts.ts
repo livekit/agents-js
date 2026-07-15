@@ -209,6 +209,8 @@ export class ChunkedStream extends tts.ChunkedStream {
   #opts: TTSOptions;
   #text: string;
   #connOptions: APIConnectOptions | undefined;
+  #connection?: Connection;
+  #streamId = '';
   label = 'soniox.ChunkedStream';
 
   constructor(
@@ -223,30 +225,30 @@ export class ChunkedStream extends tts.ChunkedStream {
     this.#text = text;
     this.#opts = cloneOptions(opts);
     this.#connOptions = connOptions;
+    this.abortSignal.addEventListener('abort', () => this.#cancelRequest(), { once: true });
   }
 
   protected async run(): Promise<void> {
     const requestId = shortuuid();
-    const streamId = shortuuid();
+    this.#streamId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const waiter = new Future<void>();
-    let connection: Connection | undefined;
 
     let lastFrame: AudioFrame | undefined;
     const emitFrame = (final: boolean) => {
       if (lastFrame !== undefined && !this.queue.closed) {
-        this.queue.put({ requestId, segmentId: streamId, frame: lastFrame, final });
+        this.queue.put({ requestId, segmentId: this.#streamId, frame: lastFrame, final });
       }
       lastFrame = undefined;
     };
 
     try {
-      connection = await currentConnection(
+      this.#connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
         this.#connOptions?.timeoutMs ?? 10000,
       );
-      connection.registerStream(streamId, {
+      this.#connection.registerStream(this.#streamId, {
         opts: this.#opts,
         waiter,
         pushAudio: (audio) => {
@@ -264,18 +266,31 @@ export class ChunkedStream extends tts.ChunkedStream {
         },
       });
 
-      connection.sendText(streamId, this.#text, false);
-      connection.sendText(streamId, '', true);
+      if (this.abortSignal.aborted) {
+        this.#cancelRequest();
+      } else {
+        this.#connection.sendText(this.#streamId, this.#text, false);
+        this.#connection.sendText(this.#streamId, '', true);
+      }
 
       await waiter.await;
     } catch (error) {
+      if (this.abortSignal.aborted) {
+        return;
+      }
       if (error instanceof APITimeoutError || error instanceof APIStatusError) {
         throw error;
       }
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
-      connection?.unregisterStream(streamId);
+      this.#connection?.unregisterStream(this.#streamId);
       this.queue.close();
+    }
+  }
+
+  #cancelRequest(): void {
+    if (this.#connection !== undefined && this.#streamId) {
+      this.#connection.cancelStream(this.#streamId);
     }
   }
 }
@@ -520,11 +535,13 @@ class Connection {
     }
     if (!stream.configSent) {
       if (!stream.waiter.done) stream.waiter.resolve();
-      this.#streams.delete(streamId);
+      this.unregisterStream(streamId);
       return;
     }
     stream.cancelSent = true;
     this.#outbound.put({ type: 'cancel', streamId });
+    if (!stream.waiter.done) stream.waiter.resolve();
+    this.unregisterStream(streamId);
   }
 
   async close(): Promise<void> {

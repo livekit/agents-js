@@ -63,6 +63,13 @@ async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
   }
 }
 
+async function settlementByNextTurn(promise: Promise<void>): Promise<'settled' | 'pending'> {
+  return Promise.race([
+    promise.then(() => 'settled' as const),
+    new Promise<'pending'>((resolve) => setImmediate(() => resolve('pending'))),
+  ]);
+}
+
 const swallowExpectedRejection = (reason: unknown) => {
   if (reason instanceof APIStatusError) return;
   throw reason;
@@ -146,6 +153,64 @@ describe('Soniox TTS speed options', () => {
 });
 
 describe('Soniox TTS stream cleanup', () => {
+  it('settles and deregisters a streaming request when close receives no response', async () => {
+    let requestStartedResolve: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      requestStartedResolve = resolve;
+    });
+    let cancelObservedResolve: (() => void) | undefined;
+    const cancelObserved = new Promise<void>((resolve) => {
+      cancelObservedResolve = resolve;
+    });
+    const { url } = await startServer((_socket, message) => {
+      if (typeof message.text === 'string') requestStartedResolve?.();
+      if (message.cancel === true) cancelObservedResolve?.();
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream();
+    const originalClose = stream.close.bind(stream);
+    let closeCalls = 0;
+    stream.close = () => {
+      closeCalls += 1;
+      originalClose();
+    };
+    stream.pushText('hello');
+    void consume(stream);
+    await requestStarted;
+
+    stream.close();
+    await cancelObserved;
+    await synthesizer.close();
+
+    expect(closeCalls).toBe(1);
+  });
+
+  it('settles and deregisters a chunked request when aborted without a response', async () => {
+    let requestStartedResolve: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      requestStartedResolve = resolve;
+    });
+    let cancelObservedResolve: (() => void) | undefined;
+    const cancelObserved = new Promise<void>((resolve) => {
+      cancelObservedResolve = resolve;
+    });
+    const { url } = await startServer((_socket, message) => {
+      if (typeof message.text === 'string') requestStartedResolve?.();
+      if (message.cancel === true) cancelObservedResolve?.();
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.on('error', () => {});
+    const abortController = new AbortController();
+    const stream = synthesizer.synthesize('hello', { maxRetry: 0 }, abortController.signal);
+    const outputTask = consume(stream);
+    await requestStarted;
+
+    abortController.abort();
+
+    expect(await settlementByNextTurn(outputTask)).toBe('settled');
+    await cancelObserved;
+  });
+
   it('finishes a streaming request when the server completes before input ends', async () => {
     const { url } = await startServer((socket, message) => {
       if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
