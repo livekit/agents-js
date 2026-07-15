@@ -261,31 +261,40 @@ export class SpeechStream extends stt.SpeechStream {
       try {
         await withTimeout(this._sessionStartedEvent.wait(), this.#connOptions.timeoutMs);
 
-        const inputTask = this.#processInput(pushStream);
-        const completed = await Promise.race([
-          inputTask.then(() => 'input' as const),
-          this._reconnectEvent.wait().then(() => 'reconnect' as const),
-          this._sessionStoppedEvent.wait().then(() => 'stopped' as const),
-        ]);
+        const inputAbortController = new AbortController();
+        const inputTask = this.#processInput(pushStream, inputAbortController.signal);
+        let inputEnded = false;
+        try {
+          const completed = await Promise.race([
+            inputTask.then(() => 'input' as const),
+            this._reconnectEvent.wait().then(() => 'reconnect' as const),
+            this._sessionStoppedEvent.wait().then(() => 'stopped' as const),
+          ]);
 
-        if (completed === 'stopped') {
-          const details = this._cancellationError as _CanceledEvent | null;
-          if (details !== null) {
-            throw new APIConnectionError({
-              message:
-                `Azure STT canceled: ${details.errorDetails || details.reason} ` +
-                `(${details.errorCode})`,
-            });
+          if (completed === 'stopped') {
+            const details = this._cancellationError as _CanceledEvent | null;
+            if (details !== null) {
+              throw new APIConnectionError({
+                message:
+                  `Azure STT canceled: ${details.errorDetails || details.reason} ` +
+                  `(${details.errorCode})`,
+              });
+            }
+            throw new APIConnectionError({ message: 'SpeechRecognition session stopped' });
           }
-          throw new APIConnectionError({ message: 'SpeechRecognition session stopped' });
-        }
 
-        if (completed === 'reconnect') {
-          this._reconnectEvent.clear();
-        }
+          if (completed === 'reconnect') {
+            this._reconnectEvent.clear();
+          }
 
-        if (completed === 'input') {
+          inputEnded = completed === 'input';
+        } finally {
+          inputAbortController.abort();
+          await inputTask;
           pushStream.close();
+        }
+
+        if (inputEnded) {
           await this._sessionStoppedEvent.wait();
           break;
         }
@@ -298,10 +307,19 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  async #processInput(pushStream: speechsdk.PushAudioInputStream): Promise<void> {
+  async #processInput(
+    pushStream: speechsdk.PushAudioInputStream,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
     try {
       while (!this.closed) {
-        const result = await this.input.next();
+        let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+        try {
+          result = await this.input.next({ signal: abortSignal });
+        } catch (error) {
+          if (abortSignal.aborted) break;
+          throw error;
+        }
         if (result.done) break;
 
         const input = result.value;
