@@ -46,9 +46,23 @@ async function* thoughtSummaryResponseAsyncIter(): AsyncGenerator<types.Generate
           {
             text: "**Calculating Refill Dates** I'm processing the timeline",
             thought: true,
-          } as types.Part & { thought: boolean },
+          },
           { text: 'Visible response' },
         ],
+      },
+      finishReason: FinishReason.STOP,
+    },
+  ];
+  yield response;
+}
+
+async function* thoughtOnlyResponseAsyncIter(): AsyncGenerator<types.GenerateContentResponse> {
+  const response = new GenerateContentResponse();
+  response.candidates = [
+    {
+      content: {
+        role: 'model',
+        parts: [{ text: 'Internal reasoning', thought: true }],
       },
       finishReason: FinishReason.STOP,
     },
@@ -118,6 +132,23 @@ describe('Google mixed tools request construction', () => {
     const response = await stream.collect();
 
     expect(response.text).toBe('Visible response');
+  });
+
+  it('retries when a response contains only thought summary parts', async () => {
+    generateContentStreamMock
+      .mockResolvedValueOnce(thoughtOnlyResponseAsyncIter())
+      .mockResolvedValueOnce(singleResponseAsyncIter());
+
+    const google = new LLM({ model: 'gemini-2.5-flash', apiKey: 'test' });
+    google.on('error', () => {});
+    const stream = google.chat({
+      chatCtx: llm.ChatContext.empty(),
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const response = await stream.collect();
+
+    expect(response.text).toBe('ok');
+    expect(generateContentStreamMock).toHaveBeenCalledTimes(2);
   });
 
   it('enables server-side invocations on the Gemini 3 Developer API', async () => {

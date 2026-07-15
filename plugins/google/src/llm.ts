@@ -643,7 +643,7 @@ export class LLMStream extends llm.LLMStream {
     }
 
     // Drop thought summaries so TTS never speaks Gemini's internal reasoning.
-    if ((part as types.Part & { thought?: boolean }).thought) {
+    if (part.thought) {
       return null;
     }
 
