@@ -382,6 +382,21 @@ function mapHTTPError(
   return new APIConnectionError({ message: `${requestName} error: ${String(error)}` });
 }
 
+async function readErrorText(
+  response: Response,
+  callerSignal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  requestName: string,
+): Promise<string | undefined> {
+  try {
+    return await response.text();
+  } catch (error) {
+    const mapped = mapHTTPError(error, callerSignal, timeoutSignal, requestName);
+    if (!mapped) return undefined;
+    throw mapped;
+  }
+}
+
 /** @public */
 export class TTS extends tts.TTS {
   _opts: ResolvedTTSOptions;
@@ -473,7 +488,13 @@ export class RESTChunkedStream extends tts.ChunkedStream {
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = await readErrorText(
+        response,
+        this.abortSignal,
+        timeoutSignal,
+        'Gnani TTS REST error response',
+      );
+      if (errorText === undefined) return;
       throw apiError(`Gnani TTS API Error (${response.status}): ${errorText}`, response.status);
     }
 
@@ -534,7 +555,13 @@ export class SSEChunkedStream extends tts.ChunkedStream {
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = await readErrorText(
+        response,
+        this.abortSignal,
+        timeoutSignal,
+        'Gnani TTS SSE error response',
+      );
+      if (errorText === undefined) return;
       throw apiError(`Gnani TTS SSE Error (${response.status}): ${errorText}`, response.status);
     }
     if (!response.body) {

@@ -717,6 +717,146 @@ describe('Gnani TTS', () => {
     expect(errors).not.toHaveBeenCalled();
   });
 
+  it.each(['rest', 'sse'] as const)(
+    'settles a pending %s non-2xx error body quietly when the caller closes it',
+    async (synthesizeMethod) => {
+      let observeBodyRead = () => {};
+      const bodyRead = new Promise<void>((resolve) => {
+        observeBodyRead = resolve;
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+          let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+            pull() {
+              observeBodyRead();
+            },
+          });
+          init?.signal?.addEventListener(
+            'abort',
+            () =>
+              bodyController?.error(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true },
+          );
+          return new Response(body, { status: 429, statusText: 'Too Many Requests' });
+        }),
+      );
+      const tts = new TTS({ apiKey: 'test-key', synthesizeMethod });
+      const errors = vi.fn();
+      tts.on('error', errors);
+      const stream = tts.synthesize('hello', {
+        maxRetry: 0,
+        retryIntervalMs: 0,
+        timeoutMs: 100,
+      });
+      const drain = (async () => {
+        for await (const _event of stream) {
+          // Drain until caller cancellation closes the output.
+        }
+      })();
+      await bodyRead;
+
+      stream.close();
+      await drain;
+      await new Promise<void>(setImmediate);
+
+      expect(errors).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['rest', 'sse'] as const)(
+    'maps a timeout during a %s non-2xx error body to APITimeoutError',
+    async (synthesizeMethod) => {
+      vi.useFakeTimers();
+      const timeoutController = new AbortController();
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+      let observeBodyRead = () => {};
+      const bodyRead = new Promise<void>((resolve) => {
+        observeBodyRead = resolve;
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+          let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+            pull() {
+              observeBodyRead();
+            },
+          });
+          init?.signal?.addEventListener(
+            'abort',
+            () =>
+              bodyController?.error(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true },
+          );
+          return new Response(body, { status: 503, statusText: 'Service Unavailable' });
+        }),
+      );
+      const tts = new TTS({ apiKey: 'test-key', synthesizeMethod });
+      const errorPromise = new Promise<unknown>((resolve) => {
+        tts.once('error', resolve);
+      });
+      const stream = tts.synthesize('hello', {
+        maxRetry: 0,
+        retryIntervalMs: 0,
+        timeoutMs: 100,
+      });
+      await bodyRead;
+
+      timeoutController.abort();
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(errorPromise).resolves.toMatchObject({
+        error: { name: 'APITimeoutError' },
+      });
+      stream.close();
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  );
+
+  it.each(['rest', 'sse'] as const)(
+    'preserves %s non-2xx provider status and body details',
+    async (synthesizeMethod) => {
+      vi.useFakeTimers();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          return new Response('provider quota exceeded', {
+            status: 429,
+            statusText: 'Too Many Requests',
+          });
+        }),
+      );
+      const tts = new TTS({ apiKey: 'test-key', synthesizeMethod });
+      const errorPromise = new Promise<unknown>((resolve) => {
+        tts.once('error', resolve);
+      });
+      const stream = tts.synthesize('hello', {
+        maxRetry: 0,
+        retryIntervalMs: 0,
+        timeoutMs: 100,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(errorPromise).resolves.toMatchObject({
+        error: {
+          name: 'APIStatusError',
+          statusCode: 429,
+          message: expect.stringContaining('provider quota exceeded'),
+        },
+      });
+      stream.close();
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  );
+
   it('maps timeout AbortError and network failures by provenance', async () => {
     vi.useFakeTimers();
     const timeoutController = new AbortController();
