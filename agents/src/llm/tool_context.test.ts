@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as z3 from 'zod/v3';
 import * as z4 from 'zod/v4';
+import { createEndCallTool } from '../beta/tools/end_call.js';
 import { voice } from '../index.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
@@ -15,6 +16,7 @@ import {
   type ToolOptions,
   Toolset,
   type ToolsetContext,
+  isFunctionTool,
   tool,
 } from './tool_context.js';
 import { createToolOptions, oaiParams } from './utils.js';
@@ -701,6 +703,32 @@ describe('ToolContext', () => {
     expect(ctx.getFunctionTool('b')).toBe(b);
   });
 
+  it('_exclude hides a toolset member but keeps the toolset', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const direct = makeFn('direct');
+    const ts = new Toolset({ id: 'set', tools: [a, b] });
+    const ctx = new ToolContext([ts, direct]);
+
+    ctx._exclude([a]);
+
+    expect(ctx.getFunctionTool('a')).toBeUndefined();
+    expect(ctx.flatten()).not.toContain(a);
+    expect(ctx.getFunctionTool('b')).toBe(b);
+    expect(ctx.getFunctionTool('direct')).toBe(direct);
+    expect(ctx.toolsets).toEqual([ts]);
+  });
+
+  it('_exclude with no tools is a no-op', () => {
+    const a = makeFn('a');
+    const b = makeFn('b');
+    const ctx = new ToolContext([a, b]);
+
+    ctx._exclude([]);
+
+    expect(Object.keys(ctx.functionTools).sort()).toEqual(['a', 'b']);
+  });
+
   it('copy() yields an independent context with the same tools', () => {
     const a = makeFn('a');
     const ctx = new ToolContext([a]);
@@ -765,6 +793,22 @@ describe('ToolContext', () => {
     const ctx = new ToolContext([b, provider, a]);
 
     expect(ctx.flatten()).toEqual([b, a, provider]);
+  });
+});
+
+describe('createEndCallTool', () => {
+  it('sets IGNORE_ON_ENTER only when requested', () => {
+    const [defaultTool] = createEndCallTool().tools;
+    expect(defaultTool).toBeDefined();
+    expect(isFunctionTool(defaultTool)).toBe(true);
+    expect(isFunctionTool(defaultTool) && defaultTool.flags & ToolFlag.IGNORE_ON_ENTER).toBe(0);
+
+    const [ignoredTool] = createEndCallTool({ ignoreOnEnter: true }).tools;
+    expect(ignoredTool).toBeDefined();
+    expect(isFunctionTool(ignoredTool)).toBe(true);
+    expect(
+      isFunctionTool(ignoredTool) && ignoredTool.flags & ToolFlag.IGNORE_ON_ENTER,
+    ).toBeTruthy();
   });
 });
 

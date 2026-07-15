@@ -41,13 +41,13 @@ import {
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
+  type Tool,
   type ToolChoice,
   ToolContext,
   type ToolContextEntry,
   type ToolContextLike,
   ToolFlag,
   isFunctionTool,
-  isToolset,
   toToolContext,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
@@ -2136,19 +2136,8 @@ export class AgentActivity implements RecognitionHooks {
         instructions = concatInstructions(this.agent.instructions, '\n', instructions);
       }
 
-      // Filter out tools with IGNORE_ON_ENTER flag when generateReply is called inside onEnter
-      const onEnterData = onEnterStorage.getStore();
-      const shouldFilterTools =
-        onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession;
-
-      const tools: ToolContext = shouldFilterTools
-        ? new ToolContext(
-            this.tools.tools.filter((t): boolean => {
-              if (isToolset(t) || !isFunctionTool(t)) return true;
-              return !(t.flags & ToolFlag.IGNORE_ON_ENTER);
-            }),
-          )
-        : this.tools;
+      const tools = this.tools;
+      tools._exclude(this._onEnterIgnoredTools(tools));
 
       const task = this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
@@ -2232,6 +2221,19 @@ export class AgentActivity implements RecognitionHooks {
         this.restoreInterruptionByAudioActivity();
       }
     }
+  }
+
+  _onEnterIgnoredTools(toolCtx: ToolContext): Tool[] {
+    const onEnterData = onEnterStorage.getStore();
+    if (onEnterData?.agent !== this.agent || onEnterData.session !== this.agentSession) {
+      return [];
+    }
+
+    return toolCtx
+      .flatten()
+      .filter(
+        (tool): tool is Tool => isFunctionTool(tool) && !!(tool.flags & ToolFlag.IGNORE_ON_ENTER),
+      );
   }
 
   /**
@@ -3910,11 +3912,21 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     const originalToolChoice = this.toolChoice;
-    if (toolChoice !== undefined) {
-      this.realtimeSession.updateOptions({ toolChoice });
-    }
-
+    let originalTools: ToolContext | undefined;
     try {
+      const sessionTools = this.realtimeSession.tools;
+      const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
+      if (onEnterIgnoredTools.length > 0) {
+        originalTools = sessionTools;
+        const turnTools = sessionTools._flattenedCopy();
+        turnTools._exclude(onEnterIgnoredTools);
+        await this.realtimeSession.updateTools(turnTools);
+      }
+
+      if (toolChoice !== undefined) {
+        this.realtimeSession.updateOptions({ toolChoice });
+      }
+
       const generateReplyAbortController = new AbortController();
       const generationPromise = this.realtimeSession.generateReply(
         instructions !== undefined
@@ -3940,7 +3952,18 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       // reset toolChoice value
       if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
-        this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+        try {
+          this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
+        } catch (error) {
+          this.logger.error({ error }, 'failed to reset tool_choice');
+        }
+      }
+      if (originalTools !== undefined) {
+        try {
+          await this.realtimeSession.updateTools(originalTools);
+        } catch (error) {
+          this.logger.error({ error }, 'failed to reset tools');
+        }
       }
     }
   }
