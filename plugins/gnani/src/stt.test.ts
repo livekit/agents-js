@@ -1,24 +1,43 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AudioFrame } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STT, SpeechStream } from './stt.js';
 
-vi.mock('ws', async () => {
-  const { EventEmitter } = await import('node:events');
+interface MockWebSocket extends EventEmitter {
+  options?: { handshakeTimeout?: number };
+  sent: unknown[];
+  closed: boolean;
+}
+
+const wsState = vi.hoisted(() => ({
+  instances: [] as MockWebSocket[],
+}));
+
+vi.mock('ws', () => {
   return {
     WebSocket: class MockWebSocket extends EventEmitter {
       static OPEN = 1;
       readyState = 1;
+      sent: unknown[] = [];
+      closed = false;
+      options?: { handshakeTimeout?: number };
 
-      constructor() {
+      constructor(_url: string, options?: { handshakeTimeout?: number }) {
         super();
+        this.options = options;
+        wsState.instances.push(this);
         queueMicrotask(() => this.emit('open'));
       }
 
-      send() {}
+      send(data: unknown) {
+        this.sent.push(data);
+      }
 
       close() {
+        this.closed = true;
         this.emit('close', 1000);
       }
     },
@@ -26,6 +45,10 @@ vi.mock('ws', async () => {
 });
 
 describe('Gnani STT', () => {
+  beforeEach(() => {
+    wsState.instances.length = 0;
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -175,5 +198,69 @@ describe('Gnani STT', () => {
     const stream = stt.stream();
     stream.close();
     expect(stream._opts.language).toBe('hi-IN');
+  });
+
+  it('parses WebSocket text frames delivered as non-binary Buffers', async () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 100 },
+    });
+    await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
+    const ws = wsState.instances.at(-1)!;
+
+    ws.emit(
+      'message',
+      Buffer.from(JSON.stringify({ type: 'transcript', text: 'namaste', segment_id: 'seg-1' })),
+      false,
+    );
+
+    const result = await Promise.race([
+      stream.next(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('text Buffer was not parsed')), 50),
+      ),
+    ]);
+    stream.close();
+    expect(result.value?.alternatives[0]?.text).toBe('namaste');
+  });
+
+  it('drains final responses for one second after audio input ends', async () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1500 },
+    });
+    await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
+    const ws = wsState.instances.at(-1)!;
+
+    stream.pushFrame(AudioFrame.create(16000, 1, 160));
+    stream.endInput();
+    setTimeout(() => {
+      ws.emit(
+        'message',
+        Buffer.from(JSON.stringify({ type: 'transcript', text: 'final', segment_id: 'seg-2' })),
+        false,
+      );
+    }, 25);
+
+    const result = await Promise.race([
+      stream.next(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('final response was not drained')), 100),
+      ),
+    ]);
+    stream.close();
+    expect(result.value?.alternatives[0]?.text).toBe('final');
+  });
+
+  it('uses connOptions timeout for WebSocket connection and receive', async () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 25 },
+    });
+    await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
+    const ws = wsState.instances.at(-1)!;
+
+    expect(ws.options?.handshakeTimeout).toBe(25);
+    stream.close();
   });
 });

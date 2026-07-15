@@ -179,6 +179,29 @@ function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortS
   return AbortSignal.any([signal, timeoutSignal]);
 }
 
+function mapWebSocketError(error: Error): APIConnectionError {
+  if (/timed? out|timeout/i.test(error.message)) {
+    return new APITimeoutError({
+      message: `Gnani STT WebSocket connection timed out: ${error.message}`,
+    });
+  }
+  return new APIConnectionError({ message: `Gnani STT WebSocket error: ${error.message}` });
+}
+
+async function waitForDrain(receiveTask: Promise<void>, timeoutMs: number): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      receiveTask,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 /** @public */
 export class STT extends stt.STT {
   _opts: ResolvedSTTOptions;
@@ -256,10 +279,12 @@ export class STT extends stt.STT {
 export class SpeechStream extends stt.SpeechStream {
   _opts: ResolvedSTTOptions;
   label = 'gnani.SpeechStream';
+  private readonly timeoutMs: number;
 
   constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
     this._opts = opts;
+    this.timeoutMs = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
   }
 
   buildWsUrl(): string {
@@ -269,7 +294,7 @@ export class SpeechStream extends stt.SpeechStream {
   protected async run() {
     const ws = new WebSocket(this.buildWsUrl(), {
       headers: this.buildHeaders(),
-      handshakeTimeout: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
+      handshakeTimeout: this.timeoutMs,
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -279,7 +304,7 @@ export class SpeechStream extends stt.SpeechStream {
       };
       const onError = (error: Error) => {
         cleanup();
-        reject(new APIConnectionError({ message: `Gnani STT WebSocket error: ${error.message}` }));
+        reject(mapWebSocketError(error));
       };
       const onClose = (code: number) => {
         cleanup();
@@ -296,7 +321,15 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     try {
-      await Promise.race([this.sendAudio(ws), this.receiveMessages(ws)]);
+      const sendTask = this.sendAudio(ws);
+      const receiveTask = this.receiveMessages(ws);
+      const completed = await Promise.race([
+        sendTask.then(() => 'send'),
+        receiveTask.then(() => 'receive'),
+      ]);
+      if (completed === 'send') {
+        await waitForDrain(receiveTask, 1000);
+      }
     } finally {
       ws.close();
     }
@@ -353,8 +386,8 @@ export class SpeechStream extends stt.SpeechStream {
 
   private async receiveMessages(ws: WebSocket) {
     return new Promise<void>((resolve, reject) => {
-      ws.on('message', (msg: RawData) => {
-        if (Buffer.isBuffer(msg)) return;
+      ws.on('message', (msg: RawData, isBinary: boolean) => {
+        if (isBinary) return;
 
         try {
           const data = JSON.parse(msg.toString()) as Record<string, unknown>;
@@ -398,9 +431,7 @@ export class SpeechStream extends stt.SpeechStream {
         }
       });
       ws.on('close', () => resolve());
-      ws.on('error', (error) =>
-        reject(new APIConnectionError({ message: `Gnani STT WebSocket error: ${error.message}` })),
-      );
+      ws.on('error', (error) => reject(mapWebSocketError(error)));
     });
   }
 }
