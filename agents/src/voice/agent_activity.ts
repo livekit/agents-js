@@ -79,6 +79,7 @@ import {
   delay,
   isDevMode,
   isHosted,
+  isPending,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -226,27 +227,23 @@ export interface ForwardOutput {
 }
 
 /**
- * Resolve with `p`, or with `undefined` as soon as `signal` aborts. Used where
- * a promise may never settle once the room is gone (e.g. waitForPlayout during
+ * Resolves with `p`, or with `undefined` once `signal` aborts while `p` is
+ * still pending. An already-settled `p` always wins, even when the signal has
+ * already fired — an {@link AudioOutput} is allowed to report
+ * `playbackFinished` synchronously from `clearBuffer()`, and its synchronized
+ * transcript must not be discarded in that case. Used where a promise may
+ * never settle once the room is gone (e.g. `waitForPlayout()` during
  * shutdown) — parking there would keep the reply task from committing the
- * in-flight assistant turn (#2041).
+ * in-flight assistant turn.
  */
-function raceWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
-  if (signal.aborted) return Promise.resolve(undefined);
-  return new Promise<T | undefined>((resolve, reject) => {
-    const onAbort = () => resolve(undefined);
-    signal.addEventListener('abort', onAbort, { once: true });
-    p.then(
-      (v) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(v);
-      },
-      (e) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(e);
-      },
-    );
-  });
+async function raceWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  if (signal.aborted) {
+    return (await isPending(p)) ? undefined : p;
+  }
+  return ThrowsPromise.race([
+    ThrowsPromise.fromPromise<T | undefined, Error>(p),
+    ThrowsPromise.fromPromise<undefined, Error>(waitForAbort(signal).then(() => undefined)),
+  ]);
 }
 
 export class AgentActivity implements RecognitionHooks {
