@@ -22,7 +22,7 @@ export default defineAgent({
         minSpeechDurationMs: 100,
         minSilenceDurationMs: 300,
       },
-      modelId: 'scribe_v2_realtime',
+      model: 'scribe_v2_realtime',
     });
 
     const session = new voice.AgentSession({

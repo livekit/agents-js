@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-fishaudio': minor
+'@livekit/agents-plugin-fishaudio': patch
 ---
 
-Reuse streaming TTS websockets and prebuffer initial FishAudio chunks to avoid cold-start underruns.
+Reuse and prewarm Fish Audio streaming TTS websockets to avoid repeated connection setup.
