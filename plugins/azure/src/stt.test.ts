@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { STT, SpeechStream, speechsdk } from './stt.js';
@@ -14,6 +15,7 @@ const azureHarness = vi.hoisted(() => ({
     canceled?: (_sender: unknown, event: unknown) => void;
     sessionStarted?: (_sender: unknown, event: unknown) => void;
     sessionStopped?: (_sender: unknown, event: unknown) => void;
+    speechStartDetected?: (_sender: unknown, event: unknown) => void;
   }>,
   streams: [] as Array<{
     closed: boolean;
@@ -70,7 +72,10 @@ vi.mock('microsoft-cognitiveservices-speech-sdk', async (importOriginal) => {
 
     startContinuousRecognitionAsync(resolve: () => void): void {
       resolve();
-      queueMicrotask(() => this.sessionStarted?.(undefined, {}));
+      queueMicrotask(() => {
+        this.sessionStarted?.(undefined, {});
+        this.speechStartDetected?.(undefined, {});
+      });
     }
 
     stopContinuousRecognitionAsync(resolve: () => void): void {
@@ -201,6 +206,37 @@ describe('Azure STT cancellation handling', () => {
     expect(azureHarness.recognizers).toHaveLength(2);
 
     stream.close();
+  });
+
+  it('emits speech start after replacing a canceled recognizer mid-speech', async () => {
+    const azureStt = new STT({ speechHost: 'wss://azure.test' });
+    const stream = azureStt.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const startEvents: stt.SpeechEventType[] = [];
+    const collectEvents = (async () => {
+      for await (const event of stream) {
+        if (event.type === stt.SpeechEventType.START_OF_SPEECH) {
+          startEvents.push(event.type);
+        }
+      }
+    })();
+
+    try {
+      await vi.waitFor(() => expect(startEvents).toEqual([stt.SpeechEventType.START_OF_SPEECH]));
+      stream.pushFrame(frame(1));
+      await vi.waitFor(() => expect(azureHarness.recognizers).toHaveLength(2));
+
+      await vi.waitFor(() =>
+        expect(startEvents).toEqual([
+          stt.SpeechEventType.START_OF_SPEECH,
+          stt.SpeechEventType.START_OF_SPEECH,
+        ]),
+      );
+    } finally {
+      stream.close();
+      await collectEvents;
+    }
   });
 });
 

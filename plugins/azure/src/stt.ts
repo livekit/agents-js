@@ -243,6 +243,7 @@ export class SpeechStream extends stt.SpeechStream {
       this._sessionStoppedEvent.clear();
       this._sessionStartedEvent.clear();
       this._cancellationError = null;
+      this._speaking = false;
 
       const pushStream = speechsdk.AudioInputStream.createPushStream(
         speechsdk.AudioStreamFormat.getWaveFormatPCM(
