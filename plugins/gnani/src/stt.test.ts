@@ -271,6 +271,120 @@ describe('Gnani STT', () => {
     expect(errors).not.toHaveBeenCalled();
   });
 
+  it('preserves caller cancellation while a non-2xx body read is pending', async () => {
+    let observeBodyRead = () => {};
+    const bodyRead = new Promise<void>((resolve) => {
+      observeBodyRead = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller;
+          },
+          pull() {
+            observeBodyRead();
+          },
+        });
+        init?.signal?.addEventListener(
+          'abort',
+          () => bodyController?.error(new DOMException('The operation was aborted', 'AbortError')),
+          { once: true },
+        );
+        return new Response(body, { status: 429, statusText: 'Too Many Requests' });
+      }),
+    );
+    const stt = new STT({ apiKey: 'test-key' });
+    const errors = vi.fn();
+    stt.on('error', errors);
+    const controller = new AbortController();
+    const recognition = stt.recognize(AudioFrame.create(16000, 1, 1600), controller.signal);
+    await bodyRead;
+
+    controller.abort();
+
+    await expect(recognition).rejects.toMatchObject({ name: 'AbortError' });
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it('maps timeout during a non-2xx body read to APITimeoutError', async () => {
+    const timeoutController = new AbortController();
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+    let observeBodyRead = () => {};
+    const bodyRead = new Promise<void>((resolve) => {
+      observeBodyRead = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller;
+          },
+          pull() {
+            observeBodyRead();
+          },
+        });
+        init?.signal?.addEventListener(
+          'abort',
+          () => bodyController?.error(new DOMException('The operation was aborted', 'AbortError')),
+          { once: true },
+        );
+        return new Response(body, { status: 503, statusText: 'Service Unavailable' });
+      }),
+    );
+    const stt = new STT({ apiKey: 'test-key' });
+    const recognition = stt.recognize(AudioFrame.create(16000, 1, 1600));
+    await bodyRead;
+
+    timeoutController.abort();
+
+    await expect(recognition).rejects.toMatchObject({ name: 'APITimeoutError' });
+    timeoutSpy.mockRestore();
+  });
+
+  it('preserves non-2xx provider status and body details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        return new Response('invalid language configuration', {
+          status: 422,
+          statusText: 'Unprocessable Entity',
+        });
+      }),
+    );
+    const stt = new STT({ apiKey: 'test-key' });
+
+    await expect(stt.recognize(AudioFrame.create(16000, 1, 1600))).rejects.toMatchObject({
+      name: 'APIStatusError',
+      statusCode: 422,
+      message: expect.stringContaining('invalid language configuration'),
+    });
+  });
+
+  it('maps a non-2xx body read failure to APIConnectionError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new Error('body disconnected'));
+          },
+        });
+        return new Response(body, { status: 500, statusText: 'Internal Server Error' });
+      }),
+    );
+    const stt = new STT({ apiKey: 'test-key' });
+
+    await expect(stt.recognize(AudioFrame.create(16000, 1, 1600))).rejects.toMatchObject({
+      name: 'APIConnectionError',
+      message: expect.stringContaining('body disconnected'),
+    });
+  });
+
   it('warns about deprecated auth kwargs without raising', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stt = new STT({ apiKey: 'test-key', organizationId: 'old', userId: 'old' });

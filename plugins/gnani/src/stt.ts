@@ -213,6 +213,18 @@ function mapHTTPError(
   return new APIConnectionError({ message: `Gnani STT error: ${String(error)}` });
 }
 
+async function readErrorText(
+  response: Response,
+  callerSignal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+): Promise<string> {
+  try {
+    return await response.text();
+  } catch (error) {
+    throw mapHTTPError(error, callerSignal, timeoutSignal);
+  }
+}
+
 function mapWebSocketError(error: Error): APIConnectionError {
   if (/timed? out|timeout/i.test(error.message)) {
     return new APITimeoutError({
@@ -279,7 +291,7 @@ export class STT extends stt.STT {
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = await readErrorText(response, abortSignal, timeoutSignal);
       throw new APIStatusError({
         message: `Gnani STT API Error (${response.status}): ${errorText}`,
         options: { statusCode: response.status, body: { error: errorText } },
