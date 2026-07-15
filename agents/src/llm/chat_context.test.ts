@@ -326,6 +326,19 @@ describe('stripExprMarkup and ChatMessage text content', () => {
     expect(stripExprMarkup(text)).toBe(text);
   });
 
+  it('strips an unmatched opening expr marker', () => {
+    expect(stripExprMarkup('Alpha <expr type="prosody" label="whisper">bravo')).toBe('Alpha bravo');
+  });
+
+  it('strips an unmatched closing expr marker', () => {
+    expect(stripExprMarkup('Alpha </expr>bravo')).toBe('Alpha bravo');
+  });
+
+  it('strips a marker assembled from stream-split chunks', () => {
+    const chunks = ['Alpha <ex', 'pr type="break" label="1s"/> bravo'];
+    expect(stripExprMarkup(chunks.join(''))).toBe('Alpha  bravo');
+  });
+
   it('strips expr tags from assistant textContent only', () => {
     const msg = ChatMessage.create({ role: 'assistant', content: [mixedMarkup] });
     expect(msg.textContent).toBe(mixedMarkupClean);

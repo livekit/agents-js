@@ -240,6 +240,20 @@ describe('computeChatCtxDiff', () => {
     expect(result.toCreate).toEqual([]);
   });
 
+  it('replaces a same-ID message when raw text content changes', () => {
+    const oldCtx = createChatContext([
+      createChatMessage('1', '<expr type="break" label="1s"/>Hello', 'assistant'),
+    ]);
+    const newCtx = createChatContext([
+      createChatMessage('1', '<expr type="break" label="2s"/>Hello', 'assistant'),
+    ]);
+
+    const result = computeChatCtxDiff(oldCtx, newCtx);
+
+    expect(result.toRemove).toEqual(['1']);
+    expect(result.toCreate).toEqual([[null, '1']]);
+  });
+
   it('should handle empty old context', () => {
     const msg1 = createChatMessage('1', 'Hello', 'user');
     const msg2 = createChatMessage('2', 'Hi there', 'assistant');

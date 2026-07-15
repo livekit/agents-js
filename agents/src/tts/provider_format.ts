@@ -14,5 +14,7 @@ export function stripExprMarkup(text: string): string {
       .replace(/<expr\b[^>]*>([\s\S]*?)<\/expr>/gi, '$1');
   } while (stripped !== previous);
 
+  stripped = stripped.replace(/<expr\b[^>]*\/?>/gi, '').replace(/<\/expr\s*>/gi, '');
+
   return stripped;
 }
