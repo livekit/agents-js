@@ -56,7 +56,7 @@ const defaultTTSOptions: TTSOptions = {
 };
 
 const validateSpeed = (speed: number) => {
-  if (speed < MIN_SPEED || speed > MAX_SPEED) {
+  if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
     throw new Error(`speed must be between ${MIN_SPEED} and ${MAX_SPEED}, but got ${speed}`);
   }
 };
@@ -78,6 +78,7 @@ const toAPIStatusError = (message: string, statusCode?: number, body?: object | 
 interface TTSState {
   currentConnection?: Connection;
   connectionPromise?: Promise<Connection>;
+  streams: Set<SynthesizeStream>;
 }
 
 const ttsState = new WeakMap<TTS, TTSState>();
@@ -85,7 +86,6 @@ const ttsState = new WeakMap<TTS, TTSState>();
 /** @public */
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
-  #streams = new Set<SynthesizeStream>();
   label = 'soniox.TTS';
 
   constructor(opts: Partial<TTSOptions> = {}) {
@@ -100,7 +100,7 @@ export class TTS extends tts.TTS {
     validateAudioFormat(merged.audioFormat);
 
     this.#opts = merged;
-    ttsState.set(this, {});
+    ttsState.set(this, { streams: new Set() });
   }
 
   get model(): string {
@@ -128,7 +128,7 @@ export class TTS extends tts.TTS {
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     const stream = new SynthesizeStream(this, this.#opts, options?.connOptions);
-    this.#streams.add(stream);
+    getTTSState(this).streams.add(stream);
     return stream;
   }
 
@@ -139,12 +139,12 @@ export class TTS extends tts.TTS {
   }
 
   override async close(): Promise<void> {
-    for (const stream of this.#streams) {
+    const state = getTTSState(this);
+    for (const stream of state.streams) {
       stream.close();
     }
-    this.#streams.clear();
+    state.streams.clear();
 
-    const state = getTTSState(this);
     await state.currentConnection?.close();
     state.currentConnection = undefined;
     state.connectionPromise = undefined;
@@ -230,6 +230,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const streamId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const waiter = new Future<void>();
+    let connection: Connection | undefined;
 
     let lastFrame: AudioFrame | undefined;
     const emitFrame = (final: boolean) => {
@@ -240,7 +241,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     };
 
     try {
-      const connection = await currentConnection(
+      connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
         this.#connOptions?.timeoutMs ?? 10000,
@@ -273,6 +274,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       }
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
+      connection?.unregisterStream(streamId);
       this.queue.close();
     }
   }
@@ -306,6 +308,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#streamId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const waiter = new Future<void>();
+    let inputTask: Promise<void> | undefined;
 
     let lastFrame: AudioFrame | undefined;
     const emitFrame = (final: boolean) => {
@@ -339,9 +342,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         },
       });
 
-      const inputTask = this.#sendInput();
+      inputTask = this.#sendInput();
       await waiter.await;
-      await inputTask;
     } catch (error) {
       if (this.abortSignal.aborted) {
         return;
@@ -351,9 +353,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
+      this.#cancelled = true;
+      if (!this.input.closed) {
+        this.input.close();
+      }
+      await inputTask;
       if (this.#connection !== undefined && this.#streamId) {
         this.#connection.unregisterStream(this.#streamId);
       }
+      getTTSState(this.#tts).streams.delete(this);
       if (!this.queue.closed) {
         this.queue.put(SynthesizeStream.END_OF_STREAM);
       }

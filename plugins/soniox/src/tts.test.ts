@@ -1,0 +1,254 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { APIStatusError } from '@livekit/agents';
+import { once } from 'node:events';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { TTS } from './tts.js';
+
+const servers: WebSocketServer[] = [];
+const synthesizers: TTS[] = [];
+
+async function startServer(
+  onMessage: (
+    socket: WebSocket,
+    message: Record<string, unknown>,
+    messages: Record<string, unknown>[],
+  ) => void,
+): Promise<{ url: string; messages: Record<string, unknown>[] }> {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  servers.push(server);
+  await once(server, 'listening');
+
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected a TCP address');
+  }
+
+  const messages: Record<string, unknown>[] = [];
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const message: Record<string, unknown> = JSON.parse(raw.toString());
+      messages.push(message);
+      onMessage(socket, message, messages);
+    });
+  });
+  return { url: `ws://127.0.0.1:${address.port}`, messages };
+}
+
+function createTTS(options: ConstructorParameters<typeof TTS>[0] = {}): TTS {
+  const synthesizer = new TTS({ apiKey: 'test-key', ...options });
+  synthesizers.push(synthesizer);
+  return synthesizer;
+}
+
+async function consume(stream: AsyncIterable<unknown>): Promise<void> {
+  for await (const _event of stream) {
+    // Consume the complete stream.
+  }
+}
+
+async function waitFor<T>(promise: Promise<T>, timeoutMs = 1000): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('timed out waiting for promise')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+const swallowExpectedRejection = (reason: unknown) => {
+  if (reason instanceof APIStatusError) return;
+  throw reason;
+};
+
+beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
+
+afterEach(async () => {
+  await Promise.all(synthesizers.splice(0).map((synthesizer) => synthesizer.close()));
+  await Promise.all(
+    servers.splice(0).map(async (server) => {
+      for (const client of server.clients) client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }),
+  );
+});
+
+describe('Soniox TTS speed options', () => {
+  it.each([0.7, 1, 1.3])('accepts constructor speed %s', (speed) => {
+    expect(() => createTTS({ speed })).not.toThrow();
+  });
+
+  it.each([0.69, 1.31, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects constructor speed %s',
+    (speed) => {
+      expect(() => createTTS({ speed })).toThrow(/speed must be between 0.7 and 1.3/);
+    },
+  );
+
+  it.each([0.69, 1.31, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects updated speed %s',
+    (speed) => {
+      const synthesizer = createTTS();
+      expect(() => synthesizer.updateOptions({ speed })).toThrow(
+        /speed must be between 0.7 and 1.3/,
+      );
+    },
+  );
+
+  it('sends default speed and bitrate in the initial request', async () => {
+    const { url, messages } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url, bitrate: 32000 });
+
+    await consume(synthesizer.synthesize('hello'));
+
+    expect(messages[0]).toMatchObject({ speed: 1, bitrate: 32000 });
+  });
+
+  it('sends an updated custom speed in the initial request', async () => {
+    const { url, messages } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.updateOptions({ speed: 1.3 });
+
+    await consume(synthesizer.synthesize('hello'));
+
+    expect(messages[0]).toMatchObject({ speed: 1.3 });
+  });
+});
+
+describe('Soniox TTS stream cleanup', () => {
+  it('finishes a streaming request when the server completes before input ends', async () => {
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream();
+    stream.pushText('hello');
+
+    await waitFor(consume(stream));
+  });
+
+  it('removes completed streaming requests from TTS state', async () => {
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream();
+    const originalClose = stream.close.bind(stream);
+    let closeCalls = 0;
+    stream.close = () => {
+      closeCalls += 1;
+      originalClose();
+    };
+    stream.pushText('hello');
+
+    await waitFor(consume(stream));
+    await synthesizer.close();
+
+    expect(closeCalls).toBe(0);
+  });
+
+  it('finishes a streaming request when the server errors before input ends', async () => {
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            error_code: 400,
+            error_message: 'invalid request',
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.on('error', () => {});
+    const stream = synthesizer.stream({ connOptions: { maxRetry: 0 } });
+    stream.pushText('hello');
+
+    await waitFor(consume(stream));
+  });
+
+  it('reuses the pooled connection after a failed chunked request', async () => {
+    let requestCount = 0;
+    let connectionCount = 0;
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      requestCount += 1;
+      if (requestCount === 1) {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            error_code: 400,
+            error_message: 'invalid request',
+          }),
+        );
+        return;
+      }
+      socket.send(
+        JSON.stringify({
+          stream_id: message.stream_id,
+          audio: Buffer.alloc(480).toString('base64'),
+          audio_end: true,
+          terminated: true,
+        }),
+      );
+    });
+    servers.at(-1)?.on('connection', () => {
+      connectionCount += 1;
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.on('error', () => {});
+
+    await consume(synthesizer.synthesize('fail', { maxRetry: 0 }));
+    await consume(synthesizer.synthesize('succeed', { maxRetry: 0 }));
+
+    expect(connectionCount).toBe(1);
+  });
+});
