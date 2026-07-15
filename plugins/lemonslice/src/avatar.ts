@@ -474,17 +474,18 @@ export class AvatarSession extends voice.AvatarSession {
   ): Promise<string> {
     for (let i = 0; i <= this.connOptions.maxRetry; i++) {
       try {
-        const payload: Record<string, any> = {
-          transport_type: 'livekit',
-          properties: {
-            livekit_url: livekitUrl,
-            livekit_token: livekitToken,
-          },
+        const properties: Record<string, string> = {
+          livekit_url: livekitUrl,
+          livekit_token: livekitToken,
         };
-
         if (livekitSessionId) {
-          payload.properties.livekit_session_id = livekitSessionId;
+          properties.livekit_session_id = livekitSessionId;
         }
+
+        const payload: Record<string, unknown> = {
+          transport_type: 'livekit',
+          properties,
+        };
 
         if (this.agentId) {
           payload.agent_id = this.agentId;
