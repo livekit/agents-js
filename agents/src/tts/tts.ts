@@ -805,7 +805,6 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   close() {
     if (!this.queue.closed) this.queue.close();
     if (!this.#metricsQueue.closed) this.#metricsQueue.close();
-    if (!this.output.closed) this.output.close();
     if (!this.abortController.signal.aborted) this.abortController.abort();
     this.closed = true;
   }

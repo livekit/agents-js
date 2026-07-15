@@ -7,8 +7,9 @@ import { APIConnectionError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
+import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, TTS } from './tts.js';
-import type { SynthesizeStream } from './tts.js';
+import type { SynthesizeStream, SynthesizedAudio } from './tts.js';
 
 const SAMPLE_RATE = 8000;
 const FRAME_SAMPLES = 80;
@@ -71,16 +72,42 @@ class RetryChunkedStream extends ChunkedStream {
   }
 }
 
+class CloseDuringPutQueue extends AsyncIterableQueue<SynthesizedAudio> {
+  readonly putStarted: Promise<void>;
+  closedAfterClose = false;
+  private resolvePutStarted: () => void = () => {};
+
+  constructor(private closeStream: () => void) {
+    super();
+    this.putStarted = new Promise((resolve) => {
+      this.resolvePutStarted = resolve;
+    });
+  }
+
+  override put(item: SynthesizedAudio): void {
+    this.closeStream();
+    this.closedAfterClose = this.closed;
+    this.resolvePutStarted();
+    if (!this.closed) {
+      super.put(item);
+    }
+  }
+}
+
 class CloseRaceChunkedStream extends ChunkedStream {
   label = 'test.CloseRaceChunkedStream';
-  readonly frameQueued: Promise<void>;
-  private resolveFrameQueued: () => void = () => {};
+  readonly metricsPutStarted: Promise<void>;
+  private readonly closeDuringPutQueue: CloseDuringPutQueue;
 
   constructor(tts: TTS) {
     super('close during synthesis', tts, RETRY_OPTIONS);
-    this.frameQueued = new Promise((resolve) => {
-      this.resolveFrameQueued = resolve;
-    });
+    this.closeDuringPutQueue = new CloseDuringPutQueue(() => this.close());
+    this.output = this.closeDuringPutQueue;
+    this.metricsPutStarted = this.closeDuringPutQueue.putStarted;
+  }
+
+  get outputClosedDuringMetricsPut(): boolean {
+    return this.closeDuringPutQueue.closedAfterClose;
   }
 
   protected async run(): Promise<void> {
@@ -89,15 +116,6 @@ class CloseRaceChunkedStream extends ChunkedStream {
       segmentId: 'segment',
       frame: audioFrame(4),
       final: false,
-    });
-    this.resolveFrameQueued();
-
-    await new Promise<void>((resolve) => {
-      if (this.abortSignal.aborted) {
-        resolve();
-        return;
-      }
-      this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
     });
   }
 }
@@ -134,23 +152,16 @@ describe('ChunkedStream', () => {
     expect(metrics).toHaveLength(1);
   });
 
-  it('settles metrics monitoring when closed with buffered audio', async () => {
+  it('keeps output open when closing after metrics dequeues buffered audio', async () => {
     const tts = new TestTTS();
     const stream = new CloseRaceChunkedStream(tts);
     const metricsCollected = new Promise<void>((resolve) => {
       tts.once('metrics_collected', () => resolve());
     });
 
-    await stream.frameQueued;
-    stream.close();
+    await stream.metricsPutStarted;
 
-    await expect(
-      Promise.race([
-        metricsCollected,
-        new Promise<void>((_, reject) => {
-          setTimeout(() => reject(new Error('metrics monitor did not settle')), 100);
-        }),
-      ]),
-    ).resolves.toBeUndefined();
+    expect(stream.outputClosedDuringMetricsPut).toBe(false);
+    await metricsCollected;
   });
 });
