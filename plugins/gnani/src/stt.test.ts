@@ -240,6 +240,37 @@ describe('Gnani STT', () => {
     });
   });
 
+  it('preserves caller cancellation while a REST request is pending', async () => {
+    let observeFetch = () => {};
+    const fetchStarted = new Promise<void>((resolve) => {
+      observeFetch = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        observeFetch();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const stt = new STT({ apiKey: 'test-key' });
+    const errors = vi.fn();
+    stt.on('error', errors);
+    const controller = new AbortController();
+    const recognition = stt.recognize(AudioFrame.create(16000, 1, 1600), controller.signal);
+    await fetchStarted;
+
+    controller.abort();
+
+    await expect(recognition).rejects.toMatchObject({ name: 'AbortError' });
+    expect(errors).not.toHaveBeenCalled();
+  });
+
   it('warns about deprecated auth kwargs without raising', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stt = new STT({ apiKey: 'test-key', organizationId: 'old', userId: 'old' });

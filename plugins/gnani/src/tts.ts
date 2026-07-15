@@ -369,6 +369,19 @@ function mapWebSocketError(error: Error): APIConnectionError {
   return new APIConnectionError({ message: `Gnani TTS WebSocket error: ${error.message}` });
 }
 
+function mapHTTPError(
+  error: unknown,
+  callerSignal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  requestName: string,
+): APIConnectionError | undefined {
+  if (callerSignal.aborted) return undefined;
+  if (timeoutSignal.aborted || (error instanceof DOMException && error.name === 'TimeoutError')) {
+    return new APITimeoutError({ message: `${requestName} timed out` });
+  }
+  return new APIConnectionError({ message: `${requestName} error: ${String(error)}` });
+}
+
 /** @public */
 export class TTS extends tts.TTS {
   _opts: ResolvedTTSOptions;
@@ -443,25 +456,41 @@ export class RESTChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run() {
-    const signal = AbortSignal.any([this.abortSignal, AbortSignal.timeout(this.timeoutMs)]);
-    const response = await fetch(`${this.opts.baseURL}/api/v1/tts/inference`, {
-      method: 'POST',
-      headers: buildHeaders(this.opts),
-      body: JSON.stringify(buildPayload(this.opts, this.inputText)),
-      signal,
-    }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        throw new APITimeoutError({ message: 'Gnani TTS REST request timed out' });
-      }
-      throw new APIConnectionError({ message: `Gnani TTS REST error: ${String(error)}` });
-    });
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = AbortSignal.any([this.abortSignal, timeoutSignal]);
+    let response: Response;
+    try {
+      response = await fetch(`${this.opts.baseURL}/api/v1/tts/inference`, {
+        method: 'POST',
+        headers: buildHeaders(this.opts),
+        body: JSON.stringify(buildPayload(this.opts, this.inputText)),
+        signal,
+      });
+    } catch (error) {
+      const mapped = mapHTTPError(error, this.abortSignal, timeoutSignal, 'Gnani TTS REST request');
+      if (!mapped) return;
+      throw mapped;
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
       throw apiError(`Gnani TTS API Error (${response.status}): ${errorText}`, response.status);
     }
 
-    const audioBytes = Buffer.from(await response.arrayBuffer());
+    let audioBuffer: ArrayBuffer;
+    try {
+      audioBuffer = await response.arrayBuffer();
+    } catch (error) {
+      const mapped = mapHTTPError(
+        error,
+        this.abortSignal,
+        timeoutSignal,
+        'Gnani TTS REST response',
+      );
+      if (!mapped) return;
+      throw mapped;
+    }
+    const audioBytes = Buffer.from(audioBuffer);
     const requestId = shortuuid();
     const emitter = new IncrementalAudioEmitter(this.queue, this.opts, requestId, requestId);
     emitter.push(audioBytes);
@@ -488,17 +517,21 @@ export class SSEChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run() {
-    const response = await fetch(`${this.opts.baseURL}/api/v1/tts/sse`, {
-      method: 'POST',
-      headers: buildHeaders(this.opts),
-      body: JSON.stringify(buildPayload(this.opts, this.inputText)),
-      signal: AbortSignal.any([this.abortSignal, AbortSignal.timeout(this.timeoutMs)]),
-    }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        throw new APITimeoutError({ message: 'Gnani TTS SSE request timed out' });
-      }
-      throw new APIConnectionError({ message: `Gnani TTS SSE error: ${String(error)}` });
-    });
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = AbortSignal.any([this.abortSignal, timeoutSignal]);
+    let response: Response;
+    try {
+      response = await fetch(`${this.opts.baseURL}/api/v1/tts/sse`, {
+        method: 'POST',
+        headers: buildHeaders(this.opts),
+        body: JSON.stringify(buildPayload(this.opts, this.inputText)),
+        signal,
+      });
+    } catch (error) {
+      const mapped = mapHTTPError(error, this.abortSignal, timeoutSignal, 'Gnani TTS SSE request');
+      if (!mapped) return;
+      throw mapped;
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -528,7 +561,20 @@ export class SSEChunkedStream extends tts.ChunkedStream {
     };
 
     while (true) {
-      const { done, value } = await reader.read();
+      let readResult: ReadableStreamReadResult<Uint8Array>;
+      try {
+        readResult = await reader.read();
+      } catch (error) {
+        const mapped = mapHTTPError(
+          error,
+          this.abortSignal,
+          timeoutSignal,
+          'Gnani TTS SSE response',
+        );
+        if (!mapped) return;
+        throw mapped;
+      }
+      const { done, value } = readResult;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 

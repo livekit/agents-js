@@ -622,6 +622,161 @@ describe('Gnani TTS', () => {
     stream.close();
   });
 
+  it('settles a pending REST request quietly when the caller closes it', async () => {
+    let observeFetch = () => {};
+    const fetchStarted = new Promise<void>((resolve) => {
+      observeFetch = resolve;
+    });
+    let observeAbort = () => {};
+    const abortObserved = new Promise<void>((resolve) => {
+      observeAbort = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        observeFetch();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('The operation was aborted', 'AbortError'));
+              observeAbort();
+            },
+            { once: true },
+          );
+        });
+      }),
+    );
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'rest' });
+    const errors = vi.fn();
+    tts.on('error', errors);
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain until caller cancellation closes the output.
+      }
+    })();
+    await fetchStarted;
+
+    stream.close();
+    await abortObserved;
+    await drain;
+    await new Promise<void>(setImmediate);
+
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it('settles a pending SSE body read quietly when the caller closes it', async () => {
+    let observeBodyRead = () => {};
+    const bodyRead = new Promise<void>((resolve) => {
+      observeBodyRead = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller;
+          },
+          pull() {
+            observeBodyRead();
+          },
+        });
+        init?.signal?.addEventListener(
+          'abort',
+          () => bodyController?.error(new DOMException('The operation was aborted', 'AbortError')),
+          { once: true },
+        );
+        return new Response(body);
+      }),
+    );
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'sse' });
+    const errors = vi.fn();
+    tts.on('error', errors);
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain until caller cancellation closes the output.
+      }
+    })();
+    await bodyRead;
+
+    stream.close();
+    await drain;
+    await new Promise<void>(setImmediate);
+
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it('maps timeout AbortError and network failures by provenance', async () => {
+    vi.useFakeTimers();
+    const timeoutController = new AbortController();
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      }),
+    );
+    const timeoutTTS = new TTS({ apiKey: 'test-key', synthesizeMethod: 'rest' });
+    const timeoutError = new Promise<unknown>((resolve) => {
+      timeoutTTS.once('error', resolve);
+    });
+    const timeoutStream = timeoutTTS.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(fetch)).toHaveBeenCalledOnce();
+
+    timeoutController.abort();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(timeoutError).resolves.toMatchObject({
+      error: { name: 'APITimeoutError' },
+    });
+    timeoutStream.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    timeoutSpy.mockRestore();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.reject(new Error('network down'))),
+    );
+    const networkTTS = new TTS({ apiKey: 'test-key', synthesizeMethod: 'rest' });
+    const networkError = new Promise<unknown>((resolve) => {
+      networkTTS.once('error', resolve);
+    });
+    const networkStream = networkTTS.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(networkError).resolves.toMatchObject({
+      error: { name: 'APIConnectionError' },
+    });
+    networkStream.close();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
   it('maps WebSocket connection and receive timeout through connOptions', async () => {
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'websocket' });

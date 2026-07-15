@@ -197,10 +197,20 @@ function buildFormData(wavBlob: Blob, opts: ResolvedSTTOptions, language?: strin
   return formData;
 }
 
-function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  if (!signal) return timeoutSignal;
-  return AbortSignal.any([signal, timeoutSignal]);
+function mapHTTPError(
+  error: unknown,
+  callerSignal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal,
+): Error {
+  if (callerSignal?.aborted) {
+    return error instanceof Error
+      ? error
+      : new DOMException('The operation was aborted', 'AbortError');
+  }
+  if (timeoutSignal.aborted || (error instanceof DOMException && error.name === 'TimeoutError')) {
+    return new APITimeoutError({ message: 'Gnani STT API request timed out' });
+  }
+  return new APIConnectionError({ message: `Gnani STT error: ${String(error)}` });
 }
 
 function mapWebSocketError(error: Error): APIConnectionError {
@@ -254,17 +264,19 @@ export class STT extends stt.STT {
     const wavBuffer = createWav(frame);
     const wavBlob = new Blob([new Uint8Array(wavBuffer)], { type: 'audio/wav' });
 
-    const response = await fetch(`${this._opts.baseURL}/stt/v3`, {
-      method: 'POST',
-      headers: { 'X-API-Key-ID': this._opts.apiKey },
-      body: buildFormData(wavBlob, this._opts),
-      signal: withTimeout(abortSignal, DEFAULT_API_CONNECT_OPTIONS.timeoutMs),
-    }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        throw new APITimeoutError({ message: 'Gnani STT API request timed out' });
-      }
-      throw new APIConnectionError({ message: `Gnani STT error: ${String(error)}` });
-    });
+    const timeoutSignal = AbortSignal.timeout(DEFAULT_API_CONNECT_OPTIONS.timeoutMs);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
+    let response: Response;
+    try {
+      response = await fetch(`${this._opts.baseURL}/stt/v3`, {
+        method: 'POST',
+        headers: { 'X-API-Key-ID': this._opts.apiKey },
+        body: buildFormData(wavBlob, this._opts),
+        signal,
+      });
+    } catch (error) {
+      throw mapHTTPError(error, abortSignal, timeoutSignal);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -274,7 +286,12 @@ export class STT extends stt.STT {
       });
     }
 
-    const data = (await response.json()) as { transcript?: string; request_id?: string };
+    let data: { transcript?: string; request_id?: string };
+    try {
+      data = (await response.json()) as { transcript?: string; request_id?: string };
+    } catch (error) {
+      throw mapHTTPError(error, abortSignal, timeoutSignal);
+    }
     return {
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
       requestId: data.request_id ?? '',
