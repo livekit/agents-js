@@ -216,6 +216,57 @@ describe('Soniox TTS stream cleanup', () => {
     expect(audioBytes).toEqual(expect.arrayContaining([1]));
   });
 
+  it('cancels and settles an active streaming retry when TTS closes', async () => {
+    let requestCount = 0;
+    let retryStartedResolve: (() => void) | undefined;
+    const retryStarted = new Promise<void>((resolve) => {
+      retryStartedResolve = resolve;
+    });
+    let cancelObservedResolve: (() => void) | undefined;
+    const cancelObserved = new Promise<'cancel'>((resolve) => {
+      cancelObservedResolve = () => resolve('cancel');
+    });
+    let socketClosedResolve: (() => void) | undefined;
+    const socketClosed = new Promise<'closed'>((resolve) => {
+      socketClosedResolve = () => resolve('closed');
+    });
+    const { url, messages } = await startServer((socket, message) => {
+      if (message.cancel === true) {
+        cancelObservedResolve?.();
+        return;
+      }
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      requestCount += 1;
+      if (requestCount === 1) {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            error_code: 503,
+            error_message: 'temporarily unavailable',
+          }),
+        );
+        return;
+      }
+      socket.once('close', () => socketClosedResolve?.());
+      retryStartedResolve?.();
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    stream.pushText('hello');
+    stream.endInput();
+    const outputTask = consume(stream);
+    await retryStarted;
+
+    const terminalEvent = Promise.race([cancelObserved, socketClosed]);
+    await synthesizer.close();
+
+    expect(await terminalEvent).toBe('cancel');
+    expect(messages.filter((message) => message.cancel === true)).toHaveLength(1);
+    expect(await settlementByNextTurn(outputTask)).toBe('settled');
+  });
+
   it('delivers successful chunked retry audio before closing the consumer', async () => {
     let requestCount = 0;
     let retryRequestCompletedResolve: (() => void) | undefined;

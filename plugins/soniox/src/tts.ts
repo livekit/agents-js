@@ -384,8 +384,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.#connection !== undefined && this.#streamId) {
         this.#connection.unregisterStream(this.#streamId);
       }
-      getTTSState(this.#tts).streams.delete(this);
     }
+    getTTSState(this.#tts).streams.delete(this);
   }
 
   async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
@@ -589,10 +589,10 @@ class Connection {
       clearInterval(this.#keepalive);
       this.#keepalive = undefined;
     }
+    await this.#sendTask?.catch(() => undefined);
     if (this.#ws !== undefined && this.#ws.readyState === WebSocket.OPEN) {
       this.#ws.close();
     }
-    await this.#sendTask?.catch(() => undefined);
   }
 
   async #sendLoop(): Promise<void> {
