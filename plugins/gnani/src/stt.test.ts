@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { STTMetrics } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,6 +62,7 @@ describe('Gnani STT', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -72,6 +74,12 @@ describe('Gnani STT', () => {
   it('accepts apiKey directly', () => {
     const stt = new STT({ apiKey: 'test-key' });
     expect(stt._opts.apiKey).toBe('test-key');
+  });
+
+  it('rejects unknown constructor options like Python', () => {
+    expect(() => new STT({ apiKey: 'test-key', unknownOption: true })).toThrow(
+      /unexpected option.*unknownOption/i,
+    );
   });
 
   it('accepts apiKey from env', () => {
@@ -188,6 +196,48 @@ describe('Gnani STT', () => {
   it('accepts itnNativeNumerals=true', () => {
     const stt = new STT({ apiKey: 'test-key', format: 'transcribe', itnNativeNumerals: true });
     expect(stt._opts.itnNativeNumerals).toBe(true);
+  });
+
+  it('sends Python-equivalent REST form fields and reports usage metrics', async () => {
+    let request: RequestInit | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        request = init;
+        return Response.json({ transcript: 'namaste', request_id: 'request-1' });
+      }),
+    );
+    const stt = new STT({
+      apiKey: 'test-key',
+      language: 'hi-IN',
+      format: 'transcribe',
+      preferredLanguage: 'hi-IN',
+      itnNativeNumerals: true,
+    });
+    const metricsPromise = new Promise<STTMetrics>((resolve) => {
+      stt.once('metrics_collected', resolve);
+    });
+    const frame = AudioFrame.create(16000, 1, 1600);
+
+    const event = await stt.recognize(frame);
+    const metrics = await metricsPromise;
+    const form = request?.body;
+
+    expect(form).toBeInstanceOf(FormData);
+    if (!(form instanceof FormData)) throw new Error('expected FormData request body');
+    expect(form.get('language_code')).toBe('hi-IN');
+    expect(form.get('format')).toBe('transcribe');
+    expect(form.get('preferred_language')).toBe('hi-IN');
+    expect(form.get('itn_native_numerals')).toBe('true');
+    expect(form.get('audio_file')).toBeInstanceOf(Blob);
+    expect(event.requestId).toBe('request-1');
+    expect(metrics).toMatchObject({
+      type: 'stt_metrics',
+      requestId: 'request-1',
+      audioDurationMs: 100,
+      streamed: false,
+      metadata: { modelProvider: 'Gnani', modelName: 'vachana-stt-v3' },
+    });
   });
 
   it('warns about deprecated auth kwargs without raising', () => {

@@ -40,6 +40,19 @@ export const SUPPORTED_SAMPLE_RATES = [8000, 16000, 22050, 44100] as const;
 
 const DEFAULT_SAMPLE_WIDTH = 2;
 const DEPRECATED_TTS_OPTIONS = new Set(['language', 'httpSession', 'http_session']);
+const TTS_OPTIONS = new Set([
+  'voice',
+  'model',
+  'sampleRate',
+  'numChannels',
+  'encoding',
+  'container',
+  'bitrate',
+  'apiKey',
+  'baseURL',
+  'synthesizeMethod',
+]);
+const TTS_UPDATE_OPTIONS = new Set(['voice', 'model']);
 
 /** @public */
 export interface TTSOptions {
@@ -65,7 +78,16 @@ export interface TTSOptions {
   synthesizeMethod?: GnaniTTSSynthesizeMethod;
 }
 
-interface ResolvedTTSOptions {
+/** @public */
+export interface TTSUpdateOptions {
+  /** Voice to use for future synthesis requests. */
+  voice?: GnaniTTSVoices | string;
+  /** Model to use for future synthesis requests. */
+  model?: string;
+}
+
+/** @public */
+export interface ResolvedTTSOptions {
   apiKey: string;
   voice: string;
   model: string;
@@ -79,16 +101,23 @@ interface ResolvedTTSOptions {
   synthesizeMethod: GnaniTTSSynthesizeMethod;
 }
 
-function warnDeprecatedOptions(opts: Record<string, unknown>, caller: string) {
+function validateOptions(opts: Record<string, unknown>, allowed: Set<string>, caller: string) {
   for (const name of DEPRECATED_TTS_OPTIONS) {
     if (name in opts) {
       log().warn(`\`${name}\` is deprecated and no longer used by ${caller}`);
     }
   }
+  const unknown = Object.keys(opts).filter(
+    (name) => !allowed.has(name) && !DEPRECATED_TTS_OPTIONS.has(name),
+  );
+  if (unknown.length > 0) {
+    const sorted = unknown.sort();
+    throw new TypeError(`${caller}() got unexpected option(s): ${sorted.join(', ')}`);
+  }
 }
 
 function resolveOptions(opts: TTSOptions & Record<string, unknown>): ResolvedTTSOptions {
-  warnDeprecatedOptions(opts, 'TTS');
+  validateOptions(opts, TTS_OPTIONS, 'TTS');
 
   const apiKey = opts.apiKey ?? process.env.GNANI_API_KEY;
   if (!apiKey) {
@@ -96,7 +125,7 @@ function resolveOptions(opts: TTSOptions & Record<string, unknown>): ResolvedTTS
   }
 
   const sampleRate = opts.sampleRate ?? 16000;
-  if (!SUPPORTED_SAMPLE_RATES.includes(sampleRate as (typeof SUPPORTED_SAMPLE_RATES)[number])) {
+  if (!SUPPORTED_SAMPLE_RATES.some((supported) => supported === sampleRate)) {
     throw new Error(`sampleRate must be one of ${SUPPORTED_SAMPLE_RATES.join(', ')}`);
   }
 
@@ -378,9 +407,17 @@ export class TTS extends tts.TTS {
     return new SynthesizeStream(this, this._opts, options?.connOptions);
   }
 
-  updateOptions(opts: Partial<TTSOptions> & Record<string, unknown>) {
-    warnDeprecatedOptions(opts, 'TTS.updateOptions');
-    this._opts = resolveOptions({ ...this._opts, ...opts });
+  updateOptions(opts: TTSUpdateOptions & Record<string, unknown>) {
+    validateOptions(opts, TTS_UPDATE_OPTIONS, 'TTS.updateOptions');
+    if (opts.voice != null) {
+      if (!SUPPORTED_VOICES.has(opts.voice)) {
+        throw new Error(
+          `Voice '${opts.voice}' not supported. Supported voices: ${[...SUPPORTED_VOICES].sort().join(', ')}`,
+        );
+      }
+      this._opts.voice = opts.voice;
+    }
+    if (opts.model != null) this._opts.model = opts.model;
   }
 }
 

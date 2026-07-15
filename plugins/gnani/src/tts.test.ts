@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { TTSMetrics } from '@livekit/agents';
 import { EventEmitter } from 'node:events';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -94,6 +95,12 @@ describe('Gnani TTS', () => {
   it('accepts apiKey directly', () => {
     const tts = new TTS({ apiKey: 'test-key' });
     expect(tts._opts.apiKey).toBe('test-key');
+  });
+
+  it('rejects unknown constructor options like Python', () => {
+    expect(() => new TTS({ apiKey: 'test-key', unknownOption: true })).toThrow(
+      /unexpected option.*unknownOption/i,
+    );
   });
 
   it('accepts apiKey from env', () => {
@@ -194,6 +201,29 @@ describe('Gnani TTS', () => {
     const tts = new TTS({ apiKey: 'test-key' });
     tts.updateOptions({ model: 'custom-model' });
     expect(tts._opts.model).toBe('custom-model');
+  });
+
+  it('updateOptions rejects fields Python does not make mutable', () => {
+    const tts = new TTS({ apiKey: 'test-key', sampleRate: 16000, numChannels: 1 });
+
+    expect(() => tts.updateOptions({ sampleRate: 44100, numChannels: 2 })).toThrow(
+      /unexpected option.*numChannels.*sampleRate/i,
+    );
+    expect(tts._opts.sampleRate).toBe(16000);
+    expect(tts._opts.numChannels).toBe(1);
+    expect(tts.sampleRate).toBe(16000);
+    expect(tts.numChannels).toBe(1);
+  });
+
+  it('updateOptions preserves base sample-rate and channel state', () => {
+    const tts = new TTS({ apiKey: 'test-key', sampleRate: 44100, numChannels: 2 });
+
+    tts.updateOptions({ voice: 'Raju', model: 'custom-model' });
+
+    expect(tts._opts.sampleRate).toBe(tts.sampleRate);
+    expect(tts._opts.numChannels).toBe(tts.numChannels);
+    expect(tts.sampleRate).toBe(44100);
+    expect(tts.numChannels).toBe(2);
   });
 
   it('stores synthesizeMethod options', () => {
@@ -304,6 +334,90 @@ describe('Gnani TTS', () => {
 
     expect(frame.data[0]).toBe(7);
     expect(frame.samplesPerChannel).toBe(1600);
+  });
+
+  it('sends the Python-equivalent REST payload and reports usage metrics', async () => {
+    let request: RequestInit | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        request = init;
+        return new Response(new Uint8Array(wavChunk(3200, 9)));
+      }),
+    );
+    const tts = new TTS({
+      apiKey: 'test-key',
+      voice: 'Raju',
+      model: 'custom-model',
+      sampleRate: 16000,
+      numChannels: 1,
+      encoding: 'linear_pcm',
+      container: 'wav',
+      bitrate: '128k',
+      synthesizeMethod: 'rest',
+    });
+    const metricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+
+    await tts.synthesize('hello').collect();
+    const metrics = await metricsPromise;
+
+    expect(JSON.parse(String(request?.body))).toEqual({
+      text: 'hello',
+      voice: 'Raju',
+      model: 'custom-model',
+      audio_config: {
+        sample_rate: 16000,
+        encoding: 'linear_pcm',
+        num_channels: 1,
+        sample_width: 2,
+        container: 'wav',
+        bitrate: '128k',
+      },
+    });
+    expect(metrics).toMatchObject({
+      type: 'tts_metrics',
+      charactersCount: 5,
+      audioDurationMs: 100,
+      inputTokens: 0,
+      outputTokens: 0,
+      streamed: false,
+      metadata: { modelProvider: 'Gnani', modelName: 'custom-model' },
+    });
+  });
+
+  it('reports streaming audio and usage metrics', async () => {
+    const tts = new TTS({ apiKey: 'test-key', container: 'raw' });
+    const metricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+    const stream = tts.stream();
+    const drain = (async () => {
+      for await (const _event of stream) {
+        // Drain streaming output so metrics can be finalized.
+      }
+    })();
+
+    stream.pushText('hello');
+    stream.endInput();
+    await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
+    const ws = wsState.instances.at(-1)!;
+    await vi.waitFor(() => expect(ws.listenerCount('message')).toBeGreaterThan(0));
+    ws.emit('message', Buffer.alloc(3200, 19), true);
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'complete' })), false);
+
+    await drain;
+    const metrics = await metricsPromise;
+    expect(metrics).toMatchObject({
+      type: 'tts_metrics',
+      charactersCount: 5,
+      audioDurationMs: 100,
+      inputTokens: 0,
+      outputTokens: 0,
+      streamed: true,
+      metadata: { modelProvider: 'Gnani', modelName: 'vachana-voice-v3' },
+    });
   });
 
   it('rejects encoded output formats that are not decoded by the plugin', () => {

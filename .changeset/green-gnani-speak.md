@@ -1,5 +1,5 @@
 ---
-'@livekit/agents-plugin-gnani': minor
+'@livekit/agents-plugin-gnani': patch
 ---
 
-Add the Gnani Vachana STT/TTS plugin for LiveKit Agents JS.
+Add the Gnani Vachana STT/TTS provider integration.

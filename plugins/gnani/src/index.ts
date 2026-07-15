@@ -3,8 +3,32 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export { SpeechStream, STT, type STTOptions } from './stt.js';
-export { SynthesizeStream, TTS, type TTSOptions } from './tts.js';
+export {
+  SAMPLE_RATE_8K,
+  SAMPLE_RATE_16K,
+  SpeechStream,
+  STT,
+  type GnaniSTTFormat,
+  type GnaniSTTLanguages,
+  type ResolvedSTTOptions,
+  type STTOptions,
+} from './stt.js';
+export {
+  RESTChunkedStream,
+  SSEChunkedStream,
+  SynthesizeStream,
+  TTS,
+  WebSocketChunkedStream,
+  type ChunkedStream,
+  type GnaniTTSBitrates,
+  type GnaniTTSContainers,
+  type GnaniTTSEncodings,
+  type GnaniTTSSynthesizeMethod,
+  type GnaniTTSVoices,
+  type ResolvedTTSOptions,
+  type TTSOptions,
+  type TTSUpdateOptions,
+} from './tts.js';
 
 class GnaniPlugin extends Plugin {
   constructor() {

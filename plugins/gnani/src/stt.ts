@@ -62,12 +62,30 @@ export const STREAM_SUPPORTED_LANGUAGES = new Set<string>([
   'te-IN',
 ]);
 
+/** @public */
 export const SAMPLE_RATE_16K = 16000;
+/** @public */
 export const SAMPLE_RATE_8K = 8000;
 export const STREAM_CHUNK_BYTES = 1024;
 const NUM_CHANNELS = 1;
 
-const DEPRECATED_STT_OPTIONS = new Set(['organizationId', 'organization_id', 'userId', 'user_id']);
+const DEPRECATED_STT_OPTIONS = new Set([
+  'organizationId',
+  'organization_id',
+  'userId',
+  'user_id',
+  'httpSession',
+  'http_session',
+]);
+const STT_OPTIONS = new Set([
+  'language',
+  'apiKey',
+  'sampleRate',
+  'baseURL',
+  'preferredLanguage',
+  'format',
+  'itnNativeNumerals',
+]);
 
 /** @public */
 export interface STTOptions {
@@ -87,7 +105,8 @@ export interface STTOptions {
   itnNativeNumerals?: boolean;
 }
 
-interface ResolvedSTTOptions {
+/** @public */
+export interface ResolvedSTTOptions {
   apiKey: string;
   language: string;
   sampleRate: number;
@@ -97,17 +116,22 @@ interface ResolvedSTTOptions {
   itnNativeNumerals: boolean;
 }
 
-function warnDeprecatedOptions(opts: Record<string, unknown>, caller: string) {
+function validateOptions(opts: Record<string, unknown>, caller: string) {
   for (const name of DEPRECATED_STT_OPTIONS) {
     if (name in opts) {
       log().warn(`\`${name}\` is deprecated and no longer used by ${caller}`);
     }
   }
+  const unknown = Object.keys(opts).filter(
+    (name) => !STT_OPTIONS.has(name) && !DEPRECATED_STT_OPTIONS.has(name),
+  );
+  if (unknown.length > 0) {
+    throw new TypeError(`${caller}() got unexpected option(s): ${unknown.sort().join(', ')}`);
+  }
 }
 
 function resolveOptions(opts: STTOptions & Record<string, unknown>): ResolvedSTTOptions {
-  warnDeprecatedOptions(opts, 'STT');
-
+  validateOptions(opts, 'STT');
   const apiKey = opts.apiKey ?? process.env.GNANI_API_KEY;
   if (!apiKey) {
     throw new Error('Gnani API key is required. Provide it directly or set GNANI_API_KEY.');

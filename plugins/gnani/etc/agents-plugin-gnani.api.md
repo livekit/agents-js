@@ -10,16 +10,106 @@ import { stt } from '@livekit/agents';
 import { tts } from '@livekit/agents';
 
 // @public (undocumented)
+export type ChunkedStream = RESTChunkedStream | SSEChunkedStream | WebSocketChunkedStream;
+
+// @public (undocumented)
+export type GnaniSTTFormat = 'verbatim' | 'transcribe';
+
+// @public (undocumented)
+export type GnaniSTTLanguages = 'bn-IN' | 'en-IN' | 'gu-IN' | 'hi-IN' | 'kn-IN' | 'ml-IN' | 'mr-IN' | 'pa-IN' | 'ta-IN' | 'te-IN' | 'en-IN,hi-IN';
+
+// @public (undocumented)
+export type GnaniTTSBitrates = '96k' | '128k' | '192k';
+
+// @public (undocumented)
+export type GnaniTTSContainers = 'raw' | 'mp3' | 'wav' | 'mulaw' | 'ogg';
+
+// @public (undocumented)
+export type GnaniTTSEncodings = 'linear_pcm' | 'oggopus';
+
+// @public (undocumented)
+export type GnaniTTSSynthesizeMethod = 'rest' | 'sse' | 'websocket';
+
+// @public (undocumented)
+export type GnaniTTSVoices = 'Karan' | 'Simran' | 'Nara' | 'Riya' | 'Viraj' | 'Raju';
+
+// @public (undocumented)
+export interface ResolvedSTTOptions {
+    // (undocumented)
+    apiKey: string;
+    // (undocumented)
+    baseURL: string;
+    // (undocumented)
+    format: GnaniSTTFormat;
+    // (undocumented)
+    itnNativeNumerals: boolean;
+    // (undocumented)
+    language: string;
+    // (undocumented)
+    preferredLanguage?: string;
+    // (undocumented)
+    sampleRate: number;
+}
+
+// @public (undocumented)
+export interface ResolvedTTSOptions {
+    // (undocumented)
+    apiKey: string;
+    // (undocumented)
+    baseURL: string;
+    // (undocumented)
+    bitrate?: string;
+    // (undocumented)
+    container: string;
+    // (undocumented)
+    encoding: string;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    numChannels: number;
+    // (undocumented)
+    sampleRate: number;
+    // (undocumented)
+    sampleWidth: number;
+    // (undocumented)
+    synthesizeMethod: GnaniTTSSynthesizeMethod;
+    // (undocumented)
+    voice: string;
+}
+
+// @public (undocumented)
+export class RESTChunkedStream extends tts.ChunkedStream {
+    constructor(ttsInstance: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public (undocumented)
+export const SAMPLE_RATE_16K = 16000;
+
+// @public (undocumented)
+export const SAMPLE_RATE_8K = 8000;
+
+// @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
     constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions);
     // (undocumented)
     buildWsUrl(): string;
     // (undocumented)
     label: string;
-    // Warning: (ae-forgotten-export) The symbol "ResolvedSTTOptions" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     _opts: ResolvedSTTOptions;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public (undocumented)
+export class SSEChunkedStream extends tts.ChunkedStream {
+    constructor(ttsInstance: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -48,20 +138,15 @@ export class STT extends stt.STT {
 export interface STTOptions {
     apiKey?: string;
     baseURL?: string;
-    // Warning: (ae-forgotten-export) The symbol "GnaniSTTFormat" needs to be exported by the entry point index.d.ts
     format?: GnaniSTTFormat;
     itnNativeNumerals?: boolean;
-    // Warning: (ae-forgotten-export) The symbol "GnaniSTTLanguages" needs to be exported by the entry point index.d.ts
     language?: GnaniSTTLanguages | string;
     preferredLanguage?: string;
-    // Warning: (ae-forgotten-export) The symbol "SAMPLE_RATE_8K" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-forgotten-export) The symbol "SAMPLE_RATE_16K" needs to be exported by the entry point index.d.ts
     sampleRate?: typeof SAMPLE_RATE_8K | typeof SAMPLE_RATE_16K | number;
 }
 
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
-    // Warning: (ae-forgotten-export) The symbol "ResolvedTTSOptions" needs to be exported by the entry point index.d.ts
     constructor(ttsInstance: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions);
     // (undocumented)
     buildWsUrl(): string;
@@ -86,31 +171,41 @@ export class TTS extends tts.TTS {
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): SynthesizeStream;
-    // Warning: (ae-forgotten-export) The symbol "ChunkedStream" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     // (undocumented)
-    updateOptions(opts: Partial<TTSOptions> & Record<string, unknown>): void;
+    updateOptions(opts: TTSUpdateOptions & Record<string, unknown>): void;
 }
 
 // @public (undocumented)
 export interface TTSOptions {
     apiKey?: string;
     baseURL?: string;
-    // Warning: (ae-forgotten-export) The symbol "GnaniTTSBitrates" needs to be exported by the entry point index.d.ts
     bitrate?: GnaniTTSBitrates | string;
-    // Warning: (ae-forgotten-export) The symbol "GnaniTTSContainers" needs to be exported by the entry point index.d.ts
     container?: GnaniTTSContainers | string;
-    // Warning: (ae-forgotten-export) The symbol "GnaniTTSEncodings" needs to be exported by the entry point index.d.ts
     encoding?: GnaniTTSEncodings | string;
     model?: string;
     numChannels?: number;
     sampleRate?: number;
-    // Warning: (ae-forgotten-export) The symbol "GnaniTTSSynthesizeMethod" needs to be exported by the entry point index.d.ts
     synthesizeMethod?: GnaniTTSSynthesizeMethod;
-    // Warning: (ae-forgotten-export) The symbol "GnaniTTSVoices" needs to be exported by the entry point index.d.ts
     voice?: GnaniTTSVoices | string;
+}
+
+// @public (undocumented)
+export interface TTSUpdateOptions {
+    model?: string;
+    voice?: GnaniTTSVoices | string;
+}
+
+// @public (undocumented)
+export class WebSocketChunkedStream extends tts.ChunkedStream {
+    constructor(ttsInstance: TTS, text: string, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    buildWsUrl(): string;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
 }
 
 // (No @packageDocumentation comment for this package)
