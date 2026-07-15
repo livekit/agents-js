@@ -43,7 +43,7 @@ Find a complete working example [here](../../examples/src/lemonslice_realtime_av
 
 Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
-### Video Meeting Example (Zoom/Meet/Teams)
+### Video Meeting Example (Zoom/Meet/Teams/Webex)
 
 To send your LemonSlice avatar into a third-party video meeting platform, use [`lemonslice_realtime_avatar_meeting.ts`](../../examples/src/lemonslice_realtime_avatar_meeting.ts). The avatar joins the call, listens to meeting audio, and responds through the meeting relay. Zoom, Google Meet, Microsoft Teams, and Webex are supported.
 
