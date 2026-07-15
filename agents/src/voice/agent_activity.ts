@@ -3913,20 +3913,20 @@ export class AgentActivity implements RecognitionHooks {
 
     const originalToolChoice = this.toolChoice;
     let originalTools: ToolContext | undefined;
-    const sessionTools = this.realtimeSession.tools;
-    const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
-    if (onEnterIgnoredTools.length > 0) {
-      originalTools = sessionTools;
-      const turnTools = sessionTools._flattenedCopy();
-      turnTools._exclude(onEnterIgnoredTools);
-      await this.realtimeSession.updateTools(turnTools);
-    }
-
-    if (toolChoice !== undefined) {
-      this.realtimeSession.updateOptions({ toolChoice });
-    }
-
     try {
+      const sessionTools = this.realtimeSession.tools;
+      const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
+      if (onEnterIgnoredTools.length > 0) {
+        originalTools = sessionTools;
+        const turnTools = sessionTools._flattenedCopy();
+        turnTools._exclude(onEnterIgnoredTools);
+        await this.realtimeSession.updateTools(turnTools);
+      }
+
+      if (toolChoice !== undefined) {
+        this.realtimeSession.updateOptions({ toolChoice });
+      }
+
       const generateReplyAbortController = new AbortController();
       const generationPromise = this.realtimeSession.generateReply(
         instructions !== undefined

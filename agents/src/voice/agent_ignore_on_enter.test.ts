@@ -143,7 +143,14 @@ class RecordingLLM extends FakeLLM {
 class RecordingRealtimeSession extends RealtimeSession {
   private _chatCtx = ChatContext.empty();
   private _tools = ToolContext.empty();
+  private readonly rejectFilteredUpdate: boolean;
   readonly toolSnapshots: string[][] = [];
+  rejectedTemporaryUpdates = 0;
+
+  constructor(model: RealtimeModel, rejectFilteredUpdate = false) {
+    super(model);
+    this.rejectFilteredUpdate = rejectFilteredUpdate;
+  }
 
   get chatCtx(): ChatContext {
     return this._chatCtx;
@@ -161,6 +168,14 @@ class RecordingRealtimeSession extends RealtimeSession {
 
   async updateTools(tools: ToolContext): Promise<void> {
     this._tools = tools.copy();
+    if (
+      this.rejectFilteredUpdate &&
+      this.rejectedTemporaryUpdates === 0 &&
+      !toolNames(this._tools).includes('ignored_nested')
+    ) {
+      this.rejectedTemporaryUpdates++;
+      throw new Error('temporary realtime tools rejected after mutation');
+    }
   }
 
   updateOptions(_options: { toolChoice?: ToolChoice | null }): void {}
@@ -198,7 +213,7 @@ class RecordingRealtimeSession extends RealtimeSession {
 class RecordingRealtimeModel extends RealtimeModel {
   readonly recordingSession: RecordingRealtimeSession;
 
-  constructor() {
+  constructor(rejectFilteredUpdate = false) {
     const capabilities: RealtimeCapabilities = {
       messageTruncation: false,
       turnDetection: false,
@@ -212,7 +227,7 @@ class RecordingRealtimeModel extends RealtimeModel {
       perResponseToolChoice: false,
     };
     super(capabilities);
-    this.recordingSession = new RecordingRealtimeSession(this);
+    this.recordingSession = new RecordingRealtimeSession(this, rejectFilteredUpdate);
   }
 
   get model(): string {
@@ -271,6 +286,38 @@ describe('AgentSession IGNORE_ON_ENTER tool filtering', () => {
       expect(llm.recordingSession.toolSnapshots).toEqual([
         EXPECTED_GREETING_TOOLS,
         EXPECTED_GREETING_TOOLS,
+        EXPECTED_USER_TURN_TOOLS,
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('restores realtime tools when the temporary provider update mutates then rejects', async () => {
+    const llm = new RecordingRealtimeModel(true);
+    const session = new AgentSession({ llm });
+
+    try {
+      await session.start({ agent: new GreetingAgent() });
+      await vi.waitFor(() => expect(llm.recordingSession.rejectedTemporaryUpdates).toBe(1));
+
+      expect(toolNames(llm.recordingSession.tools)).toEqual(EXPECTED_USER_TURN_TOOLS);
+      const restoredOuter = llm.recordingSession.tools.tools[0];
+      expect(restoredOuter).toBeInstanceOf(Toolset);
+      if (!(restoredOuter instanceof Toolset)) {
+        throw new Error('expected restored outer toolset');
+      }
+      expect(restoredOuter.id).toBe('outer');
+      const restoredInner = restoredOuter.tools[0];
+      expect(restoredInner).toBeInstanceOf(Toolset);
+      if (!(restoredInner instanceof Toolset)) {
+        throw new Error('expected restored inner toolset');
+      }
+      expect(restoredInner.id).toBe('inner');
+
+      await session.run({ userInput: 'later user turn' }).wait();
+      expect(llm.recordingSession.toolSnapshots).toEqual([
+        EXPECTED_USER_TURN_TOOLS,
         EXPECTED_USER_TURN_TOOLS,
       ]);
     } finally {
