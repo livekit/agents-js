@@ -1376,6 +1376,45 @@ extra`;
     expect(instr.text).toBe('null=null undefined=undefined');
   });
 
+  it('tpl renders each modality variant exactly once', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'Handle noisy voice input.', text: 'Handle typed input.' })}`;
+
+    expect(renderInstructions(instr, 'audio')).toBe(
+      'You are a helpful assistant.\n\nHandle noisy voice input.',
+    );
+    expect(renderInstructions(instr, 'text')).toBe(
+      'You are a helpful assistant.\n\nHandle typed input.',
+    );
+    expect(renderInstructions(instr, 'audio').split('You are a helpful assistant.')).toHaveLength(
+      2,
+    );
+  });
+
+  it('tpl without Instructions interpolations is an audio-only render', () => {
+    const instr = Instructions.tpl`Hello ${'Alex'}`;
+
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'Hello Alex' });
+    expect(instr.audio).toBe('Hello Alex');
+    expect(instr.text).toBe('Hello Alex');
+    expect(renderInstructions(instr)).toBe('Hello Alex');
+    expect(renderInstructions(instr, 'audio')).toBe('Hello Alex');
+  });
+
+  it('tpl collapses identical modality variants', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'shared note', text: 'shared note' })}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'You are a helpful assistant.\n\nshared note',
+    });
+    expect(renderInstructions(instr)).toBe('You are a helpful assistant.\n\nshared note');
+    expect(renderInstructions(instr, 'audio')).toBe('You are a helpful assistant.\n\nshared note');
+  });
+
   it('serializes to a dict with both variants and round-trips through toJSON', () => {
     const instr = new Instructions({ audio: 'audio variant', text: 'text variant' });
 

@@ -105,13 +105,12 @@ export class Instructions {
       return result;
     };
 
-    const hasTextVariant = values.some(
-      (value) => isInstructions(value) && value._textVariant !== undefined,
-    );
+    const audio = render('audio');
+    const text = render('text');
 
     return new Instructions({
-      audio: render('audio'),
-      text: hasTextVariant ? render('text') : undefined,
+      audio,
+      text: audio === text ? undefined : text,
       represent: render('value'),
     });
   }

@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { APIError, Future, Task, llm, stream } from '@livekit/agents';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
 import type * as api_proto from './api_proto.js';
 import {
   RealtimeModel,
   RealtimeSession,
+  isFatalError,
   livekitItemToOpenAIItem,
   processBaseURL,
 } from './realtime_model.js';
@@ -26,6 +29,8 @@ type RealtimeSessionInternals = {
 
 type ResponseDoneSessionInternals = {
   handleResponseDone: (event: api_proto.ResponseDoneEvent) => void;
+  handleResponseDoneButNotComplete: (event: api_proto.ResponseDoneEvent) => void;
+  handleError: (event: api_proto.ErrorEvent) => void;
   on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
   currentGeneration: {
     messageChannel: stream.StreamChannel<llm.MessageGeneration>;
@@ -35,6 +40,11 @@ type ResponseDoneSessionInternals = {
     _createdTimestamp: number;
     _firstTokenTimestamp?: number;
   };
+};
+
+type ErrorSessionInternals = {
+  handleError: (event: api_proto.ErrorEvent) => void;
+  on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
 };
 
 function createSessionForTest(): RealtimeSessionInternals {
@@ -174,6 +184,206 @@ describe('RealtimeSession response.done status handling', () => {
         },
       }),
     ).not.toThrow();
+  });
+});
+
+describe('RealtimeSession fatal error handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createErrorSession(): ErrorSessionInternals {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    return model.session() as unknown as ErrorSessionInternals;
+  }
+
+  function createResponseDoneSession(): ResponseDoneSessionInternals {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    return model.session() as unknown as ResponseDoneSessionInternals;
+  }
+
+  it('matches known fatal error codes', () => {
+    expect(isFatalError({ code: 'insufficient_quota' })).toBe(true);
+    expect(isFatalError({ code: undefined, type: 'invalid_api_key' })).toBe(true);
+    expect(isFatalError({ code: '', type: 'invalid_api_key' })).toBe(true);
+    expect(isFatalError({ code: 'server_error' })).toBe(false);
+    expect(isFatalError({})).toBe(false);
+    expect(isFatalError(null)).toBe(false);
+  });
+
+  it('stops the websocket session after a fatal server error', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+
+    const address = server.address();
+    if (typeof address === 'string' || address === null) {
+      throw new Error('expected websocket server to listen on a TCP port');
+    }
+
+    let connectionCount = 0;
+    server.on('connection', (socket) => {
+      connectionCount++;
+      socket.on('message', (data) => {
+        const event = JSON.parse(data.toString()) as { type?: string };
+        if (event.type !== 'response.create') return;
+
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            event_id: 'evt_quota',
+            error: {
+              type: 'invalid_request_error',
+              code: 'insufficient_quota',
+              message: 'quota exceeded',
+              param: '',
+            },
+          }),
+        );
+      });
+    });
+
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+    });
+    const session = model.session();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    try {
+      await expect(session.generateReply()).rejects.toThrow('Realtime session closed');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.recoverable).toBe(false);
+      expect(errors[0]!.error).toBeInstanceOf(APIError);
+      expect((errors[0]!.error as APIError).retryable).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(connectionCount).toBe(1);
+    } finally {
+      await session.close().catch(() => undefined);
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it('raises non-retryable APIError on fatal server error events', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    expect(() =>
+      session.handleError({
+        type: 'error',
+        event_id: 'evt_quota',
+        error: {
+          type: 'invalid_request_error',
+          code: 'insufficient_quota',
+          message: 'quota exceeded',
+          param: '',
+          event_id: 'evt_quota',
+        },
+      }),
+    ).toThrow(APIError);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('emits transient server error events as recoverable', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_server_error',
+      error: {
+        type: 'server_error',
+        code: 'server_error',
+        message: 'server hiccup',
+        param: '',
+        event_id: 'evt_server_error',
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
+  });
+
+  it('ignores cancellation failed server error events', () => {
+    const session = createErrorSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_cancel_failed',
+      error: {
+        type: 'invalid_request_error',
+        message: 'Cancellation failed: no response',
+        param: '',
+        event_id: 'evt_cancel_failed',
+      },
+    });
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('raises non-retryable APIError on fatal response.done failures', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    expect(() =>
+      session.handleResponseDoneButNotComplete({
+        type: 'response.done',
+        event_id: 'evt_response_failed',
+        response: {
+          id: 'resp_failed',
+          object: 'realtime.response',
+          status: 'failed',
+          status_details: {
+            type: 'failed',
+            error: {
+              code: 'insufficient_quota',
+              message: 'quota exceeded',
+            },
+          },
+          output: [],
+        },
+      }),
+    ).toThrow(APIError);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('emits transient response.done failures as recoverable', () => {
+    const session = createResponseDoneSession();
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleResponseDoneButNotComplete({
+      type: 'response.done',
+      event_id: 'evt_response_failed',
+      response: {
+        id: 'resp_failed',
+        object: 'realtime.response',
+        status: 'failed',
+        status_details: {
+          type: 'failed',
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'rate limited',
+          },
+        },
+        output: [],
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
   });
 });
 
