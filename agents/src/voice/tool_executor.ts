@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { z } from 'zod';
-import type { ChatContext, FunctionCallOutput } from '../llm/chat_context.js';
-import { FunctionCall } from '../llm/chat_context.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
   type DuplicateMode,
