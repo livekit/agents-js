@@ -594,6 +594,13 @@ export class ToolContext<UserData = UnknownUserData> {
     this._syncFlattened(this.flatten().filter((tool) => !excludedTools.has(tool)));
   }
 
+  /** Return a copy containing only flattened callable/provider entries. @internal */
+  _flattenedCopy(): ToolContext<UserData> {
+    const copy = ToolContext.empty<UserData>();
+    copy._syncFlattened(this.flatten());
+    return copy;
+  }
+
   copy(): ToolContext<UserData> {
     return new ToolContext<UserData>([...this._tools]);
   }

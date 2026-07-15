@@ -3913,10 +3913,11 @@ export class AgentActivity implements RecognitionHooks {
 
     const originalToolChoice = this.toolChoice;
     let originalTools: ToolContext | undefined;
-    const turnTools = this.realtimeSession.tools;
-    const onEnterIgnoredTools = this._onEnterIgnoredTools(turnTools);
+    const sessionTools = this.realtimeSession.tools;
+    const onEnterIgnoredTools = this._onEnterIgnoredTools(sessionTools);
     if (onEnterIgnoredTools.length > 0) {
-      originalTools = this.realtimeSession.tools;
+      originalTools = sessionTools;
+      const turnTools = sessionTools._flattenedCopy();
       turnTools._exclude(onEnterIgnoredTools);
       await this.realtimeSession.updateTools(turnTools);
     }
