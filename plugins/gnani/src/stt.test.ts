@@ -10,6 +10,7 @@ interface MockWebSocket extends EventEmitter {
   options?: { handshakeTimeout?: number };
   sent: unknown[];
   closed: boolean;
+  terminated: boolean;
 }
 
 const wsState = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ vi.mock('ws', () => {
       readyState = 1;
       sent: unknown[] = [];
       closed = false;
+      terminated = false;
       options?: { handshakeTimeout?: number };
 
       constructor(_url: string, options?: { handshakeTimeout?: number }) {
@@ -40,6 +42,12 @@ vi.mock('ws', () => {
       close() {
         this.closed = true;
         this.emit('close', 1000);
+      }
+
+      terminate() {
+        this.terminated = true;
+        this.closed = true;
+        this.emit('close', 1006);
       }
     },
   };
@@ -320,6 +328,7 @@ describe('Gnani STT', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(ws.closed).toBe(true);
+    expect(ws.terminated).toBe(false);
   });
 
   it('closes a pending WebSocket receive when the stream aborts', async () => {
@@ -335,6 +344,10 @@ describe('Gnani STT', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(ws.closed).toBe(true);
+    expect(ws.terminated).toBe(true);
+    expect(ws.listenerCount('message')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
   });
 
   it('allows provider close during the one-second final drain', async () => {

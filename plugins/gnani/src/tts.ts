@@ -612,7 +612,8 @@ async function synthesizeViaWebSocket(
     headers: buildHeaders(opts),
     handshakeTimeout: timeoutMs,
   });
-  const onAbort = () => ws.close();
+  const onHandshakeAbort = () => ws.close();
+  let established = false;
   try {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -636,14 +637,16 @@ async function synthesizeViaWebSocket(
         ws.removeListener('open', onOpen);
         ws.removeListener('error', onError);
         ws.removeListener('close', onClose);
+        abortSignal.removeEventListener('abort', onHandshakeAbort);
       };
       ws.on('open', onOpen);
       ws.on('error', onError);
       ws.on('close', onClose);
-      abortSignal.addEventListener('abort', onAbort, { once: true });
-      if (abortSignal.aborted) onAbort();
+      abortSignal.addEventListener('abort', onHandshakeAbort, { once: true });
+      if (abortSignal.aborted) onHandshakeAbort();
     });
     if (abortSignal.aborted) return;
+    established = true;
 
     ws.send(JSON.stringify(buildPayload(opts, text)));
     onStarted?.();
@@ -657,6 +660,7 @@ async function synthesizeViaWebSocket(
         ws.removeListener('message', onMessage);
         ws.removeListener('close', onClose);
         ws.removeListener('error', onError);
+        abortSignal.removeEventListener('abort', onAbort);
       };
       const settle = (error?: Error) => {
         if (settled) return;
@@ -710,12 +714,18 @@ async function synthesizeViaWebSocket(
         if (abortSignal.aborted) settle();
         else settle(mapWebSocketError(error));
       };
+      const onAbort = () => {
+        settle();
+        ws.terminate();
+      };
       ws.on('message', onMessage);
       ws.on('close', onClose);
       ws.on('error', onError);
+      abortSignal.addEventListener('abort', onAbort, { once: true });
+      if (abortSignal.aborted) onAbort();
     });
   } finally {
-    abortSignal.removeEventListener('abort', onAbort);
-    ws.close();
+    if (abortSignal.aborted && established) ws.terminate();
+    else ws.close();
   }
 }

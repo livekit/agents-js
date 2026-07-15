@@ -296,7 +296,8 @@ export class SpeechStream extends stt.SpeechStream {
       headers: this.buildHeaders(),
       handshakeTimeout: this.timeoutMs,
     });
-    const onAbort = () => ws.close();
+    const onHandshakeAbort = () => ws.close();
+    let established = false;
     try {
       await new Promise<void>((resolve, reject) => {
         const onOpen = () => {
@@ -316,14 +317,16 @@ export class SpeechStream extends stt.SpeechStream {
           ws.removeListener('open', onOpen);
           ws.removeListener('error', onError);
           ws.removeListener('close', onClose);
+          this.abortSignal.removeEventListener('abort', onHandshakeAbort);
         };
         ws.on('open', onOpen);
         ws.on('error', onError);
         ws.on('close', onClose);
-        this.abortSignal.addEventListener('abort', onAbort, { once: true });
-        if (this.abortSignal.aborted) onAbort();
+        this.abortSignal.addEventListener('abort', onHandshakeAbort, { once: true });
+        if (this.abortSignal.aborted) onHandshakeAbort();
       });
       if (this.abortSignal.aborted) return;
+      established = true;
 
       const receiveState = { allowClose: false };
       const sendTask = this.sendAudio(ws).then(() => {
@@ -338,8 +341,8 @@ export class SpeechStream extends stt.SpeechStream {
         await waitForDrain(receiveTask, 1000);
       }
     } finally {
-      this.abortSignal.removeEventListener('abort', onAbort);
-      ws.close();
+      if (this.abortSignal.aborted && established) ws.terminate();
+      else ws.close();
     }
   }
 
@@ -403,6 +406,7 @@ export class SpeechStream extends stt.SpeechStream {
         ws.removeListener('message', onMessage);
         ws.removeListener('close', onClose);
         ws.removeListener('error', onError);
+        this.abortSignal.removeEventListener('abort', onAbort);
       };
       const settle = (error?: Error) => {
         if (settled) return;
@@ -466,9 +470,15 @@ export class SpeechStream extends stt.SpeechStream {
           );
       };
       const onError = (error: Error) => settle(mapWebSocketError(error));
+      const onAbort = () => {
+        settle();
+        ws.terminate();
+      };
       ws.on('message', onMessage);
       ws.on('close', onClose);
       ws.on('error', onError);
+      this.abortSignal.addEventListener('abort', onAbort, { once: true });
+      if (this.abortSignal.aborted) onAbort();
     });
   }
 }
