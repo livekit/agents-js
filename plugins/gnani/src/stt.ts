@@ -296,33 +296,40 @@ export class SpeechStream extends stt.SpeechStream {
       headers: this.buildHeaders(),
       handshakeTimeout: this.timeoutMs,
     });
-
-    await new Promise<void>((resolve, reject) => {
-      const onOpen = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (error: Error) => {
-        cleanup();
-        reject(mapWebSocketError(error));
-      };
-      const onClose = (code: number) => {
-        cleanup();
-        reject(new APIConnectionError({ message: `Gnani STT WebSocket closed: ${code}` }));
-      };
-      const cleanup = () => {
-        ws.removeListener('open', onOpen);
-        ws.removeListener('error', onError);
-        ws.removeListener('close', onClose);
-      };
-      ws.on('open', onOpen);
-      ws.on('error', onError);
-      ws.on('close', onClose);
-    });
-
+    const onAbort = () => ws.close();
     try {
-      const sendTask = this.sendAudio(ws);
-      const receiveTask = this.receiveMessages(ws);
+      await new Promise<void>((resolve, reject) => {
+        const onOpen = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = (error: Error) => {
+          cleanup();
+          reject(mapWebSocketError(error));
+        };
+        const onClose = (code: number) => {
+          cleanup();
+          if (this.abortSignal.aborted) resolve();
+          else reject(new APIConnectionError({ message: `Gnani STT WebSocket closed: ${code}` }));
+        };
+        const cleanup = () => {
+          ws.removeListener('open', onOpen);
+          ws.removeListener('error', onError);
+          ws.removeListener('close', onClose);
+        };
+        ws.on('open', onOpen);
+        ws.on('error', onError);
+        ws.on('close', onClose);
+        this.abortSignal.addEventListener('abort', onAbort, { once: true });
+        if (this.abortSignal.aborted) onAbort();
+      });
+      if (this.abortSignal.aborted) return;
+
+      const receiveState = { allowClose: false };
+      const sendTask = this.sendAudio(ws).then(() => {
+        receiveState.allowClose = true;
+      });
+      const receiveTask = this.receiveMessages(ws, receiveState);
       const completed = await Promise.race([
         sendTask.then(() => 'send'),
         receiveTask.then(() => 'receive'),
@@ -331,6 +338,7 @@ export class SpeechStream extends stt.SpeechStream {
         await waitForDrain(receiveTask, 1000);
       }
     } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
       ws.close();
     }
   }
@@ -384,10 +392,28 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
-  private async receiveMessages(ws: WebSocket) {
+  private async receiveMessages(ws: WebSocket, state: { allowClose: boolean }) {
     return new Promise<void>((resolve, reject) => {
-      ws.on('message', (msg: RawData, isBinary: boolean) => {
+      let settled = false;
+      const receiveTimeout = setTimeout(() => {
+        settle(new APITimeoutError({ message: 'Gnani STT WebSocket receive timed out' }));
+      }, this.timeoutMs);
+      const cleanup = () => {
+        clearTimeout(receiveTimeout);
+        ws.removeListener('message', onMessage);
+        ws.removeListener('close', onClose);
+        ws.removeListener('error', onError);
+      };
+      const settle = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+      const onMessage = (msg: RawData, isBinary: boolean) => {
         if (isBinary) return;
+        clearTimeout(receiveTimeout);
 
         try {
           const data = JSON.parse(msg.toString()) as Record<string, unknown>;
@@ -417,7 +443,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
           } else if (msgType === 'error') {
             const message = typeof data.message === 'string' ? data.message : 'Unknown error';
-            reject(
+            settle(
               new APIStatusError({
                 message: `Gnani STT stream error: ${message}`,
                 options: { statusCode: 500, body: { error: message } },
@@ -425,13 +451,24 @@ export class SpeechStream extends stt.SpeechStream {
             );
           }
         } catch (error) {
-          reject(
+          settle(
             new APIConnectionError({ message: `Error receiving Gnani STT messages: ${error}` }),
           );
         }
-      });
-      ws.on('close', () => resolve());
-      ws.on('error', (error) => reject(mapWebSocketError(error)));
+      };
+      const onClose = (code: number) => {
+        if (this.abortSignal.aborted || state.allowClose) settle();
+        else
+          settle(
+            new APIConnectionError({
+              message: `Gnani STT WebSocket closed before input completed: ${code}`,
+            }),
+          );
+      };
+      const onError = (error: Error) => settle(mapWebSocketError(error));
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
     });
   }
 }

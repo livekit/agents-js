@@ -38,7 +38,6 @@ export const SUPPORTED_VOICES = new Set<string>([
 ]);
 export const SUPPORTED_SAMPLE_RATES = [8000, 16000, 22050, 44100] as const;
 
-const WAV_HEADER_SIZE = 44;
 const DEFAULT_SAMPLE_WIDTH = 2;
 const DEPRECATED_TTS_OPTIONS = new Set(['language', 'httpSession', 'http_session']);
 
@@ -165,46 +164,78 @@ function buildHeaders(opts: ResolvedTTSOptions): Record<string, string> {
   };
 }
 
-function stripWavHeader(data: Buffer): Buffer {
-  if (
-    data.length > WAV_HEADER_SIZE &&
-    data.subarray(0, 4).toString() === 'RIFF' &&
-    data.subarray(8, 12).toString() === 'WAVE'
-  ) {
-    return data.subarray(WAV_HEADER_SIZE);
-  }
-  return data;
-}
-
-function decodeAudioChunk(data: Buffer, opts: ResolvedTTSOptions): Buffer {
-  return opts.container === 'wav' ? stripWavHeader(data) : data;
-}
-
 function rawDataToBuffer(data: RawData): Buffer {
   if (Array.isArray(data)) return Buffer.concat(data);
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
 }
 
-function framesFromAudio(data: Buffer, opts: ResolvedTTSOptions): AudioFrame[] {
-  const stream = new AudioByteStream(opts.sampleRate, opts.numChannels);
-  return [...stream.write(data), ...stream.flush()];
-}
+class AudioContainerDecoder {
+  private buffer = Buffer.alloc(0);
+  private dataBytesRemaining: number | undefined;
+  private foundDataChunk = false;
+  private parsedRiffHeader = false;
+  private receivedInput = false;
 
-function putFrames(
-  queue: { put: (audio: tts.SynthesizedAudio) => void },
-  frames: AudioFrame[],
-  requestId: string,
-  segmentId: string,
-  final = true,
-) {
-  for (const [index, frame] of frames.entries()) {
-    queue.put({ requestId, segmentId, frame, final: final && index === frames.length - 1 });
+  constructor(private readonly container: string) {}
+
+  push(data: Buffer): Buffer[] {
+    if (data.length === 0) return [];
+    this.receivedInput = true;
+    if (this.container === 'raw') return [data];
+    this.buffer = Buffer.concat([this.buffer, data]);
+    const output: Buffer[] = [];
+
+    if (!this.parsedRiffHeader) {
+      if (this.buffer.length < 12) return output;
+      if (
+        this.buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+        this.buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+      ) {
+        throw new APIConnectionError({ message: 'Gnani TTS returned an invalid WAV container' });
+      }
+      this.buffer = this.buffer.subarray(12);
+      this.parsedRiffHeader = true;
+    }
+
+    while (true) {
+      if (this.dataBytesRemaining != null) {
+        if (this.dataBytesRemaining === 0 || this.buffer.length === 0) break;
+        const length = Math.min(this.buffer.length, this.dataBytesRemaining);
+        output.push(this.buffer.subarray(0, length));
+        this.buffer = this.buffer.subarray(length);
+        this.dataBytesRemaining -= length;
+        continue;
+      }
+      if (this.foundDataChunk || this.buffer.length < 8) break;
+
+      const chunkId = this.buffer.subarray(0, 4).toString('ascii');
+      const chunkSize = this.buffer.readUInt32LE(4);
+      if (chunkId === 'data') {
+        this.buffer = this.buffer.subarray(8);
+        this.dataBytesRemaining = chunkSize;
+        this.foundDataChunk = true;
+        continue;
+      }
+
+      const paddedChunkSize = chunkSize + (chunkSize % 2);
+      if (this.buffer.length < 8 + paddedChunkSize) break;
+      this.buffer = this.buffer.subarray(8 + paddedChunkSize);
+    }
+    return output;
+  }
+
+  finish() {
+    if (this.container === 'wav' && this.receivedInput && !this.foundDataChunk) {
+      throw new APIConnectionError({ message: 'Gnani TTS WAV response has no data chunk' });
+    }
   }
 }
 
 class IncrementalAudioEmitter {
   private readonly stream: AudioByteStream;
+  private readonly decoder: AudioContainerDecoder;
+  private pendingFrame: AudioFrame | undefined;
 
   constructor(
     private readonly queue: { put: (audio: tts.SynthesizedAudio) => void },
@@ -212,15 +243,45 @@ class IncrementalAudioEmitter {
     private readonly requestId: string,
     private readonly segmentId: string,
   ) {
-    this.stream = new AudioByteStream(opts.sampleRate, opts.numChannels);
+    const frameSamples = Math.max(1, Math.floor(opts.sampleRate / 100));
+    this.stream = new AudioByteStream(opts.sampleRate, opts.numChannels, frameSamples);
+    this.decoder = new AudioContainerDecoder(opts.container);
   }
 
   push(data: Buffer) {
-    putFrames(this.queue, this.stream.write(data), this.requestId, this.segmentId, false);
+    for (const pcm of this.decoder.push(data)) {
+      this.pushFrames(this.stream.write(pcm));
+    }
   }
 
   flush() {
-    putFrames(this.queue, this.stream.flush(), this.requestId, this.segmentId);
+    this.decoder.finish();
+    const frames = this.stream.flush();
+    this.pushFrames(frames);
+    if (this.pendingFrame) {
+      this.queue.put({
+        requestId: this.requestId,
+        segmentId: this.segmentId,
+        frame: this.pendingFrame,
+        final: true,
+      });
+      this.pendingFrame = undefined;
+    }
+  }
+
+  private pushFrames(frames: AudioFrame[]) {
+    for (const frame of frames) {
+      if (frame.samplesPerChannel === 0) continue;
+      if (this.pendingFrame) {
+        this.queue.put({
+          requestId: this.requestId,
+          segmentId: this.segmentId,
+          frame: this.pendingFrame,
+          final: false,
+        });
+      }
+      this.pendingFrame = frame;
+    }
   }
 }
 
@@ -326,12 +387,9 @@ export class RESTChunkedStream extends tts.ChunkedStream {
 
     const audioBytes = Buffer.from(await response.arrayBuffer());
     const requestId = shortuuid();
-    putFrames(
-      this.queue,
-      framesFromAudio(decodeAudioChunk(audioBytes, this.opts), this.opts),
-      requestId,
-      requestId,
-    );
+    const emitter = new IncrementalAudioEmitter(this.queue, this.opts, requestId, requestId);
+    emitter.push(audioBytes);
+    emitter.flush();
   }
 }
 
@@ -388,8 +446,7 @@ export class SSEChunkedStream extends tts.ChunkedStream {
       if (payload.status === 'streaming_started') return false;
       const audio = typeof payload.audio === 'string' ? payload.audio : '';
       if (audio) {
-        const chunk = decodeAudioChunk(Buffer.from(audio, 'base64'), this.opts);
-        emitter.push(chunk);
+        emitter.push(Buffer.from(audio, 'base64'));
       }
       return payload.is_final === true;
     };
@@ -453,8 +510,10 @@ export class WebSocketChunkedStream extends tts.ChunkedStream {
       this.inputText,
       this.opts,
       this.timeoutMs,
+      this.abortSignal,
       (chunk) => emitter.push(chunk),
     );
+    if (this.abortSignal.aborted) return;
     emitter.flush();
   }
 }
@@ -491,9 +550,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       text,
       this.opts,
       this.connOptions.timeoutMs,
+      this.abortSignal,
       (chunk) => emitter.push(chunk),
       () => this.markStarted(),
     );
+    if (this.abortSignal.aborted) return;
     emitter.flush();
     this.queue.put(SynthesizeStream.END_OF_STREAM);
   }
@@ -504,6 +565,7 @@ async function synthesizeViaWebSocket(
   text: string,
   opts: ResolvedTTSOptions,
   timeoutMs: number,
+  abortSignal: AbortSignal,
   onAudio: (chunk: Buffer) => void,
   onStarted?: () => void,
 ): Promise<void> {
@@ -511,34 +573,37 @@ async function synthesizeViaWebSocket(
     headers: buildHeaders(opts),
     handshakeTimeout: timeoutMs,
   });
-
-  await new Promise<void>((resolve, reject) => {
-    const onOpen = () => {
-      cleanup();
-      resolve();
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(mapWebSocketError(error));
-    };
-    const onClose = (code: number) => {
-      cleanup();
-      reject(new APIConnectionError({ message: `Gnani TTS WebSocket closed: ${code}` }));
-    };
-    const cleanup = () => {
-      ws.removeListener('open', onOpen);
-      ws.removeListener('error', onError);
-      ws.removeListener('close', onClose);
-    };
-    ws.on('open', onOpen);
-    ws.on('error', onError);
-    ws.on('close', onClose);
-  });
-
-  ws.send(JSON.stringify(buildPayload(opts, text)));
-  onStarted?.();
-
+  const onAbort = () => ws.close();
   try {
+    await new Promise<void>((resolve, reject) => {
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(mapWebSocketError(error));
+      };
+      const onClose = (code: number) => {
+        cleanup();
+        if (abortSignal.aborted) resolve();
+        else reject(new APIConnectionError({ message: `Gnani TTS WebSocket closed: ${code}` }));
+      };
+      const cleanup = () => {
+        ws.removeListener('open', onOpen);
+        ws.removeListener('error', onError);
+        ws.removeListener('close', onClose);
+      };
+      ws.on('open', onOpen);
+      ws.on('error', onError);
+      ws.on('close', onClose);
+      abortSignal.addEventListener('abort', onAbort, { once: true });
+      if (abortSignal.aborted) onAbort();
+    });
+    if (abortSignal.aborted) return;
+
+    ws.send(JSON.stringify(buildPayload(opts, text)));
+    onStarted?.();
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const receiveTimeout = setTimeout(() => {
@@ -555,8 +620,7 @@ async function synthesizeViaWebSocket(
       ws.on('message', (msg: RawData, isBinary: boolean) => {
         try {
           if (isBinary) {
-            const chunk = decodeAudioChunk(rawDataToBuffer(msg), opts);
-            onAudio(chunk);
+            onAudio(rawDataToBuffer(msg));
             return;
           }
 
@@ -566,9 +630,9 @@ async function synthesizeViaWebSocket(
           const audio = typeof data.audio === 'string' ? data.audio : '';
 
           if (msgType === 'audio') {
-            if (audio) onAudio(decodeAudioChunk(Buffer.from(audio, 'base64'), opts));
+            if (audio) onAudio(Buffer.from(audio, 'base64'));
           } else if (msgType === 'complete') {
-            if (audio) onAudio(decodeAudioChunk(Buffer.from(audio, 'base64'), opts));
+            if (audio) onAudio(Buffer.from(audio, 'base64'));
             settle();
           } else if (msgType === 'error') {
             settle(apiError(String(payload.message ?? data.message ?? 'Gnani TTS stream error')));
@@ -585,16 +649,19 @@ async function synthesizeViaWebSocket(
           }
         }
       });
-      ws.on('close', (code, reason) =>
-        settle(
-          new APIConnectionError({
-            message: `Gnani TTS WebSocket closed before completion: ${code} ${reason?.toString() ?? ''}`,
-          }),
-        ),
-      );
+      ws.on('close', (code, reason) => {
+        if (abortSignal.aborted) settle();
+        else
+          settle(
+            new APIConnectionError({
+              message: `Gnani TTS WebSocket closed before completion: ${code} ${reason?.toString() ?? ''}`,
+            }),
+          );
+      });
       ws.on('error', (error) => settle(mapWebSocketError(error)));
     });
   } finally {
+    abortSignal.removeEventListener('abort', onAbort);
     ws.close();
   }
 }

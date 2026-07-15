@@ -14,6 +14,7 @@ interface MockWebSocket extends EventEmitter {
 
 const wsState = vi.hoisted(() => ({
   instances: [] as MockWebSocket[],
+  autoOpen: true,
 }));
 
 vi.mock('ws', () => {
@@ -29,7 +30,7 @@ vi.mock('ws', () => {
         super();
         this.options = options;
         wsState.instances.push(this);
-        queueMicrotask(() => this.emit('open'));
+        if (wsState.autoOpen) queueMicrotask(() => this.emit('open'));
       }
 
       send(data: unknown) {
@@ -47,10 +48,12 @@ vi.mock('ws', () => {
 describe('Gnani STT', () => {
   beforeEach(() => {
     wsState.instances.length = 0;
+    wsState.autoOpen = true;
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it('requires an API key', () => {
@@ -255,12 +258,103 @@ describe('Gnani STT', () => {
   it('uses connOptions timeout for WebSocket connection and receive', async () => {
     const stt = new STT({ apiKey: 'test-key' });
     const stream = stt.stream({
-      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 25 },
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 200 },
     });
     await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
     const ws = wsState.instances.at(-1)!;
+    await vi.waitFor(() => expect(ws.listenerCount('message')).toBeGreaterThan(0));
 
-    expect(ws.options?.handshakeTimeout).toBe(25);
+    expect(ws.options?.handshakeTimeout).toBe(200);
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'connected' })), false);
+    stream.close();
+  });
+
+  it('rejects provider close before audio input completes', async () => {
+    const stream = Object.create(SpeechStream.prototype);
+    Reflect.set(stream, 'timeoutMs', 100);
+    Reflect.set(stream, 'abortController', new AbortController());
+    Reflect.set(stream, '_opts', { language: 'en-IN' });
+    Reflect.set(stream, 'queue', { put: vi.fn() });
+    const ws = new EventEmitter();
+    const receive = Reflect.apply(Reflect.get(stream, 'receiveMessages'), stream, [
+      ws,
+      { allowClose: false },
+    ]);
+    const rejection = expect(receive).rejects.toMatchObject({ name: 'APIConnectionError' });
+
+    ws.emit('close', 1006);
+
+    await rejection;
+  });
+
+  it('times out a transport-connected socket with no provider response', async () => {
+    vi.useFakeTimers();
+    const stream = Object.create(SpeechStream.prototype);
+    Reflect.set(stream, 'timeoutMs', 25);
+    Reflect.set(stream, 'abortController', new AbortController());
+    Reflect.set(stream, '_opts', { language: 'en-IN' });
+    Reflect.set(stream, 'queue', { put: vi.fn() });
+    const ws = new EventEmitter();
+    const receive = Reflect.apply(Reflect.get(stream, 'receiveMessages'), stream, [
+      ws,
+      { allowClose: false },
+    ]);
+    const rejection = expect(receive).rejects.toMatchObject({ name: 'APITimeoutError' });
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
+  });
+
+  it('closes a pending WebSocket handshake when the stream aborts', async () => {
+    vi.useFakeTimers();
+    wsState.autoOpen = false;
+    const stt = new STT({ apiKey: 'test-key' });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 100 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    stream.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.closed).toBe(true);
+  });
+
+  it('closes a pending WebSocket receive when the stream aborts', async () => {
+    vi.useFakeTimers();
+    const stt = new STT({ apiKey: 'test-key' });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 100 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    stream.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.closed).toBe(true);
+  });
+
+  it('allows provider close during the one-second final drain', async () => {
+    vi.useFakeTimers();
+    const stt = new STT({ apiKey: 'test-key' });
+    const errors: Error[] = [];
+    stt.on('error', (event) => errors.push(event.error));
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 100 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'connected' })), false);
+
+    stream.endInput();
+    await vi.advanceTimersByTimeAsync(0);
+    ws.emit('close', 1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errors).toHaveLength(0);
     stream.close();
   });
 });

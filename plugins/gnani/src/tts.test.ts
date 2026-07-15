@@ -19,6 +19,7 @@ interface MockWebSocket extends EventEmitter {
 
 const wsState = vi.hoisted(() => ({
   instances: [] as MockWebSocket[],
+  autoOpen: true,
 }));
 
 vi.mock('ws', () => {
@@ -34,7 +35,7 @@ vi.mock('ws', () => {
         super();
         this.options = options;
         wsState.instances.push(this);
-        queueMicrotask(() => this.emit('open'));
+        if (wsState.autoOpen) queueMicrotask(() => this.emit('open'));
       }
 
       send(data: unknown) {
@@ -53,10 +54,12 @@ describe('Gnani TTS', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   beforeEach(() => {
     wsState.instances.length = 0;
+    wsState.autoOpen = true;
     vi.stubGlobal(
       'fetch',
       vi.fn(() => new Promise(() => {})),
@@ -333,6 +336,7 @@ describe('Gnani TTS', () => {
     const stream = tts.synthesize('hello');
     await vi.waitFor(() => expect(wsState.instances.length).toBeGreaterThan(0));
     const ws = wsState.instances.at(-1)!;
+    await vi.waitFor(() => expect(ws.listenerCount('message')).toBeGreaterThan(0));
     ws.emit(
       'message',
       Buffer.from(
@@ -397,6 +401,115 @@ describe('Gnani TTS', () => {
     }
     timeoutSpy.mockRestore();
   });
+
+  it('parses a REST WAV data chunk after ancillary RIFF chunks', async () => {
+    const wav = wavWithJunkChunk(3200, 23);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array(wav))),
+    );
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'rest' });
+
+    const frame = await tts.synthesize('hello').collect();
+
+    expect(frame.data[0]).toBe(23);
+    expect(frame.samplesPerChannel).toBe(1600);
+  });
+
+  it('parses a streaming WAV header split across SSE payloads', async () => {
+    const wav = wavWithJunkChunk(3200, 29);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of [wav.subarray(0, 7), wav.subarray(7, 31), wav.subarray(31)]) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ audio: chunk.toString('base64') })}\n\n`,
+            ),
+          );
+        }
+        controller.enqueue(
+          new TextEncoder().encode(`data: ${JSON.stringify({ is_final: true })}\n\n`),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body)),
+    );
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'sse' });
+
+    const frame = await tts.synthesize('hello').collect();
+
+    expect(frame.data[0]).toBe(29);
+    expect(frame.samplesPerChannel).toBe(1600);
+  });
+
+  it('marks the actual exact-aligned WebSocket audio frame final', async () => {
+    vi.useFakeTimers();
+    const tts = new TTS({
+      apiKey: 'test-key',
+      synthesizeMethod: 'websocket',
+      container: 'raw',
+    });
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    const eventsPromise = (async () => {
+      const events = [];
+      for await (const event of stream) events.push(event);
+      return events;
+    })();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    ws.emit('message', Buffer.alloc(3200, 31), true);
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'complete' })), false);
+    await vi.advanceTimersByTimeAsync(0);
+    const events = await eventsPromise;
+
+    expect(events.every((event) => event.frame.samplesPerChannel > 0)).toBe(true);
+    expect(events.reduce((sum, event) => sum + event.frame.samplesPerChannel, 0)).toBe(1600);
+    expect(events.filter((event) => event.final)).toHaveLength(1);
+    expect(events.at(-1)!.final).toBe(true);
+  });
+
+  it('closes a pending TTS WebSocket handshake when the stream aborts', async () => {
+    vi.useFakeTimers();
+    wsState.autoOpen = false;
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'websocket' });
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    stream.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.closed).toBe(true);
+  });
+
+  it('closes a pending TTS WebSocket receive when the stream aborts', async () => {
+    vi.useFakeTimers();
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'websocket' });
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    stream.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.closed).toBe(true);
+  });
 });
 
 function wavChunk(pcmBytes: number, sample: number): Buffer {
@@ -417,4 +530,30 @@ function wavChunk(pcmBytes: number, sample: number): Buffer {
   const pcm = Buffer.alloc(pcmBytes);
   pcm.writeInt16LE(sample, 0);
   return Buffer.concat([header, pcm]);
+}
+
+function wavWithJunkChunk(pcmBytes: number, sample: number): Buffer {
+  const fmt = Buffer.alloc(24);
+  fmt.write('fmt ', 0);
+  fmt.writeUInt32LE(16, 4);
+  fmt.writeUInt16LE(1, 8);
+  fmt.writeUInt16LE(1, 10);
+  fmt.writeUInt32LE(16000, 12);
+  fmt.writeUInt32LE(32000, 16);
+  fmt.writeUInt16LE(2, 20);
+  fmt.writeUInt16LE(16, 22);
+  const junk = Buffer.alloc(12);
+  junk.write('JUNK', 0);
+  junk.writeUInt32LE(3, 4);
+  junk.fill(9, 8, 11);
+  const dataHeader = Buffer.alloc(8);
+  dataHeader.write('data', 0);
+  dataHeader.writeUInt32LE(pcmBytes, 4);
+  const body = Buffer.concat([fmt, junk, dataHeader, Buffer.alloc(pcmBytes)]);
+  body.writeInt16LE(sample, fmt.length + junk.length + dataHeader.length);
+  const riff = Buffer.alloc(12);
+  riff.write('RIFF', 0);
+  riff.writeUInt32LE(body.length + 4, 4);
+  riff.write('WAVE', 8);
+  return Buffer.concat([riff, body]);
 }
