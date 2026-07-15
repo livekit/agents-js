@@ -172,9 +172,11 @@ function rawDataToBuffer(data: RawData): Buffer {
 
 class AudioContainerDecoder {
   private buffer = Buffer.alloc(0);
-  private dataBytesRemaining: number | undefined;
-  private foundDataChunk = false;
-  private parsedRiffHeader = false;
+  private state: 'riff-header' | 'chunk-header' | 'data' | 'data-padding' = 'riff-header';
+  private riffBytesRemaining = 0;
+  private dataBytesRemaining = 0;
+  private dataPaddingBytesRemaining = 0;
+  private sawDataChunk = false;
   private receivedInput = false;
 
   constructor(private readonly container: string) {}
@@ -186,48 +188,85 @@ class AudioContainerDecoder {
     this.buffer = Buffer.concat([this.buffer, data]);
     const output: Buffer[] = [];
 
-    if (!this.parsedRiffHeader) {
-      if (this.buffer.length < 12) return output;
-      if (
-        this.buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
-        this.buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
-      ) {
-        throw new APIConnectionError({ message: 'Gnani TTS returned an invalid WAV container' });
-      }
-      this.buffer = this.buffer.subarray(12);
-      this.parsedRiffHeader = true;
-    }
-
     while (true) {
-      if (this.dataBytesRemaining != null) {
-        if (this.dataBytesRemaining === 0 || this.buffer.length === 0) break;
+      if (this.state === 'riff-header') {
+        if (this.buffer.length < 12) break;
+        if (
+          this.buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+          this.buffer.subarray(8, 12).toString('ascii') !== 'WAVE'
+        ) {
+          throw new APIConnectionError({ message: 'Gnani TTS returned an invalid WAV container' });
+        }
+        const riffSize = this.buffer.readUInt32LE(4);
+        if (riffSize < 4) {
+          throw new APIConnectionError({ message: 'Gnani TTS returned an invalid RIFF size' });
+        }
+        this.buffer = this.buffer.subarray(12);
+        this.riffBytesRemaining = riffSize - 4;
+        this.state = 'chunk-header';
+        continue;
+      }
+
+      if (this.state === 'chunk-header') {
+        if (this.riffBytesRemaining === 0) {
+          this.state = 'riff-header';
+          continue;
+        }
+        if (this.buffer.length < 8) break;
+        const chunkId = this.buffer.subarray(0, 4).toString('ascii');
+        const chunkSize = this.buffer.readUInt32LE(4);
+        const paddedChunkSize = chunkSize + (chunkSize % 2);
+        if (8 + paddedChunkSize > this.riffBytesRemaining) {
+          throw new APIConnectionError({ message: 'Gnani TTS WAV chunk exceeds RIFF container' });
+        }
+        if (chunkId === 'data') {
+          this.buffer = this.buffer.subarray(8);
+          this.riffBytesRemaining -= 8;
+          this.dataBytesRemaining = chunkSize;
+          this.dataPaddingBytesRemaining = chunkSize % 2;
+          this.sawDataChunk = true;
+          this.state = 'data';
+          continue;
+        }
+        if (this.buffer.length < 8 + paddedChunkSize) break;
+        this.buffer = this.buffer.subarray(8 + paddedChunkSize);
+        this.riffBytesRemaining -= 8 + paddedChunkSize;
+        continue;
+      }
+
+      if (this.state === 'data') {
+        if (this.dataBytesRemaining === 0) {
+          this.state = 'data-padding';
+          continue;
+        }
+        if (this.buffer.length === 0) break;
         const length = Math.min(this.buffer.length, this.dataBytesRemaining);
         output.push(this.buffer.subarray(0, length));
         this.buffer = this.buffer.subarray(length);
         this.dataBytesRemaining -= length;
-        continue;
-      }
-      if (this.foundDataChunk || this.buffer.length < 8) break;
-
-      const chunkId = this.buffer.subarray(0, 4).toString('ascii');
-      const chunkSize = this.buffer.readUInt32LE(4);
-      if (chunkId === 'data') {
-        this.buffer = this.buffer.subarray(8);
-        this.dataBytesRemaining = chunkSize;
-        this.foundDataChunk = true;
+        this.riffBytesRemaining -= length;
         continue;
       }
 
-      const paddedChunkSize = chunkSize + (chunkSize % 2);
-      if (this.buffer.length < 8 + paddedChunkSize) break;
-      this.buffer = this.buffer.subarray(8 + paddedChunkSize);
+      if (this.dataPaddingBytesRemaining > 0) {
+        if (this.buffer.length === 0) break;
+        this.buffer = this.buffer.subarray(1);
+        this.dataPaddingBytesRemaining -= 1;
+        this.riffBytesRemaining -= 1;
+        continue;
+      }
+      this.state = 'chunk-header';
     }
     return output;
   }
 
   finish() {
-    if (this.container === 'wav' && this.receivedInput && !this.foundDataChunk) {
+    if (this.container !== 'wav' || !this.receivedInput) return;
+    if (!this.sawDataChunk) {
       throw new APIConnectionError({ message: 'Gnani TTS WAV response has no data chunk' });
+    }
+    if (this.state !== 'riff-header' || this.buffer.length > 0) {
+      throw new APIConnectionError({ message: 'Gnani TTS returned a truncated WAV container' });
     }
   }
 }
@@ -576,18 +615,22 @@ async function synthesizeViaWebSocket(
   const onAbort = () => ws.close();
   try {
     await new Promise<void>((resolve, reject) => {
-      const onOpen = () => {
+      let settled = false;
+      const settle = (error?: Error) => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        resolve();
+        if (error) reject(error);
+        else resolve();
       };
+      const onOpen = () => settle();
       const onError = (error: Error) => {
-        cleanup();
-        reject(mapWebSocketError(error));
+        if (abortSignal.aborted) settle();
+        else settle(mapWebSocketError(error));
       };
       const onClose = (code: number) => {
-        cleanup();
-        if (abortSignal.aborted) resolve();
-        else reject(new APIConnectionError({ message: `Gnani TTS WebSocket closed: ${code}` }));
+        if (abortSignal.aborted) settle();
+        else settle(new APIConnectionError({ message: `Gnani TTS WebSocket closed: ${code}` }));
       };
       const cleanup = () => {
         ws.removeListener('open', onOpen);
@@ -609,15 +652,20 @@ async function synthesizeViaWebSocket(
       const receiveTimeout = setTimeout(() => {
         settle(new APITimeoutError({ message: 'Gnani TTS WebSocket receive timed out' }));
       }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(receiveTimeout);
+        ws.removeListener('message', onMessage);
+        ws.removeListener('close', onClose);
+        ws.removeListener('error', onError);
+      };
       const settle = (error?: Error) => {
         if (settled) return;
         settled = true;
-        clearTimeout(receiveTimeout);
+        cleanup();
         if (error) reject(error);
         else resolve();
       };
-
-      ws.on('message', (msg: RawData, isBinary: boolean) => {
+      const onMessage = (msg: RawData, isBinary: boolean) => {
         try {
           if (isBinary) {
             onAudio(rawDataToBuffer(msg));
@@ -648,8 +696,8 @@ async function synthesizeViaWebSocket(
             settle(new APIConnectionError({ message: `Gnani TTS WebSocket error: ${error}` }));
           }
         }
-      });
-      ws.on('close', (code, reason) => {
+      };
+      const onClose = (code: number, reason: Buffer) => {
         if (abortSignal.aborted) settle();
         else
           settle(
@@ -657,8 +705,14 @@ async function synthesizeViaWebSocket(
               message: `Gnani TTS WebSocket closed before completion: ${code} ${reason?.toString() ?? ''}`,
             }),
           );
-      });
-      ws.on('error', (error) => settle(mapWebSocketError(error)));
+      };
+      const onError = (error: Error) => {
+        if (abortSignal.aborted) settle();
+        else settle(mapWebSocketError(error));
+      };
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
     });
   } finally {
     abortSignal.removeEventListener('abort', onAbort);

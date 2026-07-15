@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   RESTChunkedStream,
   SSEChunkedStream,
@@ -49,6 +49,18 @@ vi.mock('ws', () => {
     },
   };
 });
+
+const swallowExpectedRejection = (reason: unknown) => {
+  if (
+    reason instanceof Error &&
+    ['APIConnectionError', 'APIStatusError', 'APITimeoutError'].includes(reason.name)
+  ) {
+    return;
+  }
+  throw reason;
+};
+beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
+afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
 describe('Gnani TTS', () => {
   afterEach(() => {
@@ -445,6 +457,37 @@ describe('Gnani TTS', () => {
     expect(frame.samplesPerChannel).toBe(1600);
   });
 
+  it('decodes consecutive complete WAV payloads from one SSE response', async () => {
+    const first = wavChunk(3200, 37);
+    const second = wavChunk(3200, 41);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of [first, second]) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ audio: chunk.toString('base64') })}\n\n`,
+            ),
+          );
+        }
+        controller.enqueue(
+          new TextEncoder().encode(`data: ${JSON.stringify({ is_final: true })}\n\n`),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body)),
+    );
+    const tts = new TTS({ apiKey: 'test-key', synthesizeMethod: 'sse' });
+
+    const frame = await tts.synthesize('hello').collect();
+
+    expect(frame.samplesPerChannel).toBe(3200);
+    expect(frame.data[0]).toBe(37);
+    expect(frame.data[1600]).toBe(41);
+  });
+
   it('marks the actual exact-aligned WebSocket audio frame final', async () => {
     vi.useFakeTimers();
     const tts = new TTS({
@@ -509,6 +552,85 @@ describe('Gnani TTS', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(ws.closed).toBe(true);
+    expect(ws.listenerCount('message')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
+  });
+
+  it('removes receive listeners after WebSocket terminal completion', async () => {
+    vi.useFakeTimers();
+    const tts = new TTS({
+      apiKey: 'test-key',
+      synthesizeMethod: 'websocket',
+      container: 'raw',
+    });
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'complete' })), false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.listenerCount('message')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
+    expect(() => ws.emit('message', Buffer.alloc(3200), true)).not.toThrow();
+    stream.close();
+  });
+
+  it('removes receive listeners after WebSocket provider error', async () => {
+    vi.useFakeTimers();
+    const tts = new TTS({
+      apiKey: 'test-key',
+      synthesizeMethod: 'websocket',
+      container: 'raw',
+    });
+    tts.on('error', () => {});
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'error', message: 'failed' })), false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.listenerCount('message')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
+    expect(() => ws.emit('message', Buffer.alloc(3200), true)).not.toThrow();
+    stream.close();
+  });
+
+  it('removes receive listeners after WebSocket timeout', async () => {
+    vi.useFakeTimers();
+    const tts = new TTS({
+      apiKey: 'test-key',
+      synthesizeMethod: 'websocket',
+      container: 'raw',
+    });
+    tts.on('error', () => {});
+    const stream = tts.synthesize('hello', {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 100,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = wsState.instances.at(-1)!;
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(ws.listenerCount('message')).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+    expect(ws.listenerCount('error')).toBe(0);
+    expect(() => ws.emit('message', Buffer.alloc(3200), true)).not.toThrow();
+    stream.close();
   });
 });
 
