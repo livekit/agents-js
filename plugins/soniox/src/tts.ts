@@ -284,7 +284,6 @@ export class ChunkedStream extends tts.ChunkedStream {
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
       this.#connection?.unregisterStream(this.#streamId);
-      this.queue.close();
     }
   }
 
@@ -386,9 +385,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#connection.unregisterStream(this.#streamId);
       }
       getTTSState(this.#tts).streams.delete(this);
-      if (!this.queue.closed) {
-        this.queue.put(SynthesizeStream.END_OF_STREAM);
-      }
     }
   }
 

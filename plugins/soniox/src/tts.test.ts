@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError } from '@livekit/agents';
+import { APIStatusError, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -153,10 +153,18 @@ describe('Soniox TTS speed options', () => {
 });
 
 describe('Soniox TTS stream cleanup', () => {
-  it('retries streaming text and produces audio after a retryable error', async () => {
+  it('delivers retry audio before ending a streaming consumer', async () => {
     let requestCount = 0;
+    let retryRequestCompletedResolve: (() => void) | undefined;
+    const retryRequestCompleted = new Promise<void>((resolve) => {
+      retryRequestCompletedResolve = resolve;
+    });
     const { url, messages } = await startServer((socket, message) => {
-      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      if (typeof message.stream_id !== 'string') return;
+      if (message.text_end === true && requestCount === 2) {
+        retryRequestCompletedResolve?.();
+      }
+      if (typeof message.text !== 'string') return;
       requestCount += 1;
       if (requestCount === 1) {
         socket.send(
@@ -171,7 +179,7 @@ describe('Soniox TTS stream cleanup', () => {
       socket.send(
         JSON.stringify({
           stream_id: message.stream_id,
-          audio: Buffer.alloc(480).toString('base64'),
+          audio: Buffer.alloc(480, 1).toString('base64'),
           audio_end: true,
           terminated: true,
         }),
@@ -181,26 +189,81 @@ describe('Soniox TTS stream cleanup', () => {
     const stream = synthesizer.stream({
       connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
     });
-    const audioEvents: unknown[] = [];
+    const outputOrder: Array<'audio' | 'end'> = [];
+    const audioBytes: number[] = [];
     stream.pushText('hello');
     stream.endInput();
     const outputTask = (async () => {
       for await (const event of stream) {
-        if (typeof event === 'object') audioEvents.push(event);
+        if (event === tts.SynthesizeStream.END_OF_STREAM) {
+          outputOrder.push('end');
+          break;
+        }
+        outputOrder.push('audio');
+        audioBytes.push(...new Uint8Array(event.frame.data.buffer));
       }
+      if (outputOrder.at(-1) !== 'end') outputOrder.push('end');
     })();
 
-    try {
-      await waitFor(outputTask);
-    } catch {
-      stream.close();
-      await outputTask;
-    }
+    await waitFor(outputTask);
+    await retryRequestCompleted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     const textMessages = messages.filter((message) => typeof message.text === 'string');
     expect(textMessages.map((message) => message.text)).toEqual(['hello', 'hello']);
     expect(messages.filter((message) => message.text_end === true)).toHaveLength(2);
-    expect(audioEvents).not.toHaveLength(0);
+    expect(outputOrder).toEqual(['audio', 'end']);
+    expect(audioBytes).toEqual(expect.arrayContaining([1]));
+  });
+
+  it('delivers successful chunked retry audio before closing the consumer', async () => {
+    let requestCount = 0;
+    let retryRequestCompletedResolve: (() => void) | undefined;
+    const retryRequestCompleted = new Promise<void>((resolve) => {
+      retryRequestCompletedResolve = resolve;
+    });
+    const { url, messages } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string') return;
+      if (message.text_end === true && requestCount === 2) {
+        retryRequestCompletedResolve?.();
+      }
+      if (typeof message.text !== 'string') return;
+      requestCount += 1;
+      if (requestCount === 1) {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            error_code: 503,
+            error_message: 'temporarily unavailable',
+          }),
+        );
+        return;
+      }
+      socket.send(
+        JSON.stringify({
+          stream_id: message.stream_id,
+          audio: Buffer.alloc(480, 2).toString('base64'),
+          audio_end: true,
+          terminated: true,
+        }),
+      );
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const audioBytes: number[] = [];
+
+    for await (const event of synthesizer.synthesize('hello', {
+      maxRetry: 1,
+      retryIntervalMs: 0,
+      timeoutMs: 1000,
+    })) {
+      audioBytes.push(...new Uint8Array(event.frame.data.buffer));
+    }
+    await retryRequestCompleted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(messages.filter((message) => typeof message.text === 'string')).toHaveLength(2);
+    expect(messages.filter((message) => message.text_end === true)).toHaveLength(2);
+    expect(audioBytes).toEqual(expect.arrayContaining([2]));
   });
 
   it('settles and deregisters a streaming request when close receives no response', async () => {
