@@ -63,6 +63,36 @@ describe('LemonSlice AvatarSession', () => {
     );
   });
 
+  it('converts camelCase extraPayload keys to snake_case', async () => {
+    const mockFetch = vi.mocked(fetch);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ session_id: 'test-session-id' }),
+    } as Response);
+
+    const avatar = new AvatarSession({
+      apiKey: 'test-api-key',
+      agentImageUrl: 'https://example.com/avatar.png',
+      extraPayload: {
+        aspectRatio: '9x16',
+        responseDoneTimeout: 2,
+      },
+    });
+
+    await (
+      avatar as unknown as {
+        startAgent(livekitUrl: string, livekitToken: string): Promise<void>;
+      }
+    ).startAgent('wss://livekit.example.com', 'livekit-token');
+
+    const requestInit = mockFetch.mock.calls[0]?.[1];
+    const body = JSON.parse(String(requestInit?.body));
+    expect(body.aspect_ratio).toBe('9x16');
+    expect(body).not.toHaveProperty('aspectRatio');
+    expect(body.response_done_timeout).toBe(2);
+    expect(body).not.toHaveProperty('responseDoneTimeout');
+  });
+
   it('keeps the request body unchanged when extraPayload is omitted', async () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({

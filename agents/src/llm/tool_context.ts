@@ -223,6 +223,10 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
+/**
+ * A function tool without `id`/`name`. Returned by {@link tool} when `name` is omitted; the
+ * containing object key supplies the name when registered via an object-map tool definition.
+ */
 export type AnonFunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,

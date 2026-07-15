@@ -30,6 +30,37 @@ function isGemini3Model(model: string): boolean {
   return modelLower.includes('gemini-3');
 }
 
+function toFunctionCallingConfig(
+  toolChoice: llm.ToolChoice | undefined,
+  toolCtx: llm.ToolContext | undefined,
+): types.FunctionCallingConfig | undefined {
+  if (toolChoice === undefined) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: [toolChoice.function.name],
+    };
+  }
+  if (toolChoice === 'required') {
+    const toolNames = llm.sortedToolNames(toolCtx);
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
+    };
+  }
+  if (toolChoice === 'auto') {
+    return { mode: FunctionCallingConfigMode.AUTO };
+  }
+  if (toolChoice === 'none') {
+    return { mode: FunctionCallingConfigMode.NONE };
+  }
+
+  throw new Error(`Invalid tool choice: ${toolChoice}`);
+}
+
 function isGemini3FlashModel(model: string): boolean {
   const modelLower = model.toLowerCase();
   return modelLower.includes('gemini-3') && modelLower.includes('flash');
@@ -231,42 +262,44 @@ export class LLM extends llm.LLM {
     }
 
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
-    if (toolChoice) {
-      let geminiToolConfig: types.ToolConfig;
+    // Mixing built-in (provider) tools with function tools is only supported on the Gemini 3
+    // Developer API, not Vertex AI. https://ai.google.dev/gemini-api/docs/tool-combination
+    const allowMixedTools = isGemini3Model(this.#opts.model) && !this.#opts.vertexai;
+    const usingCache = this.#opts.cachedContent !== undefined || 'cachedContent' in extras;
 
-      if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: [toolChoice.function.name],
-          },
+    if (usingCache) {
+      const dropped = ['tools', 'toolConfig'].filter((key) => key in extras);
+      delete extras.tools;
+      delete extras.toolConfig;
+
+      const hasTools =
+        (toolCtx !== undefined &&
+          (Object.keys(toolCtx.functionTools).length > 0 || toolCtx.providerTools.length > 0)) ||
+        geminiTools !== undefined ||
+        dropped.length > 0;
+      if (hasTools) {
+        log().warn(
+          { model: this.#opts.model },
+          'gemini llm: ignoring tools; bake them into the CachedContent resource',
+        );
+      }
+    } else {
+      const [toolsConfig, mixed] = toToolsConfig({ toolCtx, geminiTools, allowMixedTools });
+      const functionCallingConfig = toFunctionCallingConfig(toolChoice, toolCtx);
+
+      if (functionCallingConfig !== undefined || mixed) {
+        extras.toolConfig = {
+          ...(extras.toolConfig ?? {}),
+          ...(functionCallingConfig !== undefined ? { functionCallingConfig } : {}),
+          includeServerSideToolInvocations: mixed || undefined,
         };
-      } else if (toolChoice === 'required') {
-        const toolNames = llm.sortedToolNames(toolCtx);
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
-          },
-        };
-      } else if (toolChoice === 'auto') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.AUTO,
-          },
-        };
-      } else if (toolChoice === 'none') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.NONE,
-          },
-        };
-      } else {
-        throw new Error(`Invalid tool choice: ${toolChoice}`);
       }
 
-      extras.toolConfig = geminiToolConfig;
+      if (toolsConfig !== undefined) {
+        extras.tools = toolsConfig;
+      }
     }
 
     if (this.#opts.temperature !== undefined) {
@@ -342,15 +375,12 @@ export class LLM extends llm.LLM {
       extras.mediaResolution = this.#opts.mediaResolution;
     }
 
-    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
-
     return new LLMStream(this, {
       client: this.#client,
       model: this.#opts.model,
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs: extras,
     });
   }
@@ -368,7 +398,6 @@ const BLOCKED_REASONS = [
 export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
-  #geminiTools?: LLMTools;
   #extraKwargs: GenerateContentConfig;
 
   constructor(
@@ -379,7 +408,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs,
     }: {
       client: GoogleGenAI;
@@ -387,7 +415,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
-      geminiTools?: LLMTools;
       extraKwargs: GenerateContentConfig;
     },
   ) {
@@ -395,7 +422,6 @@ export class LLMStream extends llm.LLMStream {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#model = model;
-    this.#geminiTools = geminiTools;
     this.#extraKwargs = extraKwargs;
   }
 
@@ -414,12 +440,6 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const tools = toToolsConfig({
-        toolCtx: this.toolCtx,
-        geminiTools: this.#geminiTools,
-        onlySingleType: true,
-      });
-
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
         systemInstruction = {
@@ -428,23 +448,18 @@ export class LLMStream extends llm.LLMStream {
       }
 
       // Gemini's API rejects `generateContent` requests that pass `cachedContent` together with
-      // `systemInstruction`, `tools`, or `toolConfig` — those fields must live INSIDE the
-      // CachedContent resource, not on the request. The application bakes them into the cache via
-      // `client.caches.create(...)`; here we just suppress the duplicates on the outgoing request
-      // whenever a cache is attached.
+      // `systemInstruction`; it must live inside the CachedContent resource.
       const cachedContent = this.#extraKwargs.cachedContent;
       const usingCache = cachedContent !== undefined;
       const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
 
       if (!usingCache) {
         requestConfig.systemInstruction = systemInstruction;
-        requestConfig.tools = tools;
       } else {
-        const dropped = ['tools', 'toolConfig', 'systemInstruction'].filter(
-          (key) => key in requestConfig,
-        );
-        if (tools && !dropped.includes('tools')) {
-          dropped.push('tools');
+        const dropped: string[] = [];
+        if ('systemInstruction' in requestConfig) {
+          delete requestConfig.systemInstruction;
+          dropped.push('systemInstruction');
         }
         if (systemInstruction && !dropped.includes('systemInstruction')) {
           dropped.push('systemInstruction');
@@ -452,12 +467,9 @@ export class LLMStream extends llm.LLMStream {
         if (dropped.length > 0) {
           this.logger.warn(
             { dropped, cachedContent },
-            'dropping fields from Gemini request because cachedContent is set; these fields must be baked into the CachedContent resource',
+            'dropping systemInstruction from Gemini request because cachedContent is set; this field must be baked into the CachedContent resource',
           );
         }
-        delete requestConfig.tools;
-        delete requestConfig.toolConfig;
-        delete requestConfig.systemInstruction;
       }
 
       const httpOptions = {

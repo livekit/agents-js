@@ -193,7 +193,7 @@ describe('ElevenLabs STT', () => {
         baseURL,
         languageCode: 'en',
         tagAudioEvents: false,
-        modelId: 'scribe_v2',
+        model: 'scribe_v2',
         keyterms: ['LiveKit', 'ElevenLabs'],
       });
 
@@ -262,7 +262,7 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
       stream.startTimeOffset = 1;
 
@@ -341,7 +341,7 @@ describe('ElevenLabs STT', () => {
       const eleven = new STT({
         apiKey: 'test-key',
         baseURL,
-        modelId: 'scribe_v2_realtime',
+        model: 'scribe_v2_realtime',
         languageCode: 'en',
         includeTimestamps: true,
         serverVad: {
@@ -389,7 +389,7 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
 
       await waitUntil(() => urls.length === 1);
