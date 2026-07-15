@@ -12,7 +12,6 @@ import {
   tokenize,
   tts,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
 import { decode, encode } from '@msgpack/msgpack';
 import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
@@ -399,14 +398,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    let lastFrame: AudioFrame | undefined;
-    const sendLastFrame = (final: boolean) => {
-      if (lastFrame) {
-        this.queue.put({ requestId, segmentId: requestId, frame: lastFrame, final });
-        lastFrame = undefined;
-      }
-    };
-
     const recvTask = async () => {
       // No per-receive timeout: Fish has natural inter-sentence gaps that can
       // exceed connOptions.timeoutMs when the LLM is slow.
@@ -432,9 +423,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (event === 'audio') {
           const audio = parsed.audio as Uint8Array | undefined;
           if (audio && audio.byteLength > 0) {
-            for (const f of bstream.write(audio)) {
-              sendLastFrame(false);
-              lastFrame = f;
+            for (const frame of bstream.write(audio)) {
+              this.queue.put({ requestId, segmentId: requestId, frame, final: false });
             }
           }
         } else if (event === 'finish') {
@@ -448,11 +438,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             );
             return;
           }
-          for (const f of bstream.flush()) {
-            sendLastFrame(false);
-            lastFrame = f;
+          const remainingFrames = [...bstream.flush()];
+          for (const [idx, frame] of remainingFrames.entries()) {
+            this.queue.put({
+              requestId,
+              segmentId: requestId,
+              frame,
+              final: idx === remainingFrames.length - 1,
+            });
           }
-          sendLastFrame(true);
           if (!this.queue.closed) {
             this.queue.put(SynthesizeStream.END_OF_STREAM);
           }
