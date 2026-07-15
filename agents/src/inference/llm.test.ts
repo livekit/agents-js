@@ -178,6 +178,14 @@ describe('inference.LLM streamed tool calls', () => {
 });
 
 describeLiveKitInference('LiveKit Inference LLM integration', agents, async (harness) => {
+  const liveConnOptions = { maxRetry: 3, retryIntervalMs: 2000, timeoutMs: 30000 };
+
+  const withLiveConnOptions = (llm: LLM): LLM => {
+    const chat = llm.chat.bind(llm);
+    llm.chat = ((opts) => chat({ ...opts, connOptions: liveConnOptions })) as LLM['chat'];
+    return llm;
+  };
+
   for (const model of [
     'google/gemma-4-31b-it',
     'openai/gpt-4.1-mini',
@@ -185,11 +193,13 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
     'openai/gpt-oss-120b',
   ] as const) {
     describe(model, async () => {
-      await harness.llm(new LLM({ model }), false);
+      await harness.llm(withLiveConnOptions(new LLM({ model })), false);
     });
   }
 
   describe('openai/gpt-4.1-mini strict tool schema', async () => {
-    await harness.llmStrict(new LLM({ model: 'openai/gpt-4.1-mini', strictToolSchema: true }));
+    await harness.llmStrict(
+      withLiveConnOptions(new LLM({ model: 'openai/gpt-4.1-mini', strictToolSchema: true })),
+    );
   });
 });
