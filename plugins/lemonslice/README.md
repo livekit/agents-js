@@ -50,9 +50,14 @@ Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `agentId` | `string` | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided. |
-| `agentImageUrl` | `AvatarImage` | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided. |
-| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. |
+| `agentId` | `string` | The LemonSlice agent ID to use. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImageUrl` | `string` | A publicly accessible url to your avatar image. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImage` | `string \| Buffer` | A local image file path or Buffer to upload as the agent's avatar. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImageMimeType` | `string` | MIME type for `agentImage` when provided as a Buffer (e.g. `'image/jpeg'`). Ignored for file paths. Defaults to `'image/png'`. |
+| `agentPrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while responding. |
+| `agentIdlePrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while idle. |
+| `idleTimeout` | `number` | The idle timeout, in seconds. |
+| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. Keys are automatically converted from camelCase to snake_case |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
 | `avatarParticipantIdentity` | `string` | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |

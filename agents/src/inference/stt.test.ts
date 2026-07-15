@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
@@ -13,6 +14,7 @@ import {
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
+import { describeLiveKitInference } from './test_utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
@@ -425,4 +427,19 @@ describe('STT VAD handling for Speechmatics models', () => {
     stt.updateOptions({ model: 'speechmatics/enhanced' });
     expect(stt['vad']).toBeInstanceOf(InferenceVAD);
   });
+});
+
+describeLiveKitInference('LiveKit Inference STT integration', agents, async (harness) => {
+  for (const model of [
+    'deepgram/nova-3',
+    'cartesia/ink-whisper',
+    'assemblyai/universal-streaming',
+    'xai/stt-1',
+  ] as const) {
+    describe(model, async () => {
+      await harness.stt(new STT({ model }), new InferenceVAD(), {
+        nonStreaming: false,
+      });
+    });
+  }
 });
