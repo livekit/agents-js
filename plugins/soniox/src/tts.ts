@@ -302,6 +302,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #connection?: Connection;
   #streamId = '';
   #cancelled = false;
+  #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
+  #inputConsumed = false;
   label = 'soniox.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -311,9 +313,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   override close(): void {
-    if (!this.#cancelled && this.#connection !== undefined && this.#streamId) {
+    if (!this.#cancelled) {
       this.#cancelled = true;
-      this.#connection.cancelStream(this.#streamId);
+      if (this.#connection !== undefined && this.#streamId) {
+        this.#connection.cancelStream(this.#streamId);
+      }
     }
     super.close();
   }
@@ -324,6 +328,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const waiter = new Future<void>();
     let inputTask: Promise<void> | undefined;
+    const attemptState = { cancelled: false };
 
     let lastFrame: AudioFrame | undefined;
     const emitFrame = (final: boolean) => {
@@ -357,7 +362,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         },
       });
 
-      inputTask = this.#sendInput();
+      if (this.#cancelled || this.abortSignal.aborted) {
+        this.#connection.cancelStream(this.#streamId);
+      } else {
+        inputTask = this.#sendInput(attemptState);
+      }
       await waiter.await;
     } catch (error) {
       if (this.abortSignal.aborted) {
@@ -368,7 +377,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
-      this.#cancelled = true;
+      attemptState.cancelled = true;
       if (!this.input.closed) {
         this.input.close();
       }
@@ -383,21 +392,40 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     }
   }
 
-  async #sendInput(): Promise<void> {
-    for await (const data of this.input) {
-      if (this.#cancelled || this.#connection === undefined) {
-        break;
+  async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
+    if (this.#inputConsumed) {
+      for (const data of this.#inputCache) {
+        if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
+          break;
+        }
+        this.#sendInputItem(data);
       }
-      if (data === SynthesizeStream.FLUSH_SENTINEL) {
-        continue;
+      if (!this.#cancelled && !attemptState.cancelled && this.#connection !== undefined) {
+        this.#connection.sendText(this.#streamId, '', true);
       }
-      this.markStarted();
-      this.#connection.sendText(this.#streamId, data, false);
+      return;
     }
 
-    if (!this.#cancelled && this.#connection !== undefined) {
+    for await (const data of this.input) {
+      this.#inputCache.push(data);
+      if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
+        break;
+      }
+      this.#sendInputItem(data);
+    }
+    this.#inputConsumed = true;
+
+    if (!this.#cancelled && !attemptState.cancelled && this.#connection !== undefined) {
       this.#connection.sendText(this.#streamId, '', true);
     }
+  }
+
+  #sendInputItem(data: string | typeof SynthesizeStream.FLUSH_SENTINEL): void {
+    if (data === SynthesizeStream.FLUSH_SENTINEL || this.#connection === undefined) {
+      return;
+    }
+    this.markStarted();
+    this.#connection.sendText(this.#streamId, data, false);
   }
 }
 

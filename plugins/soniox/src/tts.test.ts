@@ -153,6 +153,56 @@ describe('Soniox TTS speed options', () => {
 });
 
 describe('Soniox TTS stream cleanup', () => {
+  it('retries streaming text and produces audio after a retryable error', async () => {
+    let requestCount = 0;
+    const { url, messages } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      requestCount += 1;
+      if (requestCount === 1) {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            error_code: 503,
+            error_message: 'temporarily unavailable',
+          }),
+        );
+        return;
+      }
+      socket.send(
+        JSON.stringify({
+          stream_id: message.stream_id,
+          audio: Buffer.alloc(480).toString('base64'),
+          audio_end: true,
+          terminated: true,
+        }),
+      );
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const audioEvents: unknown[] = [];
+    stream.pushText('hello');
+    stream.endInput();
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (typeof event === 'object') audioEvents.push(event);
+      }
+    })();
+
+    try {
+      await waitFor(outputTask);
+    } catch {
+      stream.close();
+      await outputTask;
+    }
+
+    const textMessages = messages.filter((message) => typeof message.text === 'string');
+    expect(textMessages.map((message) => message.text)).toEqual(['hello', 'hello']);
+    expect(messages.filter((message) => message.text_end === true)).toHaveLength(2);
+    expect(audioEvents).not.toHaveLength(0);
+  });
+
   it('settles and deregisters a streaming request when close receives no response', async () => {
     let requestStartedResolve: (() => void) | undefined;
     const requestStarted = new Promise<void>((resolve) => {
