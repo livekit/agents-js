@@ -89,8 +89,8 @@ const tts = new gnani.TTS({
   voice: 'Karan', // Default: 'Karan' (also: Simran, Nara, Riya, Viraj, Raju)
   model: 'vachana-voice-v3', // Default: 'vachana-voice-v3'
   sampleRate: 16000, // Default: 16000 (also: 8000, 22050, 44100)
-  encoding: 'linear_pcm', // Default: 'linear_pcm' (also: 'oggopus')
-  container: 'wav', // Default: 'wav' (also: 'raw', 'mp3', 'mulaw', 'ogg')
+  encoding: 'linear_pcm', // Only supported encoding
+  container: 'wav', // Default: 'wav' (also: 'raw')
   numChannels: 1, // Default: 1
   bitrate: undefined, // Default: undefined (also: '96k', '128k', '192k')
   synthesizeMethod: 'rest', // Default: 'rest' (also: 'sse', 'websocket')
@@ -131,7 +131,8 @@ Frames must be sent at **real-time cadence**. See **[STT Realtime: PCM Specifica
 - **SSE streaming**: lower-latency chunked synthesis via Server-Sent Events (`synthesizeMethod: 'sse'`)
 - **WebSocket synthesis**: lowest-latency synthesis via `synthesizeMethod: 'websocket'` or the `stream()` method
 - **6 voices**: Karan, Simran, Nara, Riya, Viraj, Raju
-- **Configurable output**: sample rate (8000-44100), encoding (linear_pcm, oggopus), container (raw, mp3, wav, mulaw, ogg)
+- **Decoded output**: linear PCM in raw or WAV containers; encoded formats aren't supported
+- **Configurable output**: sample rate (8000-44100), raw or WAV container, and optional bitrate
 - **Runtime updates**: change voice or model via `updateOptions()`
 
 ## Supported Languages

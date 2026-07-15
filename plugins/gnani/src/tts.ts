@@ -20,9 +20,9 @@ export const GNANI_TTS_BASE_URL = 'https://api.vachana.ai';
 /** @public */
 export type GnaniTTSVoices = 'Karan' | 'Simran' | 'Nara' | 'Riya' | 'Viraj' | 'Raju';
 /** @public */
-export type GnaniTTSEncodings = 'linear_pcm' | 'oggopus';
+export type GnaniTTSEncodings = 'linear_pcm';
 /** @public */
-export type GnaniTTSContainers = 'raw' | 'mp3' | 'wav' | 'mulaw' | 'ogg';
+export type GnaniTTSContainers = 'raw' | 'wav';
 /** @public */
 export type GnaniTTSBitrates = '96k' | '128k' | '192k';
 /** @public */
@@ -65,9 +65,9 @@ export interface TTSOptions {
   /** Number of audio channels. Default: 1. */
   numChannels?: number;
   /** Audio encoding. Default: `linear_pcm`. */
-  encoding?: GnaniTTSEncodings | string;
+  encoding?: GnaniTTSEncodings;
   /** Audio container. Default: `wav`. */
-  container?: GnaniTTSContainers | string;
+  container?: GnaniTTSContainers;
   /** Optional audio bitrate. */
   bitrate?: GnaniTTSBitrates | string;
   /** Gnani API key. Defaults to `$GNANI_API_KEY`. */
@@ -92,8 +92,8 @@ export interface ResolvedTTSOptions {
   voice: string;
   model: string;
   sampleRate: number;
-  encoding: string;
-  container: string;
+  encoding: GnaniTTSEncodings;
+  container: GnaniTTSContainers;
   numChannels: number;
   sampleWidth: number;
   bitrate?: string;

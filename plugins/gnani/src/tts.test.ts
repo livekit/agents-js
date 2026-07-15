@@ -3,12 +3,25 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TTSMetrics } from '@livekit/agents';
 import { EventEmitter } from 'node:events';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
+import {
+  type GnaniTTSContainers,
+  type GnaniTTSEncodings,
   RESTChunkedStream,
   SSEChunkedStream,
   SynthesizeStream,
   TTS,
+  type TTSOptions,
   WebSocketChunkedStream,
 } from './tts.js';
 
@@ -171,6 +184,13 @@ describe('Gnani TTS', () => {
     const tts = new TTS({ apiKey: 'test-key' });
     expect(tts._opts.encoding).toBe('linear_pcm');
     expect(tts._opts.container).toBe('wav');
+  });
+
+  it('publishes only decodable TTS audio formats', () => {
+    expectTypeOf<GnaniTTSEncodings>().toEqualTypeOf<'linear_pcm'>();
+    expectTypeOf<GnaniTTSContainers>().toEqualTypeOf<'raw' | 'wav'>();
+    expectTypeOf<TTSOptions['encoding']>().toEqualTypeOf<'linear_pcm' | undefined>();
+    expectTypeOf<TTSOptions['container']>().toEqualTypeOf<'raw' | 'wav' | undefined>();
   });
 
   it('accepts custom audio config', () => {
@@ -387,6 +407,49 @@ describe('Gnani TTS', () => {
     });
   });
 
+  it('attributes in-flight metrics to the request model snapshot', async () => {
+    const requests: RequestInit[] = [];
+    let completeFirstRequest: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        if (init) requests.push(init);
+        if (requests.length === 1) {
+          return new Promise<Response>((resolve) => {
+            completeFirstRequest = resolve;
+          });
+        }
+        return Promise.resolve(new Response(new Uint8Array(wavChunk(3200, 17))));
+      }),
+    );
+    const tts = new TTS({
+      apiKey: 'test-key',
+      model: 'model-A',
+      synthesizeMethod: 'rest',
+    });
+    const firstMetricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+    const firstAudioPromise = tts.synthesize('first').collect();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    tts.updateOptions({ model: 'model-B' });
+    completeFirstRequest?.(new Response(new Uint8Array(wavChunk(3200, 13))));
+    await firstAudioPromise;
+    const firstMetrics = await firstMetricsPromise;
+
+    const secondMetricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+    await tts.synthesize('second').collect();
+    const secondMetrics = await secondMetricsPromise;
+
+    expect(JSON.parse(String(requests[0]?.body))).toMatchObject({ model: 'model-A' });
+    expect(firstMetrics).toMatchObject({ metadata: { modelName: 'model-A' } });
+    expect(JSON.parse(String(requests[1]?.body))).toMatchObject({ model: 'model-B' });
+    expect(secondMetrics).toMatchObject({ metadata: { modelName: 'model-B' } });
+  });
+
   it('reports streaming audio and usage metrics', async () => {
     const tts = new TTS({ apiKey: 'test-key', container: 'raw' });
     const metricsPromise = new Promise<TTSMetrics>((resolve) => {
@@ -420,10 +483,58 @@ describe('Gnani TTS', () => {
     });
   });
 
+  it('attributes streaming metrics to each request model snapshot', async () => {
+    const tts = new TTS({ apiKey: 'test-key', container: 'raw', model: 'model-A' });
+    const firstMetricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+    const firstStream = tts.stream();
+    const firstDrain = (async () => {
+      for await (const _event of firstStream) {
+        // Drain the first request so metrics can be finalized.
+      }
+    })();
+    firstStream.pushText('first');
+    firstStream.endInput();
+    await vi.waitFor(() => expect(wsState.instances[0]?.sent).toHaveLength(1));
+    const firstSocket = wsState.instances[0]!;
+    const firstPayload = JSON.parse(String(firstSocket.sent[0]));
+
+    tts.updateOptions({ model: 'model-B' });
+    firstSocket.emit('message', Buffer.alloc(3200, 19), true);
+    firstSocket.emit('message', Buffer.from(JSON.stringify({ type: 'complete' })), false);
+    await firstDrain;
+    const firstMetrics = await firstMetricsPromise;
+
+    const secondMetricsPromise = new Promise<TTSMetrics>((resolve) => {
+      tts.once('metrics_collected', resolve);
+    });
+    const secondStream = tts.stream();
+    const secondDrain = (async () => {
+      for await (const _event of secondStream) {
+        // Drain the second request so metrics can be finalized.
+      }
+    })();
+    secondStream.pushText('second');
+    secondStream.endInput();
+    await vi.waitFor(() => expect(wsState.instances[1]?.sent).toHaveLength(1));
+    const secondSocket = wsState.instances[1]!;
+    const secondPayload = JSON.parse(String(secondSocket.sent[0]));
+    secondSocket.emit('message', Buffer.alloc(3200, 23), true);
+    secondSocket.emit('message', Buffer.from(JSON.stringify({ type: 'complete' })), false);
+    await secondDrain;
+    const secondMetrics = await secondMetricsPromise;
+
+    expect(firstPayload.model).toBe('model-A');
+    expect(firstMetrics).toMatchObject({ metadata: { modelName: 'model-A' } });
+    expect(secondPayload.model).toBe('model-B');
+    expect(secondMetrics).toMatchObject({ metadata: { modelName: 'model-B' } });
+  });
+
   it('rejects encoded output formats that are not decoded by the plugin', () => {
-    expect(() => new TTS({ apiKey: 'test-key', encoding: 'oggopus', container: 'ogg' })).toThrow(
-      /unsupported audio format/i,
-    );
+    expect(() =>
+      Reflect.construct(TTS, [{ apiKey: 'test-key', encoding: 'oggopus', container: 'ogg' }]),
+    ).toThrow(/unsupported audio format/i);
   });
 
   it('emits SSE audio before the terminal event', async () => {

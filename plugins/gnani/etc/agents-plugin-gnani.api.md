@@ -22,10 +22,10 @@ export type GnaniSTTLanguages = 'bn-IN' | 'en-IN' | 'gu-IN' | 'hi-IN' | 'kn-IN' 
 export type GnaniTTSBitrates = '96k' | '128k' | '192k';
 
 // @public (undocumented)
-export type GnaniTTSContainers = 'raw' | 'mp3' | 'wav' | 'mulaw' | 'ogg';
+export type GnaniTTSContainers = 'raw' | 'wav';
 
 // @public (undocumented)
-export type GnaniTTSEncodings = 'linear_pcm' | 'oggopus';
+export type GnaniTTSEncodings = 'linear_pcm';
 
 // @public (undocumented)
 export type GnaniTTSSynthesizeMethod = 'rest' | 'sse' | 'websocket';
@@ -60,9 +60,9 @@ export interface ResolvedTTSOptions {
     // (undocumented)
     bitrate?: string;
     // (undocumented)
-    container: string;
+    container: GnaniTTSContainers;
     // (undocumented)
-    encoding: string;
+    encoding: GnaniTTSEncodings;
     // (undocumented)
     model: string;
     // (undocumented)
@@ -182,8 +182,8 @@ export interface TTSOptions {
     apiKey?: string;
     baseURL?: string;
     bitrate?: GnaniTTSBitrates | string;
-    container?: GnaniTTSContainers | string;
-    encoding?: GnaniTTSEncodings | string;
+    container?: GnaniTTSContainers;
+    encoding?: GnaniTTSEncodings;
     model?: string;
     numChannels?: number;
     sampleRate?: number;

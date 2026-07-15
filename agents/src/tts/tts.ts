@@ -197,6 +197,8 @@ export abstract class SynthesizeStream
   abstract label: string;
 
   #tts: TTS;
+  readonly #metricsModelProvider: string;
+  readonly #metricsModelName: string;
   #metricsPendingTexts: string[] = [];
   #metricsText = '';
   #monitorMetricsTask?: Promise<void>;
@@ -213,6 +215,8 @@ export abstract class SynthesizeStream
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
+    this.#metricsModelProvider = tts.provider;
+    this.#metricsModelName = tts.model;
     this.connOptions = connOptions;
     this.deferredInputStream = new DeferredReadableStream();
     this.pumpInput();
@@ -447,8 +451,8 @@ export abstract class SynthesizeStream
           outputTokens: this.#outputTokens,
           streamed: true,
           metadata: {
-            modelProvider: this.#tts.provider,
-            modelName: this.#tts.model,
+            modelProvider: this.#metricsModelProvider,
+            modelName: this.#metricsModelName,
           },
         };
         if (this.#ttsRequestSpan) {
@@ -595,6 +599,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   abstract label: string;
   #text: string;
   #tts: TTS;
+  readonly #metricsModelProvider: string;
+  readonly #metricsModelName: string;
   #ttsRequestSpan?: Span;
   private _connOptions: APIConnectOptions;
   private logger = log();
@@ -612,6 +618,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   ) {
     this.#text = text;
     this.#tts = tts;
+    this.#metricsModelProvider = tts.provider;
+    this.#metricsModelName = tts.model;
     this._connOptions = connOptions;
     this.#startedTime = performance.now() / 1000;
 
@@ -753,8 +761,8 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
       outputTokens: this.#outputTokens,
       streamed: false,
       metadata: {
-        modelProvider: this.#tts.provider,
-        modelName: this.#tts.model,
+        modelProvider: this.#metricsModelProvider,
+        modelName: this.#metricsModelName,
       },
     };
 
