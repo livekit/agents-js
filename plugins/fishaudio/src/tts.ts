@@ -25,6 +25,8 @@ const NUM_CHANNELS = 1;
 // Fish Audio's default sample rate for raw PCM output.
 const DEFAULT_SAMPLE_RATE = 24000;
 
+const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
+
 export interface TTSOptions {
   apiKey?: string;
   model?: TTSModels | string;
@@ -114,7 +116,8 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
 
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
-  pool: ConnectionPool<WebSocket>;
+  #pool: ConnectionPool<WebSocket>;
+  #closed = false;
   label = 'fishaudio.TTS';
 
   constructor(opts: TTSOptions = {}) {
@@ -151,12 +154,13 @@ export class TTS extends tts.TTS {
       tokenizer,
     };
 
-    this.pool = new ConnectionPool<WebSocket>({
+    this.#pool = new ConnectionPool<WebSocket>({
       connectCb: (timeoutMs) => this.#connectWebSocket(timeoutMs),
       closeCb: async (ws) => closeWebSocket(ws),
       maxSessionDuration: 300_000,
       markRefreshedOnGet: true,
     });
+    connectionPools.set(this, this.#pool);
   }
 
   get model(): string {
@@ -179,7 +183,7 @@ export class TTS extends tts.TTS {
       this.#opts.model = opts.model;
       // The model is sent as a connection header at ws-handshake time, not in the
       // per-request body, so a pooled socket keeps the old model.
-      this.pool.invalidate();
+      this.#pool.invalidate();
     }
     if (opts.voiceId !== undefined) this.#opts.voiceId = opts.voiceId;
     if (opts.latencyMode !== undefined) this.#opts.latencyMode = opts.latencyMode;
@@ -204,24 +208,35 @@ export class TTS extends tts.TTS {
   }
 
   prewarm(): void {
-    this.pool.prewarm();
+    this.#pool.prewarm();
   }
 
   override async close(): Promise<void> {
-    await this.pool.close();
+    this.#closed = true;
+    await this.#pool.close();
     await super.close();
   }
 
   async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
     const wsUrl = `${this.#opts.baseURL.replace(/^http/, 'ws')}/v1/tts/live`;
-    return await connectWebSocket({
+    const model = this.#opts.model;
+    const ws = await connectWebSocket({
       url: wsUrl,
       headers: {
         Authorization: `Bearer ${this.#opts.apiKey}`,
-        model: this.#opts.model,
+        model,
       },
       timeoutMs,
     });
+    if (this.#closed) {
+      closeWebSocket(ws);
+      throw new APIConnectionError({ message: 'Fish Audio TTS is closed' });
+    }
+    if (model !== this.#opts.model) {
+      closeWebSocket(ws);
+      return await this.#connectWebSocket(timeoutMs);
+    }
+    return ws;
   }
 }
 
@@ -361,12 +376,14 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'fishaudio.SynthesizeStream';
   #logger = log();
-  #tts: TTS;
+  #pool: ConnectionPool<WebSocket>;
   #opts: ResolvedTTSOptions;
 
   constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
-    this.#tts = tts;
+    const pool = connectionPools.get(tts);
+    if (!pool) throw new Error('Fish Audio connection pool is not initialized');
+    this.#pool = pool;
     this.#opts = opts;
   }
 
@@ -507,8 +524,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     try {
-      await this.#tts.pool.withConnection(
+      await this.#pool.withConnection(
         async (ws) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            throw new APIConnectionError({
+              message: 'Fish Audio pooled websocket is not open',
+            });
+          }
           await Promise.all([inputTask(), sendTask(ws), recvTask(ws)]);
         },
         { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
