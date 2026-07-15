@@ -303,6 +303,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #cancelled = false;
   #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
   #inputConsumed = false;
+  #attemptCount = 0;
   label = 'soniox.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -322,6 +323,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    const attempt = this.#attemptCount++;
     const requestId = shortuuid();
     this.#streamId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
@@ -371,10 +373,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.abortSignal.aborted) {
         return;
       }
-      if (error instanceof APITimeoutError || error instanceof APIStatusError) {
-        throw error;
-      }
-      throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
+      const apiError =
+        error instanceof APITimeoutError || error instanceof APIStatusError
+          ? error
+          : new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
+      const isTerminal = !apiError.retryable || attempt >= this.connOptions.maxRetry;
+      if (isTerminal) this.#releaseOwnership();
+      throw apiError;
     } finally {
       attemptState.cancelled = true;
       if (!this.input.closed) {
@@ -385,6 +390,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#connection.unregisterStream(this.#streamId);
       }
     }
+    this.#releaseOwnership();
+  }
+
+  #releaseOwnership(): void {
     getTTSState(this.#tts).streams.delete(this);
   }
 

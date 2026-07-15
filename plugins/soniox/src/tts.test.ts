@@ -267,6 +267,85 @@ describe('Soniox TTS stream cleanup', () => {
     expect(await settlementByNextTurn(outputTask)).toBe('settled');
   });
 
+  it('releases ownership after a nonretryable streaming failure', async () => {
+    let failureSentResolve: (() => void) | undefined;
+    const failureSent = new Promise<void>((resolve) => {
+      failureSentResolve = resolve;
+    });
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      socket.send(
+        JSON.stringify({
+          stream_id: message.stream_id,
+          error_code: 400,
+          error_message: 'invalid request',
+        }),
+      );
+      failureSentResolve?.();
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.on('error', () => {});
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const originalClose = stream.close.bind(stream);
+    let closeCalls = 0;
+    stream.close = () => {
+      closeCalls += 1;
+      originalClose();
+    };
+    stream.pushText('hello');
+    stream.endInput();
+    const outputTask = consume(stream);
+
+    await failureSent;
+    await outputTask;
+    await synthesizer.close();
+
+    expect(closeCalls).toBe(0);
+  });
+
+  it('releases ownership after streaming retries are exhausted', async () => {
+    let requestCount = 0;
+    let attemptsExhaustedResolve: (() => void) | undefined;
+    const attemptsExhausted = new Promise<void>((resolve) => {
+      attemptsExhaustedResolve = resolve;
+    });
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      requestCount += 1;
+      socket.send(
+        JSON.stringify({
+          stream_id: message.stream_id,
+          error_code: 503,
+          error_message: 'temporarily unavailable',
+        }),
+      );
+      if (requestCount === 2) attemptsExhaustedResolve?.();
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    synthesizer.on('error', () => {});
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const originalClose = stream.close.bind(stream);
+    let closeCalls = 0;
+    stream.close = () => {
+      closeCalls += 1;
+      originalClose();
+    };
+    stream.pushText('hello');
+    stream.endInput();
+    const outputTask = consume(stream);
+
+    await attemptsExhausted;
+    await outputTask;
+    await synthesizer.close();
+
+    expect(requestCount).toBe(2);
+    expect(closeCalls).toBe(0);
+  });
+
   it('delivers successful chunked retry audio before closing the consumer', async () => {
     let requestCount = 0;
     let retryRequestCompletedResolve: (() => void) | undefined;
