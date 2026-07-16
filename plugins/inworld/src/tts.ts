@@ -23,15 +23,15 @@ const USER_AGENT = 'livekit-agents-js';
 
 const DEFAULT_BIT_RATE = 64000;
 const DEFAULT_ENCODING = 'PCM';
-const DEFAULT_MODEL = 'inworld-tts-2';
+const DEFAULT_MODEL = 'inworld-tts-1.5-max';
 const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_URL = 'https://api.inworld.ai/';
 const DEFAULT_WS_URL = 'wss://api.inworld.ai/';
-const DEFAULT_VOICE = 'Jason';
-const DEFAULT_TEMPERATURE = 1.1;
+const DEFAULT_VOICE = 'Ashley';
+const DEFAULT_TEMPERATURE = 1.0;
 const DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY = 'ASYNC';
 const DEFAULT_SPEAKING_RATE = 1.0;
-const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
+const DEFAULT_BUFFER_CHAR_THRESHOLD = 120;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
