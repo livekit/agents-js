@@ -24,7 +24,6 @@ interface TextSyncOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  enabled: boolean;
 }
 
 interface TextData {
@@ -142,7 +141,6 @@ interface AudioData {
 }
 
 class SegmentSynchronizerImpl {
-  private enabled: boolean;
   private textData: TextData;
   private audioData: AudioData;
   private speed: number;
@@ -181,7 +179,6 @@ class SegmentSynchronizerImpl {
      */
     private readonly seedFromPushAudio: boolean = false,
   ) {
-    this.enabled = options.enabled;
     this.speed = options.speed * STANDARD_SPEECH_RATE; // hyphens per second
     this.textData = {
       wordStream: options.wordTokenizer.stream(),
@@ -199,15 +196,13 @@ class SegmentSynchronizerImpl {
     this.outputStreamWriter = this.outputStream.writable.getWriter();
     this.outputEnabledFuture.resolve();
 
-    if (this.enabled) {
-      this.mainTask()
-        .then(() => {
-          this.outputStreamWriter.close();
-        })
-        .catch((error) => {
-          this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
-        });
-    }
+    this.mainTask()
+      .then(() => {
+        this.outputStreamWriter.close();
+      })
+      .catch((error) => {
+        this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
+      });
     this.captureTask = this.captureTaskImpl();
   }
 
@@ -308,11 +303,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.textData.done = true;
-    if (!this.enabled) {
-      this.outputStreamWriter.close();
-    } else {
-      this.textData.wordStream.endInput();
-    }
+    this.textData.wordStream.endInput();
   }
 
   pause(): void {
@@ -546,10 +537,6 @@ class SegmentSynchronizerImpl {
     if (!this.outputEnabledFuture.done) {
       this.outputEnabledFuture.resolve();
     }
-    // Close the writer if endTextInput hasn't already done so (e.g. on interruption)
-    if (!this.enabled && !this.textData.done) {
-      this.outputStreamWriter.close();
-    }
     this.textData.wordStream.close();
     await this.captureTask;
   }
@@ -560,7 +547,6 @@ export interface TranscriptionSynchronizerOptions {
   hyphenateWord: (word: string) => string[];
   splitWords: (words: string) => [string, number, number][];
   wordTokenizer: WordTokenizer;
-  enabled: boolean;
 }
 
 export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
@@ -568,7 +554,6 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
   wordTokenizer: new basic.WordTokenizer(false),
-  enabled: true,
 };
 
 export class TranscriptionSynchronizer {
@@ -587,8 +572,8 @@ export class TranscriptionSynchronizer {
   _audioAttached: boolean = true;
   /** @internal */
   _textAttached: boolean = true;
-  // warn once per enabled cycle when only one of audio/text is detached; reset when
-  // the synchronizer transitions back to enabled
+  // warn once per detach cycle when only one of audio/text is detached; reset when
+  // both outputs are reattached
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
 
@@ -626,7 +611,6 @@ export class TranscriptionSynchronizer {
       hyphenateWord: options.hyphenateWord,
       splitWords: options.splitWords,
       wordTokenizer: options.wordTokenizer,
-      enabled: options.enabled,
     };
 
     // initial segment/first segment, recreated for each new segment
@@ -638,18 +622,6 @@ export class TranscriptionSynchronizer {
 
   get outputsAttached(): boolean {
     return this._outputsAttached;
-  }
-
-  get enabled(): boolean {
-    return this.options.enabled;
-  }
-
-  set enabled(value: boolean) {
-    if (this.options.enabled === value) {
-      return;
-    }
-    this.options.enabled = value;
-    this.rotateSegment();
   }
 
   /** @internal */
@@ -790,10 +762,6 @@ class SyncedAudioOutput extends AudioOutput {
       return;
     }
 
-    if (!this.synchronizer.enabled) {
-      return;
-    }
-
     if (this.synchronizer._impl.audioInputEnded) {
       this.logger.warn(
         'SegmentSynchronizerImpl audio marked as ended in capture audio, rotating segment',
@@ -812,7 +780,7 @@ class SyncedAudioOutput extends AudioOutput {
       this.lastSegmentAccepted = this.segmentAccepted;
     }
 
-    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       return;
     }
 
@@ -861,7 +829,7 @@ class SyncedAudioOutput extends AudioOutput {
    */
   private settleDriftFinish(): void {
     const ev: PlaybackFinishedEvent = { playbackPosition: 0, interrupted: true };
-    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       super.onPlaybackFinished(ev);
       return;
     }
@@ -891,14 +859,14 @@ class SyncedAudioOutput extends AudioOutput {
   // this is going to be automatically called by the next_in_chain
   onPlaybackStarted(createdAt: number): void {
     super.onPlaybackStarted(createdAt);
-    if (this.synchronizer.outputsAttached && this.synchronizer.enabled) {
+    if (this.synchronizer.outputsAttached) {
       this.synchronizer._impl.onPlaybackStarted(createdAt);
     }
   }
 
   // this is going to be automatically called by the next_in_chain
   onPlaybackFinished(ev: PlaybackFinishedEvent) {
-    if (!this.synchronizer.outputsAttached || !this.synchronizer.enabled) {
+    if (!this.synchronizer.outputsAttached) {
       super.onPlaybackFinished(ev);
       return;
     }
@@ -960,11 +928,6 @@ class SyncedTextOutput extends TextOutput {
 
     const textStr = isTimedString(text) ? text.text : text;
 
-    if (!this.synchronizer.enabled) {
-      await this.nextInChain.captureText(textStr);
-      return;
-    }
-
     if (!this.synchronizer.outputsAttached) {
       if (
         this.synchronizer._textAttached &&
@@ -1006,7 +969,7 @@ class SyncedTextOutput extends TextOutput {
     // Wait for any pending rotation to complete before accessing _impl
     await this.synchronizer.barrier();
 
-    if (!this.synchronizer.enabled || !this.synchronizer.outputsAttached) {
+    if (!this.synchronizer.outputsAttached) {
       this.capturing = false;
       this.nextInChain.flush();
       return;
