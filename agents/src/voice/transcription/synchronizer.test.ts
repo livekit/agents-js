@@ -4,7 +4,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
-import { AudioOutput, TextOutput } from '../io.js';
+import { AudioOutput, TextOutput, type TimedString, isTimedString } from '../io.js';
 import { SpeakingRateData, TranscriptionSynchronizer } from './synchronizer.js';
 
 describe('SpeakingRateData', () => {
@@ -223,12 +223,50 @@ class MockAudioOutput extends AudioOutput {
 class MockTextOutput extends TextOutput {
   captured: string[] = [];
 
-  async captureText(text: string): Promise<void> {
-    this.captured.push(text);
+  async captureText(text: string | TimedString): Promise<void> {
+    this.captured.push(isTimedString(text) ? text.text : text);
   }
 
   flush(): void {}
 }
+
+describe('TranscriptionSynchronizer markup pacing', () => {
+  const markedUpTurn =
+    '<expr type="expression" label="speak with warm surprise and bright energy"/> ' +
+    'Hello there my friend! ' +
+    '<expr type="sound" label="laugh"/> ' +
+    '<expr type="expression" label="speak calmly and evenly, unhurried"/> ' +
+    'How are you today?';
+
+  it('does not pace expressive markup fragments as spoken text', async () => {
+    const textOutput = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), textOutput);
+    const frame = new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+    try {
+      await synchronizer.audioOutput.captureFrame(frame);
+      synchronizer.audioOutput.flush();
+      await synchronizer.textOutput.captureText(markedUpTurn);
+      synchronizer.textOutput.flush();
+
+      const start = Date.now();
+      synchronizer.audioOutput.onPlaybackStarted(start);
+
+      while (textOutput.captured.join('').length < markedUpTurn.length) {
+        if (Date.now() - start > 6000) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      const elapsed = (Date.now() - start) / 1000;
+      expect(textOutput.captured.join('')).toBe(markedUpTurn);
+      expect(elapsed).toBeLessThan(6);
+    } finally {
+      await synchronizer.close();
+    }
+  }, 10000);
+});
 
 describe('TranscriptionSynchronizer attachment warnings', () => {
   const textDetachedWarning =
