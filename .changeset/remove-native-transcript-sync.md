@@ -3,4 +3,4 @@
 '@livekit/agents': patch
 ---
 
-Remove the unused `nativeTranscriptSync` realtime model capability. No model relies on native transcript synchronization anymore (Phonic switched to `stream_ahead_of_real_time` mode), so the transcription synchronizer is always enabled.
+Deprecate the `nativeTranscriptSync` realtime model capability while preserving its existing transcript synchronization behavior for third-party models. Remove Phonic's redundant explicit opt-out now that it uses `stream_ahead_of_real_time` mode.
