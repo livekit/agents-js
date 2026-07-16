@@ -585,11 +585,6 @@ export function performLLMInference(
         // No need to check if chunk is of type other than ChatChunk or string like in
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
-
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-      if (data.ttft !== undefined) {
-        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
-      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
@@ -599,6 +594,21 @@ export function performLLMInference(
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      span.setAttribute(
+        traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
+        JSON.stringify(
+          data.generatedToolCalls.map(({ id, callId, name, args }) => ({
+            id,
+            call_id: callId,
+            name,
+            arguments: args,
+          })),
+        ),
+      );
+      if (data.ttft !== undefined) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
       await textWriter.close();
