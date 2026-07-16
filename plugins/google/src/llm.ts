@@ -642,6 +642,11 @@ export class LLMStream extends llm.LLMStream {
       return null;
     }
 
+    // Drop thought summaries so TTS never speaks Gemini's internal reasoning.
+    if (part.thought) {
+      return null;
+    }
+
     return {
       id,
       delta: {
