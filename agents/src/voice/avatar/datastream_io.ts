@@ -212,11 +212,18 @@ export class DataStreamAudioOutput extends AudioOutput {
   clearBuffer(): void {
     if (!this.started) return;
 
-    this.room.localParticipant!.performRpc({
-      destinationIdentity: this.destinationIdentity,
-      method: RPC_CLEAR_BUFFER,
-      payload: '',
-    });
+    void this.room
+      .localParticipant!.performRpc({
+        destinationIdentity: this.destinationIdentity,
+        method: RPC_CLEAR_BUFFER,
+        payload: '',
+      })
+      .catch((error) => {
+        this.#logger.warn(
+          { error, destinationIdentity: this.destinationIdentity },
+          'failed to perform clear buffer rpc',
+        );
+      });
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
