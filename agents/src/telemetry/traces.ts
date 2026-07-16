@@ -17,7 +17,7 @@ import {
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
@@ -254,7 +254,7 @@ export async function setupCloudTracer(options: {
       job_id: jobId,
     };
 
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: 'livekit-agents',
       room_id: roomId,
       job_id: jobId,
