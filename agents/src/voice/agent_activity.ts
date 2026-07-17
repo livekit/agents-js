@@ -68,6 +68,10 @@ import { MultiInputStream } from '../stream/multi_input_stream.js';
 import { STT, type STTError, type SpeechEvent } from '../stt/stt.js';
 import { recordRealtimeMetrics, traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
+import {
+  stripAllMarkup,
+  llmInstructions as ttsMarkupInstructions,
+} from '../tts/provider_format.js';
 import { TTS, type TTSError } from '../tts/tts.js';
 import { isFlushSentinel } from '../types.js';
 import {
@@ -91,7 +95,12 @@ import {
   _setActivityTaskInfo,
   speechHandleStorage,
 } from './agent.js';
-import { type AgentSession, type TurnDetectionMode } from './agent_session.js';
+import {
+  type AgentSession,
+  DEFAULT_EXPRESSIVE_OPTIONS,
+  type ExpressiveOptions,
+  type TurnDetectionMode,
+} from './agent_session.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -794,6 +803,44 @@ export class AgentActivity implements RecognitionHooks {
 
   get tts(): TTS | undefined {
     return this.agent.tts || this.agentSession.tts;
+  }
+
+  private getTtsMarkupProvider(): string | undefined {
+    const tts = this.tts;
+    if (!tts) return undefined;
+    if (tts.provider.toLowerCase() === 'livekit') return tts.model.split('/')[0];
+    return tts.provider;
+  }
+
+  private expressiveInstructions(modality: 'audio' | 'text'): string | undefined {
+    const providerInstructions = ttsMarkupInstructions(this.getTtsMarkupProvider());
+    if (!providerInstructions) return undefined;
+
+    const expressive = this.agent.expressive ?? this.agentSession.sessionOptions.expressive;
+    if (!expressive) return undefined;
+
+    const options: Required<ExpressiveOptions> = {
+      ...DEFAULT_EXPRESSIVE_OPTIONS,
+      ...(typeof expressive === 'object' ? expressive : {}),
+    };
+    const template = renderInstructions(options.ttsInstructionsTemplate, modality);
+    const rendered = template.replace('{tts.markup.llm_instructions}', providerInstructions);
+    return concatInstructions(rendered, options.ttsInstructionsAppend).toString().trim();
+  }
+
+  private injectExpressiveInstructions(chatCtx: ChatContext, modality: 'audio' | 'text'): void {
+    const instructions = this.expressiveInstructions(modality);
+    if (!instructions) return;
+    chatCtx.items.push(
+      ChatMessage.create({
+        role: 'system',
+        content: [instructions],
+      }),
+    );
+  }
+
+  private stripExpressiveMarkup(text: string, modality: 'audio' | 'text'): string {
+    return this.expressiveInstructions(modality) ? stripAllMarkup(text) : text;
   }
 
   get tools(): ToolContext {
@@ -2604,7 +2651,10 @@ export class AgentActivity implements RecognitionHooks {
 
       const message = ChatMessage.create({
         role: 'assistant',
-        content: textOut?.text || '',
+        content: this.stripExpressiveMarkup(
+          textOut?.text || '',
+          speechHandle.inputDetails.modality,
+        ),
         interrupted: speechHandle.interrupted,
         metrics: replyAssistantMetrics,
       });
@@ -2689,6 +2739,7 @@ export class AgentActivity implements RecognitionHooks {
 
     // apply the correct variant of the instructions for the turn's input modality
     applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
+    this.injectExpressiveInstructions(chatCtx, speechHandle.inputDetails.modality);
 
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
@@ -3050,7 +3101,10 @@ export class AgentActivity implements RecognitionHooks {
       replyAbortController.abort();
       await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
 
-      const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+      const forwardedText = this.stripExpressiveMarkup(
+        segmentOutputs.map(forwardedTextFor).join(''),
+        speechHandle.inputDetails.modality,
+      );
 
       if (forwardedText) {
         hasSpeechMessage = true;
@@ -3093,7 +3147,10 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
-    const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
+    const forwardedText = this.stripExpressiveMarkup(
+      segmentOutputs.map(forwardedTextFor).join(''),
+      speechHandle.inputDetails.modality,
+    );
     if (forwardedText) {
       hasSpeechMessage = true;
       const message = ChatMessage.create({

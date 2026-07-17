@@ -219,7 +219,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const json = toCartesiaOptions(this.#opts);
-    json.transcript = this.#text;
+    json.transcript = tts.convertMarkup('cartesia', this.#text);
 
     const baseUrl = new URL(this.#opts.baseUrl);
     const doneFut = new Future<void>();
@@ -326,7 +326,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const msg = {
           ...packet,
           context_id: requestId,
-          transcript: event.token + ' ',
+          transcript: tts.convertMarkup('cartesia', event.token) + ' ',
           continue: true,
         };
         this.markStarted();
@@ -350,7 +350,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           this.#tokenizer.flush();
           continue;
         }
-        this.#tokenizer.pushText(data);
+        this.#tokenizer.pushText(tts.normalizeMarkup('cartesia', data));
       }
       this.#tokenizer.endInput();
       this.#tokenizer.close();
