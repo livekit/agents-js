@@ -2013,10 +2013,13 @@ export class AgentActivity implements RecognitionHooks {
 
         this._currentSpeech = speechHandle;
         speechHandle._authorizeGeneration();
+        const generation = speechHandle._waitForGeneration();
+        await speechHandle.waitIfNotInterrupted([generation]);
         // Keep the shared outputs serialized through interrupted-generation cleanup.
-        // Racing this wait against interruption lets the next speech attach listeners
-        // and capture frames before the old speech has detached its listeners.
-        await speechHandle._waitForGeneration();
+        // Bare handles have no owner task that can settle the generation future.
+        if (speechHandle.interrupted && speechHandle._tasks.length > 0) {
+          await ThrowsPromise.race([generation, abortFuture.await]);
+        }
         this._currentSpeech = undefined;
       }
 
