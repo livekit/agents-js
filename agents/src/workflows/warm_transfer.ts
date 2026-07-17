@@ -661,6 +661,21 @@ function formatConversationHistory(chatCtx?: ChatContext): string {
   return previousConversation;
 }
 
+/**
+ * Resolve the name of the room used to dial and brief the human agent.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function resolveHumanAgentRoomName(callerRoomName: string, override?: string): string {
+  if (override === undefined) {
+    return `${callerRoomName}-human-agent`;
+  }
+  if (override === callerRoomName) {
+    throw new Error('`humanAgentRoomName` must differ from the caller room name');
+  }
+  return override;
+}
+
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
