@@ -69,6 +69,18 @@ class FakeTTS extends TTS {
   }
 }
 
+class ThrowingPrewarmLLM extends FakeLLM {
+  override prewarm(): void {
+    throw new Error('injected LLM prewarm failure');
+  }
+}
+
+class ThrowingPrewarmTTS extends FakeTTS {
+  prewarm(): void {
+    throw new Error('injected TTS prewarm failure');
+  }
+}
+
 class LabeledSTT extends FakeSTT {
   override get model(): string {
     return 'new-model';
@@ -616,6 +628,167 @@ describe('Agent.updateOptions', () => {
     for (const model of [...stts, ...llms, ...ttss]) {
       expect(model.listenerCount('metrics_collected')).toBe(0);
       expect(model.listenerCount('error')).toBe(0);
+    }
+  });
+
+  it('rolls back a multi-model update when LLM prewarm throws', async () => {
+    const oldStt = new ContextSTT('old-stt');
+    const oldLlm = new FakeLLM();
+    const replacementStt = new ContextSTT('replacement-stt');
+    const replacementLlm = new ThrowingPrewarmLLM();
+    const agent = new Agent({
+      instructions: 'test',
+      stt: oldStt,
+      llm: oldLlm,
+      tts: new FakeTTS(),
+    });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      await expect(
+        agent.updateOptions({ stt: replacementStt, llm: replacementLlm }),
+      ).rejects.toThrow('injected LLM prewarm failure');
+      expect(agent.stt).toBe(oldStt);
+      expect(agent.llm).toBe(oldLlm);
+      expect(oldStt.listenerCount('metrics_collected')).toBe(1);
+      expect(oldStt.listenerCount('error')).toBe(1);
+      expect(oldLlm.listenerCount('metrics_collected')).toBe(1);
+      expect(oldLlm.listenerCount('error')).toBe(1);
+      expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
+      expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(replacementLlm.listenerCount('metrics_collected')).toBe(0);
+      expect(replacementLlm.listenerCount('error')).toBe(0);
+      expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('rolls back STT recognition and keyterm ownership when keyterm swap throws', async () => {
+    const oldStt = new ContextSTT('old-stt');
+    const replacementStt = new ContextSTT('replacement-stt');
+    const agent = new Agent({ instructions: 'test', stt: oldStt });
+    const session = new AgentSession({
+      turnDetection: 'manual',
+      keytermsOptions: { keyterms: ['LiveKit'] },
+    });
+    await session.start({ agent });
+    try {
+      const detector = session._keytermDetector;
+      const originalSwap = detector.swapStt.bind(detector);
+      vi.spyOn(detector, 'swapStt').mockImplementation((stt) => {
+        originalSwap(stt);
+        throw new Error('injected keyterm swap failure');
+      });
+      await expect(agent.updateOptions({ stt: replacementStt })).rejects.toThrow(
+        'injected keyterm swap failure',
+      );
+      expect(agent.stt).toBe(oldStt);
+      expect(oldStt.listenerCount('metrics_collected')).toBe(1);
+      expect(oldStt.listenerCount('error')).toBe(1);
+      expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
+      expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('preflights TTS prewarm before mutating another model', async () => {
+    const oldStt = new ContextSTT('old-stt');
+    const oldTts = new FakeTTS();
+    const replacementStt = new ContextSTT('replacement-stt');
+    const agent = new Agent({ instructions: 'test', stt: oldStt, tts: oldTts });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      await expect(
+        agent.updateOptions({ stt: replacementStt, tts: new ThrowingPrewarmTTS() }),
+      ).rejects.toThrow('injected TTS prewarm failure');
+      expect(agent.stt).toBe(oldStt);
+      expect(agent.tts).toBe(oldTts);
+      expect(oldStt.listenerCount('metrics_collected')).toBe(1);
+      expect(oldStt.listenerCount('error')).toBe(1);
+      expect(oldTts.listenerCount('metrics_collected')).toBe(1);
+      expect(oldTts.listenerCount('error')).toBe(1);
+      expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
+      expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
+      await agent.updateOptions({ stt: replacementStt, tts: new FakeTTS() });
+      expect(agent.stt).toBe(replacementStt);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('rolls back after recognition STT replacement fails operationally', async () => {
+    const oldStt = new ContextSTT('old-stt');
+    const replacementStt = new ContextSTT('replacement-stt');
+    const agent = new Agent({ instructions: 'test', stt: oldStt });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+        .audioRecognition;
+      const originalUpdateStt = recognition.updateStt.bind(recognition);
+      let fail = true;
+      const spy = vi.spyOn(recognition, 'updateStt').mockImplementation(async (...args) => {
+        await originalUpdateStt(...args);
+        if (fail) {
+          fail = false;
+          throw new Error('injected recognition STT failure');
+        }
+      });
+      await expect(agent.updateOptions({ stt: replacementStt })).rejects.toThrow(
+        'injected recognition STT failure',
+      );
+      expect(agent.stt).toBe(oldStt);
+      expect(oldStt.listenerCount('metrics_collected')).toBe(1);
+      expect(oldStt.listenerCount('error')).toBe(1);
+      expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
+      expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
+      spy.mockRestore();
+      await agent.updateOptions({ stt: replacementStt });
+      expect(agent.stt).toBe(replacementStt);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('rolls back VAD reference and task ownership after an operational failure', async () => {
+    const oldVad = new FakeVAD();
+    const replacementVad = new FakeVAD();
+    replacementVad.label = 'replacement-vad';
+    const agent = new Agent({ instructions: 'test', vad: oldVad });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+        .audioRecognition;
+      const originalUpdateVad = recognition.updateVad.bind(recognition);
+      let fail = true;
+      const spy = vi.spyOn(recognition, 'updateVad').mockImplementation(async (...args) => {
+        await originalUpdateVad(...args);
+        if (fail) {
+          fail = false;
+          throw new Error('injected recognition VAD failure');
+        }
+      });
+      await expect(agent.updateOptions({ vad: replacementVad })).rejects.toThrow(
+        'injected recognition VAD failure',
+      );
+      expect(agent.vad).toBe(oldVad);
+      expect(oldVad.listenerCount('metrics_collected')).toBe(1);
+      expect(replacementVad.listenerCount('metrics_collected')).toBe(0);
+      expect((recognition as unknown as { vad: VAD }).vad).toBe(oldVad);
+      spy.mockRestore();
+      await agent.updateOptions({ vad: replacementVad });
+      expect(agent.vad).toBe(replacementVad);
+    } finally {
+      await session.close().catch(() => {});
     }
   });
 
