@@ -7,9 +7,49 @@ import { tts as testTts } from '@livekit/agents-plugins-test';
 import { decode, encode } from '@msgpack/msgpack';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
+
+const httpsBoundary = vi.hoisted<{ payloads: Uint8Array[] }>(() => ({ payloads: [] }));
+
+vi.mock('node:https', () => {
+  class TestEmitter {
+    readonly handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+
+    on(event: string, handler: (...args: unknown[]) => void): this {
+      const handlers = this.handlers.get(event) ?? [];
+      handlers.push(handler);
+      this.handlers.set(event, handlers);
+      return this;
+    }
+
+    emit(event: string, ...args: unknown[]): void {
+      for (const handler of this.handlers.get(event) ?? []) handler(...args);
+    }
+  }
+
+  return {
+    request: (
+      _options: unknown,
+      callback: (response: TestEmitter & { statusCode: number }) => void,
+    ) => {
+      const request = new TestEmitter();
+      let payload = new Uint8Array();
+      return Object.assign(request, {
+        write: (chunk: Uint8Array) => {
+          payload = new Uint8Array(chunk);
+        },
+        end: () => {
+          httpsBoundary.payloads.push(payload);
+          const response = Object.assign(new TestEmitter(), { statusCode: 200 });
+          callback(response);
+          queueMicrotask(() => response.emit('close'));
+        },
+      });
+    },
+  };
+});
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -227,6 +267,60 @@ describe('FishAudio streaming', () => {
       streamB.close();
       await fishAudio.close();
       await closeWebSocketServer(wss);
+    }
+  });
+
+  it('snapshots options for each chunked HTTP request at construction', async () => {
+    httpsBoundary.payloads.length = 0;
+    const fishAudio = new TTS({
+      apiKey: 'test-key',
+      baseURL: 'https://fish.test',
+      temperature: 0.2,
+      topP: 0.3,
+      mp3Bitrate: 64,
+      opusBitrate: 24000,
+      normalize: false,
+    });
+    const streamA = fishAudio.synthesize('stream A.');
+    fishAudio.updateOptions({
+      temperature: 0.8,
+      topP: 0.9,
+      mp3Bitrate: 192,
+      opusBitrate: 64000,
+      normalize: true,
+    });
+    const streamB = fishAudio.synthesize('stream B.');
+
+    try {
+      for (const stream of [streamA, streamB]) {
+        for await (const _event of stream) {
+          // Drain each stream so its HTTP request finishes before assertions.
+        }
+      }
+
+      expect(httpsBoundary.payloads).toHaveLength(2);
+      expect(decode(httpsBoundary.payloads[0]!)).toMatchObject({
+        text: 'stream A.',
+        format: 'pcm',
+        temperature: 0.2,
+        top_p: 0.3,
+        mp3_bitrate: 64,
+        opus_bitrate: 24000,
+        normalize: false,
+      });
+      expect(decode(httpsBoundary.payloads[1]!)).toMatchObject({
+        text: 'stream B.',
+        format: 'pcm',
+        temperature: 0.8,
+        top_p: 0.9,
+        mp3_bitrate: 192,
+        opus_bitrate: 64000,
+        normalize: true,
+      });
+    } finally {
+      streamA.close();
+      streamB.close();
+      await fishAudio.close();
     }
   });
 
