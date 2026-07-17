@@ -65,7 +65,7 @@ export interface WarmTransferTaskOptions {
   ringingTimeout?: number | null;
   /**
    * Name of the room used to dial and brief the human agent. Defaults to
-   * `` `${callerRoom.name}-human-agent` ``.
+   * `${callerRoom.name}-human-agent`.
    *
    * Set this to control the briefing room's configuration: pre-create a room
    * under this name (e.g. with `RoomServiceClient.createRoom` and an `egress`
