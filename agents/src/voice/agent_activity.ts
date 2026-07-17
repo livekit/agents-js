@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
@@ -236,9 +236,12 @@ export interface ForwardOutput {
  * shutdown) — parking there would keep the reply task from committing the
  * in-flight assistant turn.
  */
-async function raceWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+async function raceWithAbort<T>(
+  p: Promise<T>,
+  signal: AbortSignal,
+): Promise<Throws<T | undefined, Error>> {
   if (signal.aborted) {
-    return (await isPending(p)) ? undefined : p;
+    return (await isPending(p)) ? undefined : ThrowsPromise.fromPromise<T | undefined, Error>(p);
   }
   return ThrowsPromise.race([
     ThrowsPromise.fromPromise<T | undefined, Error>(p),
