@@ -633,29 +633,64 @@ describe('Agent.updateOptions', () => {
 
   it('rolls back a multi-model update when LLM prewarm throws', async () => {
     const oldStt = new ContextSTT('old-stt');
+    const oldVad = new FakeVAD();
     const oldLlm = new FakeLLM();
     const replacementStt = new ContextSTT('replacement-stt');
+    const replacementVad = new FakeVAD();
     const replacementLlm = new ThrowingPrewarmLLM();
     const agent = new Agent({
       instructions: 'test',
       stt: oldStt,
+      vad: oldVad,
       llm: oldLlm,
       tts: new FakeTTS(),
     });
     const session = new AgentSession({ turnDetection: 'manual' });
     await session.start({ agent });
     try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+        .audioRecognition;
+      const internals = recognition as unknown as {
+        sttPipeline: unknown;
+        vadTask: unknown;
+        transcriptBuffer: string[];
+        sttRequestIds: string[];
+        lastLanguage: string | undefined;
+      };
+      internals.transcriptBuffer = ['partial transcript'];
+      internals.sttRequestIds = ['request-before-prewarm'];
+      internals.lastLanguage = 'en';
+      const previousSttPipeline = internals.sttPipeline;
+      const previousVadTask = internals.vadTask;
+      const previousTranscriptBuffer = internals.transcriptBuffer;
+      const previousSttRequestIds = internals.sttRequestIds;
+
       await expect(
-        agent.updateOptions({ stt: replacementStt, llm: replacementLlm }),
+        agent.updateOptions({
+          stt: replacementStt,
+          vad: replacementVad,
+          llm: replacementLlm,
+        }),
       ).rejects.toThrow('injected LLM prewarm failure');
       expect(agent.stt).toBe(oldStt);
+      expect(agent.vad).toBe(oldVad);
       expect(agent.llm).toBe(oldLlm);
+      expect(internals.sttPipeline).toBe(previousSttPipeline);
+      expect(internals.vadTask).toBe(previousVadTask);
+      expect(internals.transcriptBuffer).toBe(previousTranscriptBuffer);
+      expect(internals.transcriptBuffer).toEqual(['partial transcript']);
+      expect(internals.sttRequestIds).toBe(previousSttRequestIds);
+      expect(internals.sttRequestIds).toEqual(['request-before-prewarm']);
+      expect(internals.lastLanguage).toBe('en');
       expect(oldStt.listenerCount('metrics_collected')).toBe(1);
       expect(oldStt.listenerCount('error')).toBe(1);
+      expect(oldVad.listenerCount('metrics_collected')).toBe(1);
       expect(oldLlm.listenerCount('metrics_collected')).toBe(1);
       expect(oldLlm.listenerCount('error')).toBe(1);
       expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
       expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(replacementVad.listenerCount('metrics_collected')).toBe(0);
       expect(replacementLlm.listenerCount('metrics_collected')).toBe(0);
       expect(replacementLlm.listenerCount('error')).toBe(0);
       expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
@@ -696,25 +731,50 @@ describe('Agent.updateOptions', () => {
 
   it('preflights TTS prewarm before mutating another model', async () => {
     const oldStt = new ContextSTT('old-stt');
+    const oldVad = new FakeVAD();
     const oldTts = new FakeTTS();
     const replacementStt = new ContextSTT('replacement-stt');
-    const agent = new Agent({ instructions: 'test', stt: oldStt, tts: oldTts });
+    const replacementVad = new FakeVAD();
+    const agent = new Agent({
+      instructions: 'test',
+      stt: oldStt,
+      vad: oldVad,
+      tts: oldTts,
+    });
     const session = new AgentSession({ turnDetection: 'manual' });
     await session.start({ agent });
     try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+        .audioRecognition;
+      const internals = recognition as unknown as { vadTask: unknown };
+      const previousVadTask = internals.vadTask;
+
       await expect(
-        agent.updateOptions({ stt: replacementStt, tts: new ThrowingPrewarmTTS() }),
+        agent.updateOptions({
+          stt: replacementStt,
+          vad: replacementVad,
+          tts: new ThrowingPrewarmTTS(),
+        }),
       ).rejects.toThrow('injected TTS prewarm failure');
       expect(agent.stt).toBe(oldStt);
+      expect(agent.vad).toBe(oldVad);
       expect(agent.tts).toBe(oldTts);
+      expect(internals.vadTask).toBe(previousVadTask);
       expect(oldStt.listenerCount('metrics_collected')).toBe(1);
       expect(oldStt.listenerCount('error')).toBe(1);
+      expect(oldVad.listenerCount('metrics_collected')).toBe(1);
       expect(oldTts.listenerCount('metrics_collected')).toBe(1);
       expect(oldTts.listenerCount('error')).toBe(1);
       expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
       expect(replacementStt.listenerCount('error')).toBe(0);
+      expect(replacementVad.listenerCount('metrics_collected')).toBe(0);
       expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
-      await agent.updateOptions({ stt: replacementStt, tts: new FakeTTS() });
+      await agent.updateOptions({
+        stt: replacementStt,
+        vad: replacementVad,
+        tts: new FakeTTS(),
+      });
       expect(agent.stt).toBe(replacementStt);
     } finally {
       await session.close().catch(() => {});

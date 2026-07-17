@@ -1017,15 +1017,15 @@ export class AgentActivity implements RecognitionHooks {
       const nextLlm = options.llm !== undefined ? options.llm ?? undefined : this.agentSession.llm;
       const nextTts = options.tts !== undefined ? options.tts ?? undefined : this.agentSession.tts;
 
-      try {
-        if (Object.hasOwn(options, 'llm') && nextLlm instanceof LLM) {
-          nextLlm.prewarm();
-        }
-        if (Object.hasOwn(options, 'tts') && nextTts instanceof TTS) {
-          const maybePrewarm = nextTts as TTS & { prewarm?: () => void };
-          maybePrewarm.prewarm?.();
-        }
+      if (Object.hasOwn(options, 'llm') && nextLlm instanceof LLM) {
+        nextLlm.prewarm();
+      }
+      if (Object.hasOwn(options, 'tts') && nextTts instanceof TTS) {
+        const maybePrewarm = nextTts as TTS & { prewarm?: () => void };
+        maybePrewarm.prewarm?.();
+      }
 
+      try {
         if (Object.hasOwn(options, 'stt')) {
           const oldStt = this.stt;
           if (oldStt instanceof STT) {
