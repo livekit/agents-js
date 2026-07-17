@@ -16,7 +16,7 @@ import {
 import { decode, encode } from '@msgpack/msgpack';
 import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
-import type { LatencyMode, TTSModels } from './models.js';
+import type { LatencyMode, MP3Bitrate, OpusBitrate, TTSModels } from './models.js';
 
 const DEFAULT_MODEL: TTSModels = 's2.1-pro';
 const DEFAULT_VOICE_ID = '933563129e564b19a115bedd57b7406a';
@@ -27,6 +27,7 @@ const DEFAULT_SAMPLE_RATE = 24000;
 
 const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 
+/** @public */
 export interface TTSOptions {
   apiKey?: string;
   model?: TTSModels | string;
@@ -51,6 +52,27 @@ export interface TTSOptions {
    * voice's natural level. Unset leaves it unchanged.
    */
   volume?: number;
+  /**
+   * Sampling temperature (0-1). Higher values produce more varied, expressive
+   * speech; lower values are more stable. Defaults to 0.7.
+   */
+  temperature?: number;
+  /** Nucleus sampling probability mass (0-1). Defaults to 0.7. */
+  topP?: number;
+  /**
+   * MP3 bitrate request field in kbps: 64, 128, or 192. Defaults to 64.
+   * The JS plugin currently requests PCM output, so this shapes the Fish Audio
+   * request but does not change the emitted audio format or PCM bandwidth.
+   */
+  mp3Bitrate?: MP3Bitrate;
+  /**
+   * Opus bitrate request field in bps: -1000 (auto), 24000, 32000, 48000, or
+   * 64000. Defaults to 64000. The JS plugin currently requests PCM output, so
+   * this does not change the emitted audio format or PCM bandwidth.
+   */
+  opusBitrate?: OpusBitrate;
+  /** Whether Fish normalizes the input text before synthesis. Defaults to true. */
+  normalize?: boolean;
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
@@ -64,6 +86,11 @@ interface ResolvedTTSOptions {
   chunkLength: number;
   speed?: number;
   volume?: number;
+  temperature: number;
+  topP: number;
+  mp3Bitrate: MP3Bitrate;
+  opusBitrate: OpusBitrate;
+  normalize: boolean;
   tokenizer: tokenize.SentenceTokenizer;
 }
 
@@ -74,11 +101,22 @@ const DEFAULT_OPTS: Omit<ResolvedTTSOptions, 'apiKey' | 'tokenizer'> = {
   baseURL: DEFAULT_BASE_URL,
   latencyMode: 'balanced',
   chunkLength: 100,
+  temperature: 0.7,
+  topP: 0.7,
+  mp3Bitrate: 64,
+  opusBitrate: 64000,
+  normalize: true,
 };
 
 const validateChunkLength = (chunkLength: number) => {
   if (!Number.isFinite(chunkLength) || chunkLength < 100 || chunkLength > 300) {
     throw new Error('chunkLength must be between 100 and 300');
+  }
+};
+
+const validateProbability = (name: string, value: number) => {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${name} must be between 0 and 1`);
   }
 };
 
@@ -100,20 +138,21 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
     chunk_length: opts.chunkLength,
     format: 'pcm',
     sample_rate: opts.sampleRate,
-    mp3_bitrate: 64,
-    opus_bitrate: 64000,
+    mp3_bitrate: opts.mp3Bitrate,
+    opus_bitrate: opts.opusBitrate,
     references: [],
     // Fish Audio's wire field is `reference_id`; we expose it as `voiceId` on
     // the plugin for consistency with other TTS plugins.
     reference_id: opts.voiceId ?? null,
-    normalize: true,
+    normalize: opts.normalize,
     latency: opts.latencyMode,
     prosody,
-    top_p: 0.7,
-    temperature: 0.7,
+    top_p: opts.topP,
+    temperature: opts.temperature,
   };
 };
 
+/** @public */
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   #pool: ConnectionPool<WebSocket>;
@@ -130,6 +169,11 @@ export class TTS extends tts.TTS {
 
     const chunkLength = opts.chunkLength ?? DEFAULT_OPTS.chunkLength;
     validateChunkLength(chunkLength);
+
+    const temperature = opts.temperature ?? DEFAULT_OPTS.temperature;
+    validateProbability('temperature', temperature);
+    const topP = opts.topP ?? DEFAULT_OPTS.topP;
+    validateProbability('topP', topP);
 
     const sampleRate = opts.sampleRate ?? DEFAULT_OPTS.sampleRate;
 
@@ -151,6 +195,11 @@ export class TTS extends tts.TTS {
       chunkLength,
       speed: opts.speed,
       volume: opts.volume,
+      temperature,
+      topP,
+      mp3Bitrate: opts.mp3Bitrate ?? DEFAULT_OPTS.mp3Bitrate,
+      opusBitrate: opts.opusBitrate ?? DEFAULT_OPTS.opusBitrate,
+      normalize: opts.normalize ?? DEFAULT_OPTS.normalize,
       tokenizer,
     };
 
@@ -178,6 +227,11 @@ export class TTS extends tts.TTS {
     chunkLength?: number;
     speed?: number;
     volume?: number;
+    temperature?: number;
+    topP?: number;
+    mp3Bitrate?: MP3Bitrate;
+    opusBitrate?: OpusBitrate;
+    normalize?: boolean;
   }): void {
     if (opts.model !== undefined && opts.model !== this.#opts.model) {
       this.#opts.model = opts.model;
@@ -193,6 +247,17 @@ export class TTS extends tts.TTS {
     }
     if (opts.speed !== undefined) this.#opts.speed = opts.speed;
     if (opts.volume !== undefined) this.#opts.volume = opts.volume;
+    if (opts.temperature !== undefined) {
+      validateProbability('temperature', opts.temperature);
+      this.#opts.temperature = opts.temperature;
+    }
+    if (opts.topP !== undefined) {
+      validateProbability('topP', opts.topP);
+      this.#opts.topP = opts.topP;
+    }
+    if (opts.mp3Bitrate !== undefined) this.#opts.mp3Bitrate = opts.mp3Bitrate;
+    if (opts.opusBitrate !== undefined) this.#opts.opusBitrate = opts.opusBitrate;
+    if (opts.normalize !== undefined) this.#opts.normalize = opts.normalize;
   }
 
   synthesize(
@@ -200,11 +265,11 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
+    return new ChunkedStream(this, text, { ...this.#opts }, connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts, options?.connOptions);
+    return new SynthesizeStream(this, { ...this.#opts }, options?.connOptions);
   }
 
   prewarm(): void {
@@ -240,6 +305,7 @@ export class TTS extends tts.TTS {
   }
 }
 
+/** @public */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'fishaudio.ChunkedStream';
   #logger = log();
@@ -373,6 +439,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 }
 
+/** @public */
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'fishaudio.SynthesizeStream';
   #logger = log();
