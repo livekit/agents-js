@@ -122,6 +122,7 @@ import {
   type _TextOut,
   applyInstructionsModality,
   forwardedTextFor,
+  hasOwnPlaybackEvidence,
   performAudioForwarding,
   performLLMInference,
   performTTSInference,
@@ -2915,20 +2916,7 @@ export class AgentActivity implements RecognitionHooks {
           if (audioOutput) {
             audioOutput.clearBuffer();
             const interruptedPlaybackEv = await audioOutput.waitForPlayout();
-            // A reported playback position is proof of partial playback even when
-            // the playback-started notification hasn't arrived yet (remote avatar
-            // outputs deliver it via RPC, which can race with the interruption).
-            // It only counts as evidence when THIS segment bumped the output's
-            // segment count — the same condition under which waitForPlayout waits
-            // for this segment's playback event instead of returning a stale one
-            // from a previous segment (see _AudioOut.capturedSegmentsBefore).
-            const playedOwnFrame =
-              output.audioOut != null &&
-              audioOutput.capturedPlayoutSegments > output.audioOut.capturedSegmentsBefore;
-            if (
-              (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              (playedOwnFrame && interruptedPlaybackEv.playbackPosition > 0)
-            ) {
+            if (hasOwnPlaybackEvidence(output.audioOut, interruptedPlaybackEv)) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
               output.synchronizedTranscript = interruptedPlaybackEv.synchronizedTranscript;
@@ -3485,20 +3473,7 @@ export class AgentActivity implements RecognitionHooks {
           if (audioOutput) {
             audioOutput.clearBuffer();
             const playbackEv = await audioOutput.waitForPlayout();
-            // A reported playback position is proof of partial playback even when
-            // the playback-started notification hasn't arrived yet (remote avatar
-            // outputs deliver it via RPC, which can race with the interruption).
-            // It only counts as evidence when THIS message bumped the output's
-            // segment count — the same condition under which waitForPlayout waits
-            // for this message's playback event instead of returning a stale one
-            // from a previous message (see _AudioOut.capturedSegmentsBefore).
-            const playedOwnFrame =
-              output.audioOut != null &&
-              audioOutput.capturedPlayoutSegments > output.audioOut.capturedSegmentsBefore;
-            if (
-              (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) ||
-              (playedOwnFrame && playbackEv.playbackPosition > 0)
-            ) {
+            if (hasOwnPlaybackEvidence(output.audioOut, playbackEv)) {
               output.played = 'partial';
               output.playbackPositionInS = playbackEv.playbackPosition;
               output.synchronizedTranscript = playbackEv.synchronizedTranscript;

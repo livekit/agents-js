@@ -59,6 +59,7 @@ import type { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
   type LLMNode,
+  type PlaybackFinishedEvent,
   type TTSNode,
   type TextOutput,
   type TimedString,
@@ -863,6 +864,40 @@ export interface _AudioOut {
    * e.g. `ParticipantAudioOutput`, without ever being counted.)
    */
   capturedSegmentsBefore: number;
+  /**
+   * The output's segment count (`capturedPlayoutSegments`) read after the first of
+   * this segment's frames was accepted by `AudioOutput.captureFrame`. `undefined`
+   * until a frame is confirmed counted. Unlike a delta against
+   * `capturedSegmentsBefore`, this records the playout segment the frames actually
+   * landed in — a delta can be satisfied by another overlapping segment bumping the
+   * shared counter (e.g. a straggler frame from a previous interrupted speech whose
+   * `reader.read()` resolved after its abort).
+   */
+  ownSegmentIndex?: number;
+}
+
+/**
+ * Whether an interrupted segment produced evidence that some of its audio actually
+ * reached the user, based on the playback-finished event returned by
+ * `waitForPlayout()` after the interruption.
+ *
+ * Two independent evidence sources:
+ * - playback-started: `firstFrameFut` was resolved by this segment's own
+ *   PLAYBACK_STARTED event (see the listener guard in `performAudioForwarding`).
+ * - playback-position: a reported position is proof of partial playback even when
+ *   the playback-started notification hasn't arrived yet (remote avatar outputs
+ *   deliver it via RPC, which can race with the interruption). It only counts when
+ *   one of THIS segment's frames was accepted into a counted playout segment
+ *   (`ownSegmentIndex`) — the same condition under which `waitForPlayout` waits for
+ *   this segment's playback event instead of returning a stale one.
+ */
+export function hasOwnPlaybackEvidence(
+  audioOut: _AudioOut | null | undefined,
+  playbackEv: PlaybackFinishedEvent,
+): boolean {
+  if (!audioOut) return false;
+  if (audioOut.firstFrameFut.done && !audioOut.firstFrameFut.rejected) return true;
+  return audioOut.ownSegmentIndex !== undefined && playbackEv.playbackPosition > 0;
 }
 
 /**
@@ -924,6 +959,18 @@ async function forwardAudio(
       } else {
         await audioOutput.captureFrame(frame);
       }
+
+      // Read the counter after the capture resolved: this records the playout
+      // segment the frame actually landed in, and stays unset if the frame bailed
+      // at a pause/interrupt gate without being counted. The abort guard avoids
+      // attributing a foreign bump when our own frame bailed during teardown.
+      if (
+        out.ownSegmentIndex === undefined &&
+        !signal?.aborted &&
+        audioOutput.capturedPlayoutSegments > out.capturedSegmentsBefore
+      ) {
+        out.ownSegmentIndex = audioOutput.capturedPlayoutSegments;
+      }
     }
 
     if (resampler) {
@@ -983,13 +1030,25 @@ export function performAudioForwarding(
   // forwarding task: frames may be captured into a paused or remote-buffered
   // output and only start playing after forwarding has finished (#1909, #1960).
   const onPlaybackStarted = (ev: { createdAt: number }) => {
-    // The audio output is shared across overlapping segments. Only honor the
-    // event once this segment has captured its own first frame, so a stray event
-    // from another segment can't resolve our `firstFrameFut` prematurely. A
-    // premature resolution skips resampler creation (gated on
-    // `!firstFrameFut.done`) and pushes an unresampled frame to the AudioSource,
-    // raising `RtcError: sample_rate and num_channels don't match`.
-    if (out._hasCapturedOwnFrame && !out.firstFrameFut.done) {
+    // The audio output is shared across overlapping segments and the event carries
+    // no segment identity (e.g. a stale `lk.playback_started` RPC from an avatar
+    // worker can arrive after its segment was interrupted and the next one started
+    // — the main loop authorizes the next speech the moment the current one is
+    // interrupted). Only honor the event while the output's segment counter still
+    // points at THIS segment. During the first captureFrame the event can arrive
+    // before `ownSegmentIndex` is recorded — sinks emit PLAYBACK_STARTED
+    // synchronously inside the first counted capture, and chained outputs (e.g.
+    // the recorder) forward the leaf's event before counting their own segment —
+    // so until then accept the snapshot and snapshot + 1. Ambiguous events
+    // afterwards are dropped (fail closed): genuine partial playback is then still
+    // committed through the playback-position evidence in the interrupted-commit
+    // gates (`hasOwnPlaybackEvidence`).
+    const counter = audioOutput.capturedPlayoutSegments;
+    const isOwnEvent =
+      out.ownSegmentIndex !== undefined
+        ? counter === out.ownSegmentIndex
+        : counter <= out.capturedSegmentsBefore + 1;
+    if (out._hasCapturedOwnFrame && isOwnEvent && !out.firstFrameFut.done) {
       out.firstFrameFut.resolve(ev.createdAt);
     }
   };
