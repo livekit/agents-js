@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { Heap } from 'heap-js';
@@ -79,6 +79,7 @@ import {
   delay,
   isDevMode,
   isHosted,
+  isPending,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -223,6 +224,29 @@ export interface ForwardOutput {
   synchronizedTranscript?: string;
   audioOut: _AudioOut | null;
   playbackPositionInS: number;
+}
+
+/**
+ * Resolves with `p`, or with `undefined` once `signal` aborts while `p` is
+ * still pending. An already-settled `p` always wins, even when the signal has
+ * already fired — an {@link AudioOutput} is allowed to report
+ * `playbackFinished` synchronously from `clearBuffer()`, and its synchronized
+ * transcript must not be discarded in that case. Used where a promise may
+ * never settle once the room is gone (e.g. `waitForPlayout()` during
+ * shutdown) — parking there would keep the reply task from committing the
+ * in-flight assistant turn.
+ */
+async function raceWithAbort<T>(
+  p: Promise<T>,
+  signal: AbortSignal,
+): Promise<Throws<T | undefined, Error>> {
+  if (signal.aborted) {
+    return (await isPending(p)) ? undefined : ThrowsPromise.fromPromise<T | undefined, Error>(p);
+  }
+  return ThrowsPromise.race([
+    ThrowsPromise.fromPromise<T | undefined, Error>(p),
+    ThrowsPromise.fromPromise<undefined, Error>(waitForAbort(signal).then(() => undefined)),
+  ]);
 }
 
 export class AgentActivity implements RecognitionHooks {
@@ -2924,11 +2948,31 @@ export class AgentActivity implements RecognitionHooks {
           await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
           if (audioOutput) {
             audioOutput.clearBuffer();
-            const interruptedPlaybackEv = await audioOutput.waitForPlayout();
-            if (output.audioOut?.firstFrameFut.done && !output.audioOut.firstFrameFut.rejected) {
+            // During shutdown (room disconnected / activity closing) the
+            // output may never report playback finished — don't park forever
+            // on a promise that cannot resolve, or the turn is lost (#2041).
+            // The abort signal fires when the reply task is cancelled, so
+            // racing it lets the commit below still happen; we only lose the
+            // final playback position, not the turn.
+            const interruptedPlaybackEv = await raceWithAbort(
+              audioOutput.waitForPlayout(),
+              replyAbortController.signal,
+            );
+            if (
+              interruptedPlaybackEv &&
+              output.audioOut?.firstFrameFut.done &&
+              !output.audioOut.firstFrameFut.rejected
+            ) {
               output.played = 'partial';
               output.playbackPositionInS = interruptedPlaybackEv.playbackPosition;
               output.synchronizedTranscript = interruptedPlaybackEv.synchronizedTranscript;
+            } else if (
+              output.audioOut?.firstFrameFut.done &&
+              !output.audioOut.firstFrameFut.rejected
+            ) {
+              // Playback started but the output went away before reporting a
+              // final position — the visitor heard part of this turn.
+              output.played = 'partial';
             }
           } else if (output.textOut?.text) {
             output.played = 'partial';
@@ -4127,6 +4171,18 @@ export class AgentActivity implements RecognitionHooks {
     const unlock = await this.lock.lock();
     try {
       this.cancelPreemptiveGeneration();
+
+      // Commit the in-flight assistant turn before teardown (#2041): a room
+      // disconnect mid-playout parks the reply task on a playout promise that
+      // will never resolve, and hard-cancelling it there dropped the turn —
+      // no ConversationItemAdded, nothing in chatCtx. Resolving the speech's
+      // interrupt future lets the task exit through its existing interruption
+      // branch, which commits the partially-forwarded text (interrupted: true)
+      // exactly like a user barge-in does. The cancelAndWait below then aborts
+      // any await that cannot complete on a dead room (see raceWithAbort).
+      if (this._currentSpeech && !this._currentSpeech.done()) {
+        this._currentSpeech._cancel();
+      }
 
       await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
       await this._toolExecutor.drain();
