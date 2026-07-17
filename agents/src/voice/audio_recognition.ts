@@ -355,6 +355,7 @@ export class AudioRecognition {
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
   private readonly sttLifecycleLock = new Mutex();
+  private readonly vadLifecycleLock = new Mutex();
 
   // all cancellable tasks
   private bounceEOUTask?: Task<void>;
@@ -664,20 +665,23 @@ export class AudioRecognition {
     }
   }
 
-  async updateVad(vad: VAD | undefined): Promise<void> {
+  async updateVad(vad: VAD | undefined, usingDefaultVad: boolean): Promise<void> {
     this.checkVadSilenceRequirement(undefined, vad);
-    this.vad = vad;
-    this.isInterruptionEnabled = !!(this.interruptionDetection && this.vad);
+    const unlock = await this.vadLifecycleLock.lock();
+    try {
+      this.vad = vad;
+      this.usingDefaultVad = usingDefaultVad;
+      this.isInterruptionEnabled = !!(this.interruptionDetection && this.vad);
 
-    await this.vadTask?.cancelAndWait();
-    this.vadTask = undefined;
-    this.vadStream = undefined;
+      await this.vadTask?.cancelAndWait();
+      this.vadTask = undefined;
+      this.vadStream = undefined;
 
-    if (!this.closed && this.vad !== undefined) {
-      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-      this.vadTask.result.catch((err) => {
-        this.logger.error(`Error running VAD task: ${err}`);
-      });
+      if (!this.closed && this.vad !== undefined) {
+        this.startVadTask(this.vad);
+      }
+    } finally {
+      unlock();
     }
   }
 
@@ -687,10 +691,9 @@ export class AudioRecognition {
   }) {
     this.startSttTasks(options?.sttPipeline);
 
-    this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-    this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
-    });
+    if (this.vad !== undefined) {
+      this.startVadTask(this.vad);
+    }
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
@@ -2195,14 +2198,28 @@ export class AudioRecognition {
    * and trigger interruptions correctly.
    */
   private resetVad() {
-    if (!this.vad) return;
+    void this.resetVadTask().catch((err) => {
+      this.logger.error(`Error resetting VAD task: ${err}`);
+    });
+  }
 
-    this.vadTask?.cancelAndWait().finally(() => {
-      if (this.closed) return;
-      this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
-      this.vadTask.result.catch((err) => {
-        this.logger.error(`Error running VAD task: ${err}`);
-      });
+  private async resetVadTask(): Promise<void> {
+    const unlock = await this.vadLifecycleLock.lock();
+    try {
+      if (!this.vad || this.closed) return;
+      await this.vadTask?.cancelAndWait();
+      if (!this.closed && this.vad !== undefined) {
+        this.startVadTask(this.vad);
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  private startVadTask(vad: VAD): void {
+    this.vadTask = Task.from(({ signal }) => this.createVadTask(vad, signal));
+    this.vadTask.result.catch((err) => {
+      this.logger.error(`Error running VAD task: ${err}`);
     });
   }
 

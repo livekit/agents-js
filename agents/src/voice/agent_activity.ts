@@ -989,87 +989,96 @@ export class AgentActivity implements RecognitionHooks {
       this.audioRecognition.checkVadSilenceRequirement(undefined, options.vad ?? undefined);
     }
 
-    if (Object.hasOwn(options, 'stt')) {
-      const oldStt = this.stt;
-      if (oldStt instanceof STT) {
-        oldStt.off('metrics_collected', this.onMetricsCollected);
-        oldStt.off('error', this.onModelError);
-        this.agentSession.off(
-          AgentSessionEventTypes.ConversationItemAdded,
-          this.pushConversationItemToStt,
-        );
+    const unlock = await this.lock.lock();
+    try {
+      if (this.closeAbort.signal.aborted || this.agent._agentActivity !== this) {
+        return;
       }
 
-      this.agent._stt = options.stt as STT | null;
-      const resolvedStt = this.stt;
-      if (this.audioRecognition !== undefined) {
-        await this.audioRecognition.updateStt(
-          this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
-          {
-            model: resolvedStt?.model,
-            provider: resolvedStt?.provider,
-            resetContext: true,
-          },
-        );
-      }
-      this.agentSession._keytermDetector.swapStt(resolvedStt);
-
-      if (resolvedStt instanceof STT) {
-        resolvedStt.on('metrics_collected', this.onMetricsCollected);
-        resolvedStt.on('error', this.onModelError);
-        if (resolvedStt.capabilities.chatContext) {
-          this.agentSession.on(
+      if (Object.hasOwn(options, 'stt')) {
+        const oldStt = this.stt;
+        if (oldStt instanceof STT) {
+          oldStt.off('metrics_collected', this.onMetricsCollected);
+          oldStt.off('error', this.onModelError);
+          this.agentSession.off(
             AgentSessionEventTypes.ConversationItemAdded,
             this.pushConversationItemToStt,
           );
         }
-      }
-    }
 
-    if (Object.hasOwn(options, 'vad')) {
-      const oldVad = this.vad;
-      if (oldVad instanceof VAD) {
-        oldVad.off('metrics_collected', this.onMetricsCollected);
-      }
+        this.agent._stt = options.stt as STT | null;
+        const resolvedStt = this.stt;
+        if (this.audioRecognition !== undefined) {
+          await this.audioRecognition.updateStt(
+            this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
+            {
+              model: resolvedStt?.model,
+              provider: resolvedStt?.provider,
+              resetContext: true,
+            },
+          );
+        }
+        this.agentSession._keytermDetector.swapStt(resolvedStt);
 
-      this.agent._vad = options.vad as VAD | null;
-      if (this.audioRecognition !== undefined) {
-        await this.audioRecognition.updateVad(this.vad);
-      }
-      if (this.vad instanceof VAD) {
-        this.vad.on('metrics_collected', this.onMetricsCollected);
-      }
-    }
-
-    if (Object.hasOwn(options, 'llm')) {
-      const oldLlm = this.llm;
-      if (oldLlm instanceof LLM) {
-        oldLlm.off('metrics_collected', this.onMetricsCollected);
-        oldLlm.off('error', this.onModelError);
-      }
-
-      this.agent._llm = options.llm as LLM | null;
-      if (this.llm instanceof LLM) {
-        this.llm.prewarm();
-        this.llm.on('metrics_collected', this.onMetricsCollected);
-        this.llm.on('error', this.onModelError);
-      }
-    }
-
-    if (Object.hasOwn(options, 'tts')) {
-      const oldTts = this.tts;
-      if (oldTts instanceof TTS) {
-        oldTts.off('metrics_collected', this.onMetricsCollected);
-        oldTts.off('error', this.onModelError);
+        if (resolvedStt instanceof STT) {
+          resolvedStt.on('metrics_collected', this.onMetricsCollected);
+          resolvedStt.on('error', this.onModelError);
+          if (resolvedStt.capabilities.chatContext) {
+            this.agentSession.on(
+              AgentSessionEventTypes.ConversationItemAdded,
+              this.pushConversationItemToStt,
+            );
+          }
+        }
       }
 
-      this.agent._tts = options.tts as TTS | null;
-      if (this.tts instanceof TTS) {
-        const maybePrewarm = this.tts as TTS & { prewarm?: () => void };
-        maybePrewarm.prewarm?.();
-        this.tts.on('metrics_collected', this.onMetricsCollected);
-        this.tts.on('error', this.onModelError);
+      if (Object.hasOwn(options, 'vad')) {
+        const oldVad = this.vad;
+        if (oldVad instanceof VAD) {
+          oldVad.off('metrics_collected', this.onMetricsCollected);
+        }
+
+        this.agent._vad = options.vad as VAD | null;
+        if (this.audioRecognition !== undefined) {
+          await this.audioRecognition.updateVad(this.vad, this.usingDefaultVad);
+        }
+        if (this.vad instanceof VAD) {
+          this.vad.on('metrics_collected', this.onMetricsCollected);
+        }
       }
+
+      if (Object.hasOwn(options, 'llm')) {
+        const oldLlm = this.llm;
+        if (oldLlm instanceof LLM) {
+          oldLlm.off('metrics_collected', this.onMetricsCollected);
+          oldLlm.off('error', this.onModelError);
+        }
+
+        this.agent._llm = options.llm as LLM | null;
+        if (this.llm instanceof LLM) {
+          this.llm.prewarm();
+          this.llm.on('metrics_collected', this.onMetricsCollected);
+          this.llm.on('error', this.onModelError);
+        }
+      }
+
+      if (Object.hasOwn(options, 'tts')) {
+        const oldTts = this.tts;
+        if (oldTts instanceof TTS) {
+          oldTts.off('metrics_collected', this.onMetricsCollected);
+          oldTts.off('error', this.onModelError);
+        }
+
+        this.agent._tts = options.tts as TTS | null;
+        if (this.tts instanceof TTS) {
+          const maybePrewarm = this.tts as TTS & { prewarm?: () => void };
+          maybePrewarm.prewarm?.();
+          this.tts.on('metrics_collected', this.onMetricsCollected);
+          this.tts.on('error', this.onModelError);
+        }
+      }
+    } finally {
+      unlock();
     }
   }
 

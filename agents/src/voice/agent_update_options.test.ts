@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BaseStreamingTurnDetector,
   type BaseStreamingTurnDetectorStream,
@@ -20,6 +20,7 @@ import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import type { AudioRecognition } from './audio_recognition.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -149,6 +150,17 @@ class FakeStreamingTurnDetector extends BaseStreamingTurnDetector {
   }
 }
 
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('Agent.updateOptions', () => {
   it('replaces model fields when the agent is not running', async () => {
     const stt1 = new FakeSTT();
@@ -251,6 +263,52 @@ describe('Agent.updateOptions', () => {
     }
   });
 
+  it('serializes concurrent STT swaps so only the final model retains listeners', async () => {
+    const oldStt = new FakeSTT();
+    const firstStt = new FakeSTT();
+    const finalStt = new FakeSTT();
+    const agent = new Agent({
+      instructions: 'test',
+      stt: oldStt,
+      vad: new FakeVAD(),
+      llm: new FakeLLM(),
+      tts: new FakeTTS(),
+    });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+        .audioRecognition;
+      const originalUpdateStt = recognition.updateStt.bind(recognition);
+      const firstSwapBlocked = deferred();
+      const releaseFirstSwap = deferred();
+      let updateCount = 0;
+
+      vi.spyOn(recognition, 'updateStt').mockImplementation(async (...args) => {
+        updateCount += 1;
+        if (updateCount === 1) {
+          firstSwapBlocked.resolve();
+          await releaseFirstSwap.promise;
+        }
+        await originalUpdateStt(...args);
+      });
+
+      const firstSwap = agent.updateOptions({ stt: firstStt });
+      await firstSwapBlocked.promise;
+      const finalSwap = agent.updateOptions({ stt: finalStt });
+      releaseFirstSwap.resolve();
+      await Promise.all([firstSwap, finalSwap]);
+
+      expect(agent.stt).toBe(finalStt);
+      expect(oldStt.listenerCount('metrics_collected')).toBe(0);
+      expect(firstStt.listenerCount('metrics_collected')).toBe(0);
+      expect(finalStt.listenerCount('metrics_collected')).toBeGreaterThan(0);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
   it('swaps VAD while running', async () => {
     const oldVad = new FakeVAD();
     const newVad = new FakeVAD();
@@ -272,6 +330,32 @@ describe('Agent.updateOptions', () => {
       expect(activity.vad).toBe(newVad);
       expect(oldVad.listenerCount('metrics_collected')).toBe(0);
       expect(newVad.listenerCount('metrics_collected')).toBeGreaterThan(0);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('treats a runtime VAD replacement as user-provided after inheriting the session default', async () => {
+    const replacementVad = new FakeVAD();
+    const agent = new Agent({
+      instructions: 'test',
+      stt: new FakeSTT(),
+      llm: new FakeLLM(),
+      tts: new FakeTTS(),
+    });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    try {
+      const activity = session._activity!;
+      const recognition = (activity as unknown as { audioRecognition: unknown }).audioRecognition;
+
+      expect(activity.usingDefaultVad).toBe(true);
+      expect((recognition as { hasUserVad: boolean }).hasUserVad).toBe(false);
+
+      await agent.updateOptions({ vad: replacementVad });
+
+      expect(activity.usingDefaultVad).toBe(false);
+      expect((recognition as { hasUserVad: boolean }).hasUserVad).toBe(true);
     } finally {
       await session.close().catch(() => {});
     }
