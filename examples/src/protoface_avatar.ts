@@ -16,26 +16,30 @@ export default defineAgent({
       llm: new openai.realtime.RealtimeModel({
         voice: 'cedar',
       }),
+      turnHandling: {
+        interruption: {
+          resumeFalseInterruption: false,
+        },
+      },
     });
 
     await ctx.connect();
-
-    await session.start({
-      agent,
-      room: ctx.room,
-      outputOptions: {
-        syncTranscription: false,
-      },
-    });
 
     const avatar = new protoface.AvatarSession({
       avatarId: process.env.PROTOFACE_AVATAR_ID || protoface.DEFAULT_STOCK_AVATAR_ID,
     });
     await avatar.start(session, ctx.room);
 
-    session.generateReply({
-      instructions: 'Greet the user briefly and confirm you are ready.',
+    await session.start({
+      agent,
+      room: ctx.room,
+      outputOptions: {
+        audioEnabled: false,
+        syncTranscription: false,
+      },
     });
+
+    session.generateReply({ instructions: 'Say hello to the user.' });
   },
 });
 
