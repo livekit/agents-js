@@ -85,6 +85,7 @@ import {
 import { VAD, type VADEvent } from '../vad.js';
 import {
   Agent,
+  type AgentUpdateOptions,
   type ModelSettings,
   StopResponse,
   _getActivityTaskInfo,
@@ -758,7 +759,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get vad(): VAD | undefined {
-    return this.agent.vad || this.agentSession.vad;
+    return this.agent.vad !== undefined ? this.agent.vad ?? undefined : this.agentSession.vad;
   }
 
   /**
@@ -774,7 +775,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get stt(): STT | undefined {
-    return this.agent.stt || this.agentSession.stt;
+    return this.agent.stt !== undefined ? this.agent.stt ?? undefined : this.agentSession.stt;
   }
 
   private getSttProvider(): string | undefined {
@@ -789,11 +790,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get llm(): LLM | RealtimeModel | undefined {
-    return this.agent.llm || this.agentSession.llm;
+    return this.agent.llm !== undefined ? this.agent.llm ?? undefined : this.agentSession.llm;
   }
 
   get tts(): TTS | undefined {
-    return this.agent.tts || this.agentSession.tts;
+    return this.agent.tts !== undefined ? this.agent.tts ?? undefined : this.agentSession.tts;
   }
 
   get tools(): ToolContext {
@@ -971,6 +972,104 @@ export class AgentActivity implements RecognitionHooks {
     if (this.llm instanceof LLM) {
       // for realtime LLM, we assume the server will remove unvalid tool messages
       await this.updateChatCtx(this.agent._chatCtx.copy({ toolCtx: newToolCtx }));
+    }
+  }
+
+  async updateModels(options: AgentUpdateOptions): Promise<void> {
+    if (
+      Object.hasOwn(options, 'llm') &&
+      (options.llm instanceof RealtimeModel || this.llm instanceof RealtimeModel)
+    ) {
+      throw new Error(
+        'cannot swap to or from a RealtimeModel while the agent is running, use AgentSession.updateAgent() instead',
+      );
+    }
+
+    if (Object.hasOwn(options, 'vad') && this.audioRecognition !== undefined) {
+      this.audioRecognition.checkVadSilenceRequirement(undefined, options.vad ?? undefined);
+    }
+
+    if (Object.hasOwn(options, 'stt')) {
+      const oldStt = this.stt;
+      if (oldStt instanceof STT) {
+        oldStt.off('metrics_collected', this.onMetricsCollected);
+        oldStt.off('error', this.onModelError);
+        this.agentSession.off(
+          AgentSessionEventTypes.ConversationItemAdded,
+          this.pushConversationItemToStt,
+        );
+      }
+
+      this.agent._stt = options.stt as STT | null;
+      const resolvedStt = this.stt;
+      if (this.audioRecognition !== undefined) {
+        await this.audioRecognition.updateStt(
+          this.stt ? (...args) => this.agent.sttNode(...args) : undefined,
+          {
+            model: resolvedStt?.model,
+            provider: resolvedStt?.provider,
+            resetContext: true,
+          },
+        );
+      }
+      this.agentSession._keytermDetector.swapStt(resolvedStt);
+
+      if (resolvedStt instanceof STT) {
+        resolvedStt.on('metrics_collected', this.onMetricsCollected);
+        resolvedStt.on('error', this.onModelError);
+        if (resolvedStt.capabilities.chatContext) {
+          this.agentSession.on(
+            AgentSessionEventTypes.ConversationItemAdded,
+            this.pushConversationItemToStt,
+          );
+        }
+      }
+    }
+
+    if (Object.hasOwn(options, 'vad')) {
+      const oldVad = this.vad;
+      if (oldVad instanceof VAD) {
+        oldVad.off('metrics_collected', this.onMetricsCollected);
+      }
+
+      this.agent._vad = options.vad as VAD | null;
+      if (this.audioRecognition !== undefined) {
+        await this.audioRecognition.updateVad(this.vad);
+      }
+      if (this.vad instanceof VAD) {
+        this.vad.on('metrics_collected', this.onMetricsCollected);
+      }
+    }
+
+    if (Object.hasOwn(options, 'llm')) {
+      const oldLlm = this.llm;
+      if (oldLlm instanceof LLM) {
+        oldLlm.off('metrics_collected', this.onMetricsCollected);
+        oldLlm.off('error', this.onModelError);
+      }
+
+      this.agent._llm = options.llm as LLM | null;
+      if (this.llm instanceof LLM) {
+        this.llm.prewarm();
+        this.llm.on('metrics_collected', this.onMetricsCollected);
+        this.llm.on('error', this.onModelError);
+      }
+    }
+
+    if (Object.hasOwn(options, 'tts')) {
+      const oldTts = this.tts;
+      if (oldTts instanceof TTS) {
+        oldTts.off('metrics_collected', this.onMetricsCollected);
+        oldTts.off('error', this.onModelError);
+      }
+
+      this.agent._tts = options.tts as TTS | null;
+      if (this.tts instanceof TTS) {
+        const maybePrewarm = this.tts as TTS & { prewarm?: () => void };
+        maybePrewarm.prewarm?.();
+        this.tts.on('metrics_collected', this.onMetricsCollected);
+        this.tts.on('error', this.onModelError);
+      }
     }
   }
 

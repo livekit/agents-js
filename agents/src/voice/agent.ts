@@ -132,15 +132,26 @@ export interface ModelSettings {
   toolChoice?: ToolChoice;
 }
 
+export interface AgentUpdateOptions {
+  /** New STT model. Pass `null` to disable the agent STT and override any session STT. */
+  stt?: STT | STTModelString | null;
+  /** New VAD model. Pass `null` to disable the agent VAD and override any session VAD. */
+  vad?: VAD | null;
+  /** New LLM model. Pass `null` to disable the agent LLM and override any session LLM. */
+  llm?: LLM | RealtimeModel | LLMModels | null;
+  /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
+  tts?: TTS | TTSModelString | null;
+}
+
 export interface AgentOptions<UserData> {
   id?: string;
   instructions: string | Instructions;
   chatCtx?: ChatContext;
   tools?: ToolContextLike<UserData>;
-  stt?: STT | STTModelString;
-  vad?: VAD;
-  llm?: LLM | RealtimeModel | LLMModels;
-  tts?: TTS | TTSModelString;
+  stt?: STT | STTModelString | null;
+  vad?: VAD | null;
+  llm?: LLM | RealtimeModel | LLMModels | null;
+  tts?: TTS | TTSModelString | null;
   turnHandling?: TurnHandlingOptions;
   toolHandling?: ToolHandlingOptions;
   minConsecutiveSpeechDelay?: number;
@@ -153,10 +164,14 @@ export interface AgentOptions<UserData> {
 
 export class Agent<UserData = any> {
   private _id: string;
-  private _stt?: STT;
-  private _vad?: VAD;
-  private _llm?: LLM | RealtimeModel;
-  private _tts?: TTS;
+  /** @internal */
+  _stt?: STT | null;
+  /** @internal */
+  _vad?: VAD | null;
+  /** @internal */
+  _llm?: LLM | RealtimeModel | null;
+  /** @internal */
+  _tts?: TTS | null;
   private _turnHandling?: Partial<TurnHandlingOptions>;
 
   private _minConsecutiveSpeechDelay?: number;
@@ -254,19 +269,19 @@ export class Agent<UserData = any> {
     this._agentActivity = undefined;
   }
 
-  get vad(): VAD | undefined {
+  get vad(): VAD | null | undefined {
     return this._vad;
   }
 
-  get stt(): STT | undefined {
+  get stt(): STT | null | undefined {
     return this._stt;
   }
 
-  get llm(): LLM | RealtimeModel | undefined {
+  get llm(): LLM | RealtimeModel | null | undefined {
     return this._llm;
   }
 
-  get tts(): TTS | undefined {
+  get tts(): TTS | null | undefined {
     return this._tts;
   }
 
@@ -381,6 +396,31 @@ export class Agent<UserData = any> {
     }
 
     await this._agentActivity.updateInstructions(instructions);
+  }
+
+  async updateOptions(options: AgentUpdateOptions): Promise<void> {
+    const resolved: AgentUpdateOptions = { ...options };
+    if (typeof resolved.stt === 'string') {
+      resolved.stt = InferenceSTT.fromModelString(resolved.stt);
+    }
+    if (typeof resolved.llm === 'string') {
+      resolved.llm = InferenceLLM.fromModelString(resolved.llm);
+    }
+    if (typeof resolved.tts === 'string') {
+      resolved.tts = InferenceTTS.fromModelString(resolved.tts);
+    }
+
+    if (!this._agentActivity) {
+      if (Object.hasOwn(resolved, 'stt')) this._stt = resolved.stt as STT | null;
+      if (Object.hasOwn(resolved, 'vad')) this._vad = resolved.vad as VAD | null;
+      if (Object.hasOwn(resolved, 'llm')) {
+        this._llm = resolved.llm as LLM | RealtimeModel | null;
+      }
+      if (Object.hasOwn(resolved, 'tts')) this._tts = resolved.tts as TTS | null;
+      return;
+    }
+
+    await this._agentActivity.updateModels(resolved);
   }
 
   // TODO(parity): Add when AgentConfigUpdate is ported to ChatContext.
