@@ -80,6 +80,46 @@ async function synthesizeTurn(
   }
 }
 
+async function captureStartRequest(
+  opts: ConstructorParameters<typeof TTS>[0] = {},
+  update?: (fishAudio: TTS) => void,
+): Promise<Record<string, unknown>> {
+  const { wss, baseURL } = await startWebSocketServer();
+  const startRequest = new Promise<Record<string, unknown>>((resolve) => {
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = decode(Buffer.from(raw as ArrayBuffer)) as Record<string, unknown>;
+        if (message.event === 'start') {
+          resolve(message.request as Record<string, unknown>);
+        } else if (message.event === 'stop') {
+          ws.send(encode({ event: 'finish', reason: 'stop' }));
+        }
+      });
+    });
+  });
+
+  const fishAudio = new TTS({ apiKey: 'test-key', baseURL, ...opts });
+  const stream = fishAudio.stream();
+  const drain = (async () => {
+    for await (const _event of stream) {
+      // Drain the stream so its tasks finish before cleanup.
+    }
+  })();
+
+  try {
+    update?.(fishAudio);
+    stream.pushText('hello world.');
+    stream.endInput();
+    const request = await waitFor(startRequest);
+    await waitFor(drain);
+    return request;
+  } finally {
+    stream.close();
+    await fishAudio.close();
+    await closeWebSocketServer(wss);
+  }
+}
+
 const hasFishAudioConfig = Boolean(process.env.FISH_API_KEY && process.env.OPENAI_API_KEY);
 
 if (hasFishAudioConfig) {
@@ -93,6 +133,66 @@ if (hasFishAudioConfig) {
 }
 
 describe('FishAudio streaming', () => {
+  it('keeps sampling and encoding defaults unchanged', async () => {
+    const request = await captureStartRequest();
+    expect(request.temperature).toBe(0.7);
+    expect(request.top_p).toBe(0.7);
+    expect(request.mp3_bitrate).toBe(64);
+    expect(request.opus_bitrate).toBe(64000);
+    expect(request.normalize).toBe(true);
+  });
+
+  it('sets sampling and encoding params from the constructor', async () => {
+    const request = await captureStartRequest({
+      temperature: 0.3,
+      topP: 0.9,
+      mp3Bitrate: 192,
+      opusBitrate: 32000,
+      normalize: false,
+    });
+    expect(request.temperature).toBe(0.3);
+    expect(request.top_p).toBe(0.9);
+    expect(request.mp3_bitrate).toBe(192);
+    expect(request.opus_bitrate).toBe(32000);
+    expect(request.normalize).toBe(false);
+  });
+
+  it('sets sampling and encoding params from updateOptions', async () => {
+    const request = await captureStartRequest({}, (fishAudio) => {
+      fishAudio.updateOptions({
+        temperature: 0.5,
+        topP: 0.8,
+        mp3Bitrate: 128,
+        opusBitrate: -1000,
+        normalize: false,
+      });
+    });
+    expect(request.temperature).toBe(0.5);
+    expect(request.top_p).toBe(0.8);
+    expect(request.mp3_bitrate).toBe(128);
+    expect(request.opus_bitrate).toBe(-1000);
+    expect(request.normalize).toBe(false);
+  });
+
+  it('validates temperature and topP', async () => {
+    expect(() => new TTS({ apiKey: 'test-key', temperature: 1.5 })).toThrow(
+      'temperature must be between 0 and 1',
+    );
+    expect(() => new TTS({ apiKey: 'test-key', topP: -0.1 })).toThrow(
+      'topP must be between 0 and 1',
+    );
+
+    const fishAudio = new TTS({ apiKey: 'test-key' });
+    try {
+      expect(() => fishAudio.updateOptions({ temperature: 1.5 })).toThrow(
+        'temperature must be between 0 and 1',
+      );
+      expect(() => fishAudio.updateOptions({ topP: -0.1 })).toThrow('topP must be between 0 and 1');
+    } finally {
+      await fishAudio.close();
+    }
+  });
+
   it('reuses one websocket across sequential turns', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let connectionCount = 0;
