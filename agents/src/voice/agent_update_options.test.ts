@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
-import { voice } from '../index.js';
+import type { voice } from '../index.js';
 import {
   BaseStreamingTurnDetector,
   type BaseStreamingTurnDetectorStream,

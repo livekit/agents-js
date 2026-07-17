@@ -141,7 +141,7 @@ describe('AudioRecognition STT end-of-speech VAD reset', () => {
   });
 
   it('serializes VAD replacement with reset and keeps one final task owner', async () => {
-    const { recognition, internals } = makeRecognition();
+    const { internals } = makeRecognition();
     const oldVad = {} as VAD;
     const replacementVad = {} as VAD;
     internals.vad = oldVad;
