@@ -142,6 +142,9 @@ export async function streamMeetingRelay(
         const cleanup = () => {
           stop.removeEventListener('abort', onAbort);
           ws.removeAllListeners();
+          // `ws` can emit 'error' during teardown (especially if still CONNECTING).
+          // Without a listener, Node treats it as unhandled and crashes the process.
+          ws.on('error', () => {});
           if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
             ws.close();
           }
@@ -195,7 +198,17 @@ export async function streamMeetingRelay(
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    await new Promise<void>((resolve) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        stop.removeEventListener('abort', onAbort);
+        resolve();
+      }, backoffMs);
+      stop.addEventListener('abort', onAbort, { once: true });
+    });
     backoffMs = Math.min(backoffMs * 2, maxReconnectDelayMs);
   }
 }

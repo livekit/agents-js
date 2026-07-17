@@ -408,38 +408,39 @@ export class AvatarSession extends voice.AvatarSession {
     if (!meetingBotId || !sessionId) {
       return;
     }
+    this.meetingBotId = null;
+
+    // Stop local meeting activity first: the remote leave call below retries
+    // with backoff and must not keep audio/chat relays running meanwhile.
+    const relayAbort = this.meetingRelayAbort;
+    this.meetingRelayAbort = null;
+    relayAbort?.abort();
+
+    const relayTask = this.meetingRelayTask;
+    this.meetingRelayTask = null;
+    if (relayTask !== null) {
+      await relayTask.catch(() => undefined);
+    }
+
+    const meetingChat = this.meetingChat;
+    this.meetingChat = null;
+    if (meetingChat !== null) {
+      await meetingChat.aclose();
+    }
+
+    const meetingAudio = this.meetingAudio;
+    this.meetingAudio = null;
+    if (meetingAudio !== null) {
+      if (this.agentSession?.input.audio === meetingAudio) {
+        this.agentSession.input.audio = null;
+      }
+      await meetingAudio.close().catch(() => undefined);
+    }
 
     try {
       await this.callLeaveMeeting(sessionId, meetingBotId);
     } catch (error) {
       this.#logger.warn({ error }, 'failed to leave meeting via LemonSlice API');
-    } finally {
-      this.meetingBotId = null;
-
-      if (this.meetingRelayAbort !== null) {
-        this.meetingRelayAbort.abort();
-      }
-      const relayTask = this.meetingRelayTask;
-      if (relayTask !== null) {
-        await relayTask.catch(() => undefined);
-        this.meetingRelayTask = null;
-      }
-
-      if (this.meetingChat !== null) {
-        await this.meetingChat.aclose();
-        this.meetingChat = null;
-      }
-
-      const meetingAudio = this.meetingAudio;
-      this.meetingAudio = null;
-      if (meetingAudio !== null) {
-        if (this.agentSession?.input.audio === meetingAudio) {
-          this.agentSession.input.audio = null;
-        }
-        await meetingAudio.close().catch(() => undefined);
-      }
-
-      this.meetingRelayAbort = null;
     }
   }
 
