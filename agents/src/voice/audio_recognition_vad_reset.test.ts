@@ -22,6 +22,10 @@ interface RecognitionInternals {
   lastSpeakingTime?: number;
   onSTTEvent: (ev: SpeechEvent) => Promise<void>;
   bounceEOUTask?: { cancelAndWait: () => Promise<void> };
+  vadTask?: { cancelAndWait: () => Promise<void> };
+  updateVad: (vad: VAD | undefined, usingDefaultVad: boolean) => Promise<void>;
+  resetVadTask: () => Promise<void>;
+  startVadTask: (vad: VAD) => void;
 }
 
 function makeHooks(): RecognitionHooks {
@@ -134,5 +138,45 @@ describe('AudioRecognition STT end-of-speech VAD reset', () => {
     } finally {
       await internals.bounceEOUTask?.cancelAndWait().catch(() => {});
     }
+  });
+
+  it('serializes VAD replacement with reset and keeps one final task owner', async () => {
+    const { recognition, internals } = makeRecognition();
+    const oldVad = {} as VAD;
+    const replacementVad = {} as VAD;
+    internals.vad = oldVad;
+
+    let releaseInitialCancel!: () => void;
+    const initialCancel = new Promise<void>((resolve) => {
+      releaseInitialCancel = resolve;
+    });
+    let activeTasks = 1;
+    let maxActiveTasks = 1;
+    internals.vadTask = {
+      cancelAndWait: async () => {
+        await initialCancel;
+        activeTasks -= 1;
+      },
+    };
+
+    vi.spyOn(internals, 'startVadTask').mockImplementation((vad) => {
+      activeTasks += 1;
+      maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
+      internals.vadTask = {
+        cancelAndWait: async () => {
+          activeTasks -= 1;
+        },
+      };
+      internals.vad = vad;
+    });
+
+    const update = internals.updateVad(replacementVad, false);
+    const reset = internals.resetVadTask();
+    releaseInitialCancel();
+    await Promise.all([update, reset]);
+
+    expect(internals.vad).toBe(replacementVad);
+    expect(activeTasks).toBe(1);
+    expect(maxActiveTasks).toBe(1);
   });
 });

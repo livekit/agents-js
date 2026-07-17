@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import { voice } from '../index.js';
 import {
   BaseStreamingTurnDetector,
   type BaseStreamingTurnDetectorStream,
@@ -21,6 +22,7 @@ import { VAD, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import type { AudioRecognition } from './audio_recognition.js';
+import { AgentSessionEventTypes } from './events.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -74,6 +76,24 @@ class LabeledSTT extends FakeSTT {
 
   override get provider(): string {
     return 'new-provider';
+  }
+}
+
+class ContextSTT extends FakeSTT {
+  keytermUpdates: string[][] = [];
+  contextUpdates: Array<Parameters<FakeSTT['_pushConversationItem']>[0]> = [];
+
+  constructor(label: string) {
+    super({ label });
+    this.updateCapabilities({ chatContext: true, keyterms: true });
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    this.keytermUpdates.push([...keyterms]);
+  }
+
+  override _pushConversationItem(ev: Parameters<FakeSTT['_pushConversationItem']>[0]): void {
+    this.contextUpdates.push(ev);
   }
 }
 
@@ -162,6 +182,11 @@ function deferred(): {
 }
 
 describe('Agent.updateOptions', () => {
+  it('exports AgentUpdateOptions from the public voice namespace', () => {
+    const options: voice.AgentUpdateOptions = { stt: null, vad: null, llm: null, tts: null };
+    expect(options).toEqual({ stt: null, vad: null, llm: null, tts: null });
+  });
+
   it('replaces model fields when the agent is not running', async () => {
     const stt1 = new FakeSTT();
     const stt2 = new FakeSTT();
@@ -309,6 +334,72 @@ describe('Agent.updateOptions', () => {
     }
   });
 
+  it('serializes an STT swap with activity close and leaves no listeners attached', async () => {
+    const oldStt = new FakeSTT();
+    const replacementStt = new FakeSTT();
+    const agent = new Agent({
+      instructions: 'test',
+      stt: oldStt,
+      vad: new FakeVAD(),
+      llm: new FakeLLM(),
+      tts: new FakeTTS(),
+    });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+    const activity = session._activity!;
+    const recognition = (activity as unknown as { audioRecognition: AudioRecognition })
+      .audioRecognition;
+    const originalUpdateStt = recognition.updateStt.bind(recognition);
+    const swapBlocked = deferred();
+    const releaseSwap = deferred();
+    vi.spyOn(recognition, 'updateStt').mockImplementation(async (...args) => {
+      swapBlocked.resolve();
+      await releaseSwap.promise;
+      await originalUpdateStt(...args);
+    });
+
+    const swap = agent.updateOptions({ stt: replacementStt });
+    await swapBlocked.promise;
+    const close = activity.close();
+    expect(agent._agentActivity).toBe(activity);
+
+    releaseSwap.resolve();
+    await Promise.all([swap, close]);
+
+    expect(agent._agentActivity).toBeUndefined();
+    expect(oldStt.listenerCount('metrics_collected')).toBe(0);
+    expect(oldStt.listenerCount('error')).toBe(0);
+    expect(replacementStt.listenerCount('metrics_collected')).toBe(0);
+    expect(replacementStt.listenerCount('error')).toBe(0);
+    await session.close().catch(() => {});
+  });
+
+  it('moves STT context, keyterms, and error listeners to the replacement', async () => {
+    const oldStt = new ContextSTT('old-context-stt');
+    const replacementStt = new ContextSTT('replacement-context-stt');
+    const agent = new Agent({ instructions: 'test', stt: oldStt });
+    const session = new AgentSession({
+      turnDetection: 'manual',
+      keytermsOptions: { keyterms: ['LiveKit'] },
+    });
+    await session.start({ agent });
+    try {
+      await agent.updateOptions({ stt: replacementStt });
+      const itemCtx = ChatContext.empty();
+      itemCtx.addMessage({ role: 'user', content: 'hello' });
+      const event = { item: itemCtx.items[0]! };
+      session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
+
+      expect(oldStt.contextUpdates).toHaveLength(0);
+      expect(replacementStt.contextUpdates).toEqual([event]);
+      expect(replacementStt.keytermUpdates).toContainEqual(['LiveKit']);
+      expect(oldStt.listenerCount('error')).toBe(0);
+      expect(replacementStt.listenerCount('error')).toBeGreaterThan(0);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
   it('swaps VAD while running', async () => {
     const oldVad = new FakeVAD();
     const newVad = new FakeVAD();
@@ -382,6 +473,61 @@ describe('Agent.updateOptions', () => {
       expect((recognition as { sttPipeline: unknown }).sttPipeline).toBeUndefined();
     } finally {
       await session.close().catch(() => {});
+    }
+  });
+
+  it('uses session fallbacks when omitted and suppresses all four with null', async () => {
+    const sessionStt = new FakeSTT();
+    const sessionVad = new FakeVAD();
+    const sessionLlm = new FakeLLM();
+    const sessionTts = new FakeTTS();
+    const agent = new Agent({ instructions: 'test' });
+    const session = new AgentSession({
+      turnDetection: 'manual',
+      stt: sessionStt,
+      vad: sessionVad,
+      llm: sessionLlm,
+      tts: sessionTts,
+    });
+    await session.start({ agent });
+    try {
+      const activity = session._activity!;
+      expect(activity.stt).toBe(sessionStt);
+      expect(activity.vad).toBe(sessionVad);
+      expect(activity.llm).toBe(sessionLlm);
+      expect(activity.tts).toBe(sessionTts);
+
+      await agent.updateOptions({ stt: null, vad: null, llm: null, tts: null });
+
+      expect(activity.stt).toBeUndefined();
+      expect(activity.vad).toBeUndefined();
+      expect(activity.llm).toBeUndefined();
+      expect(activity.tts).toBeUndefined();
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
+  it('removes listeners from every model after sequential swaps and close', async () => {
+    const stts = [new FakeSTT(), new FakeSTT(), new FakeSTT()];
+    const llms = [new FakeLLM(), new FakeLLM(), new FakeLLM()];
+    const ttss = [new FakeTTS(), new FakeTTS(), new FakeTTS()];
+    const agent = new Agent({
+      instructions: 'test',
+      stt: stts[0],
+      llm: llms[0],
+      tts: ttss[0],
+    });
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent });
+
+    await agent.updateOptions({ stt: stts[1], llm: llms[1], tts: ttss[1] });
+    await agent.updateOptions({ stt: stts[2], llm: llms[2], tts: ttss[2] });
+    await session.close();
+
+    for (const model of [...stts, ...llms, ...ttss]) {
+      expect(model.listenerCount('metrics_collected')).toBe(0);
+      expect(model.listenerCount('error')).toBe(0);
     }
   });
 
