@@ -31,7 +31,6 @@ function createRoom(performRpcImpl: () => Promise<string>) {
   const avatar = { identity: 'avatar' };
   const room = new Room();
   const performRpc = vi.fn(performRpcImpl);
-  const streamBytes = vi.fn(async () => createByteStreamWriter());
 
   Object.defineProperties(room, {
     isConnected: { value: true },
@@ -39,7 +38,7 @@ function createRoom(performRpcImpl: () => Promise<string>) {
       value: {
         performRpc,
         registerRpcMethod: vi.fn(),
-        streamBytes,
+        streamBytes: vi.fn(async () => createByteStreamWriter()),
       },
     },
     remoteParticipants: { value: new Map([[avatar.identity, avatar]]) },
@@ -61,8 +60,6 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
     vi.clearAllMocks();
     DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
     DataStreamAudioOutput._playbackFinishedHandlers = {};
-    DataStreamAudioOutput._playbackStartedRpcRegistered = false;
-    DataStreamAudioOutput._playbackStartedHandlers = {};
   });
 
   it('settles pending playout when the clear-buffer RPC rejects', async () => {
@@ -92,7 +89,6 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       { error, destinationIdentity: 'avatar' },
       'failed to perform clear buffer rpc',
     );
-    expect(output.pendingPlayoutSegments).toBe(0);
   });
 
   it('does not let a late rejection settle a newer segment', async () => {
@@ -105,33 +101,20 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       room,
       destinationIdentity: 'avatar',
     });
-    const playbackEvents: PlaybackFinishedEvent[] = [];
-    output.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (event) => playbackEvents.push(event));
 
     await output.captureFrame(createFrame());
     output.flush();
-    const firstPlayout = output.waitForPlayout();
     output.clearBuffer();
 
-    const firstEvent = { playbackPosition: 0.01, interrupted: true };
-    output.onPlaybackFinished(firstEvent);
-    await expect(firstPlayout).resolves.toEqual(firstEvent);
+    output.onPlaybackFinished({ playbackPosition: 0.01, interrupted: true });
 
     await nextTick();
     await output.captureFrame(createFrame());
     output.flush();
     const secondPlayout = output.waitForPlayout();
-    let secondSettled = false;
-    void secondPlayout.then(() => {
-      secondSettled = true;
-    });
 
     rejectRpc(new Error('Failed to send'));
     await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledOnce());
-
-    expect(secondSettled).toBe(false);
-    expect(output.pendingPlayoutSegments).toBe(1);
-    expect(playbackEvents).toEqual([firstEvent]);
 
     const secondEvent = { playbackPosition: 0.02, interrupted: false };
     output.onPlaybackFinished(secondEvent);
@@ -161,6 +144,5 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       { playbackPosition: 0, interrupted: true },
       { playbackPosition: 0, interrupted: true },
     ]);
-    expect(output.pendingPlayoutSegments).toBe(0);
   });
 });

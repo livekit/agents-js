@@ -212,9 +212,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   clearBuffer(): void {
     if (!this.started) return;
 
-    // Capture the current segment high-water mark before starting the RPC. The rejection may
-    // arrive after a real playback-finished event or after a new segment has started, so draining
-    // the live pending count in the catch handler could incorrectly finish newer audio.
+    // A delayed rejection must not finish audio captured after this call.
     const playoutTarget = this.capturedPlayoutSegments;
 
     void this.room
@@ -229,16 +227,11 @@ export class DataStreamAudioOutput extends AudioOutput {
           'failed to perform clear buffer rpc',
         );
 
-        this.settlePlayoutThrough(playoutTarget);
+        const finishedSegments = this.capturedPlayoutSegments - this.pendingPlayoutSegments;
+        for (let segment = finishedSegments; segment < playoutTarget; segment++) {
+          this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        }
       });
-  }
-
-  private settlePlayoutThrough(playoutTarget: number): void {
-    const finishedSegments = this.capturedPlayoutSegments - this.pendingPlayoutSegments;
-
-    for (let segment = finishedSegments; segment < playoutTarget; segment++) {
-      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
-    }
   }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
