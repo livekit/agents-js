@@ -759,7 +759,7 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get vad(): VAD | undefined {
-    return this.agent.vad !== undefined ? this.agent.vad ?? undefined : this.agentSession.vad;
+    return this.agent._vad !== undefined ? this.agent._vad ?? undefined : this.agentSession.vad;
   }
 
   /**
@@ -768,14 +768,14 @@ export class AgentActivity implements RecognitionHooks {
    * session, even if the value happens to be the same silero model.
    */
   get usingDefaultVad(): boolean {
-    if (this.agent.vad !== undefined) {
+    if (this.agent._vad !== undefined) {
       return false;
     }
     return this.agentSession._usingDefaultVad;
   }
 
   get stt(): STT | undefined {
-    return this.agent.stt !== undefined ? this.agent.stt ?? undefined : this.agentSession.stt;
+    return this.agent._stt !== undefined ? this.agent._stt ?? undefined : this.agentSession.stt;
   }
 
   private getSttProvider(): string | undefined {
@@ -790,11 +790,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get llm(): LLM | RealtimeModel | undefined {
-    return this.agent.llm !== undefined ? this.agent.llm ?? undefined : this.agentSession.llm;
+    return this.agent._llm !== undefined ? this.agent._llm ?? undefined : this.agentSession.llm;
   }
 
   get tts(): TTS | undefined {
-    return this.agent.tts !== undefined ? this.agent.tts ?? undefined : this.agentSession.tts;
+    return this.agent._tts !== undefined ? this.agent._tts ?? undefined : this.agentSession.tts;
   }
 
   get tools(): ToolContext {

@@ -567,7 +567,8 @@ describe('Agent.updateOptions', () => {
 
       await agent.updateOptions({ stt: null });
 
-      expect(agent.stt).toBeNull();
+      expect(agent._stt).toBeNull();
+      expect(agent.stt).toBeUndefined();
       expect(activity.stt).toBeUndefined();
       const recognition = (activity as unknown as { audioRecognition: unknown }).audioRecognition;
       expect((recognition as { sttPipeline: unknown }).sttPipeline).toBeUndefined();
@@ -599,6 +600,14 @@ describe('Agent.updateOptions', () => {
 
       await agent.updateOptions({ stt: null, vad: null, llm: null, tts: null });
 
+      expect(agent._stt).toBeNull();
+      expect(agent._vad).toBeNull();
+      expect(agent._llm).toBeNull();
+      expect(agent._tts).toBeNull();
+      expect(agent.stt).toBeUndefined();
+      expect(agent.vad).toBeUndefined();
+      expect(agent.llm).toBeUndefined();
+      expect(agent.tts).toBeUndefined();
       expect(activity.stt).toBeUndefined();
       expect(activity.vad).toBeUndefined();
       expect(activity.llm).toBeUndefined();

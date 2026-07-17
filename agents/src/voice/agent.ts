@@ -269,20 +269,20 @@ export class Agent<UserData = any> {
     this._agentActivity = undefined;
   }
 
-  get vad(): VAD | null | undefined {
-    return this._vad;
+  get vad(): VAD | undefined {
+    return this._vad ?? undefined;
   }
 
-  get stt(): STT | null | undefined {
-    return this._stt;
+  get stt(): STT | undefined {
+    return this._stt ?? undefined;
   }
 
-  get llm(): LLM | RealtimeModel | null | undefined {
-    return this._llm;
+  get llm(): LLM | RealtimeModel | undefined {
+    return this._llm ?? undefined;
   }
 
-  get tts(): TTS | null | undefined {
-    return this._tts;
+  get tts(): TTS | undefined {
+    return this._tts ?? undefined;
   }
 
   get useTtsAlignedTranscript(): boolean | undefined {
