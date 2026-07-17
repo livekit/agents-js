@@ -23,6 +23,7 @@ export {
   setupCloudTracer,
   tracer,
   uploadSessionReport,
+  type SetTracerProviderOptions,
   type StartSpanOptions,
 } from './traces.js';
 export { recordException, recordRealtimeMetrics } from './utils.js';

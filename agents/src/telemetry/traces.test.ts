@@ -2,9 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { context as otelContext, trace } from '@opentelemetry/api';
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  type SpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setTracerProvider, setupCloudTracer, tracer } from './traces.js';
 
 /** Helper: extract parentSpanId across OTel SDK v1/v2 */
@@ -163,6 +167,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
 
   afterEach(async () => {
     await userProvider.shutdown();
+    vi.restoreAllMocks();
     otelContext.disable();
     trace.disable();
     // Assigning undefined to process.env.X stores the string "undefined"; delete instead so
@@ -185,5 +190,42 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
+  });
+
+  it('uses an explicit processor registrar when the provider has no addSpanProcessor method', async () => {
+    const registeredProcessors: SpanProcessor[] = [];
+    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
+    setTracerProvider(userProvider, {
+      registerSpanProcessor: (processor) => registeredProcessors.push(processor),
+    });
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    expect(tracer.getProvider()).toBe(userProvider);
+    expect(registeredProcessors).toHaveLength(2);
+    expect(registeredProcessors[1]).toBeInstanceOf(BatchSpanProcessor);
+  });
+
+  it('preserves a custom provider when no processor registrar is available', async () => {
+    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
+    setTracerProvider(userProvider);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    expect(tracer.getProvider()).toBe(userProvider);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('registerSpanProcessor'));
   });
 });
