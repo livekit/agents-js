@@ -866,12 +866,11 @@ export interface _AudioOut {
   capturedSegmentsBefore: number;
   /**
    * The output's segment count (`capturedPlayoutSegments`) read after the first of
-   * this segment's frames was accepted by `AudioOutput.captureFrame`. `undefined`
-   * until a frame is confirmed counted. Unlike a delta against
-   * `capturedSegmentsBefore`, this records the playout segment the frames actually
-   * landed in — a delta can be satisfied by another overlapping segment bumping the
-   * shared counter (e.g. a straggler frame from a previous interrupted speech whose
-   * `reader.read()` resolved after its abort).
+   * this segment's frames was accepted by `AudioOutput.captureFrame`; `undefined`
+   * until a frame is confirmed counted. Read post-capture rather than predicted as
+   * `capturedSegmentsBefore + 1`: a straggler frame from a previous interrupted
+   * speech (whose `reader.read()` resolved after its abort) can bump the shared
+   * counter first.
    */
   ownSegmentIndex?: number;
 }
@@ -881,15 +880,13 @@ export interface _AudioOut {
  * reached the user, based on the playback-finished event returned by
  * `waitForPlayout()` after the interruption.
  *
- * Two independent evidence sources:
- * - playback-started: `firstFrameFut` was resolved by this segment's own
- *   PLAYBACK_STARTED event (see the listener guard in `performAudioForwarding`).
- * - playback-position: a reported position is proof of partial playback even when
- *   the playback-started notification hasn't arrived yet (remote avatar outputs
- *   deliver it via RPC, which can race with the interruption). It only counts when
- *   one of THIS segment's frames was accepted into a counted playout segment
- *   (`ownSegmentIndex`) — the same condition under which `waitForPlayout` waits for
- *   this segment's playback event instead of returning a stale one.
+ * Evidence is either the segment's own PLAYBACK_STARTED event (`firstFrameFut`
+ * resolved; see the listener guard in `performAudioForwarding`) or a non-zero
+ * playback position. The started notification can lose the race with the
+ * interruption (remote avatar outputs deliver it via RPC), so a position counts
+ * too — but only when one of THIS segment's frames was accepted into a counted
+ * playout segment (`ownSegmentIndex`), the same condition under which
+ * `waitForPlayout` returns this segment's event rather than a stale one.
  */
 export function hasOwnPlaybackEvidence(
   audioOut: _AudioOut | null | undefined,
@@ -960,10 +957,8 @@ async function forwardAudio(
         await audioOutput.captureFrame(frame);
       }
 
-      // Read the counter after the capture resolved: this records the playout
-      // segment the frame actually landed in, and stays unset if the frame bailed
-      // at a pause/interrupt gate without being counted. The abort guard avoids
-      // attributing a foreign bump when our own frame bailed during teardown.
+      // The abort guard avoids attributing a foreign bump to this segment when our
+      // own frame bailed at the pause/interrupt gate during teardown.
       if (
         out.ownSegmentIndex === undefined &&
         !signal?.aborted &&
@@ -1031,18 +1026,16 @@ export function performAudioForwarding(
   // output and only start playing after forwarding has finished (#1909, #1960).
   const onPlaybackStarted = (ev: { createdAt: number }) => {
     // The audio output is shared across overlapping segments and the event carries
-    // no segment identity (e.g. a stale `lk.playback_started` RPC from an avatar
-    // worker can arrive after its segment was interrupted and the next one started
-    // — the main loop authorizes the next speech the moment the current one is
-    // interrupted). Only honor the event while the output's segment counter still
-    // points at THIS segment. During the first captureFrame the event can arrive
-    // before `ownSegmentIndex` is recorded — sinks emit PLAYBACK_STARTED
-    // synchronously inside the first counted capture, and chained outputs (e.g.
-    // the recorder) forward the leaf's event before counting their own segment —
-    // so until then accept the snapshot and snapshot + 1. Ambiguous events
-    // afterwards are dropped (fail closed): genuine partial playback is then still
-    // committed through the playback-position evidence in the interrupted-commit
-    // gates (`hasOwnPlaybackEvidence`).
+    // no segment identity (a stale `lk.playback_started` RPC from an avatar worker
+    // can arrive after its segment was interrupted and the next one started). Only
+    // honor the event while the output's segment counter still points at THIS
+    // segment. During the first captureFrame the event can arrive before
+    // `ownSegmentIndex` is recorded — sinks emit PLAYBACK_STARTED synchronously
+    // inside the first counted capture, and chained outputs (e.g. the recorder)
+    // forward the leaf's event before counting their own — so until then accept
+    // the snapshot and snapshot + 1. Ambiguous events are dropped (fail closed);
+    // partial playback still commits via the position evidence in
+    // `hasOwnPlaybackEvidence`.
     const counter = audioOutput.capturedPlayoutSegments;
     const isOwnEvent =
       out.ownSegmentIndex !== undefined
