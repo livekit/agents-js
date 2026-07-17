@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Room } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { DataStreamAudioOutput } from './datastream_io.js';
 
@@ -16,26 +16,29 @@ vi.mock('../../log.js', () => ({
   log: () => logger,
 }));
 
-function createRoom(performRpc: () => Promise<string>) {
+function createRoom(performRpc: () => Promise<string>): Room {
   const avatar = { identity: 'avatar' };
+  const room = new Room();
 
-  return {
-    isConnected: true,
+  Object.defineProperties(room, {
+    isConnected: { value: true },
     localParticipant: {
-      performRpc: vi.fn(performRpc),
-      registerRpcMethod: vi.fn(),
+      value: {
+        performRpc: vi.fn(performRpc),
+        registerRpcMethod: vi.fn(),
+      },
     },
-    remoteParticipants: new Map([[avatar.identity, avatar]]),
-    on: vi.fn(),
-    off: vi.fn(),
-  };
+    remoteParticipants: { value: new Map([[avatar.identity, avatar]]) },
+  });
+
+  return room;
 }
 
 describe('DataStreamAudioOutput.clearBuffer', () => {
   it('handles a rejected clear-buffer RPC', async () => {
     const room = createRoom(() => Promise.reject(new Error('Failed to send')));
     const output = new DataStreamAudioOutput({
-      room: room as unknown as Room,
+      room,
       destinationIdentity: 'avatar',
     });
 
