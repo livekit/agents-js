@@ -53,7 +53,9 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   forbidSpeechAfterToolCall?: string[];
+  onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
 }
@@ -155,6 +157,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Additional runtime parameters forwarded to Phonic
+       */
+      additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+      /**
        * Names of tools after which Phonic should NOT auto-generate a spoken reply.
        *
        * Use for tools that always hand off / trigger an agent switch (e.g. advancing
@@ -167,6 +173,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        * listed keep the default behavior (a reply is generated after the tool output).
        */
       forbidSpeechAfterToolCall?: string[];
+      /**
+       * Called with the Phonic conversation ID once the conversation is created
+       */
+      onConversationCreated?: (conversationId: string) => void;
       /**
        * Connection options for the API connection
        */
@@ -185,7 +195,6 @@ export class RealtimeModel extends llm.RealtimeModel {
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
       perResponseToolChoice: false,
-      nativeTranscriptSync: false,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;
@@ -226,7 +235,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      additionalParams: options.additionalParams,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
+      onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
@@ -710,6 +721,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       case 'conversation_created':
         this.conversationId = message.conversation_id;
         this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        this.options.onConversationCreated?.(this.conversationId);
         break;
       case 'tool_call_interrupted':
         this.handleToolCallInterrupted(message);
@@ -957,6 +969,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+      additional_params: this.options.additionalParams,
       stream_ahead_of_real_time: true,
     };
   }

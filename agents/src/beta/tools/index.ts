@@ -8,3 +8,4 @@ export {
   type EndCallToolCompletedEvent,
   type EndCallToolOptions,
 } from './end_call.js';
+export { sendDtmfEvents, type DtmfEvent } from './send_dtmf.js';

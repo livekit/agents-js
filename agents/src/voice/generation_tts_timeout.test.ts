@@ -164,6 +164,38 @@ describe('TTS stream idle timeout', () => {
     }
   });
 
+  it('does not capture a frame returned by an in-flight read after abort', async () => {
+    let enqueue!: (frame: AudioFrame) => void;
+    let close!: () => void;
+    let streamCancelled = false;
+    const stream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        enqueue = (frame) => controller.enqueue(frame);
+        close = () => controller.close();
+      },
+      cancel() {
+        streamCancelled = true;
+      },
+    });
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const [task] = performAudioForwarding(stream, audioOutput, controller);
+
+    // Let forwarding enter reader.read(), which cannot be cancelled by the task's
+    // AbortSignal. The read resolves only after the task has already been aborted.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (!streamCancelled) {
+      enqueue(createSilentFrame());
+      close();
+    }
+    await task.result;
+
+    expect(streamCancelled).toBe(true);
+    expect(audioOutput.capturedFrames).toHaveLength(0);
+  });
+
   it('performTTSInference completes when TTS node returns stalled stream', async () => {
     const stalledTtsStream = new ReadableStream<AudioFrame>({
       start(controller) {

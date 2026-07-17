@@ -8,6 +8,7 @@ import {
   RealtimeModel,
   type ToolCalledEvent,
   type ToolCompletedEvent,
+  ToolFlag,
   Toolset,
   tool,
 } from '../../llm/index.js';
@@ -68,6 +69,8 @@ export type EndCallToolOptions<UserData = UnknownUserData> = {
   deleteRoom?: boolean;
   /** Tool output to the LLM for generating the tool response. */
   endInstructions?: string | null;
+  /** Hide the tool during onEnter so the model can't end the call while greeting. */
+  ignoreOnEnter?: boolean;
   /** Callback to call when the tool is called. */
   onToolCalled?: (event: EndCallToolCalledEvent<UserData>) => Promise<void> | void;
   /** Callback to call when the tool is completed. */
@@ -81,6 +84,7 @@ export function createEndCallTool<UserData = UnknownUserData>({
   extraDescription = '',
   deleteRoom = true,
   endInstructions = 'say goodbye to the user',
+  ignoreOnEnter = false,
   onToolCalled,
   onToolCompleted,
 }: EndCallToolOptions<UserData> = {}): Toolset {
@@ -116,6 +120,7 @@ export function createEndCallTool<UserData = UnknownUserData>({
       tool<UserData>({
         name: 'end_call',
         description: `${END_CALL_DESCRIPTION}\n${extraDescription}`,
+        flags: ignoreOnEnter ? ToolFlag.IGNORE_ON_ENTER : ToolFlag.NONE,
         execute: async (_args, { ctx, abortSignal }) => {
           log().debug('end_call tool called');
           const session = ctx.session;

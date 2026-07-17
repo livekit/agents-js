@@ -111,6 +111,51 @@ class PausedGateOutput extends AudioOutput {
   }
 }
 
+class BlockingInterruptedOutput extends AudioOutput {
+  onFirstFrameCaptured?: () => void;
+  clearBufferCalled = new Future<void>();
+  maxPlaybackStartedListeners = 0;
+  private firstSegmentFinished = false;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(f: AudioFrame): Promise<void> {
+    await super.captureFrame(f);
+    this.maxPlaybackStartedListeners = Math.max(
+      this.maxPlaybackStartedListeners,
+      this.listenerCount(AudioOutput.EVENT_PLAYBACK_STARTED),
+    );
+    if (this.capturedPlayoutSegments === 1) {
+      this.onFirstFrameCaptured?.();
+    } else {
+      this.onPlaybackStarted(Date.now());
+    }
+  }
+
+  flush(): void {
+    super.flush();
+    if (this.capturedPlayoutSegments > 1) {
+      this.onPlaybackFinished({ playbackPosition: 0.02, interrupted: false });
+    }
+  }
+
+  clearBuffer(): void {
+    this.clearBufferCalled.resolve();
+  }
+
+  finishInterruptedSegment(): void {
+    if (!this.firstSegmentFinished) {
+      this.firstSegmentFinished = true;
+      // DataStreamAudioReceiver serializes its RPC queue, so a delayed
+      // PLAYBACK_STARTED for this segment is delivered before PLAYBACK_FINISHED.
+      this.onPlaybackStarted(Date.now());
+      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+  }
+}
+
 // Agent that synthesizes a few real frames for whatever text it receives, so the
 // audio path produces a first frame (no TTS provider needed).
 class FrameAgent extends Agent {
@@ -362,4 +407,45 @@ describe('AgentActivity interrupted-speech commit', () => {
       await session.close();
     }
   }, 15_000);
+
+  it('finishes interrupted generation cleanup before authorizing the next reply', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([
+        { input: 'first', content: 'First reply.' },
+        { input: 'second', content: 'Second reply.' },
+      ]),
+    });
+    const audioOut = new BlockingInterruptedOutput();
+    const agent = new FrameAgent();
+    session.output.audio = audioOut;
+    let second: ReturnType<AgentSession['generateReply']> | undefined;
+    audioOut.onFirstFrameCaptured = () => {
+      session.interrupt();
+      second = session.generateReply({ userInput: 'second' });
+    };
+
+    await session.start({ agent });
+    try {
+      const first = session.generateReply({ userInput: 'first' });
+
+      await audioOut.clearBufferCalled.await;
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      // The old segment's PLAYBACK_STARTED listener must be settled and detached
+      // before the shared output accepts frames for the next reply.
+      expect(audioOut.capturedPlayoutSegments).toBe(1);
+
+      audioOut.finishInterruptedSegment();
+      await first.waitForPlayout();
+      if (!second) {
+        throw new Error('second reply was not scheduled');
+      }
+      await second.waitForPlayout();
+      expect(audioOut.capturedPlayoutSegments).toBe(2);
+      expect(audioOut.maxPlaybackStartedListeners).toBe(1);
+    } finally {
+      audioOut.finishInterruptedSegment();
+      await session.close();
+    }
+  });
 });

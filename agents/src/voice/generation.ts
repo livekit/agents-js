@@ -585,11 +585,6 @@ export function performLLMInference(
         // No need to check if chunk is of type other than ChatChunk or string like in
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
-
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-      if (data.ttft !== undefined) {
-        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
-      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
@@ -599,6 +594,21 @@ export function performLLMInference(
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      span.setAttribute(
+        traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
+        JSON.stringify(
+          data.generatedToolCalls.map(({ id, callId, name, args }) => ({
+            id,
+            call_id: callId,
+            name,
+            arguments: args,
+          })),
+        ),
+      );
+      if (data.ttft !== undefined) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
       await textWriter.close();
@@ -891,6 +901,15 @@ async function forwardAudio(
   const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
+  const cancelReader = () => {
+    void reader.cancel().catch((error) => {
+      logger.debug({ error }, 'failed to cancel TTS stream reader after abort');
+    });
+  };
+  signal?.addEventListener('abort', cancelReader, { once: true });
+  if (signal?.aborted) {
+    cancelReader();
+  }
 
   try {
     audioOutput.resume();
@@ -902,6 +921,11 @@ async function forwardAudio(
 
       const { done, value: frame } = await waitUntilTimeout(reader.read(), idleTimeout);
       if (done) break;
+      // Unlike asyncio task cancellation, aborting cannot interrupt reader.read().
+      // Re-check after it resolves so a late frame cannot leak into the shared output.
+      if (signal?.aborted) {
+        break;
+      }
 
       out.audio.push(frame);
       if (out.startedForwardingAt === undefined) {
@@ -956,6 +980,7 @@ async function forwardAudio(
     // resolves the future when the late first frame plays; the reply tasks settle
     // any future still pending once the playout window ends, bounding the
     // listener's lifetime.
+    signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
     audioOutput.flush();
     if (signal?.aborted) {
