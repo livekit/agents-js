@@ -193,23 +193,14 @@ export function replace(
   options: { caseSensitive?: boolean } = {},
 ): (text: ReadableStream<string>) => ReadableStream<string> {
   const entries = Object.entries(replacements);
+  const sortedEntries = [...entries].sort(([a], [b]) => b.length - a.length);
   const flags = options.caseSensitive ? 'u' : 'iu';
-  const lookup = new Map(
-    entries.map(([old, replacement]) => [
-      options.caseSensitive ? old : old.toLowerCase(),
-      replacement,
-    ]),
+  const entryPatterns = sortedEntries.map(
+    ([old, replacement]) => [new RegExp(`^(?:${escapeRegex(old)})$`, flags), replacement] as const,
   );
   const pattern =
     entries.length > 0
-      ? new RegExp(
-          entries
-            .map(([old]) => old)
-            .sort((a, b) => b.length - a.length)
-            .map(escapeRegex)
-            .join('|'),
-          `g${flags}`,
-        )
+      ? new RegExp(sortedEntries.map(([old]) => escapeRegex(old)).join('|'), `g${flags}`)
       : null;
   const maxPrefix = entries.length > 0 ? Math.max(...entries.map(([old]) => old.length - 1)) : 0;
   const prefixes = new Set<string>();
@@ -223,12 +214,19 @@ export function replace(
       ? new RegExp(`(?:${Array.from(prefixes).map(escapeRegex).join('|')})$`, flags)
       : null;
 
-  const apply = (value: string): string => {
-    if (!pattern) return value;
-    return value.replace(
-      pattern,
-      (match) => lookup.get(options.caseSensitive ? match : match.toLowerCase())!,
-    );
+  const apply = (value: string): { output: string; lastMatchEnd: number } => {
+    if (!pattern) return { output: value, lastMatchEnd: 0 };
+    let lastMatchEnd = 0;
+    const output = value.replace(pattern, (match: string, offset: number) => {
+      const entry = entryPatterns.find(([entryPattern]) => entryPattern.test(match));
+      if (!entry) {
+        throw new Error(`Unable to resolve replacement for matched text: ${match}`);
+      }
+      const replacement = entry[1];
+      lastMatchEnd = offset + match.length;
+      return replacement;
+    });
+    return { output, lastMatchEnd };
   };
 
   const holdback = (value: string): number => {
@@ -240,19 +238,23 @@ export function replace(
   return (text: ReadableStream<string>) =>
     streamFromAsyncIterable(
       (async function* () {
-        let buffer = '';
+        let sourceBuffer = '';
 
         for await (const chunk of readStream(text)) {
-          buffer = apply(buffer + chunk);
-          const flushTo = buffer.length - holdback(buffer);
-          if (flushTo > 0) {
-            yield buffer.slice(0, flushTo);
-            buffer = buffer.slice(flushTo);
+          const source = sourceBuffer + chunk;
+          const applied = apply(source);
+          const heldLength = holdback(source);
+          const heldStart = source.length - heldLength;
+          const retainSource = heldLength > 0 && heldStart >= applied.lastMatchEnd;
+          sourceBuffer = retainSource ? source.slice(heldStart) : '';
+          const emitted = retainSource ? applied.output.slice(0, -heldLength) : applied.output;
+          if (emitted) {
+            yield emitted;
           }
         }
 
-        if (buffer) {
-          yield buffer;
+        if (sourceBuffer) {
+          yield sourceBuffer;
         }
       })(),
     );
