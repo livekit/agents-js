@@ -52,7 +52,7 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^1.10.0",
-    "@livekit/av": "^7.1.500",
+    "@livekit/av": "^10.0.0",
     "@livekit/local-inference": "^0.2.6",
     "@livekit/mutex": "^1.1.1",
     "@livekit/protocol": "^1.49.0",

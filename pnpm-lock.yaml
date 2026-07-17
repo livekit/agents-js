@@ -110,8 +110,8 @@ importers:
         specifier: ^1.10.0
         version: 1.10.1
       '@livekit/av':
-        specifier: ^7.1.500
-        version: 7.1.501
+        specifier: ^10.0.0
+        version: 10.0.0
       '@livekit/local-inference':
         specifier: ^0.2.6
         version: 0.2.6
@@ -2153,33 +2153,33 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@livekit/av-darwin-arm64@7.1.501':
-    resolution: {integrity: sha512-vUL1KJvoCicXewhRzeRCcJkqNynsLBhHKL8aJ63OShHnx8e6UGMkzmR70zUO23rZztxQpBxSG8Awah8Z/6Q4sg==}
+  '@livekit/av-darwin-arm64@10.0.0':
+    resolution: {integrity: sha512-wf6C/eMKzZT88/4HvOlGZJMA/C5mewKlGG56HMJaAP6U/gUHRVDagDvce7+sZWz5RMsj2CAMUWZ+jiF1UgAAxA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/av-darwin-x64@7.1.501':
-    resolution: {integrity: sha512-y5vd5kSZ6c/Yw4nN+st7NQ6ThIKE0k2n8Z6iYdFf+xLCIxOWyT3av/7wmuVt0QJOJTf9YUv3kQRGssepyvVYNQ==}
+  '@livekit/av-darwin-x64@10.0.0':
+    resolution: {integrity: sha512-Muw1jR+dpRHi0FLu8fHOCxDP/F/xGz1KOO9iIjAV+ObBCj0iPb1zXItWlpcVweU6JiaJpRN2HoI5FKpX+w0UeQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/av-linux-arm64@7.1.501':
-    resolution: {integrity: sha512-tSmB4MEsR8nDysD7p+lWedvabkoLPD6fV5xj3QHRgklwFXkk4yoiUyYbNZb2uIZOvrpMltxnm7kbAYGk34fdXg==}
+  '@livekit/av-linux-arm64@10.0.0':
+    resolution: {integrity: sha512-HVnzYLSKFrrR49epK37fV8eIbPuuWqbGoC7xXbmw0ziag1z0xUEZt072EEvmLcuCYMlX93At0se7Glh507751g==}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/av-linux-x64@7.1.501':
-    resolution: {integrity: sha512-jpCAtd4kUfLEMIwQW9PxjfrABXK4f91TZ5qx56b6pkkRBMrtFn4e2b1A08+WMeG0jI4X5Yd8XEnjlW5dUzEZaA==}
+  '@livekit/av-linux-x64@10.0.0':
+    resolution: {integrity: sha512-ZODmZ2bhfzjGrYF5KpwK7QHoaSVH96cX0o8sOGQT73VpgUCMDzcH+OSZWOlgFwUozk4jT/pjLfgGGPZtD2Dj7w==}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/av-win32-x64@7.1.501':
-    resolution: {integrity: sha512-u3klXmY8oMBbbLDKIOGUnEBhZQk3v9wrzj/ta6lIlhB4bLBKn1Aq/75BK8D7xOxalKjt/RZPGKn94K9ohvxIuA==}
+  '@livekit/av-win32-x64@10.0.0':
+    resolution: {integrity: sha512-zvgdIvuu8C5aM+rSkOTZLKqX0FsYaN5CXKysmkKLU+pEDz+pIzkFelxPYX7YreV111aTAY19Dzj2i0KGEFnOSQ==}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/av@7.1.501':
-    resolution: {integrity: sha512-o/T5WvmyMADwIKHx/XHdQ/gfGBikBRU7FZcJ0//COD24ev6YrCE9+L9jLp9HYR3X6Unosh4mlv8UcqFsivDVTw==}
+  '@livekit/av@10.0.0':
+    resolution: {integrity: sha512-i39au9JY9qqZ9b0yKa5+2E3BQD9JtbGlCxqDbSvFjxprdHTdP96NgsLHOViwLk84J+eCLIyNzcGw5G3zIK2ZhQ==}
     engines: {node: '>=18.0.0'}
 
   '@livekit/changesets-changelog-github@0.2.0':
@@ -6120,28 +6120,28 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@livekit/av-darwin-arm64@7.1.501':
+  '@livekit/av-darwin-arm64@10.0.0':
     optional: true
 
-  '@livekit/av-darwin-x64@7.1.501':
+  '@livekit/av-darwin-x64@10.0.0':
     optional: true
 
-  '@livekit/av-linux-arm64@7.1.501':
+  '@livekit/av-linux-arm64@10.0.0':
     optional: true
 
-  '@livekit/av-linux-x64@7.1.501':
+  '@livekit/av-linux-x64@10.0.0':
     optional: true
 
-  '@livekit/av-win32-x64@7.1.501':
+  '@livekit/av-win32-x64@10.0.0':
     optional: true
 
-  '@livekit/av@7.1.501':
+  '@livekit/av@10.0.0':
     optionalDependencies:
-      '@livekit/av-darwin-arm64': 7.1.501
-      '@livekit/av-darwin-x64': 7.1.501
-      '@livekit/av-linux-arm64': 7.1.501
-      '@livekit/av-linux-x64': 7.1.501
-      '@livekit/av-win32-x64': 7.1.501
+      '@livekit/av-darwin-arm64': 10.0.0
+      '@livekit/av-darwin-x64': 10.0.0
+      '@livekit/av-linux-arm64': 10.0.0
+      '@livekit/av-linux-x64': 10.0.0
+      '@livekit/av-win32-x64': 10.0.0
 
   '@livekit/changesets-changelog-github@0.2.0':
     dependencies:
