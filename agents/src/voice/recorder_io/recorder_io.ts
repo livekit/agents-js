@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import ffmpeg from 'fluent-ffmpeg';
@@ -10,6 +9,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { TransformStream } from 'node:stream/web';
+import { configureFfmpeg } from '../../ffmpeg.js';
 import { log } from '../../log.js';
 import { isStreamReaderReleaseError } from '../../stream/deferred_stream.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -25,10 +25,11 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { createSilenceFrame } from '../utils.js';
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+configureFfmpeg();
 
 const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
+const CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS = 2000;
 
 export interface RecorderOptions {
   agentSession: AgentSession;
@@ -59,6 +60,7 @@ export class RecorderIO {
   private lock: Mutex = new Mutex();
   private started: boolean = false;
   private closing: boolean = false;
+  private closePlayoutFlushTimeoutMs: number = CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS;
 
   // FFmpeg streaming state
   private pcmStream?: PassThrough;
@@ -111,6 +113,26 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
+      // On a force-interrupted shutdown, the session marks the speech done
+      // before playout settles, so the playout finished event may still be in flight.
+      // Give it a bounded window to land before fencing writers out.
+      if (this.outRecord?.hasPendingData) {
+        const timeoutController = new AbortController();
+        await Promise.race([
+          this.outRecord.waitForPlayout(),
+          delay(this.closePlayoutFlushTimeoutMs, { signal: timeoutController.signal }).catch(
+            () => {},
+          ),
+        ]);
+        timeoutController.abort();
+
+        if (this.outRecord.hasPendingData) {
+          this.logger.warn(
+            'RecorderIO closed before the last playback finished; dropping unflushed agent audio',
+          );
+        }
+      }
+
       // Establish shutdown fence before any async operations, so no writer can proceed.
       this.closing = true;
       this.started = false;
@@ -118,6 +140,19 @@ export class RecorderIO {
       if (this.forwardTask) {
         await cancelAndWait([this.forwardTask]);
         this.forwardTask = undefined;
+      }
+
+      // Flush input captured since the last write so the recording tail isn't dropped.
+      const inputBuf = this.inRecord?.takeBuf(this.outRecord?._lastSpeechEndTime) ?? [];
+      if (inputBuf.length > 0) {
+        try {
+          await this.inChan.write(inputBuf);
+          await this.outChan.write([]);
+        } catch (err) {
+          if (!isWritableStreamClosedError(err)) {
+            this.logger.error({ err }, 'Error writing final RecorderIO input buffer');
+          }
+        }
       }
 
       await this.inChan.close();

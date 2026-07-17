@@ -64,7 +64,10 @@ export interface RealtimeCapabilities {
   midSessionToolsUpdate?: boolean;
   /** Whether the tool and tool choice can be specified per response. */
   perResponseToolChoice?: boolean;
-  /** Whether the model can synchronize generated transcript timing natively. */
+  /**
+   * Whether the model synchronizes generated transcript timing natively.
+   * @deprecated Native transcript synchronization is no longer used by built-in models.
+   */
   nativeTranscriptSync?: boolean;
 }
 

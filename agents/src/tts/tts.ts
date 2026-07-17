@@ -614,6 +614,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   #inputTokens = 0;
   #outputTokens = 0;
   #startedTime: number;
+  #metricsQueue = new AsyncIterableQueue<SynthesizedAudio>();
 
   protected abortController = new AbortController();
 
@@ -638,7 +639,17 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     // is run **after** the constructor has finished. Otherwise we get
     // runtime error when trying to access class variables in the
     // `run` method.
-    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.queue.close()));
+    ThrowsPromise.resolve().then(() => this.mainTask().finally(() => this.#metricsQueue.close()));
+  }
+
+  private drainAttemptQueue(attemptQueue: AsyncIterableQueue<SynthesizedAudio>): Promise<void> {
+    return ThrowsPromise.resolve().then(async () => {
+      for await (const audio of attemptQueue) {
+        if (!this.#metricsQueue.closed) {
+          this.#metricsQueue.put(audio);
+        }
+      }
+    });
   }
 
   private _mainTaskImpl = async (span: Span) => {
@@ -649,8 +660,12 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     });
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
+      const attemptQueue = new AsyncIterableQueue<SynthesizedAudio>();
+      this.queue = attemptQueue;
+      const drainAttemptQueue = this.drainAttemptQueue(attemptQueue);
+
       try {
-        return await tracer.startActiveSpan(
+        const result = await tracer.startActiveSpan(
           async (attemptSpan) => {
             attemptSpan.setAttribute(traceTypes.ATTR_RETRY_COUNT, i);
             try {
@@ -662,27 +677,33 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
           },
           { name: 'tts_request_run' },
         );
+        if (!attemptQueue.closed) {
+          attemptQueue.close();
+        }
+        await drainAttemptQueue;
+        return result;
       } catch (error) {
-        if (error instanceof APIError) {
-          const retryInterval = intervalForRetry(this._connOptions, i);
+        if (!attemptQueue.closed) {
+          attemptQueue.close();
+        }
+        await drainAttemptQueue;
 
-          if (this._connOptions.maxRetry === 0 || !error.retryable) {
+        if (error instanceof APIError) {
+          const shouldRetry =
+            error.retryable && this._connOptions.maxRetry > 0 && i < this._connOptions.maxRetry;
+
+          if (!shouldRetry) {
             this.emitError({ error, recoverable: false });
             throw error;
-          } else if (i === this._connOptions.maxRetry) {
-            this.emitError({ error, recoverable: false });
-            throw new APIConnectionError({
-              message: `failed to generate TTS completion after ${this._connOptions.maxRetry + 1} attempts`,
-              options: { retryable: false },
-            });
-          } else {
-            // Don't emit error event for recoverable errors during retry loop
-            // to avoid ERR_UNHANDLED_ERROR or premature session termination
-            this.logger.warn(
-              { tts: this.#tts.label, attempt: i + 1, error },
-              `failed to generate TTS completion, retrying in ${retryInterval}ms`,
-            );
           }
+
+          const retryInterval = intervalForRetry(this._connOptions, i);
+          // Don't emit error event for recoverable errors during retry loop
+          // to avoid ERR_UNHANDLED_ERROR or premature session termination
+          this.logger.warn(
+            { tts: this.#tts.label, attempt: i + 1, error },
+            `failed to generate TTS completion, retrying in ${retryInterval}ms`,
+          );
 
           if (retryInterval > 0) {
             await delay(retryInterval);
@@ -740,7 +761,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
     let ttfb: bigint = BigInt(-1);
     let requestId = '';
 
-    for await (const audio of this.queue) {
+    for await (const audio of this.#metricsQueue) {
       audio.frame.userdata[USERDATA_TTS_STARTED_TIME] = this.#startedTime;
       this.output.put(audio);
       requestId = audio.requestId;
@@ -796,7 +817,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
   /** Close both the input and output of the TTS stream */
   close() {
     if (!this.queue.closed) this.queue.close();
-    if (!this.output.closed) this.output.close();
+    if (!this.#metricsQueue.closed) this.#metricsQueue.close();
     if (!this.abortController.signal.aborted) this.abortController.abort();
     this.closed = true;
   }

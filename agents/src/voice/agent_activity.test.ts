@@ -21,7 +21,7 @@ import { LLM, type LLMStream } from '../llm/llm.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { Future, Task } from '../utils.js';
 import { _getActivityTaskInfo } from './agent.js';
-import { AgentActivity } from './agent_activity.js';
+import { AgentActivity, onEnterStorage } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
 import type { AgentSessionEventTypes, UserInputTranscribedEvent } from './events.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -579,6 +579,77 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
     expect(fakeActivity._preemptiveGenerationCount).toBe(0);
     expect(generateReply).not.toHaveBeenCalled();
     expect(cancelPreemptiveGeneration).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentActivity - onEnter ignored tools', () => {
+  const makeFn = (name: string, flags = ToolFlag.NONE) =>
+    tool({ name, description: `${name} tool`, flags, execute: async () => name });
+
+  function buildIgnoredToolsActivity() {
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    Object.assign(activity, {
+      agent: {},
+      agentSession: {},
+    });
+    return activity;
+  }
+
+  it('returns bare and toolset-nested IGNORE_ON_ENTER tools only inside this onEnter', () => {
+    const endCall = makeFn('end_call', ToolFlag.IGNORE_ON_ENTER);
+    const keep = makeFn('keep');
+    const bareIgnored = makeFn('bare_ignored', ToolFlag.IGNORE_ON_ENTER);
+    const bareKeep = makeFn('bare_keep');
+    const toolset = new Toolset({ id: 'ts', tools: [endCall, keep] });
+    const toolCtx = new ToolContext([toolset, bareIgnored, bareKeep]);
+    const activity = buildIgnoredToolsActivity();
+
+    expect(activity._onEnterIgnoredTools(toolCtx)).toEqual([]);
+
+    onEnterStorage.run({ session: activity.agentSession, agent: activity.agent }, () => {
+      expect(
+        activity
+          ._onEnterIgnoredTools(toolCtx)
+          .map((t) => t.id)
+          .sort(),
+      ).toEqual(['bare_ignored', 'end_call']);
+    });
+
+    onEnterStorage.run({ session: activity.agentSession, agent: {} as never }, () => {
+      expect(activity._onEnterIgnoredTools(toolCtx)).toEqual([]);
+    });
+  });
+
+  it('hides ignored bare and toolset tools while preserving normal tools for nested replies', async () => {
+    const endCall = makeFn('end_call', ToolFlag.IGNORE_ON_ENTER);
+    const keep = makeFn('keep');
+    const bareIgnored = makeFn('bare_ignored', ToolFlag.IGNORE_ON_ENTER);
+    const toolset = new Toolset({ id: 'ts', tools: [endCall, keep] });
+    const activity = buildIgnoredToolsActivity();
+
+    await onEnterStorage.run(
+      { session: activity.agentSession, agent: activity.agent },
+      async () => {
+        const greetingTools = new ToolContext([toolset, bareIgnored]);
+        greetingTools._exclude(activity._onEnterIgnoredTools(greetingTools));
+        expect(greetingTools.flatten().map((t) => t.id)).toEqual(['keep']);
+        expect(greetingTools.toolsets).toEqual([toolset]);
+
+        await Promise.resolve();
+
+        const toolReplyTools = new ToolContext([toolset, bareIgnored]);
+        toolReplyTools._exclude(activity._onEnterIgnoredTools(toolReplyTools));
+        expect(toolReplyTools.flatten().map((t) => t.id)).toEqual(['keep']);
+      },
+    );
+
+    const restoredTools = new ToolContext([toolset, bareIgnored]);
+    expect(
+      restoredTools
+        .flatten()
+        .map((t) => t.id)
+        .sort(),
+    ).toEqual(['bare_ignored', 'end_call', 'keep']);
   });
 });
 
