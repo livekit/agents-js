@@ -995,6 +995,14 @@ export class AgentActivity implements RecognitionHooks {
         return;
       }
 
+      if (this._schedulingPaused || this.agentSession._activity !== this) {
+        if (Object.hasOwn(options, 'stt')) this.agent._stt = options.stt as STT | null;
+        if (Object.hasOwn(options, 'vad')) this.agent._vad = options.vad as VAD | null;
+        if (Object.hasOwn(options, 'llm')) this.agent._llm = options.llm as LLM | null;
+        if (Object.hasOwn(options, 'tts')) this.agent._tts = options.tts as TTS | null;
+        return;
+      }
+
       if (Object.hasOwn(options, 'stt')) {
         const oldStt = this.stt;
         if (oldStt instanceof STT) {

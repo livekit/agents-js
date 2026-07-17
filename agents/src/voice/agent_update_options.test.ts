@@ -374,6 +374,94 @@ describe('Agent.updateOptions', () => {
     await session.close().catch(() => {});
   });
 
+  it('keeps a queued update state-only when handoff pauses the old activity', async () => {
+    const oldStt = new ContextSTT('old-stt');
+    const oldLlm = new FakeLLM();
+    const oldTts = new FakeTTS();
+    const oldAgent = new Agent({
+      instructions: 'old',
+      stt: oldStt,
+      llm: oldLlm,
+      tts: oldTts,
+    });
+    const newStt = new ContextSTT('new-stt');
+    const newAgent = new Agent({
+      instructions: 'new',
+      stt: newStt,
+      llm: new FakeLLM(),
+      tts: new FakeTTS(),
+    });
+    const replacementStt = new ContextSTT('replacement-stt');
+    const replacementLlm = new FakeLLM();
+    const replacementTts = new FakeTTS();
+    const session = new AgentSession({ turnDetection: 'manual' });
+    await session.start({ agent: oldAgent });
+
+    try {
+      const oldActivity = session._activity!;
+      const pauseResourcesClosed = deferred();
+      const releasePause = deferred();
+      const internals = oldActivity as unknown as {
+        _closeSessionResources: () => Promise<void>;
+      };
+      const originalCloseResources = internals._closeSessionResources.bind(internals);
+      vi.spyOn(internals, '_closeSessionResources').mockImplementation(async () => {
+        await originalCloseResources();
+        pauseResourcesClosed.resolve();
+        await releasePause.promise;
+      });
+
+      const handoff = session._updateActivity(newAgent, { previousActivity: 'pause' });
+      await pauseResourcesClosed.promise;
+      const queuedUpdate = oldAgent.updateOptions({
+        stt: replacementStt,
+        llm: replacementLlm,
+        tts: replacementTts,
+      });
+      releasePause.resolve();
+      await Promise.all([queuedUpdate, handoff]);
+
+      expect(oldAgent.stt).toBe(replacementStt);
+      expect(oldAgent.llm).toBe(replacementLlm);
+      expect(oldAgent.tts).toBe(replacementTts);
+      for (const model of [
+        oldStt,
+        oldLlm,
+        oldTts,
+        replacementStt,
+        replacementLlm,
+        replacementTts,
+      ]) {
+        expect(model.listenerCount('metrics_collected')).toBe(0);
+        expect(model.listenerCount('error')).toBe(0);
+      }
+
+      const handoffCtx = ChatContext.empty();
+      handoffCtx.addMessage({ role: 'user', content: 'after handoff' });
+      const handoffEvent = { item: handoffCtx.items[0]! };
+      session.emit(AgentSessionEventTypes.ConversationItemAdded, handoffEvent);
+      expect(replacementStt.contextUpdates).toHaveLength(0);
+      expect(newStt.contextUpdates).toEqual([handoffEvent]);
+
+      await session._updateActivity(oldAgent, {
+        previousActivity: 'pause',
+        newActivity: 'resume',
+      });
+      expect(session._activity).toBe(oldActivity);
+      expect(replacementStt.listenerCount('metrics_collected')).toBeGreaterThan(0);
+      expect(replacementLlm.listenerCount('metrics_collected')).toBeGreaterThan(0);
+      expect(replacementTts.listenerCount('metrics_collected')).toBeGreaterThan(0);
+
+      const resumedCtx = ChatContext.empty();
+      resumedCtx.addMessage({ role: 'user', content: 'after resume' });
+      const resumedEvent = { item: resumedCtx.items[0]! };
+      session.emit(AgentSessionEventTypes.ConversationItemAdded, resumedEvent);
+      expect(replacementStt.contextUpdates).toEqual([resumedEvent]);
+    } finally {
+      await session.close().catch(() => {});
+    }
+  });
+
   it('moves STT context, keyterms, and error listeners to the replacement', async () => {
     const oldStt = new ContextSTT('old-context-stt');
     const replacementStt = new ContextSTT('replacement-context-stt');
