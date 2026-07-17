@@ -99,6 +99,7 @@ async function captureStartRequest(
   });
 
   const fishAudio = new TTS({ apiKey: 'test-key', baseURL, ...opts });
+  update?.(fishAudio);
   const stream = fishAudio.stream();
   const drain = (async () => {
     for await (const _event of stream) {
@@ -107,7 +108,6 @@ async function captureStartRequest(
   })();
 
   try {
-    update?.(fishAudio);
     stream.pushText('hello world.');
     stream.endInput();
     const request = await waitFor(startRequest);
@@ -172,6 +172,62 @@ describe('FishAudio streaming', () => {
     expect(request.mp3_bitrate).toBe(128);
     expect(request.opus_bitrate).toBe(-1000);
     expect(request.normalize).toBe(false);
+  });
+
+  it('snapshots options when each stream is constructed', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const requests: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = decode(Buffer.from(raw as ArrayBuffer)) as Record<string, unknown>;
+        if (message.event === 'start') {
+          requests.push(message.request as Record<string, unknown>);
+        } else if (message.event === 'stop') {
+          ws.send(encode({ event: 'finish', reason: 'stop' }));
+        }
+      });
+    });
+
+    const fishAudio = new TTS({
+      apiKey: 'test-key',
+      baseURL,
+      temperature: 0.2,
+      topP: 0.3,
+      normalize: false,
+    });
+    const streamA = fishAudio.stream();
+    fishAudio.updateOptions({ temperature: 0.8, topP: 0.9, normalize: true });
+    const streamB = fishAudio.stream();
+
+    try {
+      for (const [stream, text] of [
+        [streamA, 'stream A.'],
+        [streamB, 'stream B.'],
+      ] as const) {
+        stream.pushText(text);
+        stream.endInput();
+        for await (const _event of stream) {
+          // Drain each stream so its tasks finish before checking the requests.
+        }
+      }
+
+      expect(requests).toHaveLength(2);
+      expect(requests[0]).toMatchObject({
+        temperature: 0.2,
+        top_p: 0.3,
+        normalize: false,
+      });
+      expect(requests[1]).toMatchObject({
+        temperature: 0.8,
+        top_p: 0.9,
+        normalize: true,
+      });
+    } finally {
+      streamA.close();
+      streamB.close();
+      await fishAudio.close();
+      await closeWebSocketServer(wss);
+    }
   });
 
   it('validates temperature and topP', async () => {

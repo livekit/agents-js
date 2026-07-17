@@ -59,9 +59,17 @@ export interface TTSOptions {
   temperature?: number;
   /** Nucleus sampling probability mass (0-1). Defaults to 0.7. */
   topP?: number;
-  /** MP3 bitrate in kbps: 64, 128, or 192. Defaults to 64. */
+  /**
+   * MP3 bitrate request field in kbps: 64, 128, or 192. Defaults to 64.
+   * The JS plugin currently requests PCM output, so this shapes the Fish Audio
+   * request but does not change the emitted audio format or PCM bandwidth.
+   */
   mp3Bitrate?: MP3Bitrate;
-  /** Opus bitrate in bps: -1000 (auto), 24000, 32000, 48000, or 64000. Defaults to 64000. */
+  /**
+   * Opus bitrate request field in bps: -1000 (auto), 24000, 32000, 48000, or
+   * 64000. Defaults to 64000. The JS plugin currently requests PCM output, so
+   * this does not change the emitted audio format or PCM bandwidth.
+   */
   opusBitrate?: OpusBitrate;
   /** Whether Fish normalizes the input text before synthesis. Defaults to true. */
   normalize?: boolean;
@@ -257,11 +265,11 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
+    return new ChunkedStream(this, text, { ...this.#opts }, connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts, options?.connOptions);
+    return new SynthesizeStream(this, { ...this.#opts }, options?.connOptions);
   }
 
   prewarm(): void {
