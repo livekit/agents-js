@@ -31,6 +31,21 @@ async function collect(stream: ReadableStream<string>): Promise<string> {
   return result;
 }
 
+async function collectChunks(stream: ReadableStream<string>): Promise<string[]> {
+  const reader = stream.getReader();
+  const result: string[] = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      result.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return result;
+}
+
 describe('textTransforms.replace', () => {
   for (const chunkSize of [1, 2, 5, 11, 50]) {
     it(`replaces across chunk size ${chunkSize}`, async () => {
@@ -68,6 +83,29 @@ describe('textTransforms.replace', () => {
     expect(
       await collect(replace({ word: String.raw`\1 \n \t` })(streamText('a word here', 2))),
     ).toBe(String.raw`a \1 \n \t here`);
+  });
+
+  it('flushes non-prefix text immediately', async () => {
+    const transform = replace({ LiveKit: 'Lyve Kit' });
+    const chunks = await collectChunks(transform(streamText('you connect.', 100)));
+    expect(chunks).toEqual(['you connect.']);
+  });
+
+  it('holds only potential prefix', async () => {
+    const transform = replace({ LiveKit: 'Lyve Kit' });
+    const chunks = await collectChunks(transform(streamText('visit Live', 100)));
+    expect(chunks[0]).toBe('visit ');
+    expect(chunks.join('')).toBe('visit Live');
+  });
+
+  it('prefers longest overlapping key', async () => {
+    const transform = replace({ a: 'X', ab: 'Y' });
+    expect(await collect(transform(streamText('ab', 100)))).toBe('Y');
+  });
+
+  it('does not cascade', async () => {
+    const transform = replace({ a: 'b', b: 'c' });
+    expect(await collect(transform(streamText('a', 100)))).toBe('b');
   });
 
   it('applies callable and built-in transforms', async () => {

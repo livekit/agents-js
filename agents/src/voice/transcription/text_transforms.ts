@@ -193,8 +193,49 @@ export function replace(
   options: { caseSensitive?: boolean } = {},
 ): (text: ReadableStream<string>) => ReadableStream<string> {
   const entries = Object.entries(replacements);
-  const tailLen = entries.length > 0 ? Math.max(...entries.map(([old]) => old.length)) - 1 : 0;
-  const flags = options.caseSensitive ? 'gu' : 'giu';
+  const flags = options.caseSensitive ? 'u' : 'iu';
+  const lookup = new Map(
+    entries.map(([old, replacement]) => [
+      options.caseSensitive ? old : old.toLowerCase(),
+      replacement,
+    ]),
+  );
+  const pattern =
+    entries.length > 0
+      ? new RegExp(
+          entries
+            .map(([old]) => old)
+            .sort((a, b) => b.length - a.length)
+            .map(escapeRegex)
+            .join('|'),
+          `g${flags}`,
+        )
+      : null;
+  const maxPrefix = entries.length > 0 ? Math.max(...entries.map(([old]) => old.length - 1)) : 0;
+  const prefixes = new Set<string>();
+  for (const [old] of entries) {
+    for (let length = 1; length < old.length; length += 1) {
+      prefixes.add(old.slice(0, length));
+    }
+  }
+  const holdbackPattern =
+    prefixes.size > 0
+      ? new RegExp(`(?:${Array.from(prefixes).map(escapeRegex).join('|')})$`, flags)
+      : null;
+
+  const apply = (value: string): string => {
+    if (!pattern) return value;
+    return value.replace(
+      pattern,
+      (match) => lookup.get(options.caseSensitive ? match : match.toLowerCase())!,
+    );
+  };
+
+  const holdback = (value: string): number => {
+    if (!holdbackPattern) return 0;
+    const match = holdbackPattern.exec(value.slice(-maxPrefix));
+    return match ? match[0].length : 0;
+  };
 
   return (text: ReadableStream<string>) =>
     streamFromAsyncIterable(
@@ -202,24 +243,15 @@ export function replace(
         let buffer = '';
 
         for await (const chunk of readStream(text)) {
-          buffer += chunk;
-          if (buffer.length <= tailLen) {
-            continue;
+          buffer = apply(buffer + chunk);
+          const flushTo = buffer.length - holdback(buffer);
+          if (flushTo > 0) {
+            yield buffer.slice(0, flushTo);
+            buffer = buffer.slice(flushTo);
           }
-
-          for (const [old, replacement] of entries) {
-            buffer = buffer.replace(new RegExp(escapeRegex(old), flags), () => replacement);
-          }
-
-          const flushTo = buffer.length - tailLen;
-          yield buffer.slice(0, flushTo);
-          buffer = buffer.slice(flushTo);
         }
 
         if (buffer) {
-          for (const [old, replacement] of entries) {
-            buffer = buffer.replace(new RegExp(escapeRegex(old), flags), () => replacement);
-          }
           yield buffer;
         }
       })(),
