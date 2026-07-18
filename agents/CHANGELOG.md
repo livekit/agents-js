@@ -1,5 +1,37 @@
 # @livekit/agents
 
+## 1.5.3
+
+### Patch Changes
+
+- Export the `AudioInput` base class from the `voice` module so plugins and applications can implement custom agent audio inputs. - [#2036](https://github.com/livekit/agents-js/pull/2036) ([@aweitz](https://github.com/aweitz))
+
+- Commit the in-flight assistant turn (interrupted: true, partially-forwarded text) when the session closes mid-playout — previously a room disconnect during playback dropped the turn from chatCtx entirely, with no ConversationItemAdded emitted (#2041) - [#2042](https://github.com/livekit/agents-js/pull/2042) ([@Sarfaraz85](https://github.com/Sarfaraz85))
+
+- Restart chunked TTS retries with a fresh attempt queue so retried synthesis uses a fresh request ID and does not write to a closed failed-attempt queue. - [#1994](https://github.com/livekit/agents-js/pull/1994) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Honor `ToolFlag.IGNORE_ON_ENTER` for tools nested inside `Toolset`s. - [#2011](https://github.com/livekit/agents-js/pull/2011) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix modality-aware instruction templates to collapse identical variants and avoid duplicate rendered output. - [#2030](https://github.com/livekit/agents-js/pull/2030) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): stop dropping agent turns whose playback starts after audio forwarding completes (#1909, #1960; port of livekit/agents#5039). - [#1966](https://github.com/livekit/agents-js/pull/1966) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `forwardAudio` used to reject `firstFrameFut` (and detach its `PLAYBACK_STARTED` listener) in its `finally` block whenever no frame had played by the time forwarding finished. Two real scenarios hit this window: a speech paused in the thinking state by a brief user sound, whose buffered first frame only plays after the false interruption clears (#1909), and DataStream avatar outputs with `waitPlaybackStart: true`, which deliver `lk.playback_started` ~1s after frames were captured (#1960). In both cases the late playback-started event found nothing listening, the reply was classified "skipped", and the turn was silently removed from the chat context while the agent never entered the `speaking` state.
+
+  The `PLAYBACK_STARTED` listener now lives in `performAudioForwarding` so it outlives the forwarding task, and `forwardAudio` no longer settles the future; the reply tasks (including the `say()` path) settle it once the playout window ends, which also detaches the listener. A reported non-zero playback position on interruption is additionally honored as evidence of partial playback — but only when the segment actually captured a frame into the output (tracked via the output's segment count, which is also what makes the reported position fresh rather than stale) — covering avatars whose playback-started RPC races the interruption itself.
+
+- Preserve partial LLM response telemetry and generated function calls on every inference exit path. - [#2048](https://github.com/livekit/agents-js/pull/2048) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): stop RecorderIO from dropping the final agent speech at session teardown. A force-interrupted shutdown marks the current speech done before playout settles, so the recorder could close and fence out the in-flight playbackFinished flush, silently losing the last agent turn and trailing mic audio from the recording. RecorderIO.close() now waits (bounded) for the pending playback event — which carries the authoritative playback position — before fencing, flushes any input captured since the last write, and warns if unflushed agent audio had to be dropped. - [#2037](https://github.com/livekit/agents-js/pull/2037) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Deprecate the `nativeTranscriptSync` realtime model capability while preserving its existing transcript synchronization behavior for third-party models. Remove Phonic's redundant explicit opt-out now that it uses `stream_ahead_of_real_time` mode. - [#2044](https://github.com/livekit/agents-js/pull/2044) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Avoid splitting streamed replacement output mid-word when no replacement key prefix is pending. - [#2050](https://github.com/livekit/agents-js/pull/2050) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add a beta DTMF sending tool that publishes to the active agent session room. - [#2010](https://github.com/livekit/agents-js/pull/2010) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `speed` to xAI TTS inference options. - [#2028](https://github.com/livekit/agents-js/pull/2028) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.5.2
 
 ## 1.5.1
