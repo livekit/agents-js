@@ -21,12 +21,12 @@ describe('resolveHumanAgentRoomName', () => {
 });
 
 describe('createWarmTransferTask', () => {
-  it('rejects an empty humanAgentRoomName', () => {
+  it('rejects an empty roomName', () => {
     expect(() =>
       createWarmTransferTask({
         sipCallTo: '+15551234567',
         sipTrunkId: 'ST_dummy',
-        humanAgentRoomName: '',
+        roomName: '',
       }),
     ).toThrow(/must not be empty/);
   });

@@ -77,7 +77,7 @@ export interface WarmTransferTaskOptions {
    * (the same lifecycle as the default room), which also ends any egress
    * attached to it. Must differ from the caller room's name.
    */
-  humanAgentRoomName?: string;
+  roomName?: string;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
@@ -128,7 +128,7 @@ export function createWarmTransferTask({
   sipHeaders = {},
   dtmf,
   ringingTimeout,
-  humanAgentRoomName: rawHumanAgentRoomName,
+  roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
   callerHangupInstruction,
   instructions,
@@ -145,8 +145,8 @@ export function createWarmTransferTask({
     throw new Error('`sipCallTo` must be set');
   }
 
-  if (rawHumanAgentRoomName !== undefined && rawHumanAgentRoomName.length === 0) {
-    throw new Error('`humanAgentRoomName` must not be empty');
+  if (rawRoomName !== undefined && rawRoomName.length === 0) {
+    throw new Error('`roomName` must not be empty');
   }
 
   // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
@@ -387,7 +387,7 @@ export function createWarmTransferTask({
     }
 
     const ctx = jobCtx ?? getJobContext();
-    const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawHumanAgentRoomName);
+    const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
     const transferAgent = new Agent({
       instructions: task.instructions,
@@ -691,7 +691,7 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
     return `${callerRoomName}-human-agent`;
   }
   if (override === callerRoomName) {
-    throw new Error('`humanAgentRoomName` must differ from the caller room name');
+    throw new Error('`roomName` must differ from the caller room name');
   }
   return override;
 }
