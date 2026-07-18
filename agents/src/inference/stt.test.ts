@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
-import { initializeLogger } from '../log.js';
+import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
+import { initializeLogger, log } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
+import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   STT,
   type STTFallbackModel,
@@ -21,6 +23,10 @@ beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 /** Helper to create STT with required credentials. */
 function makeStt(overrides: Record<string, unknown> = {}) {
   const defaults = {
@@ -30,6 +36,16 @@ function makeStt(overrides: Record<string, unknown> = {}) {
     baseURL: 'https://example.livekit.cloud',
   };
   return new STT({ ...defaults, ...overrides });
+}
+
+function makeAssemblyStt(overrides: Record<string, unknown> = {}) {
+  return makeStt({ model: 'assemblyai/universal-3-5-pro', ...overrides });
+}
+
+function assistantItemEvent(text: string) {
+  return createConversationItemAddedEvent(
+    ChatMessage.create({ role: 'assistant', content: [text] }),
+  );
 }
 
 describe('parseSTTModelString', () => {
@@ -326,6 +342,111 @@ describe('STT diarization capabilities', () => {
     expect(stream['opts'].modelOptions).toHaveProperty('endpointing', 500);
 
     stream.close();
+  });
+});
+
+describe('STT agent_context carryover', () => {
+  it('agentContextCarryover defaults to enabled on AssemblyAI U3 Pro family models', () => {
+    for (const model of ['assemblyai/u3-rt-pro', 'assemblyai/universal-3-5-pro'] as const) {
+      const stt = makeAssemblyStt({ model });
+      expect(stt.capabilities.chatContext).toBe(true);
+    }
+  });
+
+  it('agentContextCarryover defaults off for unsupported models without warning', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('agentContextCarryover is off for non-AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('explicit true on unsupported model warns and is ignored', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const stt = makeAssemblyStt({
+      model: 'assemblyai/universal-streaming',
+      agentContextCarryover: true,
+    });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      { model: 'assemblyai/universal-streaming' },
+      'agentContextCarryover is enabled but model does not support it; ignoring',
+    );
+  });
+
+  it('explicit false disables carryover on a supported model', () => {
+    const stt = makeAssemblyStt({ agentContextCarryover: false });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('previous_context_n_turns=0 disables the default carryover', () => {
+    const stt = makeAssemblyStt({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('explicit true wins over previous_context_n_turns=0', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: { previous_context_n_turns: 0 },
+      agentContextCarryover: true,
+    });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+
+  it('forwards short assistant replies verbatim', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'Your room is booked for Tuesday.',
+    );
+  });
+
+  it('truncates oversize replies keeping the tail', () => {
+    const text = 'a'.repeat(2000) + 'b'.repeat(1750);
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent(text));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'b'.repeat(1750));
+  });
+
+  it('ignores non-assistant items', () => {
+    const stt = makeAssemblyStt();
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'user', content: ['hi there'] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'assistant', content: [] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('ignores agent handoff items', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('preserves explicit agent_context and later overwrites it with carryover', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: { agent_context: 'The agent asked for a booking date.' },
+    });
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'The agent asked for a booking date.',
+    );
+
+    stt._pushConversationItem(assistantItemEvent('And your zip code?'));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'And your zip code?');
   });
 });
 
