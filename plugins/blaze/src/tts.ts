@@ -39,6 +39,7 @@ import {
   resolveConfig,
 } from './config.js';
 import type { BlazeAudioFormat } from './models.js';
+import { DEFAULT_TTS_MODEL } from './models.js';
 
 // ────────────────────────────────────────────────
 // Sentence boundary regex
@@ -174,7 +175,7 @@ export interface TTSOptions {
   speakerId?: string;
   /** Bearer token for authentication. Falls back to BLAZE_API_TOKEN env var. */
   authToken?: string;
-  /** TTS model identifier. Default: "v1_5_pro" */
+  /** TTS model identifier. Default: "2.0-realtime" */
   model?: string;
   /** Audio output format. Blaze plugin currently supports only raw PCM. Default: 'pcm' */
   audioFormat?: BlazeAudioFormat | string;
@@ -240,7 +241,7 @@ function resolveTTSOptions(opts: TTSOptions): ResolvedTTSOptions {
     language: opts.language ?? 'vi',
     speakerId: opts.speakerId ?? 'default',
     authToken: opts.authToken ?? cfg.authToken,
-    model: opts.model ?? 'v1_5_pro',
+    model: opts.model ?? DEFAULT_TTS_MODEL,
     audioFormat: normalizeAudioFormat(opts.audioFormat),
     audioSpeed: opts.audioSpeed ?? '1',
     audioQuality: opts.audioQuality ?? 32,

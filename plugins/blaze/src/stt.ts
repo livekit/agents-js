@@ -7,13 +7,16 @@
  *
  * Speech-to-Text plugin interfacing with Blaze transcription service.
  *
- * API Endpoint: POST `/v1/stt/transcribe`
- * Input: WAV audio file (FormData), query params: language, enable_segments
- * Output: `{ transcription: string, confidence: number }`
+ * Batch API: POST `/v1/stt/transcribe` (default model: stt-async-1.5)
+ * Realtime API: WS `/v1/stt/realtime` (default model: stt-stream-1.5)
+ *
+ * Batch input: WAV audio file (FormData), query params: language, model, enable_segments
+ * Batch output: `{ transcription: string, confidence: number }`
  */
-import type { AudioBuffer } from '@livekit/agents';
-import { APIStatusError, mergeFrames, stt } from '@livekit/agents';
+import type { APIConnectOptions, AudioBuffer } from '@livekit/agents';
+import { APIConnectionError, APIStatusError, mergeFrames, stt } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import WebSocket from 'ws';
 import {
   type BlazeConfig,
   MAX_RETRY_COUNT,
@@ -24,6 +27,7 @@ import {
   sleep,
 } from './config.js';
 import type { BlazeSTTResponse } from './models.js';
+import { DEFAULT_STT_BATCH_MODEL, DEFAULT_STT_STREAM_MODEL } from './models.js';
 
 /** Options for the Blaze STT plugin. */
 export interface STTOptions {
@@ -37,6 +41,16 @@ export interface STTOptions {
   /** Bearer token for authentication. Falls back to BLAZE_API_TOKEN env var. */
   authToken?: string;
   /**
+   * Batch STT model for POST /v1/stt/transcribe.
+   * Default: stt-async-1.5
+   */
+  model?: string;
+  /**
+   * Realtime STT model for WS /v1/stt/realtime.
+   * Default: stt-stream-1.5
+   */
+  streamModel?: string;
+  /**
    * Dictionary of text replacements applied to transcription output.
    * Keys are search strings, values are replacements.
    * Example: `{ "AI": "trí tuệ nhân tạo" }`
@@ -44,6 +58,8 @@ export interface STTOptions {
   normalizationRules?: Record<string, string>;
   /** Request timeout in milliseconds. Default: 30000 */
   timeout?: number;
+  /** Sample rate for streaming PCM (Hz). Default: 16000 */
+  sampleRate?: number;
   /** Centralized configuration object. */
   config?: BlazeConfig;
 }
@@ -52,18 +68,28 @@ interface ResolvedSTTOptions {
   apiUrl: string;
   language: string;
   authToken: string;
+  model: string;
+  streamModel: string;
+  sampleRate: number;
   normalizationRules?: Record<string, string>;
   timeout: number;
+  wsUrl: string;
 }
 
 function resolveSTTOptions(opts: STTOptions): ResolvedSTTOptions {
   const cfg: ResolvedBlazeConfig = resolveConfig(opts.config);
+  const apiUrl = opts.apiUrl ?? cfg.apiUrl;
+  const wsBase = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://');
   return {
-    apiUrl: opts.apiUrl ?? cfg.apiUrl,
+    apiUrl,
     language: opts.language ?? 'vi',
     authToken: opts.authToken ?? cfg.authToken,
+    model: opts.model ?? DEFAULT_STT_BATCH_MODEL,
+    streamModel: opts.streamModel ?? DEFAULT_STT_STREAM_MODEL,
+    sampleRate: opts.sampleRate ?? 16000,
     normalizationRules: opts.normalizationRules,
     timeout: opts.timeout ?? cfg.sttTimeout,
+    wsUrl: `${wsBase}/v1/stt/realtime`,
   };
 }
 
@@ -77,7 +103,8 @@ function isRetryableRecognizeError(err: unknown): boolean {
  * Blaze Speech-to-Text Plugin.
  *
  * Converts audio to text using the Blaze transcription service.
- * Supports batch recognition only (no real-time streaming).
+ * Supports batch recognition (stt-async-1.5) and realtime streaming via
+ * WebSocket /v1/stt/realtime (stt-stream-1.5).
  * Includes retry logic with exponential backoff for transient failures.
  *
  * @example
@@ -105,7 +132,7 @@ export class STT extends stt.STT {
   readonly #pendingIdleTimeout: number = 10.0; // auto-clear after idle gap (s)
 
   constructor(opts: STTOptions = {}) {
-    super({ streaming: false, interimResults: false, alignedTranscript: false });
+    super({ streaming: true, interimResults: true, alignedTranscript: false });
     this.#opts = resolveSTTOptions(opts);
   }
 
@@ -113,9 +140,16 @@ export class STT extends stt.STT {
    * Update STT options at runtime.
    */
   updateOptions(opts: Partial<Omit<STTOptions, 'config'>>): void {
-    if (opts.apiUrl !== undefined) this.#opts.apiUrl = opts.apiUrl;
+    if (opts.apiUrl !== undefined) {
+      this.#opts.apiUrl = opts.apiUrl;
+      const wsBase = opts.apiUrl.replace('https://', 'wss://').replace('http://', 'ws://');
+      this.#opts.wsUrl = `${wsBase}/v1/stt/realtime`;
+    }
     if (opts.language !== undefined) this.#opts.language = opts.language;
     if (opts.authToken !== undefined) this.#opts.authToken = opts.authToken;
+    if (opts.model !== undefined) this.#opts.model = opts.model;
+    if (opts.streamModel !== undefined) this.#opts.streamModel = opts.streamModel;
+    if (opts.sampleRate !== undefined) this.#opts.sampleRate = opts.sampleRate;
     if (opts.normalizationRules !== undefined)
       this.#opts.normalizationRules = opts.normalizationRules;
     if (opts.timeout !== undefined) this.#opts.timeout = opts.timeout;
@@ -167,6 +201,7 @@ export class STT extends stt.STT {
     url.searchParams.set('language', this.#opts.language);
     url.searchParams.set('enable_segments', 'false');
     url.searchParams.set('enable_refinement', 'false');
+    url.searchParams.set('model', this.#opts.model);
 
     // 9. Make request with retry logic for transient failures
     let result: BlazeSTTResponse | undefined;
@@ -284,11 +319,13 @@ export class STT extends stt.STT {
     };
   }
 
-  stream(): stt.SpeechStream {
-    throw new Error(
-      'Blaze STT does not support streaming recognition. ' +
-        'Use _recognize() for batch transcription.',
-    );
+  stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
+    return new SpeechStream(this, this.#opts, options?.connOptions);
+  }
+
+  /** @internal */
+  get resolvedOptions(): ResolvedSTTOptions {
+    return this.#opts;
   }
 
   /**
@@ -341,5 +378,225 @@ export class STT extends stt.STT {
       result = result.replaceAll(from, to);
     }
     return result;
+  }
+}
+
+/**
+ * Realtime STT over Blaze WebSocket `/v1/stt/realtime` (stt-stream-1.5).
+ *
+ * Protocol:
+ *   1. Connect WS, send `{token, language, model}`
+ *   2. Wait for `{type: "ready"}` (or connection-ready messages)
+ *   3. Stream binary PCM (s16le mono, typically 16 kHz)
+ *   4. Receive `{type: "partial"|"final"|"error", text: "..."}`
+ */
+export class SpeechStream extends stt.SpeechStream {
+  label = 'blaze.SpeechStream';
+  #opts: ResolvedSTTOptions;
+
+  constructor(sttInstance: STT, opts: ResolvedSTTOptions, connOptions?: APIConnectOptions) {
+    super(sttInstance, opts.sampleRate, connOptions);
+    this.#opts = opts;
+  }
+
+  protected async run(): Promise<void> {
+    if (!this.#opts.authToken) {
+      throw new APIConnectionError({
+        message: 'Blaze STT streaming requires an auth token (BLAZE_API_TOKEN)',
+      });
+    }
+
+    const ws = new WebSocket(this.#opts.wsUrl);
+
+    await new Promise<void>((resolve, reject) => {
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: Error) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        ws.off('open', onOpen);
+        ws.off('error', onError);
+      };
+      ws.on('open', onOpen);
+      ws.on('error', onError);
+    });
+
+    ws.send(
+      JSON.stringify({
+        token: this.#opts.authToken,
+        language: this.#opts.language,
+        model: this.#opts.streamModel,
+      }),
+    );
+
+    // Wait for ready / auth ack.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new APIConnectionError({ message: 'STT realtime: timed out waiting for ready' }));
+      }, this.#opts.timeout);
+
+      const onMessage = (data: WebSocket.RawData) => {
+        const text =
+          typeof data === 'string'
+            ? data
+            : Buffer.isBuffer(data)
+              ? data.toString('utf8')
+              : '';
+        if (!text) return;
+        let msg: { type?: string; text?: string };
+        try {
+          msg = JSON.parse(text) as { type?: string; text?: string };
+        } catch {
+          return;
+        }
+        if (
+          msg.type === 'ready' ||
+          msg.type === 'successful-connection' ||
+          msg.type === 'successful-authentication'
+        ) {
+          cleanup();
+          resolve();
+          return;
+        }
+        if (msg.type === 'error') {
+          cleanup();
+          reject(
+            new APIConnectionError({
+              message: `STT realtime auth error: ${msg.text ?? JSON.stringify(msg)}`,
+            }),
+          );
+        }
+      };
+      const onError = (err: Error) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        clearTimeout(timer);
+        ws.off('message', onMessage);
+        ws.off('error', onError);
+      };
+      ws.on('message', onMessage);
+      ws.on('error', onError);
+    });
+
+    const sendLoop = (async () => {
+      for await (const frame of this.input) {
+        if (frame === SpeechStream.FLUSH_SENTINEL) {
+          continue;
+        }
+        const pcm = Buffer.from(
+          frame.data.buffer,
+          frame.data.byteOffset,
+          frame.data.byteLength,
+        );
+        if (pcm.byteLength > 0 && ws.readyState === WebSocket.OPEN) {
+          ws.send(pcm);
+        }
+      }
+    })();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onMessage = (data: WebSocket.RawData) => {
+          const text =
+            typeof data === 'string'
+              ? data
+              : Buffer.isBuffer(data)
+                ? data.toString('utf8')
+                : '';
+          if (!text) return;
+          let msg: { type?: string; text?: string; confidence?: number };
+          try {
+            msg = JSON.parse(text) as {
+              type?: string;
+              text?: string;
+              confidence?: number;
+            };
+          } catch {
+            return;
+          }
+
+          if (msg.type === 'error') {
+            reject(
+              new APIConnectionError({
+                message: `STT realtime error: ${msg.text ?? JSON.stringify(msg)}`,
+              }),
+            );
+            return;
+          }
+
+          if (msg.type !== 'partial' && msg.type !== 'final' && msg.type !== 'interim') {
+            return;
+          }
+
+          let transcript = msg.text ?? '';
+          const rules = this.#opts.normalizationRules;
+          if (rules) {
+            const entries = Object.entries(rules).sort((a, b) => b[0].length - a[0].length);
+            for (const [from, to] of entries) {
+              if (!from) continue;
+              transcript = transcript.replaceAll(from, to);
+            }
+          }
+          if (!transcript.trim() && msg.type !== 'final') return;
+
+          const eventType =
+            msg.type === 'final'
+              ? stt.SpeechEventType.FINAL_TRANSCRIPT
+              : stt.SpeechEventType.INTERIM_TRANSCRIPT;
+
+          this.queue.put({
+            type: eventType,
+            alternatives: [
+              {
+                text: transcript,
+                language: this.#opts.language as stt.SpeechData['language'],
+                startTime: 0,
+                endTime: 0,
+                confidence: msg.confidence ?? 1.0,
+              },
+            ],
+          });
+
+          if (msg.type === 'final') {
+            this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          }
+        };
+
+        const onClose = () => resolve();
+        const onError = (err: Error) => reject(err);
+
+        ws.on('message', onMessage);
+        ws.on('close', onClose);
+        ws.on('error', onError);
+
+        void sendLoop
+          .then(() => {
+            try {
+              ws.close();
+            } catch {
+              // ignore
+            }
+          })
+          .catch(reject);
+      });
+    } finally {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      try {
+        await sendLoop;
+      } catch {
+        // ignore send loop errors after close
+      }
+    }
   }
 }

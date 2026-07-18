@@ -24,7 +24,7 @@
  */
 import { Plugin } from '@livekit/agents';
 
-export { STT } from './stt.js';
+export { STT, SpeechStream } from './stt.js';
 export type { STTOptions } from './stt.js';
 
 export { TTS, ChunkedStream, SynthesizeStream } from './tts.js';
@@ -37,6 +37,7 @@ export type { BlazeConfig } from './config.js';
 
 export type {
   BlazeTTSModel,
+  BlazeSTTModel,
   BlazeLanguage,
   BlazeAudioFormat,
   BlazeGender,
@@ -44,6 +45,12 @@ export type {
   BlazeSTTResponse,
   BlazeChatMessage,
   BlazeLLMData,
+} from './models.js';
+
+export {
+  DEFAULT_TTS_MODEL,
+  DEFAULT_STT_BATCH_MODEL,
+  DEFAULT_STT_STREAM_MODEL,
 } from './models.js';
 
 class BlazePlugin extends Plugin {
