@@ -1001,6 +1001,15 @@ export class AudioRecognition {
     return this.userTurnSpan;
   }
 
+  private endUserTurnSpan(): void {
+    if (this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.end();
+    }
+    this.userTurnSpan = undefined;
+    this.userTurnStart = undefined;
+    this.sttRequestIds = [];
+  }
+
   private userTurnContext(span: Span): Context {
     const base = this.rootSpanContext ?? ROOT_CONTEXT;
     return trace.setSpan(base, span);
@@ -1008,7 +1017,7 @@ export class AudioRecognition {
 
   private async onSTTEvent(ev: SpeechEvent) {
     // Collect provider-known STT ids for this user turn. The actual attribute is
-    // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
+    // written once when the user_turn span ends (see endCommittedUserTurnSpan), to avoid
     // ordering issues with span creation.
     if (ev.requestId && !this.sttRequestIds.includes(ev.requestId)) {
       this.sttRequestIds.push(ev.requestId);
@@ -1630,7 +1639,7 @@ export class AudioRecognition {
         });
 
         if (committed) {
-          this._endUserTurnSpan({
+          this.endCommittedUserTurnSpan({
             transcript: this.audioTranscript,
             confidence: confidenceAvg,
             transcriptionDelay: metrics.transcriptionDelay ?? 0,
@@ -2106,11 +2115,7 @@ export class AudioRecognition {
       this.turnDetectorFlushed = true;
     }
 
-    if (this.userTurnSpan?.isRecording()) {
-      this.userTurnSpan.end();
-    }
-    this.userTurnSpan = undefined;
-    this.sttRequestIds = [];
+    this.endUserTurnSpan();
 
     const restartStt = async () => {
       const unlock = await this.sttLifecycleLock.lock();
@@ -2234,9 +2239,13 @@ export class AudioRecognition {
 
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
+
+    // A speech segment may never produce a transcript or committed turn. End
+    // its span after all recognition tasks stop so it is still exported.
+    this.endUserTurnSpan();
   }
 
-  private _endUserTurnSpan({
+  private endCommittedUserTurnSpan({
     transcript,
     confidence,
     transcriptionDelay,
@@ -2257,11 +2266,8 @@ export class AudioRecognition {
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
-      this.userTurnSpan.end();
-      this.userTurnSpan = undefined;
-      this.userTurnStart = undefined;
     }
-    this.sttRequestIds = [];
+    this.endUserTurnSpan();
   }
 
   private get vadBaseTurnDetection() {
