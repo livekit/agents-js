@@ -6,8 +6,32 @@
  * Type definitions for Blaze AI models and options.
  */
 
-/** Available TTS model identifiers. */
-export type BlazeTTSModel = 'v1_5_pro' | 'v2_pro' | string; // Allow custom model names
+/** Available TTS realtime model identifiers (gateway aliases). */
+export type BlazeTTSModel =
+  | '2.0-realtime'
+  | '1.5-realtime'
+  | '2.0-beta'
+  | '2.5-beta'
+  | '2.0-vllm'
+  | string; // Allow custom model names
+
+/** Available STT model identifiers. */
+export type BlazeSTTModel =
+  | 'stt-async-1.5'
+  | 'stt-async-1.0'
+  | 'stt-stream-1.5'
+  | 'v1.0'
+  | 'v2.0'
+  | string;
+
+/** Default batch STT model (POST /v1/stt/transcribe). */
+export const DEFAULT_STT_BATCH_MODEL: BlazeSTTModel = 'stt-async-1.5';
+
+/** Default realtime STT model (WS /v1/stt/realtime). */
+export const DEFAULT_STT_STREAM_MODEL: BlazeSTTModel = 'stt-stream-1.5';
+
+/** Default realtime TTS model (WS/HTTP /v1/tts/realtime). */
+export const DEFAULT_TTS_MODEL: BlazeTTSModel = '2.0-realtime';
 
 /** Supported language codes. */
 export type BlazeLanguage =
