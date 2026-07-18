@@ -31,6 +31,7 @@ import {
 } from '@livekit/agents';
 import type { APIConnectOptions } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import {
   type BlazeConfig,
@@ -452,12 +453,23 @@ async function synthesizeAudio(
 
   let response: Response;
   try {
-    response = await fetch(`${opts.apiUrl}/v1/tts/realtime`, {
-      method: 'POST',
-      headers: buildAuthHeaders(opts.authToken),
-      body: formData,
-      signal,
-    });
+    try {
+      response = await fetch(`${opts.apiUrl}/v1/tts/realtime`, {
+        method: 'POST',
+        headers: buildAuthHeaders(opts.authToken),
+        body: formData,
+        signal,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // External cancel (caller abort) vs internal timeout from setTimeout above.
+        if (abortSignal.aborted) {
+          throw err;
+        }
+        throw new APITimeoutError({ message: 'Blaze TTS request timed out' });
+      }
+      throw err;
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'unknown error');
@@ -531,15 +543,21 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run(): Promise<void> {
-    const requestId = crypto.randomUUID();
-    await synthesizeAudio(
-      this.inputText,
-      this.#opts,
-      requestId,
-      requestId,
-      this.queue,
-      this.abortSignal,
-    );
+    const requestId = randomUUID();
+    try {
+      await synthesizeAudio(
+        this.inputText,
+        this.#opts,
+        requestId,
+        requestId,
+        this.queue,
+        this.abortSignal,
+      );
+    } catch (err) {
+      // Swallow external cancels; timeouts are converted to APITimeoutError in synthesizeAudio.
+      if (err instanceof Error && err.name === 'AbortError') return;
+      throw err;
+    }
   }
 }
 
@@ -569,7 +587,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected async run(): Promise<void> {
     const opts = this.#opts;
-    const requestId = crypto.randomUUID();
+    const requestId = randomUUID();
     const segmentId = requestId;
     const silenceBuf = generateSilence(opts.sampleRate, opts.interSentenceSilenceMs);
 
