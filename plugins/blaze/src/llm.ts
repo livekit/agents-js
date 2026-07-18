@@ -15,6 +15,7 @@ import {
   APIConnectionError,
   APIError,
   APIStatusError,
+  APITimeoutError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
 } from '@livekit/agents';
@@ -247,9 +248,14 @@ export class BlazeLLMStream extends llm.LLMStream {
       let streamDone = false;
 
       resetStreamIdleTimeout();
+      let idleTimedOut = false;
       streamIdleController.signal.addEventListener(
         'abort',
         () => {
+          // Distinguish idle timeout from intentional abort of the whole request.
+          if (!this.abortController.signal.aborted) {
+            idleTimedOut = true;
+          }
           void reader.cancel().catch(() => {});
         },
         { once: true },
@@ -312,6 +318,14 @@ export class BlazeLLMStream extends llm.LLMStream {
         }
       } finally {
         reader.releaseLock();
+      }
+
+      // Idle timeout must not look like a successful end-of-stream — surface an
+      // error so the base LLMStream retry/error handling can engage.
+      if (idleTimedOut && !streamDone) {
+        throw new APITimeoutError({
+          message: `Blaze LLM stream idle timeout after no data (tokens so far: ${completionTokens})`,
+        });
       }
 
       // Emit final chunk with usage stats (approximate)

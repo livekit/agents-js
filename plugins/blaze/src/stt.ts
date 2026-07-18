@@ -485,19 +485,34 @@ export class SpeechStream extends stt.SpeechStream {
       ws.on('error', onError);
     });
 
+    // Abort controller so sendLoop terminates when the socket ends (error/close)
+    // without waiting forever for the still-open mic input queue.
+    const socketEnded = new AbortController();
+    let socketError: Error | null = null;
+
     const sendLoop = (async () => {
-      for await (const frame of this.input) {
-        if (frame === SpeechStream.FLUSH_SENTINEL) {
-          continue;
+      try {
+        for await (const frame of this.input) {
+          if (socketEnded.signal.aborted) break;
+          if (frame === SpeechStream.FLUSH_SENTINEL) {
+            continue;
+          }
+          if (ws.readyState !== WebSocket.OPEN) break;
+          const pcm = Buffer.from(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength,
+          );
+          if (pcm.byteLength > 0) {
+            try {
+              ws.send(pcm);
+            } catch {
+              break;
+            }
+          }
         }
-        const pcm = Buffer.from(
-          frame.data.buffer,
-          frame.data.byteOffset,
-          frame.data.byteLength,
-        );
-        if (pcm.byteLength > 0 && ws.readyState === WebSocket.OPEN) {
-          ws.send(pcm);
-        }
+      } catch {
+        // Input closed / aborted — normal shutdown path.
       }
     })();
 
@@ -523,11 +538,11 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           if (msg.type === 'error') {
-            reject(
-              new APIConnectionError({
-                message: `STT realtime error: ${msg.text ?? JSON.stringify(msg)}`,
-              }),
-            );
+            socketError = new APIConnectionError({
+              message: `STT realtime error: ${msg.text ?? JSON.stringify(msg)}`,
+            });
+            socketEnded.abort();
+            reject(socketError);
             return;
           }
 
@@ -569,8 +584,15 @@ export class SpeechStream extends stt.SpeechStream {
           }
         };
 
-        const onClose = () => resolve();
-        const onError = (err: Error) => reject(err);
+        const onClose = () => {
+          socketEnded.abort();
+          resolve();
+        };
+        const onError = (err: Error) => {
+          socketError = err;
+          socketEnded.abort();
+          reject(err);
+        };
 
         ws.on('message', onMessage);
         ws.on('close', onClose);
@@ -579,24 +601,29 @@ export class SpeechStream extends stt.SpeechStream {
         void sendLoop
           .then(() => {
             try {
-              ws.close();
+              if (ws.readyState === WebSocket.OPEN) ws.close();
             } catch {
               // ignore
             }
           })
           .catch(reject);
       });
+      if (socketError) throw socketError;
     } finally {
+      socketEnded.abort();
       try {
-        ws.close();
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
       } catch {
         // ignore
       }
-      try {
-        await sendLoop;
-      } catch {
-        // ignore send loop errors after close
-      }
+      // Don't await sendLoop forever — race against a short drain so mid-stream
+      // socket failures cannot deadlock run() while mic input stays open.
+      await Promise.race([
+        sendLoop.catch(() => undefined),
+        new Promise<void>((r) => setTimeout(r, 250)),
+      ]);
     }
   }
 }
