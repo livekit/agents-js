@@ -1017,7 +1017,7 @@ export class AudioRecognition {
 
   private async onSTTEvent(ev: SpeechEvent) {
     // Collect provider-known STT ids for this user turn. The actual attribute is
-    // written once when the user_turn span ends (see endCommittedUserTurnSpan), to avoid
+    // written once when the user_turn span ends (see _endUserTurnSpan), to avoid
     // ordering issues with span creation.
     if (ev.requestId && !this.sttRequestIds.includes(ev.requestId)) {
       this.sttRequestIds.push(ev.requestId);
@@ -1639,7 +1639,7 @@ export class AudioRecognition {
         });
 
         if (committed) {
-          this.endCommittedUserTurnSpan({
+          this._endUserTurnSpan({
             transcript: this.audioTranscript,
             confidence: confidenceAvg,
             transcriptionDelay: metrics.transcriptionDelay ?? 0,
@@ -2245,7 +2245,7 @@ export class AudioRecognition {
     this.endUserTurnSpan();
   }
 
-  private endCommittedUserTurnSpan({
+  private _endUserTurnSpan({
     transcript,
     confidence,
     transcriptionDelay,
