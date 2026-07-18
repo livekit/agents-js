@@ -2106,11 +2106,7 @@ export class AudioRecognition {
       this.turnDetectorFlushed = true;
     }
 
-    if (this.userTurnSpan?.isRecording()) {
-      this.userTurnSpan.end();
-    }
-    this.userTurnSpan = undefined;
-    this.sttRequestIds = [];
+    this._endUserTurnSpan();
 
     const restartStt = async () => {
       const unlock = await this.sttLifecycleLock.lock();
@@ -2234,33 +2230,34 @@ export class AudioRecognition {
 
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
+
+    // A speech segment may never produce a transcript or committed turn. End
+    // its span after all recognition tasks stop so it is still exported.
+    this._endUserTurnSpan();
   }
 
-  private _endUserTurnSpan({
-    transcript,
-    confidence,
-    transcriptionDelay,
-    endOfUtteranceDelay,
-  }: {
+  private _endUserTurnSpan(info?: {
     transcript: string;
     confidence: number;
     transcriptionDelay: number;
     endOfUtteranceDelay: number;
   }): void {
-    if (this.userTurnSpan) {
+    if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
-        [traceTypes.ATTR_USER_TRANSCRIPT]: transcript,
-        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidence,
-        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
-        [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
+        [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
+        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay,
       });
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
-      this.userTurnSpan.end();
-      this.userTurnSpan = undefined;
-      this.userTurnStart = undefined;
     }
+    if (this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.end();
+    }
+    this.userTurnSpan = undefined;
+    this.userTurnStart = undefined;
     this.sttRequestIds = [];
   }
 
