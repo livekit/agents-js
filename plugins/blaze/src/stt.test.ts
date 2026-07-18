@@ -469,7 +469,7 @@ describe('STT', () => {
       expect(capturedWavSize).toBe(44 + 320); // no pending after discard
     });
 
-    it('discards buffer when duration exceeds maxPendingDuration', async () => {
+    it('discards buffer when duration exceeds maxPendingDurationMs', async () => {
       fetchMock.mockResolvedValue(emptyFetchResponse());
 
       const sttInstance = new STT({
@@ -477,7 +477,7 @@ describe('STT', () => {
         apiUrl: 'http://stt:8080',
       }) as STTWithRecognize;
 
-      // At 16kHz, 16-bit, mono: 5s = 5 * 16000 * 2 = 160000 bytes
+      // At 16kHz, 16-bit, mono: 5000ms = 5 * 16000 * 2 = 160000 bytes
       // Use a large frame whose PCM > 160000 bytes
       const largeSamples = 80500; // 161000 bytes > 160000
       const largeFrame = makePcmFrame(largeSamples);
