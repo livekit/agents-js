@@ -489,6 +489,7 @@ export class SpeechStream extends stt.SpeechStream {
     // without waiting forever for the still-open mic input queue.
     const socketEnded = new AbortController();
     let socketError: Error | null = null;
+    let speaking = false;
 
     const sendLoop = (async () => {
       try {
@@ -561,6 +562,12 @@ export class SpeechStream extends stt.SpeechStream {
           }
           if (!transcript.trim() && msg.type !== 'final') return;
 
+          // AgentSession stt turn-detection needs START_OF_SPEECH to open the user turn.
+          if (transcript.trim() && !speaking) {
+            speaking = true;
+            this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
+          }
+
           const eventType =
             msg.type === 'final'
               ? stt.SpeechEventType.FINAL_TRANSCRIPT
@@ -579,7 +586,8 @@ export class SpeechStream extends stt.SpeechStream {
             ],
           });
 
-          if (msg.type === 'final') {
+          if (msg.type === 'final' && speaking) {
+            speaking = false;
             this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
           }
         };
