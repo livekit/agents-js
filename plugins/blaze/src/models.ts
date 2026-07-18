@@ -17,15 +17,15 @@ export type BlazeTTSModel =
 
 /** Available STT model identifiers. */
 export type BlazeSTTModel =
+  | 'v2.0'
+  | 'v1.0'
+  | 'stt-stream-1.5'
   | 'stt-async-1.5'
   | 'stt-async-1.0'
-  | 'stt-stream-1.5'
-  | 'v1.0'
-  | 'v2.0'
   | string;
 
-/** Default batch STT model (POST /v1/stt/transcribe). */
-export const DEFAULT_STT_BATCH_MODEL: BlazeSTTModel = 'stt-async-1.5';
+/** Default batch STT model for POST /v1/stt/transcribe (sync realtime path). */
+export const DEFAULT_STT_BATCH_MODEL: BlazeSTTModel = 'v2.0';
 
 /** Default realtime STT model (WS /v1/stt/realtime). */
 export const DEFAULT_STT_STREAM_MODEL: BlazeSTTModel = 'stt-stream-1.5';

@@ -29,7 +29,7 @@ describe('STT', () => {
   it('supports streaming with latest models', () => {
     const sttInstance = new STT({ authToken: 'test', apiUrl: 'http://stt:8080' });
     expect(sttInstance.capabilities.streaming).toBe(true);
-    expect(sttInstance.resolvedOptions.model).toBe('stt-async-1.5');
+    expect(sttInstance.resolvedOptions.model).toBe('v2.0');
     expect(sttInstance.resolvedOptions.streamModel).toBe('stt-stream-1.5');
     const stream = sttInstance.stream();
     expect(stream).toBeDefined();
@@ -95,7 +95,7 @@ describe('STT', () => {
       expect(url).toContain('/v1/stt/transcribe');
       expect(url).toContain('language=vi');
       expect(url).toContain('enable_segments=false');
-      expect(url).toContain('model=stt-async-1.5');
+      expect(url).toContain('model=v2.0');
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
     });

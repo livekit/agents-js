@@ -7,7 +7,7 @@
  *
  * Speech-to-Text plugin interfacing with Blaze transcription service.
  *
- * Batch API: POST `/v1/stt/transcribe` (default model: stt-async-1.5)
+ * Batch API: POST `/v1/stt/transcribe` (default model: v2.0)
  * Realtime API: WS `/v1/stt/realtime` (default model: stt-stream-1.5)
  *
  * Batch input: WAV audio file (FormData), query params: language, model, enable_segments
@@ -42,7 +42,7 @@ export interface STTOptions {
   authToken?: string;
   /**
    * Batch STT model for POST /v1/stt/transcribe.
-   * Default: stt-async-1.5
+   * Default: v2.0
    */
   model?: string;
   /**
@@ -103,7 +103,7 @@ function isRetryableRecognizeError(err: unknown): boolean {
  * Blaze Speech-to-Text Plugin.
  *
  * Converts audio to text using the Blaze transcription service.
- * Supports batch recognition (stt-async-1.5) and realtime streaming via
+ * Supports batch recognition (v2.0) and realtime streaming via
  * WebSocket /v1/stt/realtime (stt-stream-1.5).
  * Includes retry logic with exponential backoff for transient failures.
  *
