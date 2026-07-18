@@ -407,83 +407,98 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     const ws = new WebSocket(this.#opts.wsUrl);
-
-    await new Promise<void>((resolve, reject) => {
-      const onOpen = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (err: Error) => {
-        cleanup();
-        reject(err);
-      };
-      const cleanup = () => {
-        ws.off('open', onOpen);
-        ws.off('error', onError);
-      };
-      ws.on('open', onOpen);
-      ws.on('error', onError);
-    });
-
-    ws.send(
-      JSON.stringify({
-        token: this.#opts.authToken,
-        language: this.#opts.language,
-        model: this.#opts.streamModel,
-      }),
-    );
-
-    // Wait for ready / auth ack.
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new APIConnectionError({ message: 'STT realtime: timed out waiting for ready' }));
-      }, this.#opts.timeout);
-
-      const onMessage = (data: WebSocket.RawData) => {
-        const text =
-          typeof data === 'string'
-            ? data
-            : Buffer.isBuffer(data)
-              ? data.toString('utf8')
-              : '';
-        if (!text) return;
-        let msg: { type?: string; text?: string };
-        try {
-          msg = JSON.parse(text) as { type?: string; text?: string };
-        } catch {
-          return;
+    const closeWsSilently = () => {
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
         }
-        if (
-          msg.type === 'ready' ||
-          msg.type === 'successful-connection' ||
-          msg.type === 'successful-authentication'
-        ) {
+      } catch {
+        // ignore
+      }
+    };
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onOpen = () => {
           cleanup();
           resolve();
-          return;
-        }
-        if (msg.type === 'error') {
+        };
+        const onError = (err: Error) => {
           cleanup();
-          reject(
-            new APIConnectionError({
-              message: `STT realtime auth error: ${msg.text ?? JSON.stringify(msg)}`,
-            }),
-          );
-        }
-      };
-      const onError = (err: Error) => {
-        cleanup();
-        reject(err);
-      };
-      const cleanup = () => {
-        clearTimeout(timer);
-        ws.off('message', onMessage);
-        ws.off('error', onError);
-      };
-      ws.on('message', onMessage);
-      ws.on('error', onError);
-    });
+          reject(err);
+        };
+        const cleanup = () => {
+          ws.off('open', onOpen);
+          ws.off('error', onError);
+        };
+        ws.on('open', onOpen);
+        ws.on('error', onError);
+      });
+
+      ws.send(
+        JSON.stringify({
+          token: this.#opts.authToken,
+          language: this.#opts.language,
+          model: this.#opts.streamModel,
+        }),
+      );
+
+      // Wait for ready / auth ack.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new APIConnectionError({ message: 'STT realtime: timed out waiting for ready' }));
+        }, this.#opts.timeout);
+
+        const onMessage = (data: WebSocket.RawData) => {
+          const text =
+            typeof data === 'string'
+              ? data
+              : Buffer.isBuffer(data)
+                ? data.toString('utf8')
+                : '';
+          if (!text) return;
+          let msg: { type?: string; text?: string };
+          try {
+            msg = JSON.parse(text) as { type?: string; text?: string };
+          } catch {
+            return;
+          }
+          if (
+            msg.type === 'ready' ||
+            msg.type === 'successful-connection' ||
+            msg.type === 'successful-authentication'
+          ) {
+            cleanup();
+            resolve();
+            return;
+          }
+          if (msg.type === 'error') {
+            cleanup();
+            reject(
+              new APIConnectionError({
+                message: `STT realtime auth error: ${msg.text ?? JSON.stringify(msg)}`,
+              }),
+            );
+          }
+        };
+        const onError = (err: Error) => {
+          cleanup();
+          reject(err);
+        };
+        const cleanup = () => {
+          clearTimeout(timer);
+          ws.off('message', onMessage);
+          ws.off('error', onError);
+        };
+        ws.on('message', onMessage);
+        ws.on('error', onError);
+      });
+    } catch (err) {
+      // Handshake failures must not leak open sockets across base-class retries.
+      closeWsSilently();
+      throw err;
+    }
 
     // Abort controller so sendLoop terminates when the socket ends (error/close)
     // without waiting forever for the still-open mic input queue.
