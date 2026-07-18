@@ -121,10 +121,9 @@ export interface STTOptions {
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
   /**
-   * When the model supports it, let an `AgentSession` push each assistant reply into
-   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
-   * set true to enable. Prior user turns are carried automatically by the model regardless of
-   * this flag. Ignored on models without context support.
+   * @deprecated Use `new AgentSession({ sttContextOptions: { forwardChatContext: ... } })`
+   * instead. On the Universal-3 Pro family, assistant replies are carried into `agentContext` by
+   * default; pass `false` to opt out. On other models it is off.
    */
   agentContextCarryover?: boolean;
   baseUrl: string;
@@ -156,20 +155,25 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
-    // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
+    // u3-rt-pro family — "u3-pro" is normalized below — supports native chat context.
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
-    if (opts.agentContextCarryover && !supportsCarryover) {
+    if (opts.agentContextCarryover !== undefined) {
       log().warn(
-        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+        'agentContextCarryover is deprecated, use AgentSession({ sttContextOptions: { forwardChatContext: ... } }) instead',
       );
+      if (opts.agentContextCarryover && !supportsCarryover) {
+        log().warn(
+          `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+        );
+      }
     }
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
-      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
+      chatContext: supportsCarryover && (opts.agentContextCarryover ?? true),
     });
 
     if (opts.speechModel === 'u3-pro') {

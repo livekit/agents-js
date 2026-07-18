@@ -40,6 +40,7 @@ export {
   KeytermDetector,
   type KeytermDetectionOptions,
   type KeytermsOptions,
+  type STTContextOptions,
 } from './keyterm_detection.js';
 export {
   AudioInput,

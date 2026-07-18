@@ -21,6 +21,8 @@ import {
   formatInput,
   parseToolCall,
   resolveDetection,
+  resolveSTTContextOptions,
+  sttContextFromKeytermsOptions,
 } from './keyterm_detection.js';
 
 type DetectionResult = [string[], string[], string[]];
@@ -675,5 +677,40 @@ describe('module helpers', () => {
     expect(resolved.enabled).toBe(true);
     expect(resolved.turnInterval).toBe(1);
     expect(resolved.maxKeyterms).toBeUndefined();
+  });
+
+  it('resolve STT context options defaults', () => {
+    const resolved = resolveSTTContextOptions(undefined);
+    expect(resolved.keyterms).toEqual([]);
+    expect(resolved.keytermDetection.enabled).toBe(false);
+    expect(resolved.forwardChatContext).toBe(true);
+  });
+
+  it('resolve STT context options passthrough', () => {
+    const resolved = resolveSTTContextOptions({
+      keyterms: ['LiveKit'],
+      keytermDetection: { enabled: true, turnInterval: 2 },
+      forwardChatContext: false,
+    });
+
+    expect(resolved.keyterms).toEqual(['LiveKit']);
+    expect(resolved.keytermDetection.enabled).toBe(true);
+    expect(resolved.keytermDetection.turnInterval).toBe(2);
+    expect(resolved.forwardChatContext).toBe(false);
+  });
+
+  it('STT context from keyterms options maps keys', () => {
+    const mapped = sttContextFromKeytermsOptions({
+      keyterms: ['Acme'],
+      keytermDetection: { enabled: true },
+    });
+    expect(mapped).toEqual({ keyterms: ['Acme'], keytermDetection: { enabled: true } });
+
+    const resolved = resolveSTTContextOptions(mapped);
+    expect(resolved.keyterms).toEqual(['Acme']);
+    expect(resolved.keytermDetection.enabled).toBe(true);
+    expect(resolved.forwardChatContext).toBe(true);
+
+    expect(sttContextFromKeytermsOptions(undefined)).toEqual({});
   });
 });

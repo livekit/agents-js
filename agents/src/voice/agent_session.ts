@@ -95,7 +95,8 @@ import { AgentInput, AgentOutput } from './io.js';
 import {
   KeytermDetector,
   type KeytermsOptions,
-  resolveKeytermsOptions,
+  type ResolvedSTTContextOptions,
+  type STTContextOptions,
 } from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
@@ -181,6 +182,7 @@ export function resolveRecordingOptions(
 
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
+  sttContextOptions: ResolvedSTTContextOptions;
   useTtsAlignedTranscript: boolean;
   maxToolSteps: number;
   userAwayTimeout: number | null;
@@ -310,9 +312,16 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   turnHandling?: Partial<TurnHandlingOptions>;
 
   /**
-   * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
-   * (LLM extraction). Applies to STTs that accept a term list; on others it warns
-   * and is ignored.
+   * Conversation-aware context for the STT: static `keyterms` plus `keytermDetection` for STTs
+   * that accept a term list, and `forwardChatContext` (on by default) that forwards conversation
+   * turns to STTs that consume context directly. Applied where the STT supports it, ignored
+   * otherwise.
+   */
+  sttContextOptions?: STTContextOptions;
+
+  /**
+   * @deprecated Use `sttContextOptions` instead. Its `keyterms`/`keytermDetection` keys map onto
+   * the new option.
    */
   keytermsOptions?: KeytermsOptions;
 
@@ -573,10 +582,9 @@ export class AgentSession<
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
 
-    const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
     this._keytermDetector = new KeytermDetector({
-      staticKeyterms: keytermsOptions.keyterms,
-      options: keytermsOptions.keytermDetection,
+      staticKeyterms: this.sessionOptions.sttContextOptions.keyterms,
+      options: this.sessionOptions.sttContextOptions.keytermDetection,
     });
 
     this.options = legacyVoiceOptions;

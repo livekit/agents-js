@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -70,6 +71,90 @@ describe('AssemblyAI options', () => {
           previousContextNTurns: 5,
         }),
     ).toThrow(/previousContextNTurns/);
+  });
+
+  it('carryover is on by default for U3 Pro family', () => {
+    for (const speechModel of [
+      'u3-rt-pro',
+      'u3-rt-pro-beta-1',
+      'universal-3-5-pro',
+      'u3-pro',
+    ] as const) {
+      const stt = new STT({ apiKey: 'test-key', speechModel });
+      expect(stt.capabilities.chatContext).toBe(true);
+    }
+  });
+
+  it('carryover default does not warn', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'universal-3-5-pro' });
+
+    expect(stt.capabilities.chatContext).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('deprecated agentContextCarryover true still enables and warns', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({
+      apiKey: 'test-key',
+      speechModel: 'universal-3-5-pro',
+      agentContextCarryover: true,
+    });
+
+    expect(stt.capabilities.chatContext).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
+    warn.mockRestore();
+  });
+
+  it('carryover defaults off for unsupported models without warning', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'universal-streaming-english' });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('deprecated agentContextCarryover true on unsupported model warns and is ignored', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({
+      apiKey: 'test-key',
+      speechModel: 'universal-streaming-english',
+      agentContextCarryover: true,
+    });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not support it'));
+    warn.mockRestore();
+  });
+
+  it('deprecated agentContextCarryover false disables and warns', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({ apiKey: 'test-key', agentContextCarryover: false });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
+    warn.mockRestore();
+  });
+
+  it('deprecated agentContextCarryover true wins over previousContextNTurns zero', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const stt = new STT({
+      apiKey: 'test-key',
+      previousContextNTurns: 0,
+      agentContextCarryover: true,
+    });
+
+    expect(stt.capabilities.chatContext).toBe(true);
+    warn.mockRestore();
   });
 
   it('forwards inactivity timeout to the streaming query', async () => {
