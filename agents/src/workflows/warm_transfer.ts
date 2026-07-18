@@ -63,6 +63,21 @@ export interface WarmTransferTaskOptions {
    * nearest second.
    */
   ringingTimeout?: number | null;
+  /**
+   * Name of the room used to dial and brief the human agent. Defaults to
+   * `${callerRoom.name}-human-agent`.
+   *
+   * Set this to control the briefing room's configuration: pre-create a room
+   * under this name (e.g. with `RoomServiceClient.createRoom` and an `egress`
+   * request to record the transfer leg) before running the task, and the
+   * transfer agent joins the pre-configured room instead of implicitly
+   * creating one with project defaults.
+   *
+   * The room is deleted when the transfer completes, fails, or is cancelled
+   * (the same lifecycle as the default room), which also ends any egress
+   * attached to it. Must differ from the caller room's name.
+   */
+  roomName?: string;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
@@ -113,6 +128,7 @@ export function createWarmTransferTask({
   sipHeaders = {},
   dtmf,
   ringingTimeout,
+  roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
   callerHangupInstruction,
   instructions,
@@ -127,6 +143,10 @@ export function createWarmTransferTask({
 }: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
   if (!sipCallTo) {
     throw new Error('`sipCallTo` must be set');
+  }
+
+  if (rawRoomName !== undefined && rawRoomName.length === 0) {
+    throw new Error('`roomName` must not be empty');
   }
 
   // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
@@ -367,7 +387,7 @@ export function createWarmTransferTask({
     }
 
     const ctx = jobCtx ?? getJobContext();
-    const humanAgentRoomName = `${callerRoom.name}-human-agent`;
+    const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
     const transferAgent = new Agent({
       instructions: task.instructions,
@@ -659,6 +679,21 @@ function formatConversationHistory(chatCtx?: ChatContext): string {
     previousConversation += `${role}: ${content}\n`;
   }
   return previousConversation;
+}
+
+/**
+ * Resolve the name of the room used to dial and brief the human agent.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function resolveHumanAgentRoomName(callerRoomName: string, override?: string): string {
+  if (override === undefined) {
+    return `${callerRoomName}-human-agent`;
+  }
+  if (override === callerRoomName) {
+    throw new Error('`roomName` must differ from the caller room name');
+  }
+  return override;
 }
 
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
