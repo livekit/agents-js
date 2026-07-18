@@ -126,10 +126,10 @@ export class STT extends stt.STT {
   #pendingEmptyCount: number = 0;
   #lastRecognizeTime: number = 0;
 
-  // Safety limits (mirrors Python defaults)
-  readonly #maxPendingDuration: number = 5.0; // seconds of buffered audio
+  // Safety limits (mirrors Python defaults; times in ms per repo convention)
+  readonly #maxPendingDurationMs: number = 5000; // max buffered audio duration
   readonly #maxPendingSegments: number = 3; // consecutive empty segments
-  readonly #pendingIdleTimeout: number = 10.0; // auto-clear after idle gap (s)
+  readonly #pendingIdleTimeoutMs: number = 10000; // auto-clear after idle gap
 
   constructor(opts: STTOptions = {}) {
     super({ streaming: true, interimResults: true, alignedTranscript: false });
@@ -165,10 +165,10 @@ export class STT extends stt.STT {
     );
 
     // 3. Auto-clear stale pending buffer if too much time has elapsed
-    const now = Date.now() / 1000; // seconds
+    const now = Date.now();
     if (this.#pendingPcm.length > 0 && this.#lastRecognizeTime > 0) {
-      const idleGap = now - this.#lastRecognizeTime;
-      if (idleGap > this.#pendingIdleTimeout) {
+      const idleGapMs = now - this.#lastRecognizeTime;
+      if (idleGapMs > this.#pendingIdleTimeoutMs) {
         this.#pendingPcm = Buffer.alloc(0);
         this.#pendingEmptyCount = 0;
       }
@@ -265,19 +265,19 @@ export class STT extends stt.STT {
       this.#pendingEmptyCount++;
 
       const bytesPerSample = 2 * frame.channels; // 16-bit PCM
-      const segmentDuration =
+      const segmentDurationMs =
         frame.sampleRate && bytesPerSample
-          ? segmentPcm.byteLength / (frame.sampleRate * bytesPerSample)
+          ? (segmentPcm.byteLength * 1000) / (frame.sampleRate * bytesPerSample)
           : 0;
-      const pendingDuration =
+      const pendingDurationMs =
         this.#pendingPcm.length > 0 && frame.sampleRate && bytesPerSample
-          ? this.#pendingPcm.byteLength / (frame.sampleRate * bytesPerSample)
+          ? (this.#pendingPcm.byteLength * 1000) / (frame.sampleRate * bytesPerSample)
           : 0;
-      const totalPendingDuration = pendingDuration + segmentDuration;
+      const totalPendingDurationMs = pendingDurationMs + segmentDurationMs;
 
       if (
         this.#pendingEmptyCount <= this.#maxPendingSegments &&
-        totalPendingDuration <= this.#maxPendingDuration
+        totalPendingDurationMs <= this.#maxPendingDurationMs
       ) {
         // Buffer combined PCM for next call
         this.#pendingPcm = pcmData;
