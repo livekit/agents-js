@@ -239,6 +239,11 @@ export abstract class SynthesizeStream
         // already surfaced via emitError; swallow to avoid unhandled rejection.
       } finally {
         this.queue.close();
+        try {
+          this.onStreamDone();
+        } catch (error) {
+          this.logger.error(error, 'Error in TTS stream completion hook');
+        }
         if (this.#monitorMetricsTask) {
           await this.#monitorMetricsTask.catch(() => {});
         }
@@ -504,6 +509,14 @@ export abstract class SynthesizeStream
       this.#ttsRequestSpan = undefined;
     }
   }
+
+  /**
+   * Called exactly once after the entire logical stream retry loop terminates.
+   *
+   * This runs after success, explicit close or abort, nonretryable failure, or exhausted retries,
+   * but never between provider attempts. Subclasses may override it for whole-stream cleanup.
+   */
+  protected onStreamDone(): void {}
 
   protected abstract run(): Promise<void>;
 
