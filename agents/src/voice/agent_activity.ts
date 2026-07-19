@@ -254,6 +254,7 @@ export class AgentActivity implements RecognitionHooks {
   agentSession: AgentSession;
 
   private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
+  private static readonly INTERRUPTED_GENERATION_TIMEOUT = 3000;
 
   private started = false;
   private audioRecognition?: AudioRecognition;
@@ -2018,7 +2019,44 @@ export class AgentActivity implements RecognitionHooks {
         // Keep the shared outputs serialized through interrupted-generation cleanup.
         // Bare handles have no owner task that can settle the generation future.
         if (speechHandle.interrupted && speechHandle._tasks.length > 0) {
-          await ThrowsPromise.race([generation, abortFuture.await]);
+          // A reply interrupted before its playout starts can park the reply task on
+          // audioOutput.waitForPlayout() with nothing left to fire the playback event:
+          // the replyAbortController only aborts after the segment loop returns, and the
+          // segment loop is blocked on that same await. Generation then never settles and
+          // the scheduler stays wedged on this handle forever, leaving the agent mute for
+          // the rest of the session (#2065). Bound the wait; on timeout, cancel the
+          // handle's tasks — their abort path runs the normal interrupted-reply cleanup,
+          // which settles the generation future.
+          let generationSettled = false;
+          const watchedGeneration = generation.finally(() => {
+            generationSettled = true;
+          });
+          const forceAbortFut = new Future<void, never>();
+          const forceAbortTimer = setTimeout(
+            () => forceAbortFut.resolve(),
+            AgentActivity.INTERRUPTED_GENERATION_TIMEOUT,
+          );
+          try {
+            await ThrowsPromise.race([watchedGeneration, abortFuture.await, forceAbortFut.await]);
+          } finally {
+            clearTimeout(forceAbortTimer);
+          }
+          if (!generationSettled && !signal.aborted) {
+            this.logger.warn(
+              {
+                speech_id: speechHandle.id,
+                timeout_ms: AgentActivity.INTERRUPTED_GENERATION_TIMEOUT,
+              },
+              'interrupted speech generation is stuck, forcing pipeline abort',
+            );
+            await cancelAndWait(
+              speechHandle._tasks.filter((task) => !task.done),
+              AgentActivity.REPLY_TASK_CANCEL_TIMEOUT,
+            );
+            if (!speechHandle.done()) {
+              speechHandle._markDone();
+            }
+          }
         }
         this._currentSpeech = undefined;
       }
