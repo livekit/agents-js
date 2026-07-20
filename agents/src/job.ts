@@ -219,7 +219,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return undefined;
     }
 
-    this.#simulationCtx = new SimulationContext(dispatch, this);
+    this.#simulationCtx = new SimulationContext(
+      dispatch,
+      this as JobContext<unknown> as JobContext,
+    );
     return this.#simulationCtx;
   }
 
