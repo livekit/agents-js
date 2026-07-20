@@ -7,48 +7,16 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 // regression test that the telemetry API composes with an SDK 2.x provider without type errors,
 // and the runtime regression test that spans flushed through such a provider actually reach both
 // the user's exporter and the cloud span processor.
-import {
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-  type SpanProcessor,
-} from 'otel-v2-sdk-trace-base';
+import { InMemorySpanExporter, SimpleSpanProcessor } from 'otel-v2-sdk-trace-base';
 import { NodeTracerProvider } from 'otel-v2-sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CloudSpanProcessorOptions,
+  FanoutSpanProcessor,
   setTracerProvider,
   setupCloudTracer,
   tracer,
 } from './traces.js';
-
-/** Span processor that forwards to a list of processors that can grow after construction. */
-class FanoutSpanProcessor implements SpanProcessor {
-  private readonly processors: SpanProcessor[] = [];
-
-  add(processor: SpanProcessor): void {
-    this.processors.push(processor);
-  }
-
-  onStart(...args: Parameters<SpanProcessor['onStart']>): void {
-    for (const processor of this.processors) {
-      processor.onStart(...args);
-    }
-  }
-
-  onEnd(...args: Parameters<SpanProcessor['onEnd']>): void {
-    for (const processor of this.processors) {
-      processor.onEnd(...args);
-    }
-  }
-
-  async forceFlush(): Promise<void> {
-    await Promise.all(this.processors.map((processor) => processor.forceFlush()));
-  }
-
-  async shutdown(): Promise<void> {
-    await Promise.all(this.processors.map((processor) => processor.shutdown()));
-  }
-}
 
 describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   let userExporter: InMemorySpanExporter;

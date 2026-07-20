@@ -193,6 +193,36 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(addSpanProcessor.mock.calls[1]![0]).toBeInstanceOf(BatchSpanProcessor);
   });
 
+  it('prefers a user-supplied cloud processor factory over the built-in exporter', async () => {
+    const addSpanProcessor = vi.spyOn(userProvider, 'addSpanProcessor');
+    const factoryProcessor = new SimpleSpanProcessor(new InMemorySpanExporter());
+    const createCloudSpanProcessor = vi.fn(() => factoryProcessor);
+    setTracerProvider(userProvider, { createCloudSpanProcessor });
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
+    expect(addSpanProcessor).toHaveBeenCalledTimes(2);
+    expect(addSpanProcessor.mock.calls[1]![0]).toBe(factoryProcessor);
+  });
+
+  it('warns when a cloud processor factory is supplied without a usable registrar', () => {
+    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    setTracerProvider(userProvider, {
+      createCloudSpanProcessor: () => new SimpleSpanProcessor(new InMemorySpanExporter()),
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Ignoring createCloudSpanProcessor'));
+  });
+
   it('warns and skips cloud tracing when a registrar is supplied without a processor factory', async () => {
     // Simulates an OTel 2.x-style provider: no addSpanProcessor, so this package's own SDK 1.x
     // exporter must not be attached and the user has to supply createCloudSpanProcessor.

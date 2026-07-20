@@ -18,6 +18,7 @@ export {
 } from './pino_otel_transport.js';
 export * as traceTypes from './trace_types.js';
 export {
+  FanoutSpanProcessor,
   flushOtelLogs,
   setTracerProvider,
   setupCloudTracer,
