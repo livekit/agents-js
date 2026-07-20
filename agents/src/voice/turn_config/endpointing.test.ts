@@ -106,6 +106,22 @@ describe('DynamicEndpointing', () => {
     expect(endpointing.maxDelay).toBeCloseTo(1000);
   });
 
+  it('leaves delays unchanged when the next user turn starts after agent speech ends', () => {
+    const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
+
+    endpointing.onEndOfSpeech(100_000);
+    endpointing.onStartOfAgentSpeech(100_600);
+    endpointing.onEndOfAgentSpeech(101_200);
+    const previousMinDelay = endpointing.minDelay;
+    const previousMaxDelay = endpointing.maxDelay;
+
+    endpointing.onStartOfSpeech(101_500);
+    endpointing.onEndOfSpeech(102_000);
+
+    expect(endpointing.minDelay).toBe(previousMinDelay);
+    expect(endpointing.maxDelay).toBe(previousMaxDelay);
+  });
+
   it('updates alpha in place without resetting learned state', () => {
     const endpointing = new DynamicEndpointing({ minDelay: 300, maxDelay: 1000, alpha: 0.5 });
 
