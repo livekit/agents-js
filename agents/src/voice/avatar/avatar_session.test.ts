@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Room } from '@livekit/rtc-node';
+import { Job } from '@livekit/protocol';
+import { Room } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JobContext, JobProcess } from '../../job.js';
 import * as jobModule from '../../job.js';
 import * as logModule from '../../log.js';
-import type { AgentSession } from '../agent_session.js';
+import { AgentSession } from '../agent_session.js';
+import { AudioOutput } from '../io.js';
 import { AvatarSession } from './avatar_session.js';
 
 const { removeParticipantMock, roomServiceClientMock } = vi.hoisted(() => ({
@@ -25,32 +28,62 @@ describe('AvatarSession base', () => {
     vi.clearAllMocks();
   });
 
-  const mockAgentSession = (overrides: Record<string, unknown> = {}) => ({
-    _started: false,
-    output: { audio: null },
-    on: vi.fn(),
-    off: vi.fn(),
-    emit: vi.fn(),
-    ...overrides,
-  });
+  const mockAgentSession = ({ started = false, audioOutput = null } = {}) => {
+    const session = new TestAgentSession(started);
+    session.output.audio = audioOutput;
+    return {
+      session,
+      on: vi.spyOn(session, 'on'),
+      off: vi.spyOn(session, 'off'),
+    };
+  };
 
-  const mockRoom = () => ({
-    name: 'test-room',
-    isConnected: false,
-    on: vi.fn(),
-    off: vi.fn(),
-  });
+  const mockRoom = () => {
+    const room = new Room();
+    let isConnected = false;
+    vi.spyOn(room, 'name', 'get').mockReturnValue('test-room');
+    vi.spyOn(room, 'isConnected', 'get').mockImplementation(() => isConnected);
+    return {
+      room,
+      on: vi.spyOn(room, 'on'),
+      off: vi.spyOn(room, 'off'),
+      connect: () => {
+        isConnected = true;
+      },
+    };
+  };
 
-  const mockJobContext = () => {
-    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
-      addShutdownCallback: vi.fn(),
-      info: {
+  const mockJobContext = (room = new Room()) => {
+    const context = new JobContext(
+      new JobProcess(),
+      {
+        job: new Job({ id: 'test-job' }),
         url: 'wss://example.livekit.cloud',
+        token: 'token',
+        workerId: 'worker-id',
         apiKey: 'api-key',
         apiSecret: 'api-secret',
       },
-    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+      room,
+      vi.fn(),
+      vi.fn(),
+      { doInference: vi.fn() },
+    );
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue(context);
+    return context;
   };
+
+  class TestAgentSession extends AgentSession {
+    constructor(private readonly started: boolean) {
+      super({ vad: null, turnHandling: { turnDetection: null } });
+    }
+
+    override get _started(): boolean {
+      return this.started;
+    }
+  }
+
+  class MockAudioOutput extends AudioOutput {}
 
   class TestAvatarSession extends AvatarSession {
     override get avatarIdentity(): string {
@@ -63,17 +96,15 @@ describe('AvatarSession base', () => {
     const addShutdownCallback = vi.fn((cb: () => Promise<void>) => {
       shutdownCallback = cb;
     });
-    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
-      addShutdownCallback,
-    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const jobContext = mockJobContext();
+    vi.spyOn(jobContext, 'addShutdownCallback').mockImplementation(addShutdownCallback);
 
     const session = new AvatarSession();
     const acloseSpy = vi.spyOn(session, 'aclose').mockResolvedValue();
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
 
-    await session.start(
-      mockAgentSession() as unknown as AgentSession,
-      mockRoom() as unknown as Room,
-    );
+    await session.start(agentSession.session, room.room);
 
     expect(addShutdownCallback).toHaveBeenCalledTimes(1);
     expect(shutdownCallback).toBeTypeOf('function');
@@ -84,23 +115,17 @@ describe('AvatarSession base', () => {
 
   it('warns when avatar is started after AgentSession.start()', async () => {
     const warn = vi.fn();
-    vi.spyOn(logModule, 'log').mockReturnValue({
-      warn,
-      debug: vi.fn(),
-    } as unknown as ReturnType<typeof logModule.log>);
+    vi.spyOn(logModule.log(), 'warn').mockImplementation(warn);
     vi.spyOn(jobModule, 'getJobContext').mockReturnValue(undefined);
 
     const session = new AvatarSession();
+    const agentSession = mockAgentSession({
+      started: true,
+      audioOutput: new MockAudioOutput(),
+    });
+    const room = mockRoom();
 
-    await session.start(
-      {
-        ...mockAgentSession({
-          _started: true,
-          output: { audio: { constructor: { name: 'MockAudioOutput' } } },
-        }),
-      } as unknown as AgentSession,
-      mockRoom() as unknown as Room,
-    );
+    await session.start(agentSession.session, room.room);
 
     expect(warn).toHaveBeenCalledWith(
       { audioOutput: 'MockAudioOutput' },
@@ -111,18 +136,16 @@ describe('AvatarSession base', () => {
   it('logs at debug and completes cleanup when the avatar participant is not found', async () => {
     const debug = vi.fn();
     const warn = vi.fn();
-    vi.spyOn(logModule, 'log').mockReturnValue({
-      debug,
-      warn,
-    } as unknown as ReturnType<typeof logModule.log>);
+    vi.spyOn(logModule.log(), 'debug').mockImplementation(debug);
+    vi.spyOn(logModule.log(), 'warn').mockImplementation(warn);
     mockJobContext();
     removeParticipantMock.mockRejectedValueOnce({ code: 'not_found' });
 
     const agentSession = mockAgentSession();
     const room = mockRoom();
     const session = new TestAvatarSession();
-    await session.start(agentSession as unknown as AgentSession, room as unknown as Room);
-    room.isConnected = true;
+    await session.start(agentSession.session, room.room);
+    room.connect();
 
     await expect(session.aclose()).resolves.toBeUndefined();
 
@@ -139,10 +162,8 @@ describe('AvatarSession base', () => {
   it('warns with the original error and completes cleanup when participant removal fails', async () => {
     const debug = vi.fn();
     const warn = vi.fn();
-    vi.spyOn(logModule, 'log').mockReturnValue({
-      debug,
-      warn,
-    } as unknown as ReturnType<typeof logModule.log>);
+    vi.spyOn(logModule.log(), 'debug').mockImplementation(debug);
+    vi.spyOn(logModule.log(), 'warn').mockImplementation(warn);
     mockJobContext();
     const error = new Error('remove failed');
     removeParticipantMock.mockRejectedValueOnce(error);
@@ -150,8 +171,8 @@ describe('AvatarSession base', () => {
     const agentSession = mockAgentSession();
     const room = mockRoom();
     const session = new TestAvatarSession();
-    await session.start(agentSession as unknown as AgentSession, room as unknown as Room);
-    room.isConnected = true;
+    await session.start(agentSession.session, room.room);
+    room.connect();
 
     await expect(session.aclose()).resolves.toBeUndefined();
 
