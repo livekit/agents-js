@@ -83,7 +83,9 @@ describe('AvatarSession base', () => {
     }
   }
 
-  class MockAudioOutput extends AudioOutput {}
+  class MockAudioOutput extends AudioOutput {
+    override clearBuffer(): void {}
+  }
 
   class TestAvatarSession extends AvatarSession {
     override get avatarIdentity(): string {
