@@ -573,7 +573,7 @@ export class LLMStream extends llm.LLMStream {
     if (delta === undefined) return undefined;
 
     const content = stripThinkingTokens(delta.content, thinkingFilter, {
-      final: choice.finish_reason !== null,
+      final: choice.finish_reason !== null && choice.finish_reason !== undefined,
     });
 
     if (delta.tool_calls) {
@@ -603,7 +603,7 @@ export class LLMStream extends llm.LLMStream {
         let callChunk: llm.ChatChunk | undefined;
         // If we have a previous tool call and this is a new one, emit the previous
         if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
-          callChunk = this.createRunningToolCallChunk(id, delta, content);
+          callChunk = this.createRunningToolCallChunk(id, delta);
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
           // Note: We intentionally do NOT reset toolExtra here.
           // For Gemini 3+, the thought_signature is only provided on the first tool call
@@ -642,7 +642,7 @@ export class LLMStream extends llm.LLMStream {
       ['tool_calls', 'stop'].includes(choice.finish_reason) &&
       this.toolCallId !== undefined
     ) {
-      const callChunk = this.createRunningToolCallChunk(id, delta, content);
+      const callChunk = this.createRunningToolCallChunk(id, delta);
       this.toolCallId = this.fncName = this.fncRawArguments = undefined;
       // Reset toolExtra at the end of the response (not between parallel tool calls)
       this.toolExtra = undefined;
@@ -672,7 +672,6 @@ export class LLMStream extends llm.LLMStream {
   private createRunningToolCallChunk(
     id: string,
     delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta,
-    content?: string,
   ): llm.ChatChunk {
     const toolExtra = this.toolExtra ? { ...this.toolExtra } : {};
     const thoughtSignature = this.extractThoughtSignature(toolExtra);
@@ -684,7 +683,6 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: content || undefined,
         extra: deltaExtra,
         toolCalls: [
           llm.FunctionCall.create({

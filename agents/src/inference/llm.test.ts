@@ -143,7 +143,7 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
 });
 
 describe('inference.LLM streamed tool calls', () => {
-  it('strips reasoning from text alongside tool calls', async () => {
+  it('does not expose content alongside tool calls', async () => {
     const chunks = await collectChatChunks(
       [
         {
@@ -175,11 +175,47 @@ describe('inference.LLM streamed tool calls', () => {
     );
 
     expect(chunks).toHaveLength(1);
-    expect(chunks[0]?.delta?.content).toBe('Let me check that.\n\n');
+    expect(chunks[0]?.delta?.content).toBeUndefined();
     expect(chunks[0]?.delta?.toolCalls).toHaveLength(1);
     expect(chunks[0]?.delta?.toolCalls?.[0]?.callId).toBe('call_123');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.name).toBe('saveAnswer');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.args).toBe('{"answer":"yes"}');
+  });
+});
+
+describe('inference.LLM reasoning markers', () => {
+  it('does not flush a split marker when finish_reason is omitted', async () => {
+    const chunks = await collectChatChunks(
+      [
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                content: 'before<|chan',
+              },
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              delta: {
+                content: 'nel>thought\nprivate reasoning<channel|>answer',
+              },
+            },
+          ],
+        },
+      ],
+      'google/gemma-4-31b-it',
+    );
+
+    expect(chunks.map((chunk) => chunk.delta?.content).join('')).toBe('beforeanswer');
   });
 });
 
