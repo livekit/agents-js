@@ -22,6 +22,85 @@ import {
 } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
+export const THINK_TAG_START = '<think>';
+export const THINK_TAG_END = '</think>';
+
+export class ThinkingTokenFilter {
+  startTag: string;
+  endTag: string;
+  buffer = '';
+  endMarker?: string;
+
+  constructor(startTag: string = THINK_TAG_START, endTag: string = THINK_TAG_END) {
+    this.startTag = startTag;
+    this.endTag = endTag;
+  }
+}
+
+function partialMarkerLength(content: string, markers: string[]): number {
+  let longest = 0;
+
+  for (const marker of markers) {
+    for (let length = 1; length <= Math.min(content.length, marker.length - 1); length += 1) {
+      if (content.endsWith(marker.slice(0, length))) {
+        longest = Math.max(longest, length);
+      }
+    }
+  }
+
+  return longest;
+}
+
+export function stripThinkingTokens(
+  content: string | null | undefined,
+  state: ThinkingTokenFilter,
+  { final = false }: { final?: boolean } = {},
+): string | undefined {
+  if (content !== null && content !== undefined) {
+    state.buffer += content;
+  }
+
+  const visible: string[] = [];
+  while (state.buffer) {
+    if (state.endMarker !== undefined) {
+      const idx = state.buffer.indexOf(state.endMarker);
+      if (idx < 0) {
+        const keep = partialMarkerLength(state.buffer, [state.endMarker]);
+        state.buffer = keep ? state.buffer.slice(-keep) : '';
+        break;
+      }
+
+      state.buffer = state.buffer.slice(idx + state.endMarker.length);
+      state.endMarker = undefined;
+      continue;
+    }
+
+    const idx = state.buffer.indexOf(state.startTag);
+    if (idx >= 0) {
+      visible.push(state.buffer.slice(0, idx));
+      state.buffer = state.buffer.slice(idx + state.startTag.length);
+      state.endMarker = state.endTag;
+      continue;
+    }
+
+    const keep = partialMarkerLength(state.buffer, [state.startTag]);
+    visible.push(keep ? state.buffer.slice(0, -keep) : state.buffer);
+    state.buffer = keep ? state.buffer.slice(-keep) : '';
+    break;
+  }
+
+  if (final) {
+    if (state.endMarker === undefined) {
+      visible.push(state.buffer);
+    }
+    state.buffer = '';
+    state.endMarker = undefined;
+  }
+
+  const result = visible.join('');
+  return result || (content === '' ? '' : undefined);
+}
+
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
   mimeType?: string;
