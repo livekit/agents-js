@@ -4,7 +4,15 @@
 import { AgentSession as pb } from '@livekit/protocol';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { InferenceExecutor } from '../ipc/inference_executor.js';
+import {
+  JobContext,
+  type JobProcess,
+  type RunningJobInfo,
+  runWithJobContextAsync,
+} from '../job.js';
 import { initializeLogger } from '../log.js';
+import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
 import { SessionHost, SessionTransport, TcpSessionTransport } from './remote_session.js';
 
@@ -311,6 +319,146 @@ describe('SessionHost updateIo', () => {
     expect(setInputAudio).not.toHaveBeenCalled();
     expect(setOutputAudio).not.toHaveBeenCalled();
     expect(setTranscription).toHaveBeenCalledWith(true);
+
+    await host.close();
+  });
+});
+
+function fakeSimJobContext(onSimulationEnd?: (ctx: SimulationContext) => unknown): JobContext {
+  const room = {
+    name: 'room',
+    on: () => room,
+    off: () => room,
+    isConnected: false,
+    remoteParticipants: new Map(),
+  };
+  const ctx = new JobContext(
+    {} as unknown as JobProcess,
+    {
+      acceptArguments: { name: 'agent', identity: 'agent', metadata: '' },
+      job: {
+        id: 'job-id',
+        room: { name: 'room' },
+        attributes: {
+          'lk.simulator.dispatch': JSON.stringify({
+            simulationRunId: 'SR_9',
+            scenario: { label: 's', userdata: '{"target":3}' },
+          }),
+        },
+      },
+      url: 'wss://example.livekit.cloud',
+      token: 'token',
+      workerId: 'worker-id',
+    } as unknown as RunningJobInfo,
+    room as unknown as Room,
+    () => {},
+    () => {},
+    {} as unknown as InferenceExecutor,
+  );
+  ctx._simulationEndFnc = onSimulationEnd;
+  return ctx;
+}
+
+function finalizeMessage(requestId: string, success: boolean, reason: string) {
+  return new pb.AgentSessionMessage({
+    message: {
+      case: 'request',
+      value: new pb.SessionRequest({
+        requestId,
+        request: {
+          case: 'finalizeSimulation',
+          value: new pb.SessionRequest_FinalizeSimulation({
+            provisionalSuccess: success,
+            provisionalReason: reason,
+          }),
+        },
+      }),
+    },
+  });
+}
+
+const fakeAgentSession = () =>
+  ({
+    on: () => {},
+    off: () => {},
+  }) as unknown as AgentSession;
+
+describe('SessionHost finalizeSimulation', () => {
+  it('runs onSimulationEnd with the simulator verdict and returns the agent veto', async () => {
+    let seen: SimulationContext | undefined;
+    const ctx = fakeSimJobContext((simCtx) => {
+      seen = simCtx;
+      expect(simCtx.simulatorVerdict).toEqual({ success: true, reason: 'all good' });
+      simCtx.fail('db state diverged');
+    });
+
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f1', true, 'all good'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    expect(seen).toBeDefined();
+    expect(seen!.simulationRun).toEqual({ id: 'SR_9' });
+    const resp = transport.sent[0]!.message.value as pb.SessionResponse;
+    expect(resp.requestId).toBe('f1');
+    expect(resp.response.case).toBe('finalizeSimulation');
+    const value = resp.response.value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict?.success).toBe(false);
+    expect(value.userVerdict?.reason).toBe('db state diverged');
+
+    await host.close();
+  });
+
+  it('omits the user verdict when the agent does not veto', async () => {
+    const ctx = fakeSimJobContext(() => {});
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f2', false, 'agent never answered'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict).toBeUndefined();
+
+    await host.close();
+  });
+
+  it('still responds when onSimulationEnd throws', async () => {
+    const ctx = fakeSimJobContext(() => {
+      throw new Error('user callback exploded');
+    });
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f3', true, 'fine'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const resp = transport.sent[0]!.message.value as pb.SessionResponse;
+    expect(resp.response.case).toBe('finalizeSimulation');
+
+    await host.close();
+  });
+
+  it('responds without a job context (no simulation)', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await host.start();
+
+    transport.push(finalizeMessage('f4', true, 'fine'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict).toBeUndefined();
 
     await host.close();
   });

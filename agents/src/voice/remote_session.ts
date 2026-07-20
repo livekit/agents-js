@@ -971,7 +971,49 @@ export class SessionHost {
         });
       case 'updateIo':
         return this.handleUpdateIo(req.requestId, req.request.value);
+      case 'finalizeSimulation':
+        return this.handleFinalizeSimulation(req.requestId, req.request.value);
     }
+  }
+
+  private async handleFinalizeSimulation(
+    requestId: string,
+    req: pb.SessionRequest_FinalizeSimulation,
+  ): Promise<void> {
+    // The simulator's verdict is passed in so onSimulationEnd can read it
+    // (ctx.simulatorVerdict); the agent records its OWN verdict via ctx.fail().
+    let userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+    try {
+      // Imported lazily to keep this module free of a static cycle with job.ts.
+      const { getJobContext } = await import('../job.js');
+      const jobCtx = getJobContext(false);
+      const simCtx = jobCtx?.simulationContext();
+      if (jobCtx && simCtx) {
+        simCtx._beginFinalize({
+          simulatorVerdict: {
+            success: req.provisionalSuccess,
+            reason: req.provisionalReason,
+          },
+          run: { id: simCtx._dispatch.simulationRunId },
+        });
+        const fnc = jobCtx._simulationEndFnc;
+        if (fnc) {
+          await fnc(simCtx);
+        }
+        if (simCtx.userVerdict) {
+          userVerdict = new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
+            success: simCtx.userVerdict.success,
+            reason: simCtx.userVerdict.reason,
+          });
+        }
+      }
+    } catch (error) {
+      log().error({ error }, 'error while executing the onSimulationEnd callback');
+    }
+    return this.sendResponse(requestId, {
+      case: 'finalizeSimulation',
+      value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
+    });
   }
 
   private async handleUpdateIo(
