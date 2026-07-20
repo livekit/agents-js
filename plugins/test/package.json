@@ -39,6 +39,7 @@
     "zod": "^3.25.76"
   },
   "dependencies": {
+    "@livekit/av": "^10.0.0",
     "fastest-levenshtein": "^1.0.16",
     "vitest": "^4.0.17"
   },

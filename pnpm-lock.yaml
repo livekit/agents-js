@@ -1385,6 +1385,9 @@ importers:
 
   plugins/test:
     dependencies:
+      '@livekit/av':
+        specifier: ^10.0.0
+        version: 10.0.0
       fastest-levenshtein:
         specifier: ^1.0.16
         version: 1.0.16
