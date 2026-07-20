@@ -193,6 +193,12 @@ class MetadataSpanProcessor implements SpanProcessor {
 export interface SpanProcessorLike {
   forceFlush(): Promise<void>;
   onStart(span: unknown, parentContext: unknown): void;
+  /**
+   * Pre-end hook introduced in OpenTelemetry SDK 2.x (experimental there): called synchronously
+   * when a span begins ending, while it is still mutable, before any `onEnd` call. SDK 1.x
+   * never invokes it.
+   */
+  onEnding?(span: unknown): void;
   onEnd(span: unknown): void;
   shutdown(): Promise<void>;
 }
@@ -218,6 +224,12 @@ export class FanoutSpanProcessor implements SpanProcessorLike {
   onStart(span: unknown, parentContext: unknown): void {
     for (const processor of this.processors) {
       processor.onStart(span, parentContext);
+    }
+  }
+
+  onEnding(span: unknown): void {
+    for (const processor of this.processors) {
+      processor.onEnding?.(span);
     }
   }
 
@@ -326,11 +338,11 @@ function resolveSpanProcessorRegistrar(
  *
  * @example OpenTelemetry SDK 1.x
  * ```typescript
+ * import { telemetry } from '@livekit/agents';
  * import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
- * import { setTracerProvider } from '@livekit/agents/telemetry';
  *
  * const provider = new NodeTracerProvider();
- * setTracerProvider(provider, {
+ * telemetry.setTracerProvider(provider, {
  *   metadata: { room_id: 'room123', job_id: 'job456' }
  * });
  * ```
@@ -341,16 +353,16 @@ function resolveSpanProcessorRegistrar(
  * cloud processor must be constructed from the caller's own SDK packages so its version matches
  * the provider's.
  * ```typescript
- * import { FanoutSpanProcessor, setTracerProvider } from '@livekit/agents/telemetry';
+ * import { telemetry } from '@livekit/agents';
  * import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
  * import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
  *
- * const fanout = new FanoutSpanProcessor();
+ * const fanout = new telemetry.FanoutSpanProcessor();
  * const provider = new NodeTracerProvider({
  *   spanProcessors: [new BatchSpanProcessor(myBackendExporter), fanout],
  * });
  * provider.register();
- * setTracerProvider(provider, {
+ * telemetry.setTracerProvider(provider, {
  *   registerSpanProcessor: (processor) => fanout.add(processor),
  *   createCloudSpanProcessor: ({ url, headers }) =>
  *     new BatchSpanProcessor(new OTLPTraceExporter({ url, headers })),

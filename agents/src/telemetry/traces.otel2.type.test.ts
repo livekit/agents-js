@@ -7,7 +7,11 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 // regression test that the telemetry API composes with an SDK 2.x provider without type errors,
 // and the runtime regression test that spans flushed through such a provider actually reach both
 // the user's exporter and the cloud span processor.
-import { InMemorySpanExporter, SimpleSpanProcessor } from 'otel-v2-sdk-trace-base';
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+  type SpanProcessor,
+} from 'otel-v2-sdk-trace-base';
 import { NodeTracerProvider } from 'otel-v2-sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -86,6 +90,41 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(cloudSpans[0]!.attributes).toMatchObject({ room_id: 'room1', job_id: 'job1' });
 
     expect(userExporter.getFinishedSpans().map((s) => s.name)).toEqual(['otel2-span']);
+  });
+
+  it('forwards the SDK 2.x onEnding hook to dynamically registered processors', async () => {
+    setTracerProvider(provider, {
+      registerSpanProcessor: (processor) => fanout.add(processor),
+      createCloudSpanProcessor: () => new SimpleSpanProcessor(cloudExporter),
+    });
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const onEndingProcessor: SpanProcessor = {
+      forceFlush: async () => undefined,
+      onStart: () => undefined,
+      onEnding: (span) => span.setAttribute('livekit.test.on_ending', true),
+      onEnd: () => undefined,
+      shutdown: async () => undefined,
+    };
+    fanout.add(onEndingProcessor);
+
+    const span = tracer.startSpan({ name: 'otel2-on-ending' });
+    span.end();
+    await provider.forceFlush();
+
+    // onEnding fires while the span is still mutable, before any onEnd export, so the
+    // attribute it sets must be visible to both backends.
+    const [cloudSpan] = cloudExporter.getFinishedSpans();
+    const [userSpan] = userExporter.getFinishedSpans();
+    expect(cloudSpan!.attributes['livekit.test.on_ending']).toBe(true);
+    expect(userSpan!.attributes['livekit.test.on_ending']).toBe(true);
   });
 
   it('disables cloud tracing but keeps the user pipeline when no processor factory is supplied', async () => {
