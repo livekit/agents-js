@@ -45,6 +45,7 @@ import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -362,6 +363,14 @@ type ActivityTransitionOptions = {
   waitOnEnter?: boolean;
 };
 
+/** True when the surrounding job runs under a text simulation (the simulated
+ * user interacts over text streams only). */
+function resolveTextOnly(): boolean {
+  const jobCtx = getJobContext(false);
+  const simCtx = jobCtx?.simulationContext();
+  return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
+}
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -422,6 +431,16 @@ export class AgentSession<
    * @internal
    */
   _usingDefaultVad: boolean = false;
+
+  /**
+   * True when running under a text simulation: the session uses no audio
+   * I/O and no audio models (STT/TTS/VAD). Resolved once in the constructor —
+   * the session must be created inside the job entrypoint for the job context
+   * to be visible (it always is in practice).
+   *
+   * @internal
+   */
+  _textOnly: boolean = false;
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
@@ -518,13 +537,20 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
+    // Under a text simulation the session uses no audio models: STT/TTS/VAD
+    // are dropped here regardless of what the caller supplied (audio I/O is
+    // disabled at start(), and AgentActivity gates agent-level overrides).
+    this._textOnly = resolveTextOnly();
+
     // VAD: undefined → auto-provision bundled inference.VAD (silero). The
     // `_usingDefaultVad` marker is the single source of truth for "this VAD
     // was framework-provisioned" — code paths that should ignore a default
     // VAD read it via `AgentActivity.usingDefaultVad`. null → leave VAD off
     // entirely. Otherwise use what the caller supplied.
-    this._usingDefaultVad = vad === undefined;
-    if (vad === undefined) {
+    this._usingDefaultVad = vad === undefined && !this._textOnly;
+    if (this._textOnly) {
+      this.vad = undefined;
+    } else if (vad === undefined) {
       this.vad = new InferenceVAD({ model: 'silero' });
     } else if (vad === null) {
       this.vad = undefined;
@@ -532,7 +558,9 @@ export class AgentSession<
       this.vad = vad;
     }
 
-    if (typeof stt === 'string') {
+    if (this._textOnly) {
+      this.stt = undefined;
+    } else if (typeof stt === 'string') {
       this.stt = InferenceSTT.fromModelString(stt);
     } else {
       this.stt = stt;
@@ -544,7 +572,9 @@ export class AgentSession<
       this.llm = llm;
     }
 
-    if (typeof tts === 'string') {
+    if (this._textOnly) {
+      this.tts = undefined;
+    } else if (typeof tts === 'string') {
       this.tts = InferenceTTS.fromModelString(tts);
     } else {
       this.tts = tts;
@@ -692,6 +722,15 @@ export class AgentSession<
         this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
+      if (this._textOnly) {
+        // Under a text simulation the simulated user interacts over text
+        // streams only: no audio I/O. STT/TTS/VAD are dropped in the
+        // constructor.
+        this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+        inputOptions = { ...inputOptions, audioEnabled: false };
+        outputOptions = { ...outputOptions, audioEnabled: false };
+      }
+
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
