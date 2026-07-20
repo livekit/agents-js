@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import {
   type AudioBuffer,
   AudioByteStream,
@@ -10,6 +9,7 @@ import {
   tokenize,
   tts as ttslib,
 } from '@livekit/agents';
+import { getFfmpegPath } from '@livekit/av';
 import { type AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
 import { spawn } from 'node:child_process';
@@ -31,11 +31,16 @@ const compressedFormats = new Set([
 ]);
 
 const assertPCM = async (frames: AudioFrame[]) => {
+  const ffmpegPath = getFfmpegPath();
+  if (!ffmpegPath) {
+    throw new Error('ffmpeg binary from @livekit/av is not available on this platform');
+  }
+
   const frame = combineAudioFrames(frames);
   const data = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
 
   const container = await new Promise<string | undefined>((resolve, reject) => {
-    const ffmpeg = spawn(ffmpegInstaller.path, [
+    const ffmpeg = spawn(ffmpegPath, [
       '-hide_banner',
       '-probesize',
       '32',
