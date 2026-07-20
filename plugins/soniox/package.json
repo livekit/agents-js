@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-soniox",
-  "version": "1.5.0",
+  "version": "1.5.3",
   "description": "Soniox plugin for LiveKit Agents for Node.js",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

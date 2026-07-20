@@ -1424,6 +1424,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildConnectConfig(): types.LiveConnectConfig {
     const opts = this.options;
+    const [tools] = toToolsConfig({
+      toolCtx: this._tools,
+      geminiTools: this.options.geminiTools,
+      toolBehavior: this.options.toolBehavior,
+    });
 
     const config: types.LiveConnectConfig = {
       thinkingConfig: opts.thinkingConfig,
@@ -1441,11 +1446,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         },
         languageCode: opts.language,
       },
-      tools: toToolsConfig({
-        toolCtx: this._tools,
-        geminiTools: this.options.geminiTools,
-        toolBehavior: this.options.toolBehavior,
-      }),
+      tools,
       inputAudioTranscription: opts.inputAudioTranscription,
       outputAudioTranscription: opts.outputAudioTranscription,
       sessionResumption: this.sessionResumptionHandle

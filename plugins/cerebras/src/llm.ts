@@ -75,6 +75,7 @@ export class LLM extends OpenAILLM {
       merged.client = new OpenAI({
         apiKey: merged.apiKey,
         baseURL: merged.baseURL,
+        maxRetries: 0,
         fetch: createCompressedFetch({
           useMsgpack: merged.msgpackEncoding ?? true,
           useGzip: merged.gzipCompression ?? true,

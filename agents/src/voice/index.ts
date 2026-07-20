@@ -37,6 +37,12 @@ export {
 } from './remote_session.js';
 export * from './events.js';
 export {
+  KeytermDetector,
+  type KeytermDetectionOptions,
+  type KeytermsOptions,
+} from './keyterm_detection.js';
+export {
+  AudioInput,
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,
@@ -51,4 +57,5 @@ export { RunContext } from './run_context.js';
 export * from './turn_config/endpointing.js';
 export * from './turn_config/user_turn_limit.js';
 export * as testing from './testing/index.js';
+export { type RunOutputOptions } from './testing/run_result.js';
 export * as textTransforms from './transcription/text_transforms.js';

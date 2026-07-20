@@ -63,8 +63,29 @@ export interface WarmTransferTaskOptions {
    * nearest second.
    */
   ringingTimeout?: number | null;
+  /**
+   * Name of the room used to dial and brief the human agent. Defaults to
+   * `${callerRoom.name}-human-agent`.
+   *
+   * Set this to control the briefing room's configuration: pre-create a room
+   * under this name (e.g. with `RoomServiceClient.createRoom` and an `egress`
+   * request to record the transfer leg) before running the task, and the
+   * transfer agent joins the pre-configured room instead of implicitly
+   * creating one with project defaults.
+   *
+   * The room is deleted when the transfer completes, fails, or is cancelled
+   * (the same lifecycle as the default room), which also ends any egress
+   * attached to it. Must differ from the caller room's name.
+   */
+  roomName?: string;
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+  /**
+   * Instructions used to generate the reply spoken to the human agent before their call is
+   * ended when the caller hangs up mid-transfer (after the human agent answered but before
+   * the merge). Falls back to a built-in instruction when not provided.
+   */
+  callerHangupInstruction?: string | null;
   /**
    * Instructions for the human agent briefing. Pass a full string to replace the built-in prompt
    * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
@@ -91,6 +112,12 @@ type IoState = {
  * Build a warm-transfer {@link AgentTask} that dials a human agent over SIP, briefs them
  * in a private room, and (on confirmation) merges them into the caller room.
  *
+ * If the caller hangs up before the merge — including while the human agent's phone is
+ * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
+ * room is torn down (ending the SIP call), and the task completes with a {@link ToolError}.
+ * A human agent who already answered is told the caller left (a reply generated from
+ * {@link WarmTransferTaskOptions.callerHangupInstruction}) before their call is ended.
+ *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
 export function createWarmTransferTask({
@@ -101,7 +128,9 @@ export function createWarmTransferTask({
   sipHeaders = {},
   dtmf,
   ringingTimeout,
+  roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  callerHangupInstruction,
   instructions,
   chatCtx,
   turnDetection,
@@ -114,6 +143,10 @@ export function createWarmTransferTask({
 }: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
   if (!sipCallTo) {
     throw new Error('`sipCallTo` must be set');
+  }
+
+  if (rawRoomName !== undefined && rawRoomName.length === 0) {
+    throw new Error('`roomName` must not be empty');
   }
 
   // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
@@ -146,11 +179,17 @@ export function createWarmTransferTask({
   // creation, so getJobContext() would read an empty/stale store there.
   let jobCtx: JobContext | null = null;
   let transferAgentSession: AgentSession | null = null;
+  // Session handed off to the caller-hangup notification flow, which owns its
+  // teardown from that point on — no other cleanup path may close it.
+  let hangupNotifySession: AgentSession | null = null;
   let holdAudioHandle: PlayHandle | null = null;
   let originalIoState: IoState | null = null;
 
   // Resolves when the human agent room/session fails, so onEnter stops waiting.
   const humanAgentFailedFut = new Future<void>();
+  // Resolves when the caller hangs up before the merge, so onEnter cancels a
+  // still-pending dial (e.g. while the human agent's phone is ringing).
+  const callerHangupFut = new Future<void>();
 
   // `task` is created at the end of this function. The helpers and tools below
   // only read it at runtime (inside their bodies), long after it's assigned, so
@@ -173,6 +212,11 @@ export function createWarmTransferTask({
 
   const setResult = (result: WarmTransferResult | Error): void => {
     if (task.done) return;
+
+    // Every completion path (merge, decline, voicemail, failure, hangup) ends
+    // the pre-merge hangup watch; connect_to_caller re-attaches its own
+    // post-merge cleanup listener.
+    callerRoom?.off(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
 
     if (transferAgentSession) {
       // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
@@ -199,6 +243,71 @@ export function createWarmTransferTask({
     logger.debug({ reason }, 'human agent room closed');
     humanAgentFailedFut.resolve();
     setResult(new ToolError(`room closed: ${reason}`));
+  };
+
+  const hasCallerParticipant = (): boolean => {
+    if (!callerRoom) return false;
+    for (const participant of callerRoom.remoteParticipants.values()) {
+      if (DEFAULT_PARTICIPANT_KINDS.includes(participant.kind)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Announces the caller hangup to the human agent, then hangs up on them by
+  // shutting the session down (deleteRoomOnClose ends the SIP call).
+  const notifyHumanAgentOfHangup = async (session: AgentSession): Promise<void> => {
+    try {
+      session.interrupt();
+      const handle = session.generateReply({
+        instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+        allowInterruptions: false,
+        // The transfer is already cancelled; the reply must speak, not call
+        // connect_to_caller/decline_transfer.
+        toolChoice: 'none',
+      });
+      // Cap the wait so teardown can't hang on a stuck playout.
+      await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
+    } catch (error) {
+      logger.warn({ error }, 'failed to notify human agent of caller hangup');
+    } finally {
+      session.shutdown();
+    }
+  };
+
+  const cancelForCallerHangup = (participantIdentity?: string): void => {
+    if (task.done) return;
+    logger.info(
+      { participantIdentity },
+      'caller hung up before the transfer completed, cancelling transfer',
+    );
+    callerHangupFut.resolve();
+
+    // If the human agent already answered, take the session out of setResult's
+    // reach and let them know before hanging up, instead of dropping the call
+    // on them mid-briefing.
+    const session = transferAgentSession;
+    if (session) {
+      transferAgentSession = null;
+      humanAgentRoom = null;
+      hangupNotifySession = session;
+      void notifyHumanAgentOfHangup(session);
+    }
+    setResult(new ToolError('caller hung up before the transfer completed'));
+  };
+
+  // Pre-merge watch: cancels the transfer if the caller leaves while the human
+  // agent's phone is still ringing or they're being briefed. Without it the
+  // dial keeps going and the human agent gets merged into an empty room.
+  const onCallerLeftBeforeMerge = (participant: {
+    identity: string;
+    kind: ParticipantKind;
+  }): void => {
+    if (!DEFAULT_PARTICIPANT_KINDS.includes(participant.kind)) {
+      return;
+    }
+    cancelForCallerHangup(participant.identity);
   };
 
   const onCallerParticipantDisconnected = (participant: {
@@ -278,7 +387,7 @@ export function createWarmTransferTask({
     }
 
     const ctx = jobCtx ?? getJobContext();
-    const humanAgentRoomName = `${callerRoom.name}-human-agent`;
+    const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
     const transferAgent = new Agent({
       instructions: task.instructions,
@@ -388,6 +497,11 @@ export function createWarmTransferTask({
         if (!callerRoom) {
           throw new Error('caller room is not available');
         }
+        if (task.done) {
+          // e.g. the caller hung up while the human agent was confirming;
+          // don't move them into an empty room.
+          throw new ToolError('the transfer was already cancelled');
+        }
 
         await mergeCalls();
         setResult({ humanAgentIdentity });
@@ -432,25 +546,49 @@ export function createWarmTransferTask({
       jobCtx = getJobContext();
       callerRoom = jobCtx.room;
 
+      callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
+      if (!hasCallerParticipant()) {
+        // The caller was already gone before the listener could attach.
+        cancelForCallerHangup();
+        return;
+      }
+
       if (holdAudio !== null) {
         await backgroundAudio.start({ room: callerRoom });
+        if (task.done) {
+          // The caller hung up while the hold audio was starting; setResult
+          // already closed the player, so don't create an orphaned play handle.
+          return;
+        }
         holdAudioHandle = backgroundAudio.play(holdAudio, true);
       }
 
       setIoEnabled(false);
 
-      // Race the dial against a human-agent-room failure. AbortController lets
-      // the `finally` cancel a still-pending dial when the room dies first.
+      // Race the dial against a human-agent-room failure or a caller hangup.
+      // AbortController lets the `finally` cancel a still-pending dial when
+      // either of those wins the race.
       const abortController = new AbortController();
       const dialPromise = dialHumanAgent(abortController.signal);
       try {
         const result = await Promise.race([
-          dialPromise.then((session) => ({ session })),
-          humanAgentFailedFut.await.then(() => ({ session: null })),
+          dialPromise.then((session) => ({ session, callerHungUp: false })),
+          humanAgentFailedFut.await.then(() => ({ session: null, callerHungUp: false })),
+          callerHangupFut.await.then(() => ({ session: null, callerHungUp: true })),
         ]);
 
+        if (result.callerHungUp) {
+          // cancelForCallerHangup already completed the task; the `finally`
+          // below aborts the pending dial and tears down the half-built room.
+          return;
+        }
         if (!result.session) {
           throw new Error('human agent room closed');
+        }
+        if (task.done) {
+          // The caller hung up in the same tick the dial completed; leave
+          // `transferAgentSession` unset so the `finally` discards the session.
+          return;
         }
         transferAgentSession = result.session;
       } catch (error) {
@@ -458,9 +596,10 @@ export function createWarmTransferTask({
         setResult(new ToolError('could not dial human agent'));
       } finally {
         abortController.abort();
-        // If the dial won the race we kept its session; otherwise discard it.
+        // If the dial won the race we kept its session; if the hangup-notify
+        // flow took it, that flow shuts it down; otherwise discard it.
         const session = await dialPromise.catch(() => null);
-        if (session && transferAgentSession !== session) {
+        if (session && transferAgentSession !== session && hangupNotifySession !== session) {
           await cleanupHumanAgentDial(session, humanAgentRoom);
           humanAgentRoom = null;
         }
@@ -541,6 +680,24 @@ function formatConversationHistory(chatCtx?: ChatContext): string {
   }
   return previousConversation;
 }
+
+/**
+ * Resolve the name of the room used to dial and brief the human agent.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function resolveHumanAgentRoomName(callerRoomName: string, override?: string): string {
+  if (override === undefined) {
+    return `${callerRoomName}-human-agent`;
+  }
+  if (override === callerRoomName) {
+    throw new Error('`roomName` must differ from the caller room name');
+  }
+  return override;
+}
+
+const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
+Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
 const PERSONA = `# Identity
 

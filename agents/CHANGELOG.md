@@ -1,5 +1,73 @@
 # @livekit/agents
 
+## 1.5.3
+
+### Patch Changes
+
+- Export the `AudioInput` base class from the `voice` module so plugins and applications can implement custom agent audio inputs. - [#2036](https://github.com/livekit/agents-js/pull/2036) ([@aweitz](https://github.com/aweitz))
+
+- Commit the in-flight assistant turn (interrupted: true, partially-forwarded text) when the session closes mid-playout — previously a room disconnect during playback dropped the turn from chatCtx entirely, with no ConversationItemAdded emitted (#2041) - [#2042](https://github.com/livekit/agents-js/pull/2042) ([@Sarfaraz85](https://github.com/Sarfaraz85))
+
+- Restart chunked TTS retries with a fresh attempt queue so retried synthesis uses a fresh request ID and does not write to a closed failed-attempt queue. - [#1994](https://github.com/livekit/agents-js/pull/1994) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Honor `ToolFlag.IGNORE_ON_ENTER` for tools nested inside `Toolset`s. - [#2011](https://github.com/livekit/agents-js/pull/2011) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix modality-aware instruction templates to collapse identical variants and avoid duplicate rendered output. - [#2030](https://github.com/livekit/agents-js/pull/2030) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): stop dropping agent turns whose playback starts after audio forwarding completes (#1909, #1960; port of livekit/agents#5039). - [#1966](https://github.com/livekit/agents-js/pull/1966) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `forwardAudio` used to reject `firstFrameFut` (and detach its `PLAYBACK_STARTED` listener) in its `finally` block whenever no frame had played by the time forwarding finished. Two real scenarios hit this window: a speech paused in the thinking state by a brief user sound, whose buffered first frame only plays after the false interruption clears (#1909), and DataStream avatar outputs with `waitPlaybackStart: true`, which deliver `lk.playback_started` ~1s after frames were captured (#1960). In both cases the late playback-started event found nothing listening, the reply was classified "skipped", and the turn was silently removed from the chat context while the agent never entered the `speaking` state.
+
+  The `PLAYBACK_STARTED` listener now lives in `performAudioForwarding` so it outlives the forwarding task, and `forwardAudio` no longer settles the future; the reply tasks (including the `say()` path) settle it once the playout window ends, which also detaches the listener. A reported non-zero playback position on interruption is additionally honored as evidence of partial playback — but only when the segment actually captured a frame into the output (tracked via the output's segment count, which is also what makes the reported position fresh rather than stale) — covering avatars whose playback-started RPC races the interruption itself.
+
+- Preserve partial LLM response telemetry and generated function calls on every inference exit path. - [#2048](https://github.com/livekit/agents-js/pull/2048) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(voice): stop RecorderIO from dropping the final agent speech at session teardown. A force-interrupted shutdown marks the current speech done before playout settles, so the recorder could close and fence out the in-flight playbackFinished flush, silently losing the last agent turn and trailing mic audio from the recording. RecorderIO.close() now waits (bounded) for the pending playback event — which carries the authoritative playback position — before fencing, flushes any input captured since the last write, and warns if unflushed agent audio had to be dropped. - [#2037](https://github.com/livekit/agents-js/pull/2037) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Deprecate the `nativeTranscriptSync` realtime model capability while preserving its existing transcript synchronization behavior for third-party models. Remove Phonic's redundant explicit opt-out now that it uses `stream_ahead_of_real_time` mode. - [#2044](https://github.com/livekit/agents-js/pull/2044) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Avoid splitting streamed replacement output mid-word when no replacement key prefix is pending. - [#2050](https://github.com/livekit/agents-js/pull/2050) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add a beta DTMF sending tool that publishes to the active agent session room. - [#2010](https://github.com/livekit/agents-js/pull/2010) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `speed` to xAI TTS inference options. - [#2028](https://github.com/livekit/agents-js/pull/2028) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.2
+
+## 1.5.1
+
+### Patch Changes
+
+- Replace @ffmpeg-installer/ffmpeg with @livekit/av, LiveKit's own minimal LGPL FFmpeg build shipped as platform-specific npm packages. - [#1999](https://github.com/livekit/agents-js/pull/1999) ([@u9g](https://github.com/u9g))
+
+- Conversation-aware STT recognition (keyterms + chat context), ported from python livekit-agents PR #6039. Adds `keytermsOptions` on `AgentSession` with static `keyterms` and LLM-based `keytermDetection` (confirmation-gated), new `STTCapabilities.keyterms`/`chatContext` flags with `_updateSessionKeyterms()`/`_pushConversationItem()` hooks (forwarded by the fallback and stream adapters), keyterm support for deepgram (v1/v2), assemblyai, and livekit inference STT, and native conversation-context carryover (`agentContextCarryover`) for assemblyai u3-rt-pro. - [#1967](https://github.com/livekit/agents-js/pull/1967) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Disable OpenAI SDK retries for LiveKit inference and OpenAI SDK-based plugin requests. - [#1981](https://github.com/livekit/agents-js/pull/1981) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Export the `AnonFunctionTool` type so callers can annotate return types for name-less `tool()` factories used in object-map tool registration. - [#2014](https://github.com/livekit/agents-js/pull/2014) ([@jonh-1](https://github.com/jonh-1))
+
+- Fix duplicated user chat items in observability: a superseding EOU bounce created while an earlier bounce was mid-commit could fire after the transcript was already committed and cleared, committing a second empty user turn with stale metrics. The transcript guard is now re-checked at fire time. Also, session-report chat items now only upload string content (matching Python), so non-string content can no longer render as garbage in the dashboard. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix TTS TTFB attribution: `tts_node` TTFB is now anchored on the time the first sentence is sent to the TTS provider instead of the time the first LLM token arrives, so upstream text generation and tokenization latency is no longer counted as TTS latency. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `session.run()` stalling or racing the activity transition when an AgentTask handoff is triggered by a speech that predates the run (e.g. created in `onEnter`): the blocked handoff tasks are now watched by the active run for the duration of the transition. - [#1961](https://github.com/livekit/agents-js/pull/1961) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add output retries for AgentSession.run structured outputs. - [#1978](https://github.com/livekit/agents-js/pull/1978) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- implement CLI serverInfo protocol - [#2015](https://github.com/livekit/agents-js/pull/2015) ([@davidzhao](https://github.com/davidzhao))
+
+- Tighten audio EOT cancellation to rely on speech activity start events. - [#1939](https://github.com/livekit/agents-js/pull/1939) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Trim the chat context recorded on the `eou_detection` span to the last 6 items and exclude function calls, instructions, empty messages, handoffs, and config updates (matching Python), so the span no longer re-emits the whole conversation on every end-of-turn inference. - [#1955](https://github.com/livekit/agents-js/pull/1955) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(deps): update @livekit/rtc-node to 0.13.31 - [#1992](https://github.com/livekit/agents-js/pull/1992) ([@toubatbrian](https://github.com/toubatbrian))
+
+  Fixes AudioSource.waitForPlayout resolving early with audio still queued (livekit/node-sdks#693).
+
+- fix(workflows): cancel a warm transfer when the caller hangs up before the merge. `WarmTransferTask` now watches the caller room from `onEnter`: if the caller disconnects while the human agent's phone is still ringing or during the briefing, the pending SIP dial is aborted, the human agent room is torn down (ending the call), and the task completes with a `ToolError` — instead of the human agent being connected into an empty room. A human agent who already answered is told the caller left — a reply generated from the new `callerHangupInstruction` option (built-in default when not provided) — before their call is ended. - [#2008](https://github.com/livekit/agents-js/pull/2008) ([@toubatbrian](https://github.com/toubatbrian))
+
+- chore(example): update otel trace example - [#1864](https://github.com/livekit/agents-js/pull/1864) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.5.0
 
 ### Minor Changes

@@ -58,6 +58,7 @@ export class OpenAILLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: opts.baseURL,
+        maxRetries: 0,
         apiKey: opts.apiKey,
       });
   }

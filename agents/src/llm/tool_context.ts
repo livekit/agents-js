@@ -223,6 +223,10 @@ export interface FunctionTool<
   [FUNCTION_TOOL_SYMBOL]: true;
 }
 
+/**
+ * A function tool without `id`/`name`. Returned by {@link tool} when `name` is omitted; the
+ * containing object key supplies the name when registered via an object-map tool definition.
+ */
 export type AnonFunctionTool<
   Parameters extends JSONObject = JSONObject,
   UserData = UnknownUserData,
@@ -515,7 +519,12 @@ export class ToolContext<UserData = UnknownUserData> {
   }
 
   updateTools(tools: ToolContextInit<UserData>): void {
+    this._updateTools(tools);
+  }
+
+  private _updateTools(tools: ToolContextInit<UserData>, exclude: readonly Tool[] = []): void {
     const normalizedTools = normalizeToolContextInit(tools);
+    const excludedTools = new Set<unknown>(exclude);
     this._tools = normalizedTools;
     this._functionToolsMap = new Map();
     this._providerTools = [];
@@ -523,6 +532,10 @@ export class ToolContext<UserData = UnknownUserData> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts any tool shape
     const addTool = (tool: any): void => {
+      if (excludedTools.has(tool)) {
+        return;
+      }
+
       if (isToolset(tool)) {
         for (const inner of tool.tools) {
           addTool(inner);
@@ -554,6 +567,42 @@ export class ToolContext<UserData = UnknownUserData> {
     for (const tool of normalizedTools) {
       addTool(tool);
     }
+  }
+
+  private _syncFlattened(tools: readonly Tool[]): void {
+    const current = this.flatten();
+    const currentTools = new Set(current);
+    const nextTools = new Set(tools);
+    if (currentTools.size === nextTools.size && current.every((tool) => nextTools.has(tool))) {
+      return;
+    }
+
+    const added: Extract<ToolContextEntry<UserData>, Tool>[] = tools
+      .filter((tool) => !currentTools.has(tool))
+      .filter(
+        (tool): tool is Extract<ToolContextEntry<UserData>, Tool> =>
+          isFunctionTool(tool) || isProviderTool(tool),
+      );
+    const removed = current.filter((tool) => !nextTools.has(tool));
+    const structured = this._tools.filter((tool) => !removed.includes(tool as Tool));
+    this._updateTools([...structured, ...added], removed);
+  }
+
+  /** Hide tools from the callable set while keeping their toolsets intact. @internal */
+  _exclude(tools: readonly Tool[]): void {
+    if (tools.length === 0) {
+      return;
+    }
+
+    const excludedTools = new Set(tools);
+    this._syncFlattened(this.flatten().filter((tool) => !excludedTools.has(tool)));
+  }
+
+  /** Return a copy containing only flattened callable/provider entries. @internal */
+  _flattenedCopy(): ToolContext<UserData> {
+    const copy = ToolContext.empty<UserData>();
+    copy._syncFlattened(this.flatten());
+    return copy;
   }
 
   copy(): ToolContext<UserData> {
