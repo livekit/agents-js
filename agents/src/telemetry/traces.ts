@@ -183,12 +183,50 @@ class MetadataSpanProcessor implements SpanProcessor {
   }
 }
 
-type SpanProcessorRegistrar = (spanProcessor: SpanProcessor) => void;
+/**
+ * Structural span-processor contract compatible with both OpenTelemetry SDK 1.x and 2.x.
+ *
+ * The concrete `SpanProcessor` types of the two SDK majors are not mutually assignable (their
+ * span types differ), so cross-version composition is expressed through this shape instead.
+ * Any real `SpanProcessor` instance from either SDK major satisfies it.
+ */
+export interface SpanProcessorLike {
+  forceFlush(): Promise<void>;
+  onStart(span: unknown, parentContext: unknown): void;
+  onEnd(span: unknown): void;
+  shutdown(): Promise<void>;
+}
 
-const spanProcessorRegistrars = new WeakMap<TracerProvider, SpanProcessorRegistrar>();
+type SpanProcessorRegistrar = (spanProcessor: SpanProcessorLike) => void;
+
+/** Connection details for building a span processor that exports to LiveKit Cloud. */
+export interface CloudSpanProcessorOptions {
+  /** OTLP/HTTP protobuf endpoint for LiveKit Cloud traces. */
+  url: string;
+  /** Request headers, including the authorization token, the exporter must send. */
+  headers: Record<string, string>;
+}
+
+interface CustomProviderConfig {
+  registerSpanProcessor: SpanProcessorRegistrar;
+  createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessorLike;
+}
+
+const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
 
 interface LegacySpanProcessorProvider extends TracerProvider {
-  addSpanProcessor?: SpanProcessorRegistrar;
+  addSpanProcessor?: (spanProcessor: SpanProcessor) => void;
+}
+
+/**
+ * OpenTelemetry SDK 1.x providers expose `addSpanProcessor`; 2.x providers do not. The method's
+ * presence is also how the cloud setup decides whether this package's own SDK 1.x exporter may
+ * be attached to the provider.
+ */
+function isSdk1Provider(provider: TracerProvider): provider is LegacySpanProcessorProvider & {
+  addSpanProcessor: (spanProcessor: SpanProcessor) => void;
+} {
+  return typeof (provider as LegacySpanProcessorProvider).addSpanProcessor === 'function';
 }
 
 /** Options for configuring a custom tracer provider. */
@@ -202,7 +240,25 @@ export interface SetTracerProviderOptions {
    * using a provider backed by a mutable or delegating span processor so LiveKit Cloud tracing can
    * share the same provider as another observability backend.
    */
-  registerSpanProcessor?: (spanProcessor: SpanProcessor) => void;
+  registerSpanProcessor?: SpanProcessorRegistrar;
+  /**
+   * Builds the span processor that exports to LiveKit Cloud, called when cloud tracing starts.
+   *
+   * This package ships OpenTelemetry SDK 1.x, and processors/exporters must match the SDK major
+   * version of the provider they run in. When the provider is built on OpenTelemetry 2.x, supply
+   * this callback and construct the processor from your own SDK packages:
+   *
+   * ```typescript
+   * import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
+   * import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
+   *
+   * createCloudSpanProcessor: ({ url, headers }) =>
+   *   new BatchSpanProcessor(new OTLPTraceExporter({ url, headers }))
+   * ```
+   *
+   * Not needed for SDK 1.x providers, where the built-in cloud exporter is used.
+   */
+  createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessorLike;
 }
 
 function resolveSpanProcessorRegistrar(
@@ -213,9 +269,8 @@ function resolveSpanProcessorRegistrar(
     return registerSpanProcessor;
   }
 
-  const legacyProvider = provider as LegacySpanProcessorProvider;
-  if (typeof legacyProvider.addSpanProcessor === 'function') {
-    return legacyProvider.addSpanProcessor.bind(legacyProvider);
+  if (isSdk1Provider(provider)) {
+    return provider.addSpanProcessor.bind(provider);
   }
 
   return undefined;
@@ -228,7 +283,7 @@ function resolveSpanProcessorRegistrar(
  * @param provider - The tracer provider to use
  * @param options - Optional provider configuration
  *
- * @example
+ * @example OpenTelemetry SDK 1.x
  * ```typescript
  * import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
  * import { setTracerProvider } from '@livekit/agents/telemetry';
@@ -236,6 +291,28 @@ function resolveSpanProcessorRegistrar(
  * const provider = new NodeTracerProvider();
  * setTracerProvider(provider, {
  *   metadata: { room_id: 'room123', job_id: 'job456' }
+ * });
+ * ```
+ *
+ * @example OpenTelemetry SDK 2.x — share one provider between another backend and LiveKit Cloud.
+ * SDK 2.x providers accept span processors only at construction time, so the provider must be
+ * built around a processor whose targets can grow later (`fanout` below), and the cloud
+ * processor must be constructed from the caller's own SDK packages so its version matches the
+ * provider's.
+ * ```typescript
+ * import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
+ * import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+ * import { setTracerProvider } from '@livekit/agents/telemetry';
+ *
+ * const fanout = new FanoutSpanProcessor(); // forwards to a mutable list of processors
+ * const provider = new NodeTracerProvider({
+ *   spanProcessors: [new BatchSpanProcessor(myBackendExporter), fanout],
+ * });
+ * provider.register();
+ * setTracerProvider(provider, {
+ *   registerSpanProcessor: (processor) => fanout.add(processor),
+ *   createCloudSpanProcessor: ({ url, headers }) =>
+ *     new BatchSpanProcessor(new OTLPTraceExporter({ url, headers })),
  * });
  * ```
  */
@@ -260,9 +337,12 @@ export function setTracerProvider(
   }
 
   if (registerSpanProcessor) {
-    spanProcessorRegistrars.set(provider, registerSpanProcessor);
+    customProviderConfigs.set(provider, {
+      registerSpanProcessor,
+      createCloudSpanProcessor: options?.createCloudSpanProcessor,
+    });
   } else {
-    spanProcessorRegistrars.delete(provider);
+    customProviderConfigs.delete(provider);
   }
 
   tracer.setProvider(provider);
@@ -317,50 +397,76 @@ export async function setupCloudTracer(options: {
     });
 
     if (enableTraces) {
+      const cloudExporterOptions: CloudSpanProcessorOptions = {
+        url: `https://${cloudHostname}/observability/traces/otlp/v0`,
+        headers,
+      };
+
       // If the user already configured a tracer provider (e.g. setTracerProvider in the job
       // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
       // both the user's backend and LiveKit Cloud.
       const currentProvider = tracer.getProvider();
       const existingProvider =
         currentProvider instanceof ProxyTracerProvider ? undefined : currentProvider;
-      const registerSpanProcessor = existingProvider
-        ? spanProcessorRegistrars.get(existingProvider)
-        : undefined;
 
-      if (existingProvider && !registerSpanProcessor) {
-        console.warn(
-          'LiveKit Cloud tracing is disabled because the custom tracer provider cannot register ' +
-            'additional span processors. Pass registerSpanProcessor to setTracerProvider when ' +
-            'using OpenTelemetry 2.x.',
-        );
-      } else {
-        // Configure OTLP exporter to send traces to LiveKit Cloud
-        const spanExporter = new OTLPTraceExporter({
-          url: `https://${cloudHostname}/observability/traces/otlp/v0`,
-          headers,
-          compression: CompressionAlgorithm.GZIP,
+      if (!existingProvider) {
+        const tracerProvider = new NodeTracerProvider({
+          resource,
+          spanProcessors: [
+            new MetadataSpanProcessor(metadata),
+            new BatchSpanProcessor(
+              new OTLPTraceExporter({
+                ...cloudExporterOptions,
+                compression: CompressionAlgorithm.GZIP,
+              }),
+            ),
+          ],
         });
+        // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
+        // and sets the global tracer provider. Both use set-once semantics in the OTel API,
+        // so if the user already called NodeSDK.start(), these are safe no-ops.
+        tracerProvider.register();
+        setTracerProvider(tracerProvider);
+      } else {
+        const config = customProviderConfigs.get(existingProvider);
 
-        if (existingProvider && registerSpanProcessor) {
-          // The user's provider keeps its own Resource (incl. service.name): a provider has one
-          // Resource shared by all exporters, so applying `resource` here would also relabel the
-          // spans going to the user's own backend. room_id/job_id — the keys Cloud correlates on —
-          // still ride along as span attributes via MetadataSpanProcessor.
-          registerSpanProcessor(new MetadataSpanProcessor(metadata));
-          registerSpanProcessor(new BatchSpanProcessor(spanExporter));
+        if (!config) {
+          console.warn(
+            'LiveKit Cloud tracing is disabled because the custom tracer provider cannot register ' +
+              'additional span processors. Pass registerSpanProcessor to setTracerProvider when ' +
+              'using OpenTelemetry 2.x.',
+          );
         } else {
-          const tracerProvider = new NodeTracerProvider({
-            resource,
-            spanProcessors: [
-              new MetadataSpanProcessor(metadata),
-              new BatchSpanProcessor(spanExporter),
-            ],
-          });
-          // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
-          // and sets the global tracer provider. Both use set-once semantics in the OTel API,
-          // so if the user already called NodeSDK.start(), these are safe no-ops.
-          tracerProvider.register();
-          setTracerProvider(tracerProvider);
+          // The cloud span processor must match the provider's OTel SDK major version: this
+          // package's own BatchSpanProcessor/OTLPTraceExporter are SDK 1.x and only work with an
+          // SDK 1.x provider (2.x spans carry instrumentationScope/parentSpanContext, which the
+          // 1.x exporter cannot serialize). For any other provider, the user-supplied factory
+          // builds the processor from the SDK version the provider actually runs on.
+          const cloudSpanProcessor = config.createCloudSpanProcessor
+            ? config.createCloudSpanProcessor(cloudExporterOptions)
+            : isSdk1Provider(existingProvider)
+              ? new BatchSpanProcessor(
+                  new OTLPTraceExporter({
+                    ...cloudExporterOptions,
+                    compression: CompressionAlgorithm.GZIP,
+                  }),
+                )
+              : undefined;
+
+          if (!cloudSpanProcessor) {
+            console.warn(
+              'LiveKit Cloud tracing is disabled because no exporter compatible with the custom ' +
+                'tracer provider is available. Pass createCloudSpanProcessor to setTracerProvider ' +
+                'to build the cloud span processor from your OpenTelemetry SDK version.',
+            );
+          } else {
+            // The user's provider keeps its own Resource (incl. service.name): a provider has one
+            // Resource shared by all exporters, so applying `resource` here would also relabel
+            // the spans going to the user's own backend. room_id/job_id — the keys Cloud
+            // correlates on — still ride along as span attributes via MetadataSpanProcessor.
+            config.registerSpanProcessor(new MetadataSpanProcessor(metadata));
+            config.registerSpanProcessor(cloudSpanProcessor);
+          }
         }
       }
     }

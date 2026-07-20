@@ -2,14 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { context as otelContext, trace } from '@opentelemetry/api';
-import {
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-  type SpanProcessor,
-} from '@opentelemetry/sdk-trace-base';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setTracerProvider, setupCloudTracer, tracer } from './traces.js';
+import { type SpanProcessorLike, setTracerProvider, setupCloudTracer, tracer } from './traces.js';
 
 /** Helper: extract parentSpanId across OTel SDK v1/v2 */
 function parentSpanId(span: unknown): string | undefined {
@@ -179,6 +175,9 @@ describe('setupCloudTracer with a user-configured provider', () => {
   });
 
   it('does not replace the user provider (attaches the cloud exporter to it instead)', async () => {
+    const addSpanProcessor = vi.spyOn(userProvider, 'addSpanProcessor');
+    setTracerProvider(userProvider);
+
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
@@ -190,14 +189,19 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
+    expect(addSpanProcessor).toHaveBeenCalledTimes(2);
+    expect(addSpanProcessor.mock.calls[1]![0]).toBeInstanceOf(BatchSpanProcessor);
   });
 
-  it('uses an explicit processor registrar when the provider has no addSpanProcessor method', async () => {
-    const registeredProcessors: SpanProcessor[] = [];
+  it('warns and skips cloud tracing when a registrar is supplied without a processor factory', async () => {
+    // Simulates an OTel 2.x-style provider: no addSpanProcessor, so this package's own SDK 1.x
+    // exporter must not be attached and the user has to supply createCloudSpanProcessor.
+    const registeredProcessors: SpanProcessorLike[] = [];
     Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
     setTracerProvider(userProvider, {
       registerSpanProcessor: (processor) => registeredProcessors.push(processor),
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -208,8 +212,8 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(tracer.getProvider()).toBe(userProvider);
-    expect(registeredProcessors).toHaveLength(2);
-    expect(registeredProcessors[1]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('createCloudSpanProcessor'));
   });
 
   it('preserves a custom provider when no processor registrar is available', async () => {
