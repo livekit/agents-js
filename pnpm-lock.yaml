@@ -507,7 +507,7 @@ importers:
         version: 17.2.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.4.3)
       ws:
         specifier: 'catalog:'
         version: 8.20.0
@@ -609,7 +609,7 @@ importers:
         version: 3.1.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.1)(zod@4.3.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -782,7 +782,7 @@ importers:
         version: 0.4.0
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.1)(zod@4.4.3)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1033,7 +1033,7 @@ importers:
         version: link:../silero
       '@mistralai/mistralai':
         specifier: ^2.2.1
-        version: 2.2.1
+        version: 2.4.1(@opentelemetry/api@1.9.0)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1095,13 +1095,13 @@ importers:
         version: 1.1.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.4.3)
       ws:
         specifier: 'catalog:'
         version: 8.20.0
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.4.3
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1132,10 +1132,10 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.1)(zod@4.4.3)
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.4.3
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1440,7 +1440,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.20.0)(zod@4.3.6)
+        version: 6.8.1(ws@8.20.0)(zod@4.4.3)
       ws:
         specifier: 'catalog:'
         version: 8.20.0
@@ -2320,8 +2320,13 @@ packages:
   '@microsoft/tsdoc@0.14.2':
     resolution: {integrity: sha512-9b8mPpKrfeGRuhFH5iO1iwCLeIIsV6+H1sRfxbkoGXIyQE2BTsPd9zqSqQJ+pv5sJ/hT5M1zvOFL02MnEezFug==}
 
-  '@mistralai/mistralai@2.2.1':
-    resolution: {integrity: sha512-uKU8CZmL2RzYKmplsU01hii4p3pe4HqJefpWNRWXm1Tcm0Sm4xXfwSLIy4k7ZCPlbETCGcp69E7hZs+WOJ5itQ==}
+  '@mistralai/mistralai@2.4.1':
+    resolution: {integrity: sha512-vNpR2GR76aW7fK8Dcu1NRx3fdSPO1QruRDo4GbfXfkro2mvp194xIAvJ2BP4ZykzyWtJoDmBe+Qsk9D443aqlg==}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
 
   '@msgpack/msgpack@3.1.3':
     resolution: {integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==}
@@ -2532,6 +2537,10 @@ packages:
 
   '@opentelemetry/semantic-conventions@1.38.0':
     resolution: {integrity: sha512-kocjix+/sSggfJhwXqClZ3i9Y/MI0fp7b+g7kCRm6psy2dsf8uApTRclwG18h8Avm7C9+fnt+O36PspJ/OzoWg==}
+    engines: {node: '>=14'}
+
+  '@opentelemetry/semantic-conventions@1.43.0':
+    resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
     engines: {node: '>=14'}
 
   '@pkgjs/parseargs@0.11.0':
@@ -5477,6 +5486,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
@@ -5504,6 +5525,9 @@ packages:
 
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -6330,11 +6354,14 @@ snapshots:
 
   '@microsoft/tsdoc@0.14.2': {}
 
-  '@mistralai/mistralai@2.2.1':
+  '@mistralai/mistralai@2.4.1(@opentelemetry/api@1.9.0)':
     dependencies:
-      ws: 8.20.0
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
+      '@opentelemetry/semantic-conventions': 1.43.0
+      ws: 8.21.1
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -6574,6 +6601,8 @@ snapshots:
   '@opentelemetry/semantic-conventions@1.28.0': {}
 
   '@opentelemetry/semantic-conventions@1.38.0': {}
+
+  '@opentelemetry/semantic-conventions@1.43.0': {}
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -8803,10 +8832,20 @@ snapshots:
       ws: 8.20.0
       zod: 3.25.76
 
-  openai@6.8.1(ws@8.20.0)(zod@4.3.6):
+  openai@6.8.1(ws@8.20.0)(zod@4.4.3):
     optionalDependencies:
       ws: 8.20.0
+      zod: 4.4.3
+
+  openai@6.8.1(ws@8.21.1)(zod@4.3.6):
+    optionalDependencies:
+      ws: 8.21.1
       zod: 4.3.6
+
+  openai@6.8.1(ws@8.21.1)(zod@4.4.3):
+    optionalDependencies:
+      ws: 8.21.1
+      zod: 4.4.3
 
   optionator@0.9.4:
     dependencies:
@@ -9857,6 +9896,8 @@ snapshots:
 
   ws@8.20.0: {}
 
+  ws@8.21.1: {}
+
   yallist@4.0.0: {}
 
   yocto-queue@0.1.0: {}
@@ -9873,10 +9914,12 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  zod-to-json-schema@3.25.2(zod@4.3.6):
+  zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
-      zod: 4.3.6
+      zod: 4.4.3
 
   zod@3.25.76: {}
 
   zod@4.3.6: {}
+
+  zod@4.4.3: {}
