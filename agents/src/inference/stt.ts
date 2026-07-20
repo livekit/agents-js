@@ -281,19 +281,8 @@ const ASSEMBLYAI_CARRYOVER_MODELS = [
 
 const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
 
-function supportsAgentContextCarryover(model: string | undefined): boolean {
-  return ASSEMBLYAI_CARRYOVER_MODELS.includes(
-    model as (typeof ASSEMBLYAI_CARRYOVER_MODELS)[number],
-  );
-}
-
-function agentContextCarryoverEnabled(opts: {
-  model: string | undefined;
-  modelOptions: Record<string, unknown>;
-  agentContextCarryover?: boolean;
-}): boolean {
-  if (!supportsAgentContextCarryover(opts.model)) return false;
-  return opts.agentContextCarryover ?? opts.modelOptions.previous_context_n_turns !== 0;
+function supportsChatContext(model: string | undefined): boolean {
+  return model === ASSEMBLYAI_CARRYOVER_MODELS[0] || model === ASSEMBLYAI_CARRYOVER_MODELS[1];
 }
 
 type _STTModels =
@@ -396,7 +385,6 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   apiKey: string;
   apiSecret: string;
   modelOptions: STTOptions<TModel>;
-  agentContextCarryover?: boolean;
   fallback?: STTFallbackModel[];
   connOptions?: APIConnectOptions;
 }
@@ -435,7 +423,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     apiSecret?: string;
     modelOptions?: STTOptions<TModel>;
     fallback?: STTFallbackModelType | STTFallbackModelType[];
-    agentContextCarryover?: boolean;
     connOptions?: APIConnectOptions;
     vad?: VAD;
   }) {
@@ -455,11 +442,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         nextModel = parsedModel as TModel;
       }
     }
-    const carryoverEnabled = agentContextCarryoverEnabled({
-      model: typeof nextModel === 'string' ? nextModel : undefined,
-      modelOptions: modelOptions as Record<string, unknown>,
-      agentContextCarryover: opts?.agentContextCarryover,
-    });
     super({
       streaming: true,
       interimResults: true,
@@ -467,15 +449,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms:
         keytermsExtraForModel(typeof nextModel === 'string' ? nextModel : undefined) !== undefined,
-      chatContext: carryoverEnabled,
+      chatContext: supportsChatContext(typeof nextModel === 'string' ? nextModel : undefined),
     });
-
-    if (opts?.agentContextCarryover && !supportsAgentContextCarryover(nextModel)) {
-      log().warn(
-        { model: nextModel },
-        'agentContextCarryover is enabled but model does not support it; ignoring',
-      );
-    }
 
     const {
       baseURL,
@@ -518,7 +493,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       apiKey: lkApiKey,
       apiSecret: lkApiSecret,
       modelOptions,
-      agentContextCarryover: opts?.agentContextCarryover,
       fallback: normalizedFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
@@ -574,22 +548,13 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this._vadPromise = undefined;
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
-        chatContext: agentContextCarryoverEnabled({
-          model: this.opts.model,
-          modelOptions: this.opts.modelOptions as Record<string, unknown>,
-          agentContextCarryover: this.opts.agentContextCarryover,
-        }),
+        chatContext: supportsChatContext(this.opts.model),
       });
     }
 
     if (nextOpts.modelOptions) {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
-        chatContext: agentContextCarryoverEnabled({
-          model: this.opts.model,
-          modelOptions: this.opts.modelOptions as Record<string, unknown>,
-          agentContextCarryover: this.opts.agentContextCarryover,
-        }),
       });
       // re-apply the active session keyterms on top of the update sent to live streams,
       // so a user extra update doesn't drop them. `this.opts.modelOptions` must stay a

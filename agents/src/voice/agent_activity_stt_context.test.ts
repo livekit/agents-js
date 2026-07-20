@@ -62,7 +62,7 @@ describe('AgentActivity STT conversation-context lifecycle', () => {
     await session.close();
   });
 
-  it('stops forwarding when previous_context_n_turns disables carryover', async () => {
+  it('tracks model-only capability through dynamic model transitions', async () => {
     const stt = new InferenceSTT({
       model: 'assemblyai/universal-streaming',
       apiKey: 'test-key',
@@ -86,9 +86,19 @@ describe('AgentActivity STT conversation-context lifecycle', () => {
     expect(pushSpy).toHaveBeenCalledTimes(1);
 
     stt.updateOptions({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(true);
+    session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
+    expect(pushSpy).toHaveBeenCalledTimes(2);
+
+    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
     expect(stt.capabilities.chatContext).toBe(false);
     session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
-    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy).toHaveBeenCalledTimes(2);
+
+    stt.updateOptions({ model: 'assemblyai/universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+    session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
+    expect(pushSpy).toHaveBeenCalledTimes(3);
 
     await session.close();
     expect(stt.listenerCount('capabilities_changed')).toBe(0);
