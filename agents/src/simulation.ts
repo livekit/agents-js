@@ -1,40 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Scenario, SimulationDispatch, SimulationMode } from '@livekit/protocol';
 import type { JobContext } from './job.js';
 
-// The @livekit/protocol npm package ships livekit_agent_simulation_pb in its
-// tarball but does not re-export it from the package root (and the exports map
-// blocks subpath imports), so the dispatch types are declared locally and the
-// protojson is decoded by hand. Swap for the generated classes once the
-// protocol package exports them.
-
-/** How the simulated user interacts with the agent.
- * Mirrors `livekit.SimulationMode`. */
-export enum SimulationMode {
-  UNSPECIFIED = 0,
-  /** The simulator chats over text streams (no audio). */
-  TEXT = 1,
-  /** The simulator publishes/subscribes audio in the room. */
-  AUDIO = 2,
-}
-
-/** Mirrors `livekit.Scenario`. */
-export interface Scenario {
-  label: string;
-  instructions: string;
-  agentExpectations: string;
-  tags: Record<string, string>;
-  userdata: string;
-}
-
-/** Mirrors `livekit.SimulationDispatch`. */
-export interface SimulationDispatch {
-  simulationRunId: string;
-  jobId: string;
-  scenario: Scenario;
-  mode: SimulationMode;
-}
+export { Scenario, SimulationDispatch, SimulationMode };
 
 /** A pass/fail verdict for a scenario, with a human-readable reason. */
 export interface SimulationVerdict {
@@ -46,59 +16,11 @@ export interface SimulationVerdict {
  * a JSON-encoded string; in a scenarios.yaml it is written as a nested mapping. */
 export type ScenarioUserdata = { [key: string]: unknown };
 
-const MODE_NAMES: Record<string, SimulationMode> = {
-  SIMULATION_MODE_UNSPECIFIED: SimulationMode.UNSPECIFIED,
-  SIMULATION_MODE_TEXT: SimulationMode.TEXT,
-  SIMULATION_MODE_AUDIO: SimulationMode.AUDIO,
-};
-
-type JsonObject = Record<string, unknown>;
-
-const pick = (obj: JsonObject, camel: string, snake: string): unknown =>
-  obj[camel] !== undefined ? obj[camel] : obj[snake];
-
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-
-/** Decode a protojson `SimulationDispatch`. Accepts camelCase or snake_case
- * keys and string or numeric enum values, ignoring unknown fields — matching
- * protobuf `json_format.Parse(..., ignore_unknown_fields=True)` semantics for
- * the fields this SDK consumes. Throws on malformed input. */
+/** Decode a protojson `SimulationDispatch`, ignoring unknown fields so newer
+ * servers can add fields without breaking older SDKs. Throws on malformed
+ * input. */
 export function parseSimulationDispatch(raw: string): SimulationDispatch {
-  const obj: unknown = JSON.parse(raw);
-  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
-    throw new TypeError('simulation dispatch is not a JSON object');
-  }
-  const root = obj as JsonObject;
-
-  let mode = SimulationMode.UNSPECIFIED;
-  const rawMode = root.mode;
-  if (typeof rawMode === 'number' && rawMode in SimulationMode) {
-    mode = rawMode as SimulationMode;
-  } else if (typeof rawMode === 'string' && rawMode in MODE_NAMES) {
-    mode = MODE_NAMES[rawMode]!;
-  }
-
-  const rawScenario = (root.scenario ?? {}) as JsonObject;
-  const rawTags = rawScenario.tags;
-  const tags: Record<string, string> = {};
-  if (typeof rawTags === 'object' && rawTags !== null && !Array.isArray(rawTags)) {
-    for (const [k, v] of Object.entries(rawTags)) {
-      tags[k] = str(v);
-    }
-  }
-
-  return {
-    simulationRunId: str(pick(root, 'simulationRunId', 'simulation_run_id')),
-    jobId: str(pick(root, 'jobId', 'job_id')),
-    scenario: {
-      label: str(rawScenario.label),
-      instructions: str(rawScenario.instructions),
-      agentExpectations: str(pick(rawScenario, 'agentExpectations', 'agent_expectations')),
-      tags,
-      userdata: str(rawScenario.userdata),
-    },
-    mode,
-  };
+  return SimulationDispatch.fromJsonString(raw, { ignoreUnknownFields: true });
 }
 
 /**
@@ -130,7 +52,7 @@ export class SimulationContext {
   }
 
   get scenario(): Scenario {
-    return this._dispatch.scenario;
+    return (this._dispatch.scenario ??= new Scenario());
   }
 
   /** How the simulated user interacts with the agent (text chat or audio).
@@ -175,10 +97,10 @@ export class SimulationContext {
 
   /** The scenario's `userdata` decoded from its JSON string (`{}` if empty). */
   userdata(): ScenarioUserdata {
-    if (!this._dispatch.scenario.userdata) {
+    if (!this.scenario.userdata) {
       return {};
     }
-    return JSON.parse(this._dispatch.scenario.userdata) as ScenarioUserdata;
+    return JSON.parse(this.scenario.userdata) as ScenarioUserdata;
   }
 
   /** Veto this run from your own checks (e.g. final DB state diverged).

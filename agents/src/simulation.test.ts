@@ -28,9 +28,9 @@ describe('parseSimulationDispatch', () => {
     const d = parseSimulationDispatch(dispatchJson());
     expect(d.simulationRunId).toBe('SR_1');
     expect(d.jobId).toBe('AJ_1');
-    expect(d.scenario.label).toBe('refund flow');
-    expect(d.scenario.agentExpectations).toBe('processes the refund');
-    expect(d.scenario.tags).toEqual({ suite: 'billing' });
+    expect(d.scenario?.label).toBe('refund flow');
+    expect(d.scenario?.agentExpectations).toBe('processes the refund');
+    expect(d.scenario?.tags).toEqual({ suite: 'billing' });
     expect(d.mode).toBe(SimulationMode.AUDIO);
   });
 
@@ -43,7 +43,7 @@ describe('parseSimulationDispatch', () => {
     });
     const d = parseSimulationDispatch(raw);
     expect(d.simulationRunId).toBe('SR_2');
-    expect(d.scenario.agentExpectations).toBe('x');
+    expect(d.scenario?.agentExpectations).toBe('x');
     expect(d.mode).toBe(SimulationMode.TEXT);
   });
 
@@ -51,14 +51,14 @@ describe('parseSimulationDispatch', () => {
     const d = parseSimulationDispatch('{"simulationRunId":"SR_3","futureField":true}');
     expect(d.simulationRunId).toBe('SR_3');
     expect(d.jobId).toBe('');
-    expect(d.scenario).toEqual({
-      label: '',
-      instructions: '',
-      agentExpectations: '',
-      tags: {},
-      userdata: '',
-    });
+    expect(d.scenario).toBeUndefined();
     expect(d.mode).toBe(SimulationMode.UNSPECIFIED);
+
+    // SimulationContext papers over the unset message field.
+    const ctx = new SimulationContext(d, fakeJobCtx);
+    expect(ctx.scenario.label).toBe('');
+    expect(ctx.scenario.tags).toEqual({});
+    expect(ctx.userdata()).toEqual({});
   });
 
   it('throws on malformed JSON and non-object payloads', () => {
