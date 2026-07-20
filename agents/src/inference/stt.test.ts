@@ -381,8 +381,15 @@ describe('STT agent_context carryover', () => {
   });
 
   it('explicit false disables carryover on a supported model', () => {
-    const stt = makeAssemblyStt({ agentContextCarryover: false });
+    const stt = makeAssemblyStt({
+      agentContextCarryover: false,
+      modelOptions: { agent_context: 'keep me' },
+    });
     expect(stt.capabilities.chatContext).toBe(false);
+
+    stt._pushConversationItem(assistantItemEvent('do not forward me'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'keep me');
   });
 
   it('previous_context_n_turns=0 disables the default carryover', () => {
@@ -400,11 +407,19 @@ describe('STT agent_context carryover', () => {
 
   it('forwards short assistant replies verbatim', () => {
     const stt = makeAssemblyStt();
+    const stream = stt.stream();
+
     stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+
     expect(stt['opts'].modelOptions).toHaveProperty(
       'agent_context',
       'Your room is booked for Tuesday.',
     );
+    expect(stream['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'Your room is booked for Tuesday.',
+    );
+    stream.close();
   });
 
   it('truncates oversize replies keeping the tail', () => {
@@ -447,6 +462,28 @@ describe('STT agent_context carryover', () => {
 
     stt._pushConversationItem(assistantItemEvent('And your zip code?'));
     expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'And your zip code?');
+  });
+
+  it('starts forwarding after changing from an unsupported to a supported model', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+
+    stt._pushConversationItem(assistantItemEvent('ignored before transition'));
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt.updateOptions({ model: 'assemblyai/universal-3-5-pro' });
+    stt._pushConversationItem(assistantItemEvent('forwarded after transition'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'forwarded after transition');
+  });
+
+  it('stops forwarding after changing from a supported to an unsupported model', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent('last supported context'));
+
+    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
+    stt._pushConversationItem(assistantItemEvent('ignored after transition'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'last supported context');
   });
 });
 

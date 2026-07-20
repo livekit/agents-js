@@ -641,6 +641,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) {
+      return;
+    }
+
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
       let text = chatItem.textContent;

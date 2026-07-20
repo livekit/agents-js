@@ -4,7 +4,12 @@
 import type { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../_exceptions.js';
+import { ChatMessage } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
+import {
+  type ConversationItemAddedEvent,
+  createConversationItemAddedEvent,
+} from '../voice/events.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import type { STT, SpeechEvent } from './stt.js';
 import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
@@ -48,6 +53,55 @@ describe('FallbackAdapter', () => {
     const a = new FakeSTT({ label: 'a' });
     const adapter = new FallbackAdapter({ sttInstances: [a] });
     expect(adapter.capabilities.streaming).toBe(true);
+  });
+
+  it('forwards conversation context only to children that support it', () => {
+    class ContextRecordingSTT extends FakeSTT {
+      readonly conversationItems: ConversationItemAddedEvent[] = [];
+
+      constructor(label: string, supportsChatContext: boolean) {
+        super({ label });
+        this.updateCapabilities({ chatContext: supportsChatContext });
+      }
+
+      override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+        this.conversationItems.push(ev);
+      }
+    }
+
+    const supported = new ContextRecordingSTT('supported', true);
+    const unsupported = new ContextRecordingSTT('unsupported', false);
+    const adapter = new FallbackAdapter({ sttInstances: [supported, unsupported] });
+    const event = createConversationItemAddedEvent(
+      ChatMessage.create({ role: 'assistant', content: ['hello'] }),
+    );
+
+    adapter._pushConversationItem(event);
+
+    expect(supported.conversationItems).toEqual([event]);
+    expect(unsupported.conversationItems).toEqual([]);
+  });
+
+  it('tracks dynamic child conversation-context capabilities and removes listeners on close', async () => {
+    class DynamicContextSTT extends FakeSTT {
+      setChatContext(supported: boolean): void {
+        this.updateCapabilities({ chatContext: supported });
+      }
+    }
+
+    const child = new DynamicContextSTT();
+    const adapter = new FallbackAdapter({ sttInstances: [child] });
+    expect(adapter.capabilities.chatContext).toBe(false);
+    expect(child.listenerCount('capabilities_changed')).toBe(1);
+
+    child.setChatContext(true);
+    expect(adapter.capabilities.chatContext).toBe(true);
+
+    child.setChatContext(false);
+    expect(adapter.capabilities.chatContext).toBe(false);
+
+    await adapter.close();
+    expect(child.listenerCount('capabilities_changed')).toBe(0);
   });
 
   it('_recognize falls through to the next instance on error', async () => {
