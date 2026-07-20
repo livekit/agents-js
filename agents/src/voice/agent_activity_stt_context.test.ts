@@ -12,6 +12,56 @@ import { AgentSessionEventTypes, createConversationItemAddedEvent } from './even
 describe('AgentActivity STT conversation-context lifecycle', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
+  it('forwards assistant context by default and removes listeners on close', async () => {
+    const stt = new InferenceSTT({
+      model: 'assemblyai/universal-3-5-pro',
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    const pushSpy = vi.spyOn(stt, '_pushConversationItem');
+    const session = new AgentSession({ stt });
+    const event = createConversationItemAddedEvent(
+      ChatMessage.create({ role: 'assistant', content: ['hello'] }),
+    );
+
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(1);
+
+    session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+
+    await session.close();
+    expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(0);
+    expect(stt.listenerCount('capabilities_changed')).toBe(0);
+  });
+
+  it('does not forward context when the session opts out', async () => {
+    const stt = new InferenceSTT({
+      model: 'assemblyai/universal-3-5-pro',
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    const pushSpy = vi.spyOn(stt, '_pushConversationItem');
+    const session = new AgentSession({
+      stt,
+      sttContextOptions: { forwardChatContext: false },
+    });
+
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    session.emit(
+      AgentSessionEventTypes.ConversationItemAdded,
+      createConversationItemAddedEvent(
+        ChatMessage.create({ role: 'assistant', content: ['hello'] }),
+      ),
+    );
+
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(session.listenerCount(AgentSessionEventTypes.ConversationItemAdded)).toBe(0);
+    await session.close();
+  });
+
   it('stops forwarding when previous_context_n_turns disables carryover', async () => {
     const stt = new InferenceSTT({
       model: 'assemblyai/universal-streaming',

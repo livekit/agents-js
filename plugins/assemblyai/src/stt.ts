@@ -24,9 +24,16 @@ import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
 
 // Speech models in the Universal-3 Pro family, which share the same parameter support.
 const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+const MAX_AGENT_CONTEXT_CHARS = 1750;
 
 function isU3ProModel(model: STTModels): boolean {
   return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
+
+function validateAgentContext(agentContext: string | undefined): void {
+  if (agentContext !== undefined && agentContext.length > MAX_AGENT_CONTEXT_CHARS) {
+    throw new Error(`agentContext must be at most ${MAX_AGENT_CONTEXT_CHARS} characters`);
+  }
 }
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
@@ -155,6 +162,8 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
+    validateAgentContext(opts.agentContext);
+
     // u3-rt-pro family — "u3-pro" is normalized below — supports native chat context.
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
@@ -224,6 +233,8 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    validateAgentContext(opts.agentContext);
+
     // session keyterms so a user update doesn't drop them)
     const nextOpts = { ...opts };
     if (nextOpts.keytermsPrompt !== undefined) {
@@ -265,7 +276,9 @@ export class STT extends stt.STT {
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
-      this.updateOptions({ agentContext: chatItem.textContent });
+      this.updateOptions({
+        agentContext: chatItem.textContent.slice(-MAX_AGENT_CONTEXT_CHARS),
+      });
     }
   }
 
@@ -313,6 +326,8 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    validateAgentContext(opts.agentContext);
+
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };

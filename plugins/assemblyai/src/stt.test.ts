@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log } from '@livekit/agents';
+import {
+  AgentHandoffItem,
+  ChatMessage,
+  createConversationItemAddedEvent,
+  log,
+} from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
@@ -60,6 +65,61 @@ describe('AssemblyAI options', () => {
           agentContext: 'hello',
         }),
     ).toThrow(/agentContext/);
+  });
+
+  it('rejects agentContext values longer than 1750 characters', () => {
+    expect(
+      () =>
+        new STT({
+          apiKey: 'test-key',
+          agentContext: 'x'.repeat(1751),
+        }),
+    ).toThrow(/1750/);
+  });
+
+  it('preserves agentContext when an update fails validation', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    try {
+      const stt = new STT({
+        apiKey: 'test-key',
+        baseUrl,
+        agentContext: 'original context',
+      });
+
+      expect(() => stt.updateOptions({ agentContext: 'x'.repeat(1751) })).toThrow(/1750/);
+
+      const stream = stt.stream();
+      await waitUntil(() => requestUrl !== '');
+      stream.close();
+
+      const url = new URL(`ws://127.0.0.1${requestUrl}`);
+      expect(url.searchParams.get('agent_context')).toBe('original context');
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('rejects oversized agentContext updates on an active stream', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let connected = false;
+    wss.on('connection', () => {
+      connected = true;
+    });
+
+    try {
+      const stream = new STT({ apiKey: 'test-key', baseUrl }).stream();
+      await waitUntil(() => connected);
+
+      expect(() => stream.updateOptions({ agentContext: 'x'.repeat(1751) })).toThrow(/1750/);
+      stream.close();
+    } finally {
+      await closeWebSocketServer(wss);
+    }
   });
 
   it('requires a u3-rt-pro model for previousContextNTurns', () => {
@@ -155,6 +215,45 @@ describe('AssemblyAI options', () => {
 
     expect(stt.capabilities.chatContext).toBe(true);
     warn.mockRestore();
+  });
+
+  it('forwards short assistant replies as agent context', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const update = vi.spyOn(stt, 'updateOptions');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(
+        ChatMessage.create({ role: 'assistant', content: ['Your order is ready.'] }),
+      ),
+    );
+
+    expect(update).toHaveBeenCalledWith({ agentContext: 'Your order is ready.' });
+  });
+
+  it('truncates automatic assistant context to the final 1750 characters', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const update = vi.spyOn(stt, 'updateOptions');
+    const reply = `${'a'.repeat(500)}${'b'.repeat(1750)}`;
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'assistant', content: [reply] })),
+    );
+
+    expect(update).toHaveBeenCalledWith({ agentContext: 'b'.repeat(1750) });
+  });
+
+  it('ignores non-assistant messages and non-message items', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+    const update = vi.spyOn(stt, 'updateOptions');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'user', content: ['hello'] })),
+    );
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
+    );
+
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('forwards inactivity timeout to the streaming query', async () => {
