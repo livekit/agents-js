@@ -405,9 +405,14 @@ describe('STT agent_context carryover', () => {
     expect(stt.capabilities.chatContext).toBe(true);
   });
 
-  it('forwards short assistant replies verbatim', () => {
+  it('emits active carryover shaping in the session.update wire payload', () => {
     const stt = makeAssemblyStt();
     const stream = stt.stream();
+    const sent: string[] = [];
+    Reflect.set(stream, 'activeWs', {
+      readyState: 1,
+      send: (payload: string) => sent.push(payload),
+    });
 
     stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
 
@@ -415,10 +420,15 @@ describe('STT agent_context carryover', () => {
       'agent_context',
       'Your room is booked for Tuesday.',
     );
-    expect(stream['opts'].modelOptions).toHaveProperty(
-      'agent_context',
-      'Your room is booked for Tuesday.',
-    );
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      type: 'session.update',
+      settings: {
+        extra: {
+          agent_context: 'Your room is booked for Tuesday.',
+        },
+      },
+    });
     stream.close();
   });
 

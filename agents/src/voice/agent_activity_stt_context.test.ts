@@ -12,7 +12,7 @@ import { AgentSessionEventTypes, createConversationItemAddedEvent } from './even
 describe('AgentActivity STT conversation-context lifecycle', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('tracks model capability transitions and removes its listener on close', async () => {
+  it('stops forwarding when previous_context_n_turns disables carryover', async () => {
     const stt = new InferenceSTT({
       model: 'assemblyai/universal-streaming',
       apiKey: 'test-key',
@@ -35,7 +35,8 @@ describe('AgentActivity STT conversation-context lifecycle', () => {
     session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
     expect(pushSpy).toHaveBeenCalledTimes(1);
 
-    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
+    stt.updateOptions({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(false);
     session.emit(AgentSessionEventTypes.ConversationItemAdded, event);
     expect(pushSpy).toHaveBeenCalledTimes(1);
 
