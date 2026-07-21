@@ -28,6 +28,11 @@ import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
+import {
+  ATTRIBUTE_REDACTION_ENABLED,
+  ATTRIBUTE_SIMULATION_ENABLED,
+  recordingEnabled,
+} from '../types.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
@@ -423,6 +428,7 @@ export async function setupCloudTracer(options: {
   cloudHostname: string;
   enableTraces?: boolean;
   enableLogs?: boolean;
+  metadata?: Attributes;
 }): Promise<void> {
   const { roomId, jobId, cloudHostname, enableTraces = true, enableLogs = true } = options;
 
@@ -446,15 +452,16 @@ export async function setupCloudTracer(options: {
       Authorization: `Bearer ${jwt}`,
     };
 
-    const metadata: Attributes = {
+    const baseMetadata: Attributes = {
       room_id: roomId,
       job_id: jobId,
     };
 
+    const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
+
     const resource = new Resource({
       [ATTR_SERVICE_NAME]: 'livekit-agents',
-      room_id: roomId,
-      job_id: jobId,
+      ...baseMetadata,
     });
 
     if (enableTraces) {
@@ -474,7 +481,7 @@ export async function setupCloudTracer(options: {
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
-            new MetadataSpanProcessor(metadata),
+            new MetadataSpanProcessor(sessionMetadata),
             new BatchSpanProcessor(
               new OTLPTraceExporter({
                 ...cloudExporterOptions,
@@ -525,7 +532,7 @@ export async function setupCloudTracer(options: {
             // Resource shared by all exporters, so applying `resource` here would also relabel
             // the spans going to the user's own backend. room_id/job_id — the keys Cloud
             // correlates on — still ride along as span attributes via MetadataSpanProcessor.
-            config.registerSpanProcessor(new MetadataSpanProcessor(metadata));
+            config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
             config.registerSpanProcessor(cloudSpanProcessor);
           }
         }
@@ -538,6 +545,7 @@ export async function setupCloudTracer(options: {
         cloudHostname,
         roomId,
         jobId,
+        metadata: options.metadata,
       });
 
       enableOtelLogging();
@@ -779,8 +787,14 @@ export async function uploadSessionReport(options: {
   agentName: string;
   cloudHostname: string;
   report: SessionReport;
+  metadata?: Attributes;
 }): Promise<void> {
   const { agentName, cloudHostname, report } = options;
+  const metadata = options.metadata ?? {};
+
+  if (!recordingEnabled(report.recordingOptions)) {
+    return;
+  }
 
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
@@ -795,6 +809,7 @@ export async function uploadSessionReport(options: {
       room_id: report.roomId,
       job_id: report.jobId,
       room: report.room,
+      ...metadata,
     },
   });
 
@@ -805,6 +820,7 @@ export async function uploadSessionReport(options: {
     room_id: report.roomId,
     job_id: report.jobId,
     'logger.name': 'chat_history',
+    ...metadata,
   };
 
   const usage = report.modelUsage?.map(filterZeroValues) || null;
@@ -892,6 +908,8 @@ export async function uploadSessionReport(options: {
       seconds: BigInt(Math.floor(audioStartTime / 1000)),
       nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
+    simulated: metadata[ATTRIBUTE_SIMULATION_ENABLED] === true,
+    redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());

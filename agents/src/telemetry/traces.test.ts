@@ -1,11 +1,23 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { MetricsRecordingHeader } from '@livekit/protocol';
 import { context as otelContext, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import FormData from 'form-data';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type SpanProcessorLike, setTracerProvider, setupCloudTracer, tracer } from './traces.js';
+import { ChatContext } from '../llm/chat_context.js';
+import type { SessionReport } from '../voice/report.js';
+import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import {
+  type SpanProcessorLike,
+  setTracerProvider,
+  setupCloudTracer,
+  tracer,
+  uploadSessionReport,
+} from './traces.js';
 
 /** Helper: extract parentSpanId across OTel SDK v1/v2 */
 function parentSpanId(span: unknown): string | undefined {
@@ -184,12 +196,20 @@ describe('setupCloudTracer with a user-configured provider', () => {
       cloudHostname: 'example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
+      metadata: { 'lk.redaction.enabled': true },
     });
 
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
     expect(addSpanProcessor).toHaveBeenCalledTimes(2);
+    const setAttributes = vi.fn();
+    addSpanProcessor.mock.calls[0]![0].onStart({ setAttributes } as never, otelContext.active());
+    expect(setAttributes).toHaveBeenCalledWith({
+      room_id: 'room1',
+      job_id: 'job1',
+      'lk.redaction.enabled': true,
+    });
     expect(addSpanProcessor.mock.calls[1]![0]).toBeInstanceOf(BatchSpanProcessor);
   });
 
@@ -261,5 +281,148 @@ describe('setupCloudTracer with a user-configured provider', () => {
 
     expect(tracer.getProvider()).toBe(userProvider);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('registerSpanProcessor'));
+  });
+});
+
+function makeReport(recordingOptions: SessionReport['recordingOptions']): SessionReport {
+  return {
+    jobId: 'job1',
+    roomId: 'room1',
+    room: 'room-name',
+    options: {},
+    events: [],
+    chatHistory: ChatContext.empty(),
+    enableRecording: true,
+    recordingOptions,
+    startedAt: 1_700_000_000_000,
+    timestamp: 1_700_000_001_000,
+  };
+}
+
+function mockSuccessfulFormSubmit() {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+    const res = new PassThrough() as PassThrough & {
+      statusCode: number;
+      statusMessage: string;
+      resume: () => PassThrough;
+    };
+    res.statusCode = 200;
+    res.statusMessage = 'OK';
+    res.resume = () => {
+      process.nextTick(() => res.emit('end'));
+      return res;
+    };
+    cb?.(null, res as never);
+    return {} as never;
+  });
+}
+
+function getMultipartBuffer(formData: FormData, name: string): Buffer {
+  const streams = (formData as unknown as { _streams: unknown[] })._streams;
+  const index = streams.findIndex(
+    (stream) => typeof stream === 'string' && stream.includes(`name="${name}"`),
+  );
+  const value = streams[index + 1];
+  if (!Buffer.isBuffer(value)) {
+    throw new Error(`multipart part ${name} was not a Buffer`);
+  }
+  return value;
+}
+
+describe('uploadSessionReport metadata', () => {
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+  });
+
+  it('includes simulation and redaction metadata on exported session-report logs', async () => {
+    const exportSpy = vi
+      .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
+      .mockResolvedValue(undefined);
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: false,
+      }),
+      metadata: {
+        'lk.simulation.enabled': true,
+        'lk.redaction.enabled': true,
+      },
+    });
+
+    const records = exportSpy.mock.calls[0]?.[0] ?? [];
+    expect(records[0]?.attributes).toMatchObject({
+      'lk.simulation.enabled': true,
+      'lk.redaction.enabled': true,
+    });
+    expect(records[0]?.attributes).not.toHaveProperty('session.simulation');
+  });
+
+  it('sets simulation and redaction on the multipart recording header', async () => {
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: false,
+        logs: false,
+        transcript: true,
+        redaction: true,
+      }),
+      metadata: {
+        'lk.simulation.enabled': true,
+        'lk.redaction.enabled': true,
+      },
+    });
+
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
+    expect(header.simulated).toBe(true);
+    expect(header.redactionEnabled).toBe(true);
+  });
+
+  it('returns before exporting when only redaction is enabled', async () => {
+    const exportSpy = vi
+      .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
+      .mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: true,
+      }),
+      metadata: { 'lk.redaction.enabled': true },
+    });
+
+    expect(exportSpy).not.toHaveBeenCalled();
+    expect(submitSpy).not.toHaveBeenCalled();
   });
 });

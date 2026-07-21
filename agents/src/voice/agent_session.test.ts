@@ -37,12 +37,14 @@ describe('resolveRecordingOptions', () => {
       traces: true,
       logs: true,
       transcript: true,
+      redaction: false,
     });
     expect(resolveRecordingOptions(false)).toEqual({
       audio: false,
       traces: false,
       logs: false,
       transcript: false,
+      redaction: false,
     });
   });
 
@@ -52,16 +54,32 @@ describe('resolveRecordingOptions', () => {
       traces: true,
       logs: true,
       transcript: true,
+      redaction: false,
+    });
+
+    expect(resolveRecordingOptions({ redaction: true })).toEqual({
+      audio: true,
+      traces: true,
+      logs: true,
+      transcript: true,
+      redaction: true,
     });
 
     // The granular form from the docs: keep audio, drop everything else.
     expect(
-      resolveRecordingOptions({ audio: true, traces: false, logs: false, transcript: false }),
+      resolveRecordingOptions({
+        audio: true,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: true,
+      }),
     ).toEqual({
       audio: true,
       traces: false,
       logs: false,
       transcript: false,
+      redaction: true,
     });
   });
 
@@ -83,8 +101,18 @@ describe('AgentSession recording state', () => {
       traces: false,
       logs: true,
       transcript: false,
+      redaction: false,
     });
     expect(session._enableRecording).toBe(true);
+
+    session._recordingOptions = resolveRecordingOptions({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: false,
+      redaction: true,
+    });
+    expect(session._enableRecording).toBe(false);
 
     session._recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
