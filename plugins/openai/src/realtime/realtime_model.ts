@@ -125,6 +125,13 @@ const DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
 const DEFAULT_TOOL_CHOICE: llm.ToolChoice = 'auto';
 const DEFAULT_MAX_RESPONSE_OUTPUT_TOKENS: number | 'inf' = 'inf';
 
+function normalizeTurnDetection(
+  turnDetection: api_proto.TurnDetectionType | null | undefined,
+): api_proto.TurnDetectionType | null | undefined {
+  if (!turnDetection || turnDetection.create_response !== undefined) return turnDetection;
+  return { ...turnDetection, create_response: true };
+}
+
 const AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: api_proto.InputAudioTranscription = {
   model: 'whisper-1',
 };
@@ -253,6 +260,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
       modalities,
     };
+    this._options.turnDetection = normalizeTurnDetection(this._options.turnDetection);
   }
 
   /**
