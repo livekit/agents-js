@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { z } from 'zod';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import type { ChatContext, FunctionCallOutput } from '../llm/chat_context.js';
+import { FunctionCall } from '../llm/chat_context.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
   type DuplicateMode,
@@ -111,6 +112,7 @@ type RunningTask = {
   controller: AbortController;
   firstUpdateFuture: Future<unknown>;
   executor: ToolExecutor;
+  attachment: object;
   allowCancellation: boolean;
   // Guarded handle to the raw user `execute()` promise (never rejects). `drain()`
   // waits on this to detect tools that keep running after being aborted.
@@ -128,7 +130,8 @@ const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 export const getRunningTasksTool = tool({
   name: 'lk_agents_get_running_tasks',
   description: 'Get the list of running tool calls that are cancellable.',
-  execute: async (_, { ctx }) => getRunningTasks(ctx.session).map((call) => call.toJSON(true)),
+  execute: async (_, { ctx }) =>
+    getCancellableRunningTasks(ctx.session).map((call) => call.toJSON(true)),
 });
 
 export const cancelTaskTool = tool({
@@ -222,7 +225,7 @@ export class ToolExecutor {
       }
 
       const firstUpdateFuture = new Future<unknown>();
-      runCtx._attachExecutor(this, firstUpdateFuture);
+      const attachment = runCtx._attachExecutor(this, firstUpdateFuture);
 
       const controller = new AbortController();
       const abort = () => {
@@ -258,10 +261,15 @@ export class ToolExecutor {
         controller,
         toolPromiseRef,
       }).finally(() => {
-        this.runningTasks.delete(callId);
-        runningTasks.get(runCtx.session)?.delete(callId);
+        if (this.runningTasks.get(callId)?.attachment === attachment) {
+          this.runningTasks.delete(callId);
+        }
+        const sessionTasks = runningTasks.get(runCtx.session);
+        if (sessionTasks?.get(callId)?.attachment === attachment) {
+          sessionTasks.delete(callId);
+        }
         abortSignal?.removeEventListener('abort', abort);
-        runCtx._detachExecutor();
+        runCtx._detachExecutor(attachment);
       });
 
       const task: RunningTask = {
@@ -270,6 +278,7 @@ export class ToolExecutor {
         controller,
         firstUpdateFuture,
         executor: this,
+        attachment,
         allowCancellation: Boolean(tool.flags & ToolFlag.CANCELLABLE),
         toolPromiseRef,
       };
@@ -319,10 +328,9 @@ export class ToolExecutor {
     if (!task.firstUpdateFuture.done) {
       task.firstUpdateFuture.resolve(undefined);
     }
+    task.ctx._detachExecutor(task.attachment);
 
     this.runningTasks.delete(callId);
-    runningTasks.get(task.ctx.session)?.delete(callId);
-    task.ctx._detachExecutor();
     void task.promise.catch(() => undefined);
     // We've abandoned the wait, but the user's execute() may ignore the abort
     // signal and keep running. Error if it hasn't stopped by the deadline.
@@ -402,8 +410,7 @@ export class ToolExecutor {
       if (!task.firstUpdateFuture.done) {
         task.firstUpdateFuture.resolve(undefined);
       }
-      runningTasks.get(task.ctx.session)?.delete(task.ctx.functionCall.callId);
-      task.ctx._detachExecutor();
+      task.ctx._detachExecutor(task.attachment);
       void task.promise.catch(() => undefined);
     }
     this.runningTasks.clear();
@@ -659,6 +666,12 @@ export function buildExecutorMap({
 }
 
 export function getRunningTasks(session: AgentSession): FunctionCall[] {
+  return [...(runningTasks.get(session)?.values() ?? [])].map((task) =>
+    FunctionCall.create({ ...task.ctx.functionCall }),
+  );
+}
+
+function getCancellableRunningTasks(session: AgentSession): FunctionCall[] {
   return [...(runningTasks.get(session)?.values() ?? [])]
     .filter((task) => task.allowCancellation)
     .map((task) => FunctionCall.create({ ...task.ctx.functionCall }));

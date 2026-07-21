@@ -161,7 +161,7 @@ describe('ToolExecutor', () => {
     await executor.waitForAll();
   });
 
-  it('returns from cancel even when a cancellable tool ignores abortSignal', async () => {
+  it('returns from cancel but keeps a non-cooperative tool visible until it actually settles', async () => {
     const executor = new ToolExecutor();
     const { runCtx } = buildRunContext('non_cooperative_cancel');
     const neverFinish = new Future<void>();
@@ -184,6 +184,125 @@ describe('ToolExecutor', () => {
     ]);
 
     expect(cancelled).toBe('cancelled');
+    expect(getRunningTasks(runCtx.session)).toHaveLength(1);
+
+    neverFinish.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getRunningTasks(runCtx.session)).toHaveLength(0);
+  });
+
+  it('detaches a cancelled non-cooperative tool before it sends a late update', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, history } = buildRunContext('late_update_after_cancel');
+    const releaseLateUpdate = new Future<void>();
+    const lateUpdateFinished = new Future<void>();
+    const releaseTool = new Future<void>();
+    const lookup = tool({
+      name: 'late_update_after_cancel',
+      description: 'Non-cooperative cancellable lookup',
+      flags: ToolFlag.CANCELLABLE,
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await releaseLateUpdate.await;
+        await ctx.update('late');
+        lateUpdateFinished.resolve();
+        await releaseTool.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+    await executor.cancel(runCtx.functionCall.callId);
+    releaseLateUpdate.resolve();
+    await lateUpdateFinished.await;
+
+    expect(history.items).toHaveLength(0);
+    expect(getRunningTasks(runCtx.session)).toHaveLength(1);
+
+    releaseTool.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getRunningTasks(runCtx.session)).toHaveLength(0);
+  });
+
+  it('detaches closed tools before they send late updates', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, history } = buildRunContext('late_update_after_close');
+    const releaseLateUpdate = new Future<void>();
+    const lateUpdateFinished = new Future<void>();
+    const releaseTool = new Future<void>();
+    const lookup = tool({
+      name: 'late_update_after_close',
+      description: 'Non-cooperative lookup',
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await releaseLateUpdate.await;
+        await ctx.update('late');
+        lateUpdateFinished.resolve();
+        await releaseTool.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+    await executor.aclose();
+    releaseLateUpdate.resolve();
+    await lateUpdateFinished.await;
+
+    expect(history.items).toHaveLength(0);
+
+    releaseTool.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it('does not let an abandoned task clean up its same-call replacement', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, history } = buildRunContext('same_call_replacement');
+    const releaseOriginal = new Future<void>();
+    const original = tool({
+      name: 'same_call_replacement',
+      description: 'Original non-cooperative tool',
+      flags: ToolFlag.CANCELLABLE,
+      execute: async (_, { ctx }) => {
+        await ctx.update('original started');
+        await releaseOriginal.await;
+        return 'original done';
+      },
+    });
+
+    await executor.execute({ tool: original, runCtx, rawArguments: {} });
+    await executor.cancel(runCtx.functionCall.callId);
+
+    const releaseReplacementUpdate = new Future<void>();
+    const replacementUpdateFinished = new Future<void>();
+    const releaseReplacement = new Future<void>();
+    const replacement = tool({
+      name: 'same_call_replacement',
+      description: 'Replacement tool',
+      flags: ToolFlag.CANCELLABLE,
+      execute: async (_, { ctx }) => {
+        await ctx.update('replacement started');
+        await releaseReplacementUpdate.await;
+        await ctx.update('replacement still running');
+        replacementUpdateFinished.resolve();
+        await releaseReplacement.await;
+        return 'replacement done';
+      },
+    });
+
+    await executor.execute({ tool: replacement, runCtx, rawArguments: {} });
+    expect(getRunningTasks(runCtx.session)).toHaveLength(1);
+
+    releaseOriginal.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(executor.hasRunningTasks).toBe(true);
+    expect(getRunningTasks(runCtx.session)).toHaveLength(1);
+
+    releaseReplacementUpdate.resolve();
+    await replacementUpdateFinished.await;
+    expect(history.items).toHaveLength(2);
+
+    releaseReplacement.resolve();
+    await executor.waitForAll();
     expect(getRunningTasks(runCtx.session)).toHaveLength(0);
   });
 
@@ -302,6 +421,30 @@ describe('ToolExecutor', () => {
     expect(getRunningTasks(second.runCtx.session)).toHaveLength(0);
 
     neverFinish.resolve();
+    await executor.waitForAll();
+  });
+
+  it('exposes non-cancellable calls through the session-wide running registry', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx } = buildRunContext('non_cancellable_running');
+    const release = new Future<void>();
+    const lookup = tool({
+      name: 'non_cancellable_running',
+      description: 'Non-cancellable running lookup',
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await release.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+
+    expect(getRunningTasks(runCtx.session).map((call) => call.callId)).toEqual([
+      runCtx.functionCall.callId,
+    ]);
+
+    release.resolve();
     await executor.waitForAll();
   });
 });
