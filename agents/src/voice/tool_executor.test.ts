@@ -9,7 +9,7 @@ import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
-import { ToolExecutor, getRunningTasks } from './tool_executor.js';
+import { ToolExecutor, _getCancellableRunningTasks, getRunningTasks } from './tool_executor.js';
 
 describe('ToolExecutor', () => {
   function buildRunContext(
@@ -185,6 +185,7 @@ describe('ToolExecutor', () => {
 
     expect(cancelled).toBe('cancelled');
     expect(getRunningTasks(runCtx.session)).toHaveLength(1);
+    expect(_getCancellableRunningTasks(runCtx.session)).toHaveLength(0);
 
     neverFinish.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));

@@ -965,10 +965,12 @@ describe('AgentActivity - interrupted tool completion', () => {
     const toolItemsAdded = vi.fn();
     const activity = Object.create(AgentActivity.prototype) as AgentActivity;
     const chatCtx = ChatContext.empty();
+    const sessionHistory = ChatContext.empty();
     Object.assign(activity, {
       agent: { _chatCtx: chatCtx },
       agentSession: {
         emit,
+        history: sessionHistory,
         _toolItemsAdded: toolItemsAdded,
       },
       logger: { info() {}, debug() {}, warn() {}, error() {} },
@@ -984,6 +986,8 @@ describe('AgentActivity - interrupted tool completion', () => {
       output: 'transferred',
       isError: false,
     });
+    chatCtx.insert(call);
+    sessionHistory.insert(call);
     const toolOutput = {
       output: [
         ToolExecutionOutput.create({
@@ -1007,7 +1011,9 @@ describe('AgentActivity - interrupted tool completion', () => {
       }
     )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
 
+    expect(chatCtx.items).not.toContain(call);
     expect(chatCtx.items).not.toContain(output);
+    expect(sessionHistory.items).not.toContain(call);
     expect(emit).not.toHaveBeenCalled();
     expect(toolItemsAdded).not.toHaveBeenCalled();
   });
@@ -1017,9 +1023,10 @@ describe('AgentActivity - interrupted tool completion', () => {
     const toolItemsAdded = vi.fn();
     const activity = Object.create(AgentActivity.prototype) as AgentActivity;
     const chatCtx = ChatContext.empty();
+    const sessionHistory = ChatContext.empty();
     Object.assign(activity, {
       agent: { _chatCtx: chatCtx },
-      agentSession: { emit, _toolItemsAdded: toolItemsAdded },
+      agentSession: { emit, history: sessionHistory, _toolItemsAdded: toolItemsAdded },
       logger: { info() {}, debug() {}, warn() {}, error() {} },
     });
     const completedCall = FunctionCall.create({
@@ -1044,6 +1051,8 @@ describe('AgentActivity - interrupted tool completion', () => {
       output: 'transferred',
       isError: false,
     });
+    chatCtx.insert([completedCall, handoffCall]);
+    sessionHistory.insert([completedCall, handoffCall]);
     const toolOutput = {
       output: [
         ToolExecutionOutput.create({
@@ -1073,7 +1082,9 @@ describe('AgentActivity - interrupted tool completion', () => {
       }
     )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
 
-    expect(chatCtx.items).toEqual([completedOutput]);
+    expect(chatCtx.items).toHaveLength(2);
+    expect(chatCtx.items).toEqual(expect.arrayContaining([completedCall, completedOutput]));
+    expect(sessionHistory.items).toEqual([completedCall]);
     expect(toolItemsAdded).toHaveBeenCalledWith([completedOutput]);
     expect(emit).toHaveBeenCalledWith(
       AgentSessionEventTypes.FunctionToolsExecuted,

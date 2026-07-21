@@ -131,7 +131,7 @@ export const getRunningTasksTool = tool({
   name: 'lk_agents_get_running_tasks',
   description: 'Get the list of running tool calls that are cancellable.',
   execute: async (_, { ctx }) =>
-    getCancellableRunningTasks(ctx.session).map((call) => call.toJSON(true)),
+    _getCancellableRunningTasks(ctx.session).map((call) => call.toJSON(true)),
 });
 
 export const cancelTaskTool = tool({
@@ -671,9 +671,10 @@ export function getRunningTasks(session: AgentSession): FunctionCall[] {
   );
 }
 
-function getCancellableRunningTasks(session: AgentSession): FunctionCall[] {
+/** @internal */
+export function _getCancellableRunningTasks(session: AgentSession): FunctionCall[] {
   return [...(runningTasks.get(session)?.values() ?? [])]
-    .filter((task) => task.allowCancellation)
+    .filter((task) => task.allowCancellation && !task.controller.signal.aborted)
     .map((task) => FunctionCall.create({ ...task.ctx.functionCall }));
 }
 

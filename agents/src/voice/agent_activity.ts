@@ -3969,6 +3969,17 @@ export class AgentActivity implements RecognitionHooks {
     speechHandle: SpeechHandle,
     createdAt: number,
   ): void {
+    const interruptedHandoffCallIds = toolOutput.output
+      .filter((output) => output.agentTask !== undefined)
+      .map((output) => output.toolCall.callId);
+    if (interruptedHandoffCallIds.length > 0) {
+      const interruptedHandoffCallIdSet = new Set(interruptedHandoffCallIds);
+      for (const chatCtx of [this.agent._chatCtx, this.agentSession.history]) {
+        chatCtx.items = chatCtx.items.filter(
+          (item) => item.type !== 'function_call' || !interruptedHandoffCallIdSet.has(item.callId),
+        );
+      }
+    }
     const completedOutputs = toolOutput.output.filter((output) => output.agentTask === undefined);
     if (completedOutputs.length === 0) return;
     const { functionToolsExecutedEvent } = this.summarizeToolExecutionOutput(
