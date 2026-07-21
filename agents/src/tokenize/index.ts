@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as basic from './basic/index.js';
+import * as blingfire from './blingfire/index.js';
 
 export {
   type TokenData,
@@ -13,4 +14,4 @@ export {
 
 export { BufferedSentenceStream, BufferedTokenStream, BufferedWordStream } from './token_stream.js';
 
-export { basic };
+export { basic, blingfire };
