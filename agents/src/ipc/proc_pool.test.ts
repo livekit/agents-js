@@ -14,11 +14,11 @@ function createMockExecutor() {
     userArguments: {},
     runningJob: undefined,
     status: JobStatus.RUNNING,
-    start: vi.fn(async () => {}),
-    join: vi.fn(async () => {}),
-    initialize: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
-    launchJob: vi.fn(async () => {}),
+    start: vi.fn(async () => { }),
+    join: vi.fn(async () => { }),
+    initialize: vi.fn(async () => { }),
+    close: vi.fn(async () => { }),
+    launchJob: vi.fn(async () => { }),
   };
   return executor;
 }
@@ -31,51 +31,16 @@ async function flushMicrotasks(ticks = 10): Promise<void> {
 }
 
 describe('ProcPool warmed process lock handling', () => {
-  it('releases lock token from the dequeued warmed process entry', async (): Promise<
-    Throws<void, Error>
-  > => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
-    const unlock = vi.fn();
-    const executor = createMockExecutor();
-    const jobInfo = {
-      acceptArguments: { name: 'n', identity: 'i', metadata: '' },
-      job: { id: 'job-id' },
-      url: 'wss://example.com',
-      token: 'token',
-      workerId: 'worker-id',
-    } as unknown as RunningJobInfo;
 
-    await pool.warmedProcQueue.put({ proc: executor, unlock });
-    await pool.launchJob(jobInfo);
-
-    expect(unlock).toHaveBeenCalledTimes(1);
-    expect(executor.launchJob).toHaveBeenCalledWith(jobInfo);
-  });
-
-  it('releases queued lock tokens during close', async () => {
-    const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
-    const unlock = vi.fn();
-    const executor = createMockExecutor();
-
-    await pool.warmedProcQueue.put({ proc: executor, unlock });
-    pool.started = true;
-    await pool.close();
-
-    expect(unlock).toHaveBeenCalledTimes(1);
-    expect(executor.close).toHaveBeenCalledTimes(1);
-  });
-
-  it('releases both init and proc locks when closed before proc starts', async () => {
+  it('releases init lock when closed before proc starts', async () => {
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const initUnlock = vi.fn();
-    const procUnlock = vi.fn();
     pool.closed = true;
     pool.initMutex.lock = vi.fn(async () => initUnlock);
 
-    await pool.procWatchTask(procUnlock);
+    await pool.procWatchTask();
 
     expect(initUnlock).toHaveBeenCalledTimes(1);
-    expect(procUnlock).toHaveBeenCalledTimes(1);
   });
 
   it('releases initMutex after warming so concurrent procWatchTasks can initialise', async (): Promise<
@@ -86,9 +51,8 @@ describe('ProcPool warmed process lock handling', () => {
     // the pool to effective concurrency 1 regardless of numIdleProcesses.
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const initUnlock = vi.fn();
-    const procUnlock = vi.fn();
 
-    let joinResolve: () => void = () => {};
+    let joinResolve: () => void = () => { };
     const joinPromise = new Promise<void>((resolve) => {
       joinResolve = resolve;
     });
@@ -106,7 +70,7 @@ describe('ProcPool warmed process lock handling', () => {
     pool.initMutex.lock = vi.fn(async () => initUnlock);
 
     try {
-      const watchPromise = pool.procWatchTask(procUnlock);
+      const watchPromise = pool.procWatchTask();
       await flushMicrotasks();
 
       // initMutex released while proc.join() is still pending.
@@ -119,7 +83,6 @@ describe('ProcPool warmed process lock handling', () => {
 
       // finally block must not double-release.
       expect(initUnlock).toHaveBeenCalledTimes(1);
-      expect(procUnlock).not.toHaveBeenCalled();
     } finally {
       jobProcExecutorSpy.mockRestore();
     }
@@ -130,7 +93,6 @@ describe('ProcPool warmed process lock handling', () => {
   > => {
     const pool = new ProcPool('agent', 1, 1000, 1000, undefined, 0, 0);
     const initUnlock = vi.fn();
-    const procUnlock = vi.fn();
 
     const mockProc: JobExecutor = {
       ...createMockExecutor(),
@@ -148,10 +110,9 @@ describe('ProcPool warmed process lock handling', () => {
     pool.initMutex.lock = vi.fn(async () => initUnlock);
 
     try {
-      await pool.procWatchTask(procUnlock);
+      await pool.procWatchTask();
 
       expect(initUnlock).toHaveBeenCalledTimes(1);
-      expect(procUnlock).toHaveBeenCalledTimes(1);
       expect(pool.warmedProcQueue.items.length).toBe(0);
     } finally {
       jobProcExecutorSpy.mockRestore();
