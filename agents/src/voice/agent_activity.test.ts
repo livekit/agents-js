@@ -16,14 +16,20 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentConfigUpdate, ChatContext } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  ChatContext,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { Future, Task } from '../utils.js';
-import { _getActivityTaskInfo } from './agent.js';
+import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
-import type { AgentSessionEventTypes, UserInputTranscribedEvent } from './events.js';
+import { AgentSessionEventTypes, type UserInputTranscribedEvent } from './events.js';
+import { ToolExecutionOutput } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
 const agentMocks = vi.hoisted(() => ({
@@ -898,5 +904,278 @@ describe('AgentActivity - waitForIdle close abort', () => {
     // close() aborts the shared signal; the wait must unblock.
     closeAbort.abort();
     expect(await raceTimeout(pending, 1000)).toBe('resolved');
+  });
+});
+
+describe('AgentActivity - interrupted tool completion', () => {
+  it('preserves completed outputs without starting a tool-reply generation', () => {
+    const generateReply = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _toolItemsAdded: toolItemsAdded,
+        generateReply,
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const call = FunctionCall.create({
+      callId: 'call_completed',
+      name: 'charge_card',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'charged',
+      isError: false,
+    });
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'charged',
+          replyRequired: true,
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).toContain(output);
+    expect(toolItemsAdded).toHaveBeenCalledWith([output]);
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
+  it('does not persist an interrupted handoff as completed', () => {
+    const emit = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit,
+        _toolItemsAdded: toolItemsAdded,
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const call = FunctionCall.create({
+      callId: 'call_handoff',
+      name: 'transfer_to_specialist',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'transferred',
+      isError: false,
+    });
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'transferred',
+          replyRequired: false,
+          agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).not.toContain(output);
+    expect(emit).not.toHaveBeenCalled();
+    expect(toolItemsAdded).not.toHaveBeenCalled();
+  });
+
+  it('commits and emits only completed regular tools from a mixed interrupted batch', () => {
+    const emit = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: { emit, _toolItemsAdded: toolItemsAdded },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const completedCall = FunctionCall.create({
+      callId: 'call_completed_mixed',
+      name: 'save_note',
+      args: '{}',
+    });
+    const completedOutput = FunctionCallOutput.create({
+      callId: completedCall.callId,
+      name: completedCall.name,
+      output: 'saved',
+      isError: false,
+    });
+    const handoffCall = FunctionCall.create({
+      callId: 'call_handoff_mixed',
+      name: 'transfer_to_specialist',
+      args: '{}',
+    });
+    const handoffOutput = FunctionCallOutput.create({
+      callId: handoffCall.callId,
+      name: handoffCall.name,
+      output: 'transferred',
+      isError: false,
+    });
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: completedCall,
+          toolCallOutput: completedOutput,
+          rawOutput: 'saved',
+          replyRequired: true,
+        }),
+        ToolExecutionOutput.create({
+          toolCall: handoffCall,
+          toolCallOutput: handoffOutput,
+          rawOutput: 'transferred',
+          replyRequired: false,
+          agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).toEqual([completedOutput]);
+    expect(toolItemsAdded).toHaveBeenCalledWith([completedOutput]);
+    expect(emit).toHaveBeenCalledWith(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      expect.objectContaining({
+        functionCalls: [completedCall],
+        functionCallOutputs: [completedOutput],
+      }),
+    );
+  });
+});
+
+describe('AgentActivity - interruption while waiting for tools', () => {
+  function buildToolOutput() {
+    const call = FunctionCall.create({
+      callId: 'call_waiting',
+      name: 'save_note',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'saved',
+      isError: false,
+    });
+    return {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'saved',
+          replyRequired: true,
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+  }
+
+  type WaitForToolExecution = (options: {
+    executeToolsTask: {
+      result: Promise<void>;
+      cancelAndWait: (timeout: number) => Promise<void>;
+    };
+    toolOutput: ReturnType<typeof buildToolOutput>;
+    speechHandle: SpeechHandle;
+    createdAt: number;
+  }) => Promise<boolean>;
+
+  function buildActivity() {
+    const commitInterruptedToolOutputs = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    Object.assign(activity, {
+      _backgroundSpeeches: new Set<SpeechHandle>(),
+      _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
+    });
+    const waitForToolExecution = (
+      activity as unknown as { _waitForToolExecution: WaitForToolExecution }
+    )._waitForToolExecution.bind(activity);
+    return { activity, commitInterruptedToolOutputs, waitForToolExecution };
+  }
+
+  it('commits completed outputs when already interrupted before waiting', async () => {
+    const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const cancelAndWait = vi.fn(async () => {});
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: { result: Promise.resolve(), cancelAndWait },
+      toolOutput,
+      speechHandle,
+      createdAt: 123,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(cancelAndWait).toHaveBeenCalledOnce();
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 123);
+    expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('rechecks interruption after tool execution settles', async () => {
+    const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    const executionFinished = new Future<void>();
+    const toolOutput = buildToolOutput();
+
+    const waiting = waitForToolExecution({
+      executeToolsTask: {
+        result: executionFinished.await,
+        cancelAndWait: vi.fn(async () => {}),
+      },
+      toolOutput,
+      speechHandle,
+      createdAt: 456,
+    });
+    expect(activity['_backgroundSpeeches']).toContain(speechHandle);
+
+    speechHandle.interrupt();
+    executionFinished.resolve();
+
+    await expect(waiting).resolves.toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
+    expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
   });
 });
