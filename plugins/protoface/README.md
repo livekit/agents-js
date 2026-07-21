@@ -2,7 +2,7 @@
 
 Support for the [Protoface](https://protoface.com/) virtual avatar.
 
-See the [Protoface docs](https://docs.protoface.com/) for more information.
+See the [Protoface integration docs](https://docs.livekit.io/agents/models/avatar/plugins/protoface/) for more information.
 
 ## Installation
 
