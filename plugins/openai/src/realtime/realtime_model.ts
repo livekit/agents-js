@@ -662,7 +662,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const timeoutController = new AbortController();
       const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
         cleanupTimedOutFutures();
-        throw new Error('Chat ctx update events timed out');
+        throw new llm.RealtimeError('update_chat_ctx timed out.');
       });
 
       try {

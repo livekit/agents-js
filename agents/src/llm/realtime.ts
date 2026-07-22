@@ -71,6 +71,14 @@ export interface RealtimeCapabilities {
   nativeTranscriptSync?: boolean;
 }
 
+export class RealtimeError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RealtimeError';
+    Error.captureStackTrace(this, RealtimeError);
+  }
+}
+
 export interface InputTranscriptionCompleted {
   itemId: string;
   transcript: string;

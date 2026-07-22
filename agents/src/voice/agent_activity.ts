@@ -38,6 +38,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   type MessageGeneration,
+  RealtimeError,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -4077,7 +4078,23 @@ export class AgentActivity implements RecognitionHooks {
         role: 'user',
         content: userInput,
       });
-      await this.realtimeSession.updateChatCtx(chatCtx);
+      try {
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        if (error instanceof RealtimeError) {
+          this.logger.warn(
+            { error: error.message },
+            'failed to update the chat context before generating the reply',
+          );
+        } else {
+          this.logger.error(
+            { error },
+            'failed to update the chat context before generating the reply',
+          );
+          speechHandle._markDone(error);
+          return;
+        }
+      }
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }
