@@ -38,13 +38,13 @@ import {
   isFlushSentinel,
 } from '../types.js';
 import {
+  type Aborted,
   Future,
   IdleTimeoutError,
   Task,
   shortuuid,
   toError,
   waitForAbort,
-  waitUntilAborted,
   waitUntilTimeout,
 } from '../utils.js';
 import {
@@ -73,6 +73,68 @@ import { type TextTransform, applyTextTransforms } from './transcription/text_tr
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
+export const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
+export const RUNNING_TOOL_PLACEHOLDER_KEY = '__lk_running_placeholder__';
+const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX = 'lk_running_placeholder/';
+
+export function _injectRunningToolCalls(
+  chatCtx: ChatContext,
+  runningCalls: Iterable<FunctionCall>,
+): void {
+  const existingCallIds = new Set(
+    chatCtx.items
+      .filter((item): item is FunctionCall => item.type === 'function_call')
+      .map((item) => item.callId),
+  );
+  const existingOutputIds = new Set(
+    chatCtx.items
+      .filter((item): item is FunctionCallOutput => item.type === 'function_call_output')
+      .map((item) => item.callId),
+  );
+
+  for (const runningCall of runningCalls) {
+    if (existingOutputIds.has(runningCall.callId)) continue;
+    if (!existingCallIds.has(runningCall.callId)) {
+      existingCallIds.add(runningCall.callId);
+      chatCtx.insert(
+        FunctionCall.create({
+          ...runningCall,
+          extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
+        }),
+      );
+    }
+    existingOutputIds.add(runningCall.callId);
+    chatCtx.insert(
+      FunctionCallOutput.create({
+        id: `${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX}${runningCall.callId}`,
+        callId: runningCall.callId,
+        name: runningCall.name,
+        output: RUNNING_TOOL_PLACEHOLDER,
+        isError: false,
+        createdAt: runningCall.createdAt,
+      }),
+    );
+  }
+}
+
+export function _stripRunningToolCalls(chatCtx: ChatContext): void {
+  const injectedCallIds = new Set(
+    chatCtx.items
+      .filter(
+        (item): item is FunctionCall =>
+          item.type === 'function_call' && item.extra[RUNNING_TOOL_PLACEHOLDER_KEY] === true,
+      )
+      .map((item) => item.callId),
+  );
+  chatCtx.items = chatCtx.items.filter(
+    (item) =>
+      !(
+        (item.type === 'function_call' && injectedCallIds.has(item.callId)) ||
+        (item.type === 'function_call_output' &&
+          item.id.startsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX))
+      ),
+  );
+}
 
 /** @internal */
 export class _LLMGenerationData {
@@ -1198,14 +1260,16 @@ export function performToolExecutions({
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 
-        // await for task to complete, if task is aborted, set exception
+        // Only completed executions produce tool output. An interrupted execution may still
+        // finish in the background and must remain retryable rather than becoming a synthetic
+        // error result in conversation history.
         let toolOutput: ToolExecutionOutput | undefined;
         try {
-          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          const { result, isAborted } = await _waitForToolExecutionResult(toolExecTask, signal);
+          if (isAborted) return;
           toolOutput = createToolOutput({
             toolCall,
-            exception: isAborted ? new Error('tool call was aborted') : undefined,
-            output: isAborted ? undefined : result,
+            output: result,
           });
 
           if (toolOutput.toolCallOutput) {
@@ -1240,8 +1304,7 @@ export function performToolExecutions({
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
           }
         } finally {
-          if (!toolOutput) throw new Error('toolOutput is undefined');
-          toolCompleted(toolOutput);
+          if (toolOutput) toolCompleted(toolOutput);
         }
       };
 
@@ -1322,6 +1385,40 @@ export function performToolExecutions({
   };
 
   return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
+}
+
+/**
+ * Race tool completion against interruption while preferring an already-settled result.
+ *
+ * A plain pre-abort short circuit can discard a result that settled earlier in the same
+ * JavaScript turn but whose reaction has not run yet. Passing the original promise first to
+ * `Promise.race` preserves the settlement order in that case.
+ *
+ * @internal
+ */
+export async function _waitForToolExecutionResult<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<Aborted<T>> {
+  const aborted = Symbol('tool execution aborted');
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<typeof aborted>((resolve) => {
+    onAbort = () => resolve(aborted);
+    if (signal.aborted) {
+      resolve(aborted);
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+
+  try {
+    const result = await Promise.race([promise, abortPromise]);
+    return result === aborted
+      ? { result: undefined, isAborted: true }
+      : { result, isAborted: false };
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 export function removeInstructions(chatCtx: ChatContext) {

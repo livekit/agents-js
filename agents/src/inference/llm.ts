@@ -4,6 +4,12 @@
 import OpenAI from 'openai';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
+import {
+  THINK_TAG_END,
+  THINK_TAG_START,
+  ThinkingTokenFilter,
+  stripThinkingTokens,
+} from '../llm/utils.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
@@ -131,6 +137,10 @@ const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
 };
 
 const REASONING_EFFORT_TOOL_INCOMPATIBLE_PREFIXES = new Set(['gpt-5.2', 'gpt-5.4']);
+
+const MODEL_THINK_TAGS = new Map<string, [string, string]>([
+  ['google/gemma-4-31b-it', ['<|channel>thought', '<channel|>']],
+]);
 
 function dropUnsupportedParams(
   model: string,
@@ -494,13 +504,17 @@ export class LLMStream extends llm.LLMStream {
         return;
       }
 
+      const thinkingFilter = new ThinkingTokenFilter(
+        ...(MODEL_THINK_TAGS.get(this.model) ?? [THINK_TAG_START, THINK_TAG_END]),
+      );
+
       for await (const chunk of stream) {
         if (this.abortController.signal.aborted) {
           break;
         }
 
         for (const choice of chunk.choices) {
-          const chatChunk = this.parseChoice(chunk.id, choice);
+          const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
             retryable = false;
             this.queue.put(chatChunk);
@@ -550,12 +564,17 @@ export class LLMStream extends llm.LLMStream {
   private parseChoice(
     id: string,
     choice: OpenAI.ChatCompletionChunk.Choice,
+    thinkingFilter: ThinkingTokenFilter,
   ): llm.ChatChunk | undefined {
     const delta = choice.delta;
 
     // https://github.com/livekit/agents/issues/688
     // the delta can be None when using Azure OpenAI (content filtering)
     if (delta === undefined) return undefined;
+
+    const content = stripThinkingTokens(delta.content, thinkingFilter, {
+      final: choice.finish_reason !== null && choice.finish_reason !== undefined,
+    });
 
     if (delta.tool_calls) {
       // check if we have functions to calls
@@ -636,7 +655,7 @@ export class LLMStream extends llm.LLMStream {
       ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
 
     // Regular content message
-    if (!delta.content && !deltaExtra) {
+    if (!content && !deltaExtra) {
       return undefined;
     }
 
@@ -644,7 +663,7 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content || undefined,
+        content: content || undefined,
         extra: deltaExtra,
       },
     };

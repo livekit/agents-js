@@ -90,6 +90,7 @@ export class MultilingualModel extends EOUModel {
         excludeImage: true,
         excludeAudio: true,
         excludeTimestamp: true,
+        stripMarkup: true,
       }),
       jobId: ctx.job.id,
       workerId: ctx.workerId,
