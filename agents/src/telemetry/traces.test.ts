@@ -377,7 +377,7 @@ describe('uploadSessionReport metadata', () => {
     expect(records[0]?.attributes).not.toHaveProperty('session.simulation');
   });
 
-  it('sets simulation and redaction on the multipart recording header', async () => {
+  it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockSuccessfulFormSubmit();
 
@@ -399,6 +399,7 @@ describe('uploadSessionReport metadata', () => {
 
     const formData = submitSpy.mock.instances[0] as FormData;
     const header = MetricsRecordingHeader.fromBinary(getMultipartBuffer(formData, 'header'));
+    expect(header.jobId).toBe('job1');
     expect(header.simulated).toBe(true);
     expect(header.redactionEnabled).toBe(true);
   });

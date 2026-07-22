@@ -903,6 +903,7 @@ export async function uploadSessionReport(options: {
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
+    jobId: report.jobId,
     duration: BigInt(0), // TODO: Calculate actual duration from report
     startTime: {
       seconds: BigInt(Math.floor(audioStartTime / 1000)),

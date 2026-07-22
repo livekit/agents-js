@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Add simulation and redaction telemetry metadata to session recording uploads.
+Add job, simulation, and redaction telemetry metadata to session recording uploads.
