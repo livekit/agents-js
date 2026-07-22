@@ -22,7 +22,9 @@ The default backend is bundled with the plugin and authenticates through LiveKit
 
 ## Quick start
 
-`krisp.vivaFilter()` resolves its backend from the environment: if both `KRISP_VIVA_SDK_LICENSE_KEY` and `KRISP_VIVA_FILTER_MODEL_PATH` are set, it uses the [Krisp license path](#alternative-krisp-license-auth) (you are responsible for installing `@krisp/viva-node-sdk`); otherwise it uses **LiveKit Cloud** authentication — the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically. Pass `authProvider` to pin a backend explicitly.
+`krisp.voiceIsolation()` resolves its backend from the environment: if both `KRISP_VIVA_SDK_LICENSE_KEY` and `KRISP_VIVA_FILTER_MODEL_PATH` are set, it uses the [Krisp license path](#alternative-krisp-license-auth) (you are responsible for installing `@krisp/viva-node-sdk`); otherwise it uses **LiveKit Cloud** authentication — the bundled backend ships the voice isolation model and authenticates against LiveKit Cloud using the room JWT the agent framework hands to the `FrameProcessor` automatically. Pass `authProvider` to pin a backend explicitly.
+
+For telephony audio, use `krisp.voiceIsolationTelephony()` instead — it takes the same options and behaves identically, but selects a noise-reduction model tuned for telephony.
 
 Pass the processor as `noiseCancellation` in the session's input options:
 
@@ -34,7 +36,7 @@ import * as silero from '@livekit/agents-plugin-silero';
 
 export default async function entry(ctx: JobContext) {
   // Default: LiveKit Cloud auth + bundled model. No keys or model files.
-  const noiseCancellation = krisp.vivaFilter({
+  const noiseCancellation = krisp.voiceIsolation({
     noiseSuppressionLevel: 100, // 0-100
   });
 
@@ -56,7 +58,7 @@ export default async function entry(ctx: JobContext) {
 }
 ```
 
-**Audio pipeline:** `Room → RoomIO (with vivaFilter) → VAD → STT → LLM`
+**Audio pipeline:** `Room → RoomIO (with voiceIsolation) → VAD → STT → LLM`
 
 ## Configuration
 
@@ -107,7 +109,7 @@ SDK), so `krispLicense()` takes no arguments:
 ```ts
 import * as krisp from '@livekit/agents-plugin-krisp';
 
-const noiseCancellation = krisp.vivaFilter({
+const noiseCancellation = krisp.voiceIsolation({
   authProvider: krisp.auth.krispLicense(),
   noiseSuppressionLevel: 100,
 });

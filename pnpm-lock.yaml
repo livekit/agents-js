@@ -901,8 +901,8 @@ importers:
   plugins/krisp:
     dependencies:
       '@livekit/plugins-krisp-viva-internal':
-        specifier: 0.1.1
-        version: 0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.31)
+        specifier: 0.2.0
+        version: 0.2.0(@livekit/agents@agents)(@livekit/rtc-node@0.13.31)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -2325,39 +2325,39 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.1.1':
-    resolution: {integrity: sha512-RxyN0TcQTqsAK6Vl9pc/eEHAimfDi9dp+aX1p1YHbs4YRbOhgSOdZLRsSm7E1zhF081AMUVj9vb8SFBC5OHinw==}
+  '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.2.0':
+    resolution: {integrity: sha512-IowQAXLcA+LUndD+mHQz+Oo4B/L/dXJ2uq0y9053/t8gfRBJPNT2fMAJt9oUD3i+fVdhnOW3/W76FLrg6NbNsw==}
     engines: {node: '>= 18'}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.1.1':
-    resolution: {integrity: sha512-Y+wq4xIXeRMJFHRA1funFmut/ErY42MduwPS1EaSL/drb6xBNaHqo24xB9Gw9C8kBQ2ATV7bzsFhkG/z/jQ1GA==}
+  '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.2.0':
+    resolution: {integrity: sha512-QAg7DnUsVRlSquUdcVK001mPTlz6nWNpiJkBhSfAkc8lKMLkQylhJJcb3ZflyN1Yv+85h5a4ShvJ4fX69Z+MnQ==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/plugins-krisp-viva-internal@0.1.1':
-    resolution: {integrity: sha512-cMQqA43gCbUhIh5fAX2TtWpBSBskgOkO+5OKtvCOwSc9K5Pwd5sFmhWS5AMgDCQaR/jGg3LJQHNHUXTmW1ZeVQ==}
+  '@livekit/plugins-krisp-viva-internal@0.2.0':
+    resolution: {integrity: sha512-M3gsNi8UJJNaOZV99lFmIznD75YNqnunFRYkn5mBYSCeUmvbZ72I8vZiDKMYDHG5r39v3Y074cOcVCnMW8GnAA==}
     engines: {node: '>= 18'}
     peerDependencies:
       '@livekit/agents': ^1.0.43
       '@livekit/rtc-node': ^0.13.24
 
-  '@livekit/plugins-krisp-viva-x86_64-apple-darwin@0.1.1':
-    resolution: {integrity: sha512-RIqG4GebnaN0b/dXyZpTCp607Ab2atAGIN777QeDYHE7RjBtiiMkr766RTkAoug0H0dWQkjmO8yeIwIg76AVeQ==}
+  '@livekit/plugins-krisp-viva-x86_64-apple-darwin@0.2.0':
+    resolution: {integrity: sha512-CuHhN9BqD+HlzNPnhMjj4G3tPRHrXsaixzhpDoZoZ5JN+VDUsM8HeiHtq2PqaR2edGQmGWqAU5eX7XHa1IjXPg==}
     engines: {node: '>= 18'}
     cpu: [x86]
     os: [darwin]
 
-  '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc@0.1.1':
-    resolution: {integrity: sha512-GGhZRklkx7UfF6Ge2yms77oQOsh/4ZrjRabzLaMSgE0AwDjTGJxaM6UPkEkWULvonWgS/HtgDUwM3wWRnIZT0Q==}
+  '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc@0.2.0':
+    resolution: {integrity: sha512-Vv1P3XREz5Iskf6tAiWOrwnqdcccO93wRIFdUxXM91ZViBnJy4tpYWHgh2xx7oz31CO+jERRZ4DJmPxZ0Uj2uQ==}
     engines: {node: '>= 18'}
     cpu: [x86]
     os: [win32]
 
-  '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.1.1':
-    resolution: {integrity: sha512-/E1nC2C4qVGtd2r/34YolR31oMQeNwsNr8Qb6VR/Clg1/YVI4PQ82L4Rl8xG4rqK44ObRLvG0cHLlQnYuUP/Xg==}
+  '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.2.0':
+    resolution: {integrity: sha512-pJcp9LRncZvym3MO1jTPr7fIK7cSyLt4/W9bDdE/z1rg/UmzAaqXgfz8PewwH0ynVdSpg8faIRxQw6IoXS4BeQ==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [linux]
@@ -6428,13 +6428,13 @@ snapshots:
   '@livekit/noise-cancellation-win32-x64@0.1.9':
     optional: true
 
-  '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.1.1':
+  '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.2.0':
     optional: true
 
-  '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.1.1':
+  '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu@0.2.0':
     optional: true
 
-  '@livekit/plugins-krisp-viva-internal@0.1.1(@livekit/agents@agents)(@livekit/rtc-node@0.13.31)':
+  '@livekit/plugins-krisp-viva-internal@0.2.0(@livekit/agents@agents)(@livekit/rtc-node@0.13.31)':
     dependencies:
       '@livekit/agents': link:agents
       '@livekit/rtc-node': 0.13.31
@@ -6443,19 +6443,19 @@ snapshots:
       pino-pretty: 13.0.0
       uniffi-bindgen-react-native: 0.29.3-1
     optionalDependencies:
-      '@livekit/plugins-krisp-viva-aarch64-apple-darwin': 0.1.1
-      '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu': 0.1.1
-      '@livekit/plugins-krisp-viva-x86_64-apple-darwin': 0.1.1
-      '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc': 0.1.1
-      '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu': 0.1.1
+      '@livekit/plugins-krisp-viva-aarch64-apple-darwin': 0.2.0
+      '@livekit/plugins-krisp-viva-aarch64-unknown-linux-gnu': 0.2.0
+      '@livekit/plugins-krisp-viva-x86_64-apple-darwin': 0.2.0
+      '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc': 0.2.0
+      '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu': 0.2.0
 
-  '@livekit/plugins-krisp-viva-x86_64-apple-darwin@0.1.1':
+  '@livekit/plugins-krisp-viva-x86_64-apple-darwin@0.2.0':
     optional: true
 
-  '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc@0.1.1':
+  '@livekit/plugins-krisp-viva-x86_64-pc-windows-msvc@0.2.0':
     optional: true
 
-  '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.1.1':
+  '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.2.0':
     optional: true
 
   '@livekit/protocol@1.49.0':

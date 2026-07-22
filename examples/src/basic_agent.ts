@@ -135,7 +135,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: {
         deleteRoomOnClose: true,
-        noiseCancellation: krisp.vivaFilter(),
+        noiseCancellation: krisp.voiceIsolation(),
       },
     });
 

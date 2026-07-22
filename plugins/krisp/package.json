@@ -45,7 +45,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@livekit/plugins-krisp-viva-internal": "0.1.1"
+    "@livekit/plugins-krisp-viva-internal": "0.2.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

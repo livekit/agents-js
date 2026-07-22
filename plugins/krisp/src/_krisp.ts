@@ -148,7 +148,7 @@ export interface KrispLicenseFrameProcessorOptions {
 /**
  * License-mode FrameProcessor wrapping `@krisp/viva-node-sdk`.
  *
- * Internal implementation detail — users call `vivaFilter()` and the facade
+ * Internal implementation detail — users call `voiceIsolation()` and the facade
  * selects this when the auth provider is {@link KrispLicenseAuthProvider}.
  *
  * The buffering strategy mirrors the Python plugin: Krisp processes fixed-size

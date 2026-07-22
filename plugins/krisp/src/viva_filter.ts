@@ -82,7 +82,11 @@ function resolveAuthProvider(explicit?: AuthProvider): AuthProvider {
   return new LiveKitCloudAuthProvider();
 }
 
-function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): KrispBackend {
+function buildBackend(
+  mode: KrispInternal.VivaMode,
+  provider: AuthProvider,
+  noiseSuppressionLevel: number,
+): KrispBackend {
   if (provider.kind === LIVEKIT_CLOUD_KIND) {
     let mod: typeof KrispInternal;
     try {
@@ -96,7 +100,7 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
       );
     }
     return new mod.KrispVivaFilterFrameProcessor({
-      mode: 'voiceIsolation',
+      mode,
       noiseSuppressionLevel,
       frameDurationMs: DEFAULT_FRAME_DURATION_MS,
     });
@@ -124,10 +128,10 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
  *
  * // Auto-resolves: Krisp license path if both KRISP_VIVA_SDK_LICENSE_KEY and
  * // KRISP_VIVA_FILTER_MODEL_PATH are set, else LiveKit Cloud auth.
- * const processor = krisp.vivaFilter();
+ * const processor = krisp.voiceIsolation();
  *
  * // Or pin a backend explicitly.
- * const processor = krisp.vivaFilter({
+ * const processor = krisp.voiceIsolation({
  *   authProvider: krisp.auth.krispLicense(),
  * });
  *
@@ -143,10 +147,13 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
 export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
   private readonly inner: KrispBackend;
 
-  constructor(opts: Partial<KrispVivaFilterOptions> = {}) {
+  constructor(
+    opts: Partial<KrispVivaFilterOptions> = {},
+    mode: KrispInternal.VivaMode = 'voiceIsolation',
+  ) {
     super();
     const provider = resolveAuthProvider(opts.authProvider);
-    this.inner = buildBackend(provider, opts.noiseSuppressionLevel ?? 100);
+    this.inner = buildBackend(mode, provider, opts.noiseSuppressionLevel ?? 100);
   }
 
   isEnabled(): boolean {
