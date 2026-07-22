@@ -350,6 +350,43 @@ describe('computeChatCtxDiff', () => {
 
     expect(result.toRemove).toEqual([]);
     expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([]);
+  });
+
+  it('should update same-id messages when raw text content changes', () => {
+    const oldMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="happy"/>Hello',
+      'assistant',
+    );
+    const newMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="sad"/>Hello',
+      'assistant',
+    );
+
+    const result = computeChatCtxDiff(createChatContext([oldMsg]), createChatContext([newMsg]));
+
+    expect(oldMsg.textContent).toBe(newMsg.textContent);
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([[null, '1']]);
+  });
+
+  it('should include previous item id for same-id message updates', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const oldMsg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const newMsg2 = createChatMessage('2', 'Hi again', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const result = computeChatCtxDiff(
+      createChatContext([msg1, oldMsg2, msg3]),
+      createChatContext([msg1, newMsg2, msg3]),
+    );
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([['1', '2']]);
   });
 
   it('should handle empty old context', () => {
