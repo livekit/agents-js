@@ -693,9 +693,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const appendCtx = llm.ChatContext.empty();
-    const changedItemIds = new Set([...diffOps.toCreate, ...diffOps.toUpdate].map(([, id]) => id));
-    for (const item of chatCtx.items) {
-      if (changedItemIds.has(item.id)) {
+    for (const [, itemId] of diffOps.toCreate) {
+      const item = chatCtx.getById(itemId);
+      if (item) {
         appendCtx.items.push(item);
       }
     }

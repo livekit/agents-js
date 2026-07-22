@@ -714,19 +714,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as api_proto.ConversationItemDeleteEvent);
     }
 
-    const creates = new Map(diffOps.toCreate.map(([previousId, id]) => [id, previousId]));
-    const updates = new Map(diffOps.toUpdate.map(([previousId, id]) => [id, previousId]));
-    for (const chatItem of newChatCtx.items) {
-      const previousId = updates.get(chatItem.id) ?? creates.get(chatItem.id);
-      if (!updates.has(chatItem.id) && !creates.has(chatItem.id)) {
-        continue;
-      }
-      if (updates.has(chatItem.id)) {
-        events.push({
-          type: 'conversation.item.delete',
-          item_id: chatItem.id,
-          event_id: shortuuid('chat_ctx_delete_'),
-        } as api_proto.ConversationItemDeleteEvent);
+    const createItem = async (previousId: string | null, id: string) => {
+      const chatItem = newChatCtx.getById(id);
+      if (!chatItem) {
+        throw new Error(`Chat item ${id} not found`);
       }
       events.push({
         type: 'conversation.item.create',
@@ -734,6 +725,27 @@ export class RealtimeSession extends llm.RealtimeSession {
         previous_item_id: previousId ?? undefined,
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
+    };
+
+    const isContentEmpty = (id: string) => {
+      const remoteItem = remoteCtx.getById(id);
+      return remoteItem?.type === 'message' && remoteItem.content.length === 0;
+    };
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      await createItem(previousId, id);
+    }
+
+    for (const [previousId, id] of diffOps.toUpdate) {
+      if (isContentEmpty(id)) {
+        continue;
+      }
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: id,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+      await createItem(previousId, id);
     }
     return events;
   }
