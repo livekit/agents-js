@@ -93,17 +93,20 @@ export interface AMDOptions {
    * end-of-turn from the session's turn detector before emitting. Useful for
    * outbound voicemail flows where leaving a message early would overlap the
    * greeting. `noSpeechTimeout` (uncertain) still fires normally (no audio at
-   * all means there is nothing to wait for). Defaults to `false`.
+   * all means there is nothing to wait for). Continuous audio without a
+   * speech-end or end-of-turn can therefore extend detection beyond
+   * `detectionTimeoutMs`; set this to `false` when `detectionTimeoutMs` should
+   * remain a hard cap after speech starts. Defaults to `true`.
    * Mirrors python detector.py `wait_until_finished`.
    */
   waitUntilFinished?: boolean;
   /**
    * Fallback end-of-turn delay (ms). When the session turn detector never
-   * commits a turn, this synthetic backstop, armed when speech ends, sets the
-   * end-of-turn so a gated verdict can still emit. Defaults to the running
-   * session activity's endpointing `maxDelay` (so the backstop tracks the real
-   * turn detector), or {@link DEFAULT_MAX_ENDPOINTING_DELAY_MS} when no activity
-   * is available. Mirrors python `max_endpointing_delay`.
+   * commits a turn, this synthetic backstop, armed when speech ends or a final
+   * transcript arrives, sets the end-of-turn so a gated verdict can still emit.
+   * Defaults to the running session activity's endpointing `maxDelay` (so the
+   * backstop tracks the real turn detector), or {@link DEFAULT_MAX_ENDPOINTING_DELAY_MS}
+   * when no activity is available. Mirrors python `max_endpointing_delay`.
    */
   maxEndpointingDelayMs?: number;
   /** Override the AMD classification system prompt. */
@@ -280,6 +283,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private eotReached = false;
   private speechStartedAt: number | undefined;
   private speechEndedAt: number | undefined;
+  private speechActive = false;
   private detectGeneration = 0;
   private extensionCount = 0;
 
@@ -349,7 +353,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.humanSilenceThresholdMs = options.humanSilenceThresholdMs ?? HUMAN_SILENCE_THRESHOLD_MS;
     this.machineSilenceThresholdMs =
       options.machineSilenceThresholdMs ?? MACHINE_SILENCE_THRESHOLD_MS;
-    this.waitUntilFinished = options.waitUntilFinished ?? false;
+    this.waitUntilFinished = options.waitUntilFinished ?? true;
     // Mirrors python `_resolve_classifier`: default to the session activity's
     // max_endpointing_delay so the backstop tracks the real turn detector, falling
     // back to the constant when no activity is running (or it's not configured).
@@ -474,6 +478,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.eotReached = false;
     this.speechStartedAt = undefined;
     this.speechEndedAt = undefined;
+    this.speechActive = false;
     this.silenceTimerTrigger = undefined;
     this.detectGeneration = 0;
     this.extensionCount = 0;
@@ -930,6 +935,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.tryEmitResult();
   }
 
+  private armEotTimer(delayMs = this.maxEndpointingDelayMs): void {
+    if (this.settled || this.speechActive) return;
+    this.clearTimer('eot');
+    this.eotReached = false;
+    this.eotTimer = setTimeout(() => this.onEotReached(), delayMs);
+  }
+
   private settleNoSpeech(): void {
     this.onTimeout(AMDCategory.UNCERTAIN, 'no_speech_timeout');
   }
@@ -955,6 +967,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (this.speechStartedAt === undefined) {
       this.speechStartedAt = performance.now();
     }
+    this.speechActive = true;
     this.silenceReached = false;
     this.eotReached = false;
   }
@@ -981,13 +994,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.speechEndedAt = performance.now() - silenceDurationMs;
     const speechDurationMs = Math.ceil(this.speechEndedAt - this.speechStartedAt);
     const remaining = (thresholdMs: number): number => Math.max(0, thresholdMs - silenceDurationMs);
+    this.speechActive = false;
 
     this.clearTimer('silence');
 
     // Arm the fallback end-of-turn backstop in case the session turn detector is
-    // slow or never commits. Mirrors python on_user_speech_ended's `_eot_timer`.
-    this.clearTimer('eot');
-    this.eotTimer = setTimeout(() => this.onEotReached(), remaining(this.maxEndpointingDelayMs));
+    // slow or never commits. Mirrors python on_user_speech_ended's `_arm_eot_timer`.
+    this.armEotTimer(remaining(this.maxEndpointingDelayMs));
 
     // Short greeting: speech ≤ humanSpeechThreshold AND no transcript yet → HUMAN (skip LLM).
     // Otherwise defer to the LLM and use the longer machine_silence_threshold so the
@@ -1032,6 +1045,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private consumeTranscript(transcript: string): void {
     if (this.settled) return;
     if (!this.listening) return;
+    this.armEotTimer();
     if (this.silenceTimer && this.silenceTimerTrigger === 'short_speech') {
       this.clearTimer('silence');
       if (this.speechEndedAt !== undefined) {

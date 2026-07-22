@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatContext } from '../llm/chat_context.js';
 import { FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
@@ -23,6 +23,14 @@ const speechEnd = (amd: AMD, silenceDurationMs = 0): void =>
   amd.onUserSpeechEnded(silenceDurationMs);
 const pushTranscript = (amd: AMD, text: string, source: 'stt' | 'amd_stt' = 'stt'): void =>
   amd.onTranscript(text, source);
+const waitForListening = async (amd: AMD): Promise<void> => {
+  const internals = amd as unknown as { listening?: boolean };
+  for (let i = 0; i < 20; i += 1) {
+    if (internals.listening) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  internals.listening = true;
+};
 
 const makeEotInfo = (newTranscript: string): EndOfTurnInfo => ({
   newTranscript,
@@ -80,6 +88,14 @@ class MockSession extends EventEmitter {
 const asAgentSession = (session: MockSession): AgentSession => session as unknown as AgentSession;
 
 describe('AMD', () => {
+  beforeEach(() => {
+    vi.stubEnv('LIVEKIT_URL', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('should classify voicemail and interrupt queued speech', async () => {
     const session = new MockSession();
     const llm = new StaticLLM(
@@ -89,12 +105,20 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+      maxEndpointingDelayMs: 20,
+    });
     const onPrediction = vi.fn();
     amd.on('amd_prediction', onPrediction);
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'Please leave a message after the tone');
+    speechEnd(amd, 0);
 
     await expect(promise).resolves.toMatchObject({
       type: 'amd_prediction',
@@ -117,10 +141,18 @@ describe('AMD', () => {
       JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+      maxEndpointingDelayMs: 20,
+    });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'Please leave a message after the tone');
+    speechEnd(amd, 0);
     await promise;
 
     // machine verdict + interruptOnMachine (default) → skip the racing auto-reply
@@ -179,6 +211,7 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
+    await waitForListening(amd);
     speechStart(amd);
     pushTranscript(amd, 'Please leave a message after the tone');
     speechEnd(amd, 0);
@@ -204,10 +237,17 @@ describe('AMD', () => {
       JSON.stringify({ category: AMDCategory.HUMAN, reason: 'live person' }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+    });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'hello there');
+    speechEnd(amd, 0);
 
     await promise;
     expect(onAmdPrediction).toHaveBeenCalledTimes(1);
@@ -226,10 +266,18 @@ describe('AMD', () => {
       }),
     );
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+      maxEndpointingDelayMs: 20,
+    });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'The mailbox you are trying to reach is unavailable');
+    speechEnd(amd, 0);
 
     await expect(promise).resolves.toMatchObject({
       category: AMDCategory.MACHINE_UNAVAILABLE,
@@ -244,6 +292,8 @@ describe('AMD', () => {
     const amd = new AMD(asAgentSession(session), { llm });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'Hello?');
 
     await expect(promise).rejects.toThrow('boom');
@@ -296,10 +346,18 @@ describe('AMD', () => {
     const session = new MockSession();
     const llm = new ToolCallLLM();
     llm.on('error', () => {});
-    const amd = new AMD(asAgentSession(session), { llm, detectionTimeoutMs: 50 });
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      detectionTimeoutMs: 5_000,
+      machineSilenceThresholdMs: 20,
+      maxEndpointingDelayMs: 20,
+    });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'Press 1 for sales, 2 for support');
+    speechEnd(amd, 0);
 
     await expect(promise).resolves.toMatchObject({
       category: AMDCategory.MACHINE_IVR,
@@ -323,11 +381,15 @@ describe('AMD', () => {
       prompt: 'custom prompt',
       participantIdentity: 'caller-1',
       suppressCompatibilityWarning: true,
-      detectionTimeoutMs: 50,
+      detectionTimeoutMs: 5_000,
+      maxEndpointingDelayMs: 20,
     });
 
     const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
     pushTranscript(amd, 'Hello?');
+    speechEnd(amd, 0);
 
     await expect(promise).resolves.toMatchObject({ category: AMDCategory.HUMAN });
   });
@@ -347,6 +409,7 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
+    await waitForListening(amd);
     speechStart(amd);
     speechEnd(amd, 0);
 
@@ -589,6 +652,7 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
+    await waitForListening(amd);
     // speech boundary so the eot backstop is armed, then the IVR transcript
     speechStart(amd);
     speechEnd(amd, 0);
@@ -619,7 +683,7 @@ describe('AMD', () => {
     expect(session.interrupt).not.toHaveBeenCalled();
   });
 
-  it('waitUntilFinished gates a machine verdict on end-of-turn', async () => {
+  it('waitUntilFinished defaults to gating a machine verdict on end-of-turn', async () => {
     const session = new MockSession();
     const llm = new StaticLLM(
       JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
@@ -627,7 +691,6 @@ describe('AMD', () => {
     llm.on('error', () => {});
     const amd = new AMD(asAgentSession(session), {
       llm,
-      waitUntilFinished: true,
       // long backstop so the only fast path to eot is the explicit turn-detector signal
       maxEndpointingDelayMs: 5_000,
       detectionTimeoutMs: 5_000,
@@ -636,6 +699,7 @@ describe('AMD', () => {
     });
 
     const promise = amd.execute();
+    await waitForListening(amd);
     // transcript present before speech ends → machine-silence (not short-greeting) path
     speechStart(amd);
     pushTranscript(amd, 'Please leave a message after the tone');
@@ -655,6 +719,48 @@ describe('AMD', () => {
     expect(amd.onEndOfTurn(makeEotInfo('Please leave a message after the tone'))).toBe(true);
     const result = await promise;
     expect(result.category).toBe(AMDCategory.MACHINE_VM);
+  }, 5_000);
+
+  it('waitUntilFinished can be disabled', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      waitUntilFinished: false,
+      maxEndpointingDelayMs: 5_000,
+      detectionTimeoutMs: 50,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
+    pushTranscript(amd, 'Please leave a message after the tone');
+
+    await expect(promise).resolves.toMatchObject({ category: AMDCategory.MACHINE_VM });
+  }, 5_000);
+
+  it('uses maxEndpointingDelay for transcripts without speech end', async () => {
+    const session = new MockSession();
+    const llm = new StaticLLM(
+      JSON.stringify({ category: AMDCategory.MACHINE_VM, reason: 'voicemail greeting' }),
+    );
+    llm.on('error', () => {});
+    const amd = new AMD(asAgentSession(session), {
+      llm,
+      maxEndpointingDelayMs: 30,
+      detectionTimeoutMs: 80,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    await waitForListening(amd);
+    pushTranscript(amd, 'Please leave a message after the tone');
+
+    await expect(promise).resolves.toMatchObject({ category: AMDCategory.MACHINE_VM });
   }, 5_000);
 
   it('subtracts already-elapsed silence from the silence timer (onUserSpeechEnded)', async () => {
