@@ -1,7 +1,9 @@
 ---
 '@livekit/agents': minor
 '@livekit/agents-plugin-anthropic': patch
+'@livekit/agents-plugin-google': patch
 '@livekit/agents-plugin-livekit': patch
+'@livekit/agents-plugin-openai': patch
 '@livekit/agents-plugin-phonic': patch
 ---
 

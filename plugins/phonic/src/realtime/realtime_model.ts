@@ -358,8 +358,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     const lastItemId =
       chatCtx.items.length > 0 ? chatCtx.items[chatCtx.items.length - 1]?.id : undefined;
 
-    for (const [, itemId] of diffOps.toCreate) {
-      const item = chatCtx.getById(itemId);
+    const changedItemIds = new Set([...diffOps.toCreate, ...diffOps.toUpdate].map(([, id]) => id));
+    for (const item of chatCtx.items) {
+      if (!changedItemIds.has(item.id)) {
+        continue;
+      }
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
         this.#logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
@@ -384,7 +387,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
 
         // Only treat a user message as text input when it's appended at the tail of the context.
-        if (item.role === 'user' && itemId === lastItemId && item.rawTextContent) {
+        if (item.role === 'user' && item.id === lastItemId && item.rawTextContent) {
           this.#logger.debug(`Received user text input: ${item.rawTextContent}`);
           this.pendingUserText = item.rawTextContent;
           bufferedUserText = true;

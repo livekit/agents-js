@@ -714,10 +714,19 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as api_proto.ConversationItemDeleteEvent);
     }
 
-    for (const [previousId, id] of diffOps.toCreate) {
-      const chatItem = newChatCtx.getById(id);
-      if (!chatItem) {
-        throw new Error(`Chat item ${id} not found`);
+    const creates = new Map(diffOps.toCreate.map(([previousId, id]) => [id, previousId]));
+    const updates = new Map(diffOps.toUpdate.map(([previousId, id]) => [id, previousId]));
+    for (const chatItem of newChatCtx.items) {
+      const previousId = updates.get(chatItem.id) ?? creates.get(chatItem.id);
+      if (!updates.has(chatItem.id) && !creates.has(chatItem.id)) {
+        continue;
+      }
+      if (updates.has(chatItem.id)) {
+        events.push({
+          type: 'conversation.item.delete',
+          item_id: chatItem.id,
+          event_id: shortuuid('chat_ctx_delete_'),
+        } as api_proto.ConversationItemDeleteEvent);
       }
       events.push({
         type: 'conversation.item.create',
