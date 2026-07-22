@@ -21,6 +21,12 @@ import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import {
+  ATTRIBUTE_REDACTION_ENABLED,
+  ATTRIBUTE_SIMULATION_ENABLED,
+  ATTRIBUTE_SIMULATOR_DISPATCH,
+  recordingEnabled,
+} from './types.js';
 import { isCloud } from './utils.js';
 import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
 import { AgentsConsole } from './voice/console_io.js';
@@ -393,12 +399,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     if (!this.isFakeJob) {
       const url = new URL(this.#info.url);
 
-      if (report.enableRecording && isCloud(url)) {
+      if ((recordingEnabled(report.recordingOptions) || report.enableRecording) && isCloud(url)) {
         try {
           await uploadSessionReport({
             agentName: this.job.agentName,
             cloudHostname: url.hostname,
             report,
+            metadata: this._otelMetadata(report.recordingOptions),
           });
           this.#logger.info(
             {
@@ -498,7 +505,31 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       cloudHostname: url.hostname,
       enableTraces: options.traces,
       enableLogs: options.logs,
+      metadata: this._otelMetadata(options),
     });
+  }
+
+  /** @internal */
+  _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean> | undefined {
+    const metadata: Record<string, boolean> = {};
+    const dispatch = this.job.attributes?.[ATTRIBUTE_SIMULATOR_DISPATCH];
+    if (dispatch) {
+      try {
+        const parsed = JSON.parse(dispatch) as {
+          simulationRunId?: unknown;
+          simulation_run_id?: unknown;
+        };
+        if (parsed.simulationRunId || parsed.simulation_run_id) {
+          metadata[ATTRIBUTE_SIMULATION_ENABLED] = true;
+        }
+      } catch {
+        // Ignore malformed simulation dispatch metadata, matching Python's parse-failure behavior.
+      }
+    }
+    if (options?.redaction) {
+      metadata[ATTRIBUTE_REDACTION_ENABLED] = true;
+    }
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 }
 
