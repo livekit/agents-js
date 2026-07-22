@@ -318,6 +318,7 @@ class FallbackSpeechStream extends SpeechStream {
   private fallbackAdapter: FallbackAdapter;
   private recoveringStreams: SpeechStream[] = [];
   private _logger = log();
+  private readonly streamStartedAt = Date.now();
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, undefined, connOptions);
@@ -476,8 +477,9 @@ class FallbackSpeechStream extends SpeechStream {
             retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
           },
         });
-        // Keep transcript timestamps anchored to the original parent stream when falling back.
-        child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
+        // Keep transcript timestamps anchored to the original parent stream across fallback
+        // attempts and outer SpeechStream retries.
+        child.startTimeOffset = this.startTimeOffset + (Date.now() - this.streamStartedAt) / 1000;
         mainRef.current = child;
         // If the forwarder has already drained and exited (input EOF), it
         // will never call endInput() on this child. End it here so the
