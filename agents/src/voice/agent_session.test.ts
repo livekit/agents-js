@@ -3,7 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
+import { AgentSessionEventTypes, createUserInputTranscribedEvent } from './events.js';
 import { SpeechHandle } from './speech_handle.js';
+
+type AgentSessionInternals = AgentSession & {
+  _agentState: string;
+  _userState: string;
+  _setUserAwayTimer: () => void;
+};
 
 describe('AgentSession.run', () => {
   it('forwards inputModality to generateReply', async () => {
@@ -81,5 +88,45 @@ describe('AgentSession recording state', () => {
 
     session._recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
+  });
+});
+
+describe('AgentSession user input transcription', () => {
+  it('resets the away timer on final transcripts when not speaking', () => {
+    const session = new AgentSession({ userAwayTimeout: 15 });
+    const internals = session as AgentSessionInternals;
+
+    internals._agentState = 'listening';
+    internals._userState = 'listening';
+
+    const finalTranscript = createUserInputTranscribedEvent({
+      transcript: 'hello',
+      isFinal: true,
+    });
+    const interimTranscript = createUserInputTranscribedEvent({
+      transcript: 'hello',
+      isFinal: false,
+    });
+
+    const setTimer = vi.spyOn(internals, '_setUserAwayTimer').mockImplementation(() => {});
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
+    expect(setTimer).toHaveBeenCalledOnce();
+    expect(session.userState).toBe('listening');
+    setTimer.mockRestore();
+
+    const setTimerForInterim = vi
+      .spyOn(internals, '_setUserAwayTimer')
+      .mockImplementation(() => {});
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, interimTranscript);
+    expect(setTimerForInterim).not.toHaveBeenCalled();
+    setTimerForInterim.mockRestore();
+
+    internals._userState = 'speaking';
+    const setTimerWhileSpeaking = vi
+      .spyOn(internals, '_setUserAwayTimer')
+      .mockImplementation(() => {});
+    session.emit(AgentSessionEventTypes.UserInputTranscribed, finalTranscript);
+    expect(setTimerWhileSpeaking).not.toHaveBeenCalled();
+    setTimerWhileSpeaking.mockRestore();
   });
 });

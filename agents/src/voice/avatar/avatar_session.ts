@@ -130,10 +130,17 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
           );
           await client.removeParticipant(roomName, this.avatarIdentity);
         } catch (error) {
-          this.#logger.warn(
-            { error, identity: this.avatarIdentity },
-            'failed to remove avatar participant',
-          );
+          if (isTwirpNotFoundError(error)) {
+            this.#logger.debug(
+              { identity: this.avatarIdentity },
+              'avatar participant not in room, skipping removal',
+            );
+          } else {
+            this.#logger.warn(
+              { error, identity: this.avatarIdentity },
+              'failed to remove avatar participant',
+            );
+          }
         }
       }
     }
@@ -231,4 +238,10 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       createMetricsCollectedEvent({ metrics }),
     );
   }
+}
+
+function isTwirpNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && error.code === 'not_found'
+  );
 }

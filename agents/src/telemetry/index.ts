@@ -18,11 +18,15 @@ export {
 } from './pino_otel_transport.js';
 export * as traceTypes from './trace_types.js';
 export {
+  FanoutSpanProcessor,
   flushOtelLogs,
   setTracerProvider,
   setupCloudTracer,
   tracer,
   uploadSessionReport,
+  type CloudSpanProcessorOptions,
+  type SetTracerProviderOptions,
+  type SpanProcessorLike,
   type StartSpanOptions,
 } from './traces.js';
 export { recordException, recordRealtimeMetrics } from './utils.js';

@@ -9,13 +9,65 @@ import {
   tokenize,
   tts as ttslib,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { getFfmpegPath } from '@livekit/av';
+import { type AudioFrame, combineAudioFrames } from '@livekit/rtc-node';
 import { distance } from 'fastest-levenshtein';
+import { spawn } from 'node:child_process';
 import { ReadableStream } from 'stream/web';
 import { describe, expect, it } from 'vitest';
 
 const TEXT =
   'The people who are crazy enough to think they can change the world are the ones who do.';
+
+const compressedFormats = new Set([
+  'mp3',
+  'aac',
+  'ogg',
+  'flac',
+  'wav',
+  'mov,mp4,m4a,3gp,3g2,mj2',
+  'matroska,webm',
+  'mpeg',
+]);
+
+const assertPCM = async (frames: AudioFrame[]) => {
+  const ffmpegPath = getFfmpegPath();
+  if (!ffmpegPath) {
+    throw new Error('ffmpeg binary from @livekit/av is not available on this platform');
+  }
+
+  const frame = combineAudioFrames(frames);
+  const data = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+
+  const container = await new Promise<string | undefined>((resolve, reject) => {
+    const ffmpeg = spawn(ffmpegPath, [
+      '-hide_banner',
+      '-probesize',
+      '32',
+      '-analyzeduration',
+      '0',
+      '-i',
+      'pipe:0',
+    ]);
+    let stderr = '';
+
+    ffmpeg.stderr.setEncoding('utf8');
+    ffmpeg.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    ffmpeg.stdin.on('error', () => {});
+    ffmpeg.on('error', reject);
+    ffmpeg.on('close', () => {
+      resolve(stderr.match(/Input #0, (.*), from 'pipe:0':/)?.[1]);
+    });
+
+    ffmpeg.stdin.end(data);
+  });
+
+  if (container && compressedFormats.has(container)) {
+    throw new Error(`Audio data isn't PCM (detected ${container})`);
+  }
+};
 
 const validate = async (
   frames: AudioBuffer,
@@ -130,6 +182,7 @@ export const tts = async (
         frames.push(event.frame);
       }
 
+      await assertPCM(frames);
       await validate(frames, stt, TEXT, 0.2, supports.streamingValidationStt!);
       stream.close();
     });

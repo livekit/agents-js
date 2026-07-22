@@ -43,6 +43,18 @@ Find a complete working example [here](../../examples/src/lemonslice_realtime_av
 
 Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
+### Video Meeting Example (Zoom/Meet/Teams/Webex)
+
+To send your LemonSlice avatar into a third-party video meeting platform, use [`lemonslice_realtime_avatar_meeting.ts`](../../examples/src/lemonslice_realtime_avatar_meeting.ts). The avatar joins the call, listens to meeting audio, and responds through the meeting relay. Zoom, Google Meet, Microsoft Teams, and Webex are supported.
+
+Set the meeting URL via job metadata when dispatching the agent. For password-protected meetings, include the password in the URL (for example, Zoom links use a `pwd` query parameter):
+
+```bash
+lk dispatch create \
+  --new-room \
+  --agent-name lemonslice-meeting \
+  --metadata '{"meeting_url":"https://zoom.us/j/123456789?pwd=abcdef", "bot_name": "LemonSlice Avatar"}'
+```
 
 ## Configuration Options
 
@@ -50,9 +62,14 @@ Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `agentId` | `string` | The LemonSlice agent ID to use. Either `agentId` or `agentImageUrl` must be provided. |
-| `agentImageUrl` | `AvatarImage` | A publicly accessible url to your avatar image. Either `agentId` or `agentImageUrl` must be provided. |
-| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. |
+| `agentId` | `string` | The LemonSlice agent ID to use. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImageUrl` | `string` | A publicly accessible url to your avatar image. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImage` | `string \| Buffer` | A local image file path or Buffer to upload as the agent's avatar. Exactly one of `agentId`, `agentImageUrl`, or `agentImage` must be provided. |
+| `agentImageMimeType` | `string` | MIME type for `agentImage` when provided as a Buffer (e.g. `'image/jpeg'`). Ignored for file paths. Defaults to `'image/png'`. |
+| `agentPrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while responding. |
+| `agentIdlePrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while idle. |
+| `idleTimeout` | `number` | The idle timeout, in seconds. |
+| `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. Keys are automatically converted from camelCase to snake_case |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
 | `avatarParticipantIdentity` | `string` | The identity of the avatar participant in the room. Defaults to `'lemonslice-avatar-agent'`. |
