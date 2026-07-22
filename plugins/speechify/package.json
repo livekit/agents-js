@@ -15,7 +15,7 @@
       "default": "./dist/index.cjs"
     }
   },
-  "author": "Speechify",
+  "author": "LiveKit",
   "type": "module",
   "repository": "git@github.com:livekit/agents-js.git",
   "license": "Apache-2.0",

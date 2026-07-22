@@ -30,13 +30,12 @@ export interface TTSOptions {
   language?: string;
   loudnessNormalization?: boolean;
   textNormalization?: boolean;
-  token?: string;
+  apiKey?: string;
   baseUrl?: string;
-  client?: SpeechifyClient;
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
-const defaultOptions = (): Omit<TTSOptions, 'client' | 'tokenizer'> => ({
+const defaultOptions = (): Omit<TTSOptions, 'tokenizer'> => ({
   voiceId: DEFAULT_VOICE_ID,
   model: DEFAULT_MODEL,
 });
@@ -78,9 +77,8 @@ export class TTS extends tts.TTS {
    * Create a new instance of Speechify TTS.
    *
    * @remarks
-   * `token` must be set, either via the constructor or the `SPEECHIFY_API_KEY`
-   * environment variable. Pass a preconfigured `client` to reuse an existing
-   * `SpeechifyClient` (in which case `token`/`baseUrl` are ignored).
+   * `apiKey` must be set, either via the constructor or the `SPEECHIFY_API_KEY`
+   * environment variable.
    *
    * Synthesis uses the Speechify `/audio/speech` endpoint, which returns raw PCM
    * (24 kHz mono) plus word-level speech marks. `stream()` chunks input into
@@ -98,17 +96,13 @@ export class TTS extends tts.TTS {
     this.#opts = merged;
     this.#tokenizer = merged.tokenizer ?? new tokenize.basic.SentenceTokenizer();
 
-    if (merged.client) {
-      this.#client = merged.client;
-    } else {
-      const token = merged.token ?? process.env.SPEECHIFY_API_KEY;
-      if (!token) {
-        throw new Error(
-          'Speechify API key is required, whether as an argument or as $SPEECHIFY_API_KEY',
-        );
-      }
-      this.#client = new SpeechifyClient({ token, baseUrl: merged.baseUrl });
+    const token = merged.apiKey ?? process.env.SPEECHIFY_API_KEY;
+    if (!token) {
+      throw new Error(
+        'Speechify API key is required, whether as an argument or as $SPEECHIFY_API_KEY',
+      );
     }
+    this.#client = new SpeechifyClient({ token, baseUrl: merged.baseUrl });
   }
 
   get model(): string {
@@ -119,10 +113,6 @@ export class TTS extends tts.TTS {
     return 'Speechify';
   }
 
-  get client(): SpeechifyClient {
-    return this.#client;
-  }
-
   get options(): TTSOptions {
     return this.#opts;
   }
@@ -131,7 +121,21 @@ export class TTS extends tts.TTS {
     return this.#tokenizer;
   }
 
-  updateOptions(opts: Partial<Omit<TTSOptions, 'client' | 'token' | 'baseUrl' | 'tokenizer'>>) {
+  /** @internal */
+  async _synthesize(
+    text: string,
+    opts: TTSOptions,
+    offsetSeconds: number,
+    params: { abortSignal: AbortSignal; timeoutInSeconds?: number },
+  ): Promise<{ audio: Buffer; timed: ReturnType<typeof createTimedString>[] }> {
+    const response = await this.#client.audio.speech(buildSpeechRequest(text, opts), params);
+    return {
+      audio: Buffer.from(response.audio_data, 'base64'),
+      timed: timedStringsFromMarks(response.speech_marks, offsetSeconds),
+    };
+  }
+
+  updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseUrl' | 'tokenizer'>>) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
@@ -182,13 +186,10 @@ export class ChunkedStream extends tts.ChunkedStream {
     const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
 
     try {
-      const response = await this.#tts.client.audio.speech(
-        buildSpeechRequest(this.inputText, this.#opts),
-        { abortSignal: this.abortSignal, timeoutInSeconds: this.#timeoutInSeconds },
-      );
-
-      const audio = Buffer.from(response.audio_data, 'base64');
-      const timed = timedStringsFromMarks(response.speech_marks, 0);
+      const { audio, timed } = await this.#tts._synthesize(this.inputText, this.#opts, 0, {
+        abortSignal: this.abortSignal,
+        timeoutInSeconds: this.#timeoutInSeconds,
+      });
       let attached = false;
 
       const putFrames = (frames: ReturnType<AudioByteStream['write']>) => {
@@ -243,13 +244,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
 
       this.markStarted();
-      const response = await this.#tts.client.audio.speech(buildSpeechRequest(text, this.#opts), {
+      const { audio, timed } = await this.#tts._synthesize(text, this.#opts, cumulativeDuration, {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.connOptions.timeoutMs / 1000,
       });
-
-      const audio = Buffer.from(response.audio_data, 'base64');
-      const timed = timedStringsFromMarks(response.speech_marks, cumulativeDuration);
       let attached = false;
 
       // Defer emitting each frame by one so the last frame of this segment can
