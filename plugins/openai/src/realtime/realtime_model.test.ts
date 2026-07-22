@@ -866,6 +866,61 @@ describe('livekitItemToOpenAIItem', () => {
   });
 });
 
+describe('RealtimeSession chat context update events', () => {
+  type ChatCtxUpdateInternals = {
+    remoteChatCtx: llm.RemoteChatContext;
+    chatCtx: llm.ChatContext;
+    createChatCtxUpdateEvents: (
+      chatCtx: llm.ChatContext,
+    ) => Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
+  };
+
+  function createChatCtxUpdateSession(remoteItem: llm.ChatMessage): ChatCtxUpdateInternals {
+    const session = Object.create(RealtimeSession.prototype) as ChatCtxUpdateInternals;
+    session.remoteChatCtx = new llm.RemoteChatContext();
+    session.remoteChatCtx.insert(undefined, remoteItem);
+    Object.defineProperty(session, 'chatCtx', {
+      get() {
+        return session.remoteChatCtx.toChatCtx();
+      },
+    });
+    return session;
+  }
+
+  it('does not replace updated remote items with empty content', async () => {
+    const session = createChatCtxUpdateSession(
+      llm.ChatMessage.create({ id: 'item_1', role: 'assistant', content: [] }),
+    );
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        llm.ChatMessage.create({ id: 'item_1', role: 'assistant', content: ['hello'] }),
+      ]),
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  it('replaces updated remote text items', async () => {
+    const session = createChatCtxUpdateSession(
+      llm.ChatMessage.create({ id: 'item_1', role: 'assistant', content: ['old'] }),
+    );
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        llm.ChatMessage.create({ id: 'item_1', role: 'assistant', content: ['new'] }),
+      ]),
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      'conversation.item.delete',
+      'conversation.item.create',
+    ]);
+    expect((events[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
+    expect((events[1] as api_proto.ConversationItemCreateEvent).item.id).toBe('item_1');
+  });
+});
+
 describe('RealtimeSession.updateOptions', () => {
   afterEach(() => {
     vi.restoreAllMocks();

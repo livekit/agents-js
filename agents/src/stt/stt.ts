@@ -348,8 +348,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
    * @internal Not annotated with Throws<> because this is fire-and-forget via startSoon()
    */
   private async mainTask(): Promise<void> {
+    let lastStartTime = Date.now();
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
+        // Keep provider-relative transcript timestamps linear across reconnect attempts.
+        this._startTimeOffset += (Date.now() - lastStartTime) / 1000;
+        lastStartTime = Date.now();
         return await this.run();
       } catch (error) {
         // If the stream was intentionally aborted (e.g. session shutdown), exit

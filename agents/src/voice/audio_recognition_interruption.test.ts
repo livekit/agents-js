@@ -22,6 +22,37 @@ function createHooks(): RecognitionHooks {
   };
 }
 
+function createRecognitionInternals(opts: {
+  ignoreUntil: number;
+  agentStarted?: number;
+  inputStarted: number;
+}) {
+  const recognition = new AudioRecognition({
+    recognitionHooks: createHooks(),
+    minEndpointingDelay: 0,
+    maxEndpointingDelay: 0,
+  }) as unknown as {
+    isInterruptionEnabled: boolean;
+    ignoreUserTranscriptUntil: number;
+    agentSpeechStartedAt?: number;
+    sttPipeline: { inputStartedAt: number };
+    shouldHoldSttEvent: (ev: SpeechEvent) => boolean;
+  };
+
+  recognition.isInterruptionEnabled = true;
+  recognition.ignoreUserTranscriptUntil = opts.ignoreUntil;
+  recognition.agentSpeechStartedAt = opts.agentStarted;
+  recognition.sttPipeline = { inputStartedAt: opts.inputStarted };
+  return recognition;
+}
+
+function finalTranscript(startTime: number, endTime: number): SpeechEvent {
+  return {
+    type: SpeechEventType.FINAL_TRANSCRIPT,
+    alternatives: [{ text: 'hi', startTime, endTime, confidence: 1 }],
+  };
+}
+
 describe('AudioRecognition interruption buffering', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
@@ -54,5 +85,57 @@ describe('AudioRecognition interruption buffering', () => {
     expect(hooks.onFinalTranscript).toHaveBeenCalledTimes(1);
     expect(recognition.currentTranscript).toBe('still listening');
     expect(internals.transcriptBuffer).toHaveLength(0);
+  });
+
+  it('holds transcripts inside the bounded ignore window', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_005_000,
+      inputStarted: 1_000_000,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(7, 8))).toBe(true);
+  });
+
+  it('does not hold timestamps anchored before agent speech', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_005_000,
+      inputStarted: 1_000_000,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(2, 3))).toBe(false);
+  });
+
+  it('does not hold timestamps after the ignore cutoff', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_005_000,
+      inputStarted: 1_000_000,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(15, 16))).toBe(false);
+  });
+
+  it('does not hold timestamps in the future', () => {
+    const now = Date.now();
+    const recognition = createRecognitionInternals({
+      ignoreUntil: now + 100_000,
+      agentStarted: now - 1_000,
+      inputStarted: now,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(200, 201))).toBe(false);
+  });
+
+  it('uses agent speech start as the lower bound across multiple overlaps', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_005_000,
+      inputStarted: 1_000_000,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(6, 6.5))).toBe(true);
+    expect(recognition.shouldHoldSttEvent(finalTranscript(8, 8.5))).toBe(true);
   });
 });
