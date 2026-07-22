@@ -3661,12 +3661,18 @@ export class AgentActivity implements RecognitionHooks {
 
         traceTextParts.push(forwardedText);
         if (addToChatCtx) {
+          const assistantMetrics: MetricsReport = {};
+          if (ev.responseId) {
+            assistantMetrics.providerRequestIds = [ev.responseId];
+          }
+
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
             id: output.message.messageId,
             interrupted,
             createdAt: startedSpeakingAt,
+            metrics: assistantMetrics,
           });
           this.agent._chatCtx.insert(message);
           speechHandle._itemAdded([message]);
