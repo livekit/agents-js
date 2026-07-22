@@ -79,7 +79,11 @@ export interface AMDOptions {
   interruptOnMachine?: boolean;
   /** If no speech is heard within this window, settle as UNCERTAIN (not a machine, so no interrupt). */
   noSpeechTimeoutMs?: number;
-  /** Hard ceiling for the entire detection. After this, settle with whatever evidence exists. */
+  /**
+   * Overall detection budget. When `waitUntilFinished` is `true` and speech has
+   * been heard, this no longer forces emission; AMD keeps waiting for the
+   * greeting to finish before releasing the verdict.
+   */
   detectionTimeoutMs?: number;
   /** Speech longer than this is treated as machine-like (skips the short-greeting heuristic). */
   humanSpeechThresholdMs?: number;
@@ -88,15 +92,15 @@ export interface AMDOptions {
   /** Silence after machine-like speech before opening the silence gate. */
   machineSilenceThresholdMs?: number;
   /**
-   * If `true`, once any speech has been heard the `detectionTimeout` no longer
-   * forces emission — AMD keeps waiting for post-speech silence and a positive
-   * end-of-turn from the session's turn detector before emitting. Useful for
-   * outbound voicemail flows where leaving a message early would overlap the
-   * greeting. `noSpeechTimeout` (uncertain) still fires normally (no audio at
-   * all means there is nothing to wait for). Continuous audio without a
-   * speech-end or end-of-turn can therefore extend detection beyond
-   * `detectionTimeoutMs`; set this to `false` when `detectionTimeoutMs` should
-   * remain a hard cap after speech starts. Defaults to `true`.
+   * If `true`, once any speech has been heard, `detectionTimeoutMs` no longer
+   * forces emission. AMD waits for post-speech silence and either a session
+   * end-of-turn signal or the synthetic `maxEndpointingDelayMs` backstop before
+   * emitting. Useful for outbound voicemail flows where leaving a message early
+   * would overlap the greeting. `noSpeechTimeoutMs` (uncertain) still fires
+   * normally when no audio is heard. Continuous audio without a speech-end or
+   * end-of-turn can therefore extend detection beyond `detectionTimeoutMs`; set
+   * this to `false` when `detectionTimeoutMs` should remain a hard cap after
+   * speech starts. Defaults to `true`.
    * Mirrors python detector.py `wait_until_finished`.
    */
   waitUntilFinished?: boolean;
