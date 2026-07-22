@@ -247,7 +247,16 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
   }
 
   setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) {
+      return;
+    }
     this.enabled = enabled;
+    // Drop buffered audio across the transition: while disabled, process()
+    // returns raw frames without draining, so a partial input chunk (inBuf) and
+    // processed-but-unemitted output (outBuf) captured before the mute would
+    // otherwise replay on re-enable and produce a discontinuity.
+    this.inBuf = new Int16Array(0);
+    this.outBuf = new Int16Array(0);
   }
 
   get noiseSuppressionLevel(): number {
