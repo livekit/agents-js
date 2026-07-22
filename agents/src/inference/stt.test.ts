@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
-import { initializeLogger, log } from '../log.js';
+import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
 import { createConversationItemAddedEvent } from '../voice/events.js';
@@ -345,63 +345,27 @@ describe('STT diarization capabilities', () => {
   });
 });
 
-describe('STT agent_context carryover', () => {
-  it('agentContextCarryover defaults to enabled on AssemblyAI U3 Pro family models', () => {
+describe('STT agent_context forwarding', () => {
+  it('enables chat context for AssemblyAI U3 Pro family models', () => {
     for (const model of ['assemblyai/u3-rt-pro', 'assemblyai/universal-3-5-pro'] as const) {
       const stt = makeAssemblyStt({ model });
       expect(stt.capabilities.chatContext).toBe(true);
     }
   });
 
-  it('agentContextCarryover defaults off for unsupported models without warning', () => {
-    const warnSpy = vi.spyOn(log(), 'warn');
+  it('disables chat context for unsupported AssemblyAI models', () => {
     const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
 
     expect(stt.capabilities.chatContext).toBe(false);
-    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('agentContextCarryover is off for non-AssemblyAI models', () => {
+  it('disables chat context for non-AssemblyAI models', () => {
     const stt = makeAssemblyStt({ model: 'deepgram/nova-3' });
     expect(stt.capabilities.chatContext).toBe(false);
   });
 
-  it('explicit true on unsupported model warns and is ignored', () => {
-    const warnSpy = vi.spyOn(log(), 'warn');
-    const stt = makeAssemblyStt({
-      model: 'assemblyai/universal-streaming',
-      agentContextCarryover: true,
-    });
-
-    expect(stt.capabilities.chatContext).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(
-      { model: 'assemblyai/universal-streaming' },
-      'agentContextCarryover is enabled but model does not support it; ignoring',
-    );
-  });
-
-  it('explicit false disables carryover on a supported model', () => {
-    const stt = makeAssemblyStt({
-      agentContextCarryover: false,
-      modelOptions: { agent_context: 'keep me' },
-    });
-    expect(stt.capabilities.chatContext).toBe(false);
-
-    stt._pushConversationItem(assistantItemEvent('do not forward me'));
-
-    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'keep me');
-  });
-
-  it('previous_context_n_turns=0 disables the default carryover', () => {
+  it('derives chatContext capability from model support only', () => {
     const stt = makeAssemblyStt({ modelOptions: { previous_context_n_turns: 0 } });
-    expect(stt.capabilities.chatContext).toBe(false);
-  });
-
-  it('explicit true wins over previous_context_n_turns=0', () => {
-    const stt = makeAssemblyStt({
-      modelOptions: { previous_context_n_turns: 0 },
-      agentContextCarryover: true,
-    });
     expect(stt.capabilities.chatContext).toBe(true);
   });
 

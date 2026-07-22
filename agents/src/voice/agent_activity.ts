@@ -615,12 +615,11 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.stt instanceof STT) {
       // bind the session's keyterm detector to this activity's STT (detection uses its
-      // own LLM, configured via keytermsOptions, not the agent's)
+      // own LLM, configured via sttContextOptions, not the agent's)
       this.agentSession._keytermDetector.start(this.agentSession, this.stt);
 
-      // forward conversation turns to STTs that consume context natively; gated by the
-      // STT's own capability (toggled via the STT's args). stateless and activity-scoped,
-      // so it lives here rather than in the detector.
+      // Forward conversation turns to STTs that consume context natively. Keep the
+      // listener synchronized with dynamic capability changes and the session opt-out.
       this.stt.on('capabilities_changed', this.syncConversationItemForwarding);
       this.syncConversationItemForwarding();
     }
@@ -1217,7 +1216,11 @@ export class AgentActivity implements RecognitionHooks {
       AgentSessionEventTypes.ConversationItemAdded,
       this.pushConversationItemToStt,
     );
-    if (this.stt instanceof STT && this.stt.capabilities.chatContext) {
+    if (
+      this.stt instanceof STT &&
+      this.stt.capabilities.chatContext &&
+      this.agentSession.sessionOptions.sttContextOptions.forwardChatContext
+    ) {
       this.agentSession.on(
         AgentSessionEventTypes.ConversationItemAdded,
         this.pushConversationItemToStt,

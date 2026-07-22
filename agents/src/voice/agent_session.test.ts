@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
+import { log } from '../log.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -81,5 +82,46 @@ describe('AgentSession recording state', () => {
 
     session._recordingOptions = resolveRecordingOptions(false);
     expect(session._enableRecording).toBe(false);
+  });
+});
+
+describe('AgentSession STT context options', () => {
+  it('defaults forwardChatContext on', () => {
+    const session = new AgentSession({ vad: null });
+
+    expect(session.sessionOptions.sttContextOptions.forwardChatContext).toBe(true);
+  });
+
+  it('passes through sttContextOptions', () => {
+    const session = new AgentSession({
+      vad: null,
+      sttContextOptions: { keyterms: ['LiveKit'], forwardChatContext: false },
+    });
+
+    expect(session.sessionOptions.sttContextOptions.keyterms).toEqual(['LiveKit']);
+    expect(session.sessionOptions.sttContextOptions.forwardChatContext).toBe(false);
+  });
+
+  it('maps deprecated keytermsOptions to sttContextOptions and warns', () => {
+    const warn = vi.spyOn(log(), 'warn');
+
+    const session = new AgentSession({ vad: null, keytermsOptions: { keyterms: ['Acme'] } });
+
+    expect(session.sessionOptions.sttContextOptions.keyterms).toEqual(['Acme']);
+    expect(session.sessionOptions.sttContextOptions.forwardChatContext).toBe(true);
+    expect(warn).toHaveBeenCalledWith(
+      'keytermsOptions is deprecated, use sttContextOptions instead',
+    );
+    warn.mockRestore();
+  });
+
+  it('sttContextOptions wins over keytermsOptions', () => {
+    const session = new AgentSession({
+      vad: null,
+      sttContextOptions: { keyterms: ['new'] },
+      keytermsOptions: { keyterms: ['old'] },
+    });
+
+    expect(session.sessionOptions.sttContextOptions.keyterms).toEqual(['new']);
   });
 });

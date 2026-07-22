@@ -9,6 +9,7 @@ import {
   type TurnDetectionMode,
   type VoiceOptions,
 } from '../agent_session.js';
+import { resolveSTTContextOptions, sttContextFromKeytermsOptions } from '../keyterm_detection.js';
 import {
   type EndpointingOptions,
   defaultEndpointingOptions,
@@ -50,6 +51,8 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     tts,
     userData,
     connOptions,
+    sttContextOptions,
+    keytermsOptions,
     ...sessionOptions
   } = legacyOptions;
 
@@ -58,6 +61,15 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
       'voiceOptions is deprecated, use top-level SessionOptions fields on AgentSessionOptions instead',
     );
   }
+
+  if (keytermsOptions !== undefined) {
+    logger.warn('keytermsOptions is deprecated, use sttContextOptions instead');
+  }
+
+  const resolvedSTTContextOptions =
+    sttContextOptions !== undefined
+      ? resolveSTTContextOptions(sttContextOptions)
+      : resolveSTTContextOptions(sttContextFromKeytermsOptions(keytermsOptions));
 
   const turnHandling: TurnHandlingOptions = {
     interruption: {
@@ -130,6 +142,7 @@ export function migrateLegacyOptions<UserData>(legacyOptions: AgentSessionOption
     ...defaultSessionOptions,
     ...migratedVoiceOptions,
     ...sessionOptions,
+    sttContextOptions: resolvedSTTContextOptions,
     turnHandling: mergeWithDefaults(turnHandling),
     // repopulate the deprecated voice options with migrated options for backwards compatibility
     voiceOptions: legacyVoiceOptions,
