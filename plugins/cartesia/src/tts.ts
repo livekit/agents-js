@@ -248,13 +248,19 @@ export class TTS extends tts.TTS {
   }
 
   async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
-    const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
-    const url = `${wsUrl}/tts/websocket`;
+    // Snapshot the handshake inputs. If a concurrent updateOptions() changes one
+    // of them while this connect is in flight, reconnect on the new value rather
+    // than pooling a socket built on stale credentials (mirrors the fishaudio
+    // plugin's model re-check).
+    const apiKey = this.#opts.apiKey!;
+    const apiVersion = this.#opts.apiVersion;
+    const baseUrl = this.#opts.baseUrl;
+    const url = `${baseUrl.replace(/^http/, 'ws')}/tts/websocket`;
     const ws = await connectCartesiaWebSocket({
       url,
       headers: {
-        [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
-        [VERSION_HEADER]: this.#opts.apiVersion,
+        [AUTHORIZATION_HEADER]: apiKey,
+        [VERSION_HEADER]: apiVersion,
       },
       timeoutMs,
     });
@@ -262,6 +268,23 @@ export class TTS extends tts.TTS {
       safeCloseWebSocket(ws);
       throw new APIConnectionError({ message: 'Cartesia TTS is closed' });
     }
+    if (
+      apiKey !== this.#opts.apiKey ||
+      apiVersion !== this.#opts.apiVersion ||
+      baseUrl !== this.#opts.baseUrl
+    ) {
+      safeCloseWebSocket(ws);
+      return await this.#connectWebSocket(timeoutMs);
+    }
+    // Drop a socket that closes (or errors) while idle in the pool. Between turns
+    // no generation listeners are attached, so without this the pool keeps a dead
+    // socket in `available` and the next turn spends a retry to discard it, or
+    // fails outright at maxRetry:0. A generation attaches its own listeners on top
+    // of these; the no-op error listener also stops an idle 'error' from crashing
+    // the process. Remove is a no-op once the socket is no longer pooled, so this
+    // is safe during an active generation and during close().
+    ws.on('error', () => {});
+    ws.on('close', () => this.#pool.remove(ws));
     return ws;
   }
 }

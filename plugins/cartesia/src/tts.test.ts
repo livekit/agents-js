@@ -188,7 +188,16 @@ describe('Cartesia streaming pool', () => {
     try {
       expect(await synthesizeTurn(cartesia, 'first turn.')).not.toHaveLength(0);
       await waitFor(firstClosed);
-      expect(await waitFor(synthesizeTurn(cartesia, 'second turn.'))).not.toHaveLength(0);
+      // Let the client observe the close so the idle handler removes the socket
+      // before the next checkout, making the maxRetry: 0 assertion deterministic.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // maxRetry: 0 proves the idle-closed socket was dropped from the pool, not
+      // handed back to burn the turn's only attempt.
+      expect(
+        await waitFor(
+          synthesizeTurn(cartesia, 'second turn.', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 }),
+        ),
+      ).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(2);
     } finally {
       await cartesia.close();
