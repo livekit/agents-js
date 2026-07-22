@@ -6,21 +6,20 @@
  * License-mode Krisp internals.
  *
  * This module is private to the plugin. It wraps the public
- * `krisp-audio-node-sdk` and exposes a {@link KrispLicenseFrameProcessor} that
+ * `@krisp/viva-node-sdk` and exposes a {@link KrispLicenseFrameProcessor} that
  * {@link krispVivaFilter} instantiates when the user picks
  * {@link KrispLicenseAuthProvider}.
  *
- * Wires the documented `krisp-audio-node-sdk` surface (https://sdk-docs.krisp.ai):
- * global init with a working-directory path, the `enums.SamplingRate` and
- * `enums.FrameDuration` tables, `NcInt16.create(config)`, per-frame `process`,
- * and the session/global destroy calls. The license key is supplied out-of-band
- * via `KRISP_VIVA_SDK_LICENSE_KEY` (read by the native SDK); the documented
- * `globalInit` takes only a working-directory path.
+ * Wires the documented `@krisp/viva-node-sdk` surface (https://sdk-docs.krisp.ai):
+ * `globalInit(workingDir, licenseKey)`, the `enums.SamplingRate` and
+ * `enums.FrameDuration` tables, `NcInt16.create(config)`, per-frame `process`
+ * (byte `Buffer` in and out), and the session/global destroy calls. The license
+ * key is read from `KRISP_VIVA_SDK_LICENSE_KEY` and passed to `globalInit`.
  *
  * The frame buffering / reframing logic is ported from the Python plugin.
  */
+import type { KrispEnumMember, KrispModule, KrispNcSession } from '@krisp/viva-node-sdk';
 import { AudioFrame, FrameProcessor } from '@livekit/rtc-node';
-import type { KrispEnumMember, KrispModule, KrispNcSession } from 'krisp-audio-node-sdk';
 import { createRequire } from 'node:module';
 import { log } from './log.js';
 
@@ -54,7 +53,7 @@ function frameDurationEnum(mod: KrispModule, frameDurationMs: number): KrispEnum
 }
 
 /**
- * Process-singleton ref counter for the proprietary `krisp-audio-node-sdk`.
+ * Process-singleton ref counter for the proprietary `@krisp/viva-node-sdk`.
  *
  * Krisp's `globalInit` / `globalDestroy` are process-global, so this manager
  * keeps a single SDK alive across multiple license-mode frame processors. The
@@ -65,23 +64,28 @@ class KrispLicenseSdkManager {
   private static module: KrispModule | null = null;
   private static referenceCount = 0;
 
-  /** Acquire a reference, returning the loaded `krisp-audio-node-sdk` module. */
+  /** Acquire a reference, returning the loaded `@krisp/viva-node-sdk` module. */
   static acquire(): KrispModule {
     if (this.referenceCount === 0) {
       let mod: KrispModule;
       try {
-        mod = require('krisp-audio-node-sdk');
+        mod = require('@krisp/viva-node-sdk');
       } catch {
         throw new Error(
-          'krisp-audio-node-sdk is not installed. Install the proprietary Krisp Node SDK ' +
-            '(`pnpm add krisp-audio-node-sdk`) and provide a .kef model, or use the ' +
+          '@krisp/viva-node-sdk is not installed. Install the proprietary Krisp Node SDK ' +
+            '(`pnpm add @krisp/viva-node-sdk`) and provide a .kef model, or use the ' +
             'default LiveKit Cloud auth provider (auth.livekitCloud()).',
         );
       }
 
-      // The license key is read from KRISP_VIVA_SDK_LICENSE_KEY by the native SDK;
-      // the documented globalInit only takes a working-directory path.
-      mod.globalInit('');
+      // Working dir '' uses the SDK default; the license key comes from the
+      // environment (KRISP_VIVA_SDK_LICENSE_KEY) and is passed to globalInit.
+      const licenseKey = process.env.KRISP_VIVA_SDK_LICENSE_KEY;
+      if (licenseKey) {
+        mod.globalInit('', licenseKey);
+      } else {
+        mod.globalInit('');
+      }
 
       this.module = mod;
       log().debug('Krisp Audio SDK (license) initialized');
@@ -119,6 +123,18 @@ function concatInt16(a: Int16Array, b: Int16Array): Int16Array {
   return out;
 }
 
+/**
+ * Reinterpret a byte buffer of interleaved int16 PCM as an `Int16Array`. Copies
+ * into a fresh, 2-byte-aligned buffer — a native-returned `Buffer` may sit at an
+ * odd `byteOffset` in a pooled `ArrayBuffer`, which a zero-copy `Int16Array`
+ * view cannot represent.
+ */
+function bufferToInt16(buf: Buffer): Int16Array {
+  const usableBytes = buf.byteLength - (buf.byteLength % 2);
+  const copy = buf.buffer.slice(buf.byteOffset, buf.byteOffset + usableBytes);
+  return new Int16Array(copy);
+}
+
 function clampLevel(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -130,7 +146,7 @@ export interface KrispLicenseFrameProcessorOptions {
 }
 
 /**
- * License-mode FrameProcessor wrapping `krisp-audio-node-sdk`.
+ * License-mode FrameProcessor wrapping `@krisp/viva-node-sdk`.
  *
  * Internal implementation detail — users call `vivaFilter()` and the facade
  * selects this when the auth provider is {@link KrispLicenseAuthProvider}.
@@ -280,14 +296,21 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
         const chunkIn = pending.subarray(i * chunk, (i + 1) * chunk);
         let chunkOut: Int16Array;
         try {
+          // The SDK takes/returns byte buffers of interleaved int16 PCM, so wrap
+          // the input samples as a Buffer view and reinterpret the returned
+          // Buffer's bytes as int16 samples (its `.length` is bytes = samples×2).
+          const inputBuf = Buffer.from(chunkIn.buffer, chunkIn.byteOffset, chunkIn.byteLength);
           // Non-null: the guard above (re)creates the session or throws.
-          chunkOut = this.session!.process(chunkIn, this.level);
+          const outputBuf = this.session!.process(inputBuf, this.level);
+          chunkOut = bufferToInt16(outputBuf);
         } catch (e) {
           log().error(`Error processing frame: ${e}`);
           chunkOut = chunkIn;
         }
-        if (!chunkOut || chunkOut.length !== chunk) {
-          log().warn('Krisp returned unexpected output, using original audio');
+        if (chunkOut.length !== chunk) {
+          log().warn(
+            `Krisp returned ${chunkOut.length} samples, expected ${chunk}; using original audio`,
+          );
           chunkOut = chunkIn;
         }
         this.outBuf = concatInt16(this.outBuf, chunkOut);

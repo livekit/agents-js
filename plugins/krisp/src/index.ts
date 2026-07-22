@@ -11,7 +11,7 @@
  * - `auth.livekitCloud()` (default): LiveKit Cloud-managed auth + bundled model.
  *   No Krisp keys or model files required.
  * - `auth.krispLicense(...)`: Krisp-direct auth using a license key and a `.kef`
- *   model file (requires the proprietary `krisp-audio-node-sdk`).
+ *   model file (requires the proprietary `@krisp/viva-node-sdk`).
  *
  * @example
  * ```ts

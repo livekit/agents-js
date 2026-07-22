@@ -11,7 +11,7 @@
  * - The closed-source `@livekit/plugins-krisp-viva-internal` backend (default;
  *   authenticates via the LiveKit Cloud-managed JWT the agent framework hands to
  *   FrameProcessors through `onCredentialsUpdated`).
- * - A local license-mode wrapper around `krisp-audio-node-sdk` (selected when the
+ * - A local license-mode wrapper around `@krisp/viva-node-sdk` (selected when the
  *   user passes a {@link KrispLicenseAuthProvider}).
  */
 import type * as KrispInternal from '@livekit/plugins-krisp-viva-internal';
@@ -67,7 +67,7 @@ const DEFAULT_FRAME_DURATION_MS = 10;
  * Pick the auth backend when the caller did not pass one explicitly. Uses the
  * Krisp license path when both `KRISP_VIVA_SDK_LICENSE_KEY` and
  * `KRISP_VIVA_FILTER_MODEL_PATH` are set (the user is responsible for having the
- * proprietary `krisp-audio-node-sdk` installed); otherwise falls back to LiveKit
+ * proprietary `@krisp/viva-node-sdk` installed); otherwise falls back to LiveKit
  * Cloud auth.
  */
 function resolveAuthProvider(explicit?: AuthProvider): AuthProvider {
@@ -115,7 +115,7 @@ function buildBackend(provider: AuthProvider, noiseSuppressionLevel: number): Kr
  *
  * Thin facade over two backend FrameProcessor implementations: the LiveKit
  * Cloud-bundled package and a local wrapper around the public
- * `krisp-audio-node-sdk`. When no `authProvider` is given, the backend is
+ * `@krisp/viva-node-sdk`. When no `authProvider` is given, the backend is
  * resolved from the environment (see {@link KrispVivaFilterOptions.authProvider}).
  *
  * @example
