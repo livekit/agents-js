@@ -139,8 +139,12 @@ export class TTS extends tts.TTS {
     this.#opts = { ...this.#opts, ...opts };
   }
 
-  synthesize(text: string, connOptions?: APIConnectOptions): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts, connOptions);
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): tts.ChunkedStream {
+    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
@@ -173,8 +177,14 @@ export class ChunkedStream extends tts.ChunkedStream {
   #tts: TTS;
   #timeoutInSeconds?: number;
 
-  constructor(ttsInstance: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions) {
-    super(text, ttsInstance, connOptions);
+  constructor(
+    ttsInstance: TTS,
+    text: string,
+    opts: TTSOptions,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, ttsInstance, connOptions, abortSignal);
     this.#tts = ttsInstance;
     this.#opts = opts;
     this.#timeoutInSeconds =
@@ -227,6 +237,23 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const sentenceStream = this.#tts.tokenizer.stream();
     let cumulativeDuration = 0;
 
+    // Buffer-one deferral across the WHOLE run: the base class only records
+    // one pending text per reply, so `final: true` must be emitted exactly
+    // once on the last frame of the entire stream (mirrors elevenlabs/cartesia).
+    let lastFrame: AudioFrame | undefined;
+    let lastRequestId: string | undefined;
+    const sendFrame = (final: boolean) => {
+      if (!lastFrame || !lastRequestId) return;
+      cumulativeDuration += lastFrame.samplesPerChannel / lastFrame.sampleRate;
+      this.queue.put({
+        requestId: lastRequestId,
+        frame: lastFrame,
+        final,
+        segmentId: lastRequestId,
+      });
+      lastFrame = undefined;
+    };
+
     const forwardInput = async () => {
       for await (const input of this.input) {
         if (this.abortController.signal.aborted) break;
@@ -248,28 +275,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.connOptions.timeoutMs / 1000,
       });
-      let attached = false;
 
-      // Defer emitting each frame by one so the last frame of this segment can
-      // be flagged final: true, which the base class needs to emit per-segment
-      // metrics (matches the elevenlabs/cartesia plugins).
-      let lastFrame: AudioFrame | undefined;
-      const sendFrame = (final: boolean) => {
-        if (!lastFrame) return;
-        if (!attached && timed.length > 0) {
-          lastFrame.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
-          attached = true;
-        }
-        cumulativeDuration += lastFrame.samplesPerChannel / lastFrame.sampleRate;
-        this.queue.put({ requestId, frame: lastFrame, final, segmentId: requestId });
-        lastFrame = undefined;
-      };
+      const frames = [...bstream.write(audio), ...bstream.flush()];
+      if (timed.length > 0 && frames.length > 0) {
+        frames[0]!.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
+      }
 
-      for (const frame of [...bstream.write(audio), ...bstream.flush()]) {
+      for (const frame of frames) {
         sendFrame(false);
         lastFrame = frame;
+        lastRequestId = requestId;
       }
-      sendFrame(true);
     };
 
     const consume = async () => {
@@ -279,6 +295,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!text) continue;
         await synthesizeSentence(text);
       }
+      sendFrame(true);
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     };
 
