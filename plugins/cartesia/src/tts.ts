@@ -8,6 +8,7 @@ import {
   APIStatusError,
   APITimeoutError,
   AudioByteStream,
+  ConnectionPool,
   Future,
   type TimedString,
   asError,
@@ -48,6 +49,13 @@ const API_VERSION_WITH_EXPERIMENTAL_CONTROLS = '2024-11-13';
 const MODEL_WITH_EXPERIMENTAL_CONTROLS = 'sonic-2-2025-03-07';
 const NUM_CHANNELS = 1;
 const BUFFERED_WORDS_COUNT = 8;
+// Cartesia refreshes a pooled socket after this long so a very long call cannot
+// keep one connection open indefinitely. Matches the Python plugin's 300s.
+const MAX_SESSION_DURATION_MS = 300_000;
+
+// Lets each SynthesizeStream reach the pool owned by the TTS that created it,
+// without widening the constructor signature the base class fixes.
+const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 
 export interface TTSOptions {
   model: TTSModels | string;
@@ -128,6 +136,8 @@ const checkGenerationConfig = (opts: TTSOptions) => {
 
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
+  #pool: ConnectionPool<WebSocket>;
+  #closed = false;
   label = 'cartesia.TTS';
 
   get model(): string {
@@ -166,9 +176,31 @@ export class TTS extends tts.TTS {
     ) {
       checkGenerationConfig(this.#opts);
     }
+
+    // One socket, reused across generations. Cartesia recommends a single
+    // preconnected WebSocket for many generations because a fresh connection
+    // repays TCP/TLS setup on every turn:
+    // https://docs.cartesia.ai/use-the-api/compare-tts-endpoints
+    this.#pool = new ConnectionPool<WebSocket>({
+      connectCb: (timeoutMs) => this.#connectWebSocket(timeoutMs),
+      closeCb: async (ws) => safeCloseWebSocket(ws),
+      maxSessionDuration: MAX_SESSION_DURATION_MS,
+      markRefreshedOnGet: true,
+    });
+    connectionPools.set(this, this.#pool);
   }
 
   updateOptions(opts: Partial<TTSOptions>) {
+    // Only these three fields reach Cartesia at WebSocket-handshake time (auth
+    // header, version header, host). Everything else — model, voice, encoding,
+    // sample rate, speed, emotion, volume, language — is sent in-band on each
+    // generation, so a pooled socket serves the new value without reconnecting.
+    // Reconnect only when one of the handshake inputs actually changes.
+    const handshakeChanged =
+      (opts.apiKey !== undefined && opts.apiKey !== this.#opts.apiKey) ||
+      (opts.apiVersion !== undefined && opts.apiVersion !== this.#opts.apiVersion) ||
+      (opts.baseUrl !== undefined && opts.baseUrl !== this.#opts.baseUrl);
+
     this.#opts = { ...this.#opts, ...opts };
     if (opts.language !== undefined) {
       this.#opts.language = normalizeLanguage(opts.language);
@@ -182,6 +214,10 @@ export class TTS extends tts.TTS {
     ) {
       checkGenerationConfig(this.#opts);
     }
+
+    if (handshakeChanged) {
+      this.#pool.invalidate();
+    }
   }
 
   synthesize(
@@ -189,11 +225,44 @@ export class TTS extends tts.TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): tts.ChunkedStream {
-    return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
+    return new ChunkedStream(this, text, { ...this.#opts }, connOptions, abortSignal);
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts, options?.connOptions);
+    return new SynthesizeStream(this, { ...this.#opts }, options?.connOptions);
+  }
+
+  /**
+   * Open the pooled WebSocket ahead of the first generation so the first turn
+   * does not pay the connect. Safe to call more than once; it is a no-op when a
+   * connection already exists.
+   */
+  prewarm(): void {
+    this.#pool.prewarm();
+  }
+
+  override async close(): Promise<void> {
+    this.#closed = true;
+    await this.#pool.close();
+    await super.close();
+  }
+
+  async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
+    const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
+    const url = `${wsUrl}/tts/websocket`;
+    const ws = await connectCartesiaWebSocket({
+      url,
+      headers: {
+        [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
+        [VERSION_HEADER]: this.#opts.apiVersion,
+      },
+      timeoutMs,
+    });
+    if (this.#closed) {
+      safeCloseWebSocket(ws);
+      throw new APIConnectionError({ message: 'Cartesia TTS is closed' });
+    }
+    return ws;
   }
 }
 
@@ -290,6 +359,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
+  #pool: ConnectionPool<WebSocket>;
   #logger = log();
   #tokenizer = new tokenize.basic.SentenceTokenizer({
     minSentenceLength: BUFFERED_WORDS_COUNT,
@@ -298,6 +368,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
+    const pool = connectionPools.get(tts);
+    if (!pool) throw new Error('Cartesia connection pool is not initialized');
+    this.#pool = pool;
     this.#opts = opts;
   }
 
@@ -316,8 +389,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected async run() {
     const requestId = shortuuid();
-    let closing = false;
-    // Only close WebSocket when both: 1) Cartesia returns done, AND 2) all sentences have been sent
+    // Only finish the generation once both: 1) Cartesia returns done, AND 2) all sentences have been sent
     let sentenceStreamClosed = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
@@ -384,6 +456,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       let timeout: NodeJS.Timeout | null = null;
+      // Set when the chunk watchdog fires: the socket is discarded, not pooled.
+      let timedOut = false;
 
       const clearTTSChunkTimeout = () => {
         if (timeout) {
@@ -400,9 +474,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       const onClose = (code: number, reason: Buffer) => {
-        if (!closing) {
-          this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
-        }
+        // A close during an active generation is unexpected: the pool owns the
+        // socket lifecycle and does not close it between turns.
+        this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
         clearTTSChunkTimeout();
         void eventChannel.close();
       };
@@ -476,7 +550,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               this.#logger.debug(
                 `Cartesia WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
               );
-              ws.close();
+              // The socket is stuck mid-generation, so it must not return to the
+              // pool. Poison it and unblock the reader; the post-loop check turns
+              // this into a retryable error so withConnection discards the socket.
+              timedOut = true;
+              safeCloseWebSocket(ws);
+              void eventChannel.close();
             }, this.#opts.chunkTimeout);
           } else if (this.#opts.wordTimestamps !== false && hasWordTimestamps(serverMsg)) {
             const wordTimestamps = serverMsg.word_timestamps;
@@ -507,9 +586,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               }
 
               if (segmentId === requestId) {
-                closing = true;
                 clearTTSChunkTimeout();
-                ws.close();
+                // Leave the socket open so the pool reuses it on the next turn.
                 break; // Exit the loop
               }
             }
@@ -519,6 +597,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             // done:true were already logged above.
             this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
           }
+        }
+
+        if (timedOut) {
+          throw new APITimeoutError({
+            message: `Cartesia TTS chunk stream timed out after ${this.#opts.chunkTimeout}ms`,
+          });
         }
       } catch (err) {
         // Always propagate API errors so the base SynthesizeStream can retry
@@ -547,32 +631,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const wsUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
-    const url = `${wsUrl}/tts/websocket`;
-
-    let ws: WebSocket | undefined;
     try {
-      ws = await connectCartesiaWebSocket({
-        url,
-        headers: {
-          [AUTHORIZATION_HEADER]: this.#opts.apiKey!,
-          [VERSION_HEADER]: this.#opts.apiVersion,
+      // The pool hands back one live socket per call and reclaims it on success
+      // (put) or discards it on any thrown error (remove). A generation never
+      // closes the socket itself, so the next turn skips the handshake.
+      await this.#pool.withConnection(
+        async (ws) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            throw new APIConnectionError({ message: 'Cartesia pooled websocket is not open' });
+          }
+          await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
         },
-        timeoutMs: this.connOptions.timeoutMs,
-        abortSignal: this.abortSignal,
-      });
-      await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+        { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
+      );
     } catch (e) {
       if (this.abortSignal.aborted) {
         return;
       }
       if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
-    } finally {
-      // Ensure we don't leak sockets/tasks across retry attempts.
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        safeTerminateWebSocket(ws);
-      }
     }
   }
 }
@@ -631,9 +708,9 @@ const waitForWsOpen = async ({
 }: {
   ws: WebSocket;
   timeoutMs: number;
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
 }) => {
-  if (abortSignal.aborted) {
+  if (abortSignal?.aborted) {
     throw new Error('aborted');
   }
 
@@ -645,7 +722,7 @@ const waitForWsOpen = async ({
     ws.off('open', onOpen);
     ws.off('error', onError);
     ws.off('close', onClose);
-    abortSignal.removeEventListener('abort', onAbort);
+    abortSignal?.removeEventListener('abort', onAbort);
   };
 
   const onOpen = () => fut.resolve();
@@ -659,7 +736,7 @@ const waitForWsOpen = async ({
   ws.on('open', onOpen);
   ws.on('error', onError);
   ws.on('close', onClose);
-  abortSignal.addEventListener('abort', onAbort, { once: true });
+  abortSignal?.addEventListener('abort', onAbort, { once: true });
 
   if (timeoutMs > 0) {
     timeout = setTimeout(() => fut.reject(new Error('connect timeout')), timeoutMs);
@@ -693,6 +770,30 @@ const safeTerminateWebSocket = (ws: WebSocket) => {
   }
 };
 
+// Graceful close used by the connection pool. A pooled socket is healthy when it
+// is retired (session age, option change, or TTS close), so a clean close frame
+// is preferable to an abrupt terminate; terminate remains the fallback for a
+// socket caught mid-handshake.
+const safeCloseWebSocket = (ws: WebSocket) => {
+  try {
+    // `ws` can emit 'error' during teardown; without a listener Node treats it as
+    // unhandled and crashes the process.
+    ws.on('error', () => {});
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+      ws.close();
+    } else if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+      ws.terminate();
+    }
+  } catch {
+    // ignore
+  }
+};
+
 const connectCartesiaWebSocket = async ({
   url,
   headers,
@@ -702,7 +803,7 @@ const connectCartesiaWebSocket = async ({
   url: string;
   headers: Record<string, string>;
   timeoutMs: number;
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
 }): Promise<WebSocket> => {
   const connectOnce = async (family?: number): Promise<WebSocket> => {
     const ws = new WebSocket(url, { handshakeTimeout: timeoutMs, family, headers });
