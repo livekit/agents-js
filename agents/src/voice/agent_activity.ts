@@ -2150,7 +2150,7 @@ export class AgentActivity implements RecognitionHooks {
           this.realtimeReplyTask({
             speechHandle: handle,
             // TODO(brian): support llm.ChatMessage for the realtime model
-            userInput: userMessage?.textContent,
+            userInput: userMessage?.rawTextContent,
             instructions,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
@@ -2426,7 +2426,7 @@ export class AgentActivity implements RecognitionHooks {
       // make sure the onUserTurnCompleted didn't change some request parameters
       // otherwise invalidate the preemptive generation
       if (
-        preemptive.info.newTranscript === userMessage?.textContent &&
+        preemptive.info.newTranscript === userMessage?.rawTextContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
         preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
@@ -2704,7 +2704,7 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
     if (newMessage) {
-      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
+      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.rawTextContent || '');
     }
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
