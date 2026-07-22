@@ -47,6 +47,12 @@ type ErrorSessionInternals = {
   on: (event: 'error', listener: (error: llm.RealtimeModelError) => void) => void;
 };
 
+type RealtimeModelInternals = RealtimeModel & {
+  _options: {
+    turnDetection?: api_proto.TurnDetectionType | null;
+  };
+};
+
 function createSessionForTest(): RealtimeSessionInternals {
   const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
   session.responseCreatedFutures = {};
@@ -64,6 +70,34 @@ function stubTaskRuntime(): void {
     result: Promise.resolve(undefined),
   } as unknown as Task<void>);
 }
+
+describe('RealtimeModel turn detection options', () => {
+  it('defaults server_vad create_response to true when omitted', () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad', threshold: 0.6 },
+    }) as RealtimeModelInternals;
+
+    expect(model._options.turnDetection).toMatchObject({
+      type: 'server_vad',
+      threshold: 0.6,
+      create_response: true,
+    });
+  });
+
+  it('preserves explicit server_vad create_response false', () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad', threshold: 0.6, create_response: false },
+    }) as RealtimeModelInternals;
+
+    expect(model._options.turnDetection).toMatchObject({
+      type: 'server_vad',
+      threshold: 0.6,
+      create_response: false,
+    });
+  });
+});
 
 describe('RealtimeSession.generateReply', () => {
   it('preserves session instructions when generating with per-response instructions', async () => {
