@@ -97,7 +97,7 @@ export interface AMDOptions {
    * end-of-turn signal or the synthetic `maxEndpointingDelayMs` backstop before
    * emitting. Useful for outbound voicemail flows where leaving a message early
    * would overlap the greeting. `noSpeechTimeoutMs` (uncertain) still fires
-   * normally when no audio is heard. Continuous audio without a speech-end or
+   * normally when no audio is heard. Continuous speech without a speech-end or
    * end-of-turn can therefore extend detection beyond `detectionTimeoutMs`; set
    * this to `false` when `detectionTimeoutMs` should remain a hard cap after
    * speech starts. Defaults to `true`.
