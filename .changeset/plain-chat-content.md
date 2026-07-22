@@ -1,5 +1,5 @@
 ---
-'@livekit/agents': minor
+'@livekit/agents': patch
 '@livekit/agents-plugin-anthropic': patch
 '@livekit/agents-plugin-google': patch
 '@livekit/agents-plugin-livekit': patch
