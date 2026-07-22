@@ -275,6 +275,13 @@ export function createAudioContent(params: {
 }
 
 export interface MetricsReport {
+  /**
+   * Provider-known request or response IDs associated with this turn.
+   *
+   * Assistant `ChatMessage` only. These IDs can be used to correlate a turn with
+   * provider-side logs.
+   */
+  providerRequestIds?: string[];
   startedSpeakingAt?: number;
   stoppedSpeakingAt?: number;
   transcriptionDelay?: number;
