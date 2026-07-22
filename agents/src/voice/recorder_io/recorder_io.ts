@@ -791,10 +791,11 @@ class RecorderAudioOutput extends AudioOutput {
   }
 
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const waitForRecorder = super.waitForPlayout();
     if (this.nextInChain) {
       await this.nextInChain.waitForPlayout();
     }
-    return super.waitForPlayout();
+    return waitForRecorder;
   }
 
   flush(): void {

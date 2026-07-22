@@ -8,7 +8,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { isWritableStreamClosedError } from '../../utils.js';
+import { Future, isWritableStreamClosedError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput } from '../io.js';
 import { RecorderIO } from './recorder_io.js';
@@ -35,12 +35,19 @@ class FakeAudioOutput extends AudioOutput {
 }
 
 class WaitAwareAudioOutput extends FakeAudioOutput {
-  waitCalled = false;
+  readonly waitStarted = new Future<void>();
+  private readonly continueWait = new Future<void>();
 
   async waitForPlayout() {
-    this.waitCalled = true;
+    const waitForCurrentSegment = super.waitForPlayout();
+    this.waitStarted.resolve();
+    await this.continueWait.await;
     this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
-    return super.waitForPlayout();
+    return waitForCurrentSegment;
+  }
+
+  releaseWait() {
+    this.continueWait.resolve();
   }
 }
 
@@ -132,16 +139,23 @@ describe('RecorderIO close', () => {
 });
 
 describe('RecorderAudioOutput', () => {
-  it('delegates playout waits to the wrapped output', async () => {
+  it('snapshots its segment before delegating the playout wait', async () => {
     const recorder = new RecorderIO({ agentSession: {} as AgentSession });
     const downstream = new WaitAwareAudioOutput();
     const output = recorder.recordOutput(downstream);
 
     await output.captureFrame(makeFrame(20));
-    const event = await output.waitForPlayout();
+    const waitForFirstSegment = output.waitForPlayout();
+    await downstream.waitStarted.await;
 
-    expect(downstream.waitCalled).toBe(true);
+    output.flush();
+    await output.captureFrame(makeFrame(20));
+    downstream.releaseWait();
+
+    const event = await waitForFirstSegment;
+
     expect(event).toEqual({ playbackPosition: 0, interrupted: true });
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
     await recorder.close();
   });
 });
