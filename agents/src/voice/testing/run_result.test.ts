@@ -9,7 +9,7 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, RunResult, withMockTools } from './run_result.js';
+import { RunResult, activeMockTools, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
