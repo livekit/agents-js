@@ -34,6 +34,16 @@ class FakeAudioOutput extends AudioOutput {
   clearBuffer(): void {}
 }
 
+class WaitAwareAudioOutput extends FakeAudioOutput {
+  waitCalled = false;
+
+  async waitForPlayout() {
+    this.waitCalled = true;
+    this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    return super.waitForPlayout();
+  }
+}
+
 function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioFrame {
   const samplesPerChannel = Math.floor((durationMs / 1000) * sampleRate);
   return new AudioFrame(
@@ -119,6 +129,21 @@ describe('RecorderIO close', () => {
     expect(fs.existsSync(outputPath)).toBe(true);
     expect(fs.statSync(outputPath).size).toBeGreaterThan(0);
   }, 15000);
+});
+
+describe('RecorderAudioOutput', () => {
+  it('delegates playout waits to the wrapped output', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new WaitAwareAudioOutput();
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20));
+    const event = await output.waitForPlayout();
+
+    expect(downstream.waitCalled).toBe(true);
+    expect(event).toEqual({ playbackPosition: 0, interrupted: true });
+    await recorder.close();
+  });
 });
 
 describe('RecorderIO writable stream error detection', () => {
