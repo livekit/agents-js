@@ -235,7 +235,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected async run() {
     const sentenceStream = this.#tts.tokenizer.stream();
-    let cumulativeDuration = 0;
+    // Total audio duration produced so far, used as the timestamp offset for
+    // the next sentence's word marks. Advances by each sentence's full frame
+    // duration right after synthesis, so it stays accurate even though the
+    // last frame of each sentence is deferred by the buffer-one loop below.
+    let offsetSeconds = 0;
 
     // Buffer-one deferral across the WHOLE run: the base class only records
     // one pending text per reply, so `final: true` must be emitted exactly
@@ -244,7 +248,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let lastRequestId: string | undefined;
     const sendFrame = (final: boolean) => {
       if (!lastFrame || !lastRequestId) return;
-      cumulativeDuration += lastFrame.samplesPerChannel / lastFrame.sampleRate;
       this.queue.put({
         requestId: lastRequestId,
         frame: lastFrame,
@@ -271,7 +274,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS);
 
       this.markStarted();
-      const { audio, timed } = await this.#tts._synthesize(text, this.#opts, cumulativeDuration, {
+      const { audio, timed } = await this.#tts._synthesize(text, this.#opts, offsetSeconds, {
         abortSignal: this.abortSignal,
         timeoutInSeconds: this.connOptions.timeoutMs / 1000,
       });
@@ -280,6 +283,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (timed.length > 0 && frames.length > 0) {
         frames[0]!.userdata[USERDATA_TIMED_TRANSCRIPT] = timed;
       }
+      offsetSeconds += frames.reduce((sum, f) => sum + f.samplesPerChannel / f.sampleRate, 0);
 
       for (const frame of frames) {
         sendFrame(false);
