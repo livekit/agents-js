@@ -71,6 +71,10 @@ export interface RealtimeCapabilities {
   nativeTranscriptSync?: boolean;
 }
 
+/**
+ * Error raised by a realtime provider when an operation fails or times out
+ * (for example a chat-context update or reply generation).
+ */
 export class RealtimeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);

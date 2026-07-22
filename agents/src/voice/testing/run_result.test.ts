@@ -9,7 +9,7 @@ import { ToolContext, tool } from '../../llm/tool_context.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, withMockTools } from './run_result.js';
+import { activeMockTools, RunResult, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -178,5 +178,30 @@ describe('withMockTools', () => {
     await task.result;
     expect(output.output[0]?.rawException?.message).toBe('test failure');
     expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
+  });
+});
+
+describe('RunResult speech handle error propagation', () => {
+  it('rejects when the last SpeechHandle completed with an error', async () => {
+    const run = new RunResult();
+    const handle = SpeechHandle.create();
+    run._watchHandle(handle);
+
+    const error = new Error('update_chat_ctx failed unexpectedly');
+    handle._markDone(error);
+    run._markDoneIfNeeded(handle);
+
+    await expect(run.wait()).rejects.toThrow('update_chat_ctx failed unexpectedly');
+  });
+
+  it('resolves when the last SpeechHandle completed without an error', async () => {
+    const run = new RunResult();
+    const handle = SpeechHandle.create();
+    run._watchHandle(handle);
+
+    handle._markDone();
+    run._markDoneIfNeeded(handle);
+
+    await expect(run.wait()).resolves.toBe(run);
   });
 });

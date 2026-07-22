@@ -184,6 +184,11 @@ export class SpeechHandle {
     return this.doneFut.done;
   }
 
+  /**
+   * Returns the error that caused this SpeechHandle to complete, if any.
+   *
+   * @throws Error if the SpeechHandle is not done yet.
+   */
   exception(): unknown {
     if (!this.doneFut.done) {
       throw new Error('SpeechHandle is not done yet');
