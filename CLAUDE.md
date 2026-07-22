@@ -130,7 +130,7 @@ Plugin capabilities by type:
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
 - **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did
+- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did, protoface
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns
