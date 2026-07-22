@@ -8,7 +8,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
-import { isWritableStreamClosedError } from '../../utils.js';
+import { Future, isWritableStreamClosedError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput } from '../io.js';
 import { RecorderIO } from './recorder_io.js';
@@ -32,6 +32,23 @@ class FakeAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {}
+}
+
+class WaitAwareAudioOutput extends FakeAudioOutput {
+  readonly waitStarted = new Future<void>();
+  private readonly continueWait = new Future<void>();
+
+  async waitForPlayout() {
+    const waitForCurrentSegment = super.waitForPlayout();
+    this.waitStarted.resolve();
+    await this.continueWait.await;
+    this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    return waitForCurrentSegment;
+  }
+
+  releaseWait() {
+    this.continueWait.resolve();
+  }
 }
 
 function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioFrame {
@@ -119,6 +136,28 @@ describe('RecorderIO close', () => {
     expect(fs.existsSync(outputPath)).toBe(true);
     expect(fs.statSync(outputPath).size).toBeGreaterThan(0);
   }, 15000);
+});
+
+describe('RecorderAudioOutput', () => {
+  it('snapshots its segment before delegating the playout wait', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new WaitAwareAudioOutput();
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20));
+    const waitForFirstSegment = output.waitForPlayout();
+    await downstream.waitStarted.await;
+
+    output.flush();
+    await output.captureFrame(makeFrame(20));
+    downstream.releaseWait();
+
+    const event = await waitForFirstSegment;
+
+    expect(event).toEqual({ playbackPosition: 0, interrupted: true });
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    await recorder.close();
+  });
 });
 
 describe('RecorderIO writable stream error detection', () => {
