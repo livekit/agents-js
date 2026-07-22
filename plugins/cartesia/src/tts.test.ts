@@ -169,6 +169,47 @@ describe('Cartesia streaming pool', () => {
     }
   });
 
+  it('fails over when the socket drops mid-generation instead of ending silently', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    // Connection 1 emits one audio chunk, then drops WITHOUT a done message,
+    // i.e. mid-speech. Connection 2 serves the recovery turn normally.
+    const server = serveCartesia(wss, (ws, contextId, connectionNumber) => {
+      if (connectionNumber === 1) {
+        ws.send(
+          JSON.stringify({
+            type: 'chunk',
+            data: CHUNK_BASE64,
+            done: false,
+            status_code: 200,
+            step_time: 0,
+            context_id: contextId,
+          }),
+        );
+        setTimeout(() => ws.close(1011, 'mid-speech drop'), 5);
+        return false; // suppress the normal chunk/done reply
+      }
+      return true;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      // The dropped turn does not complete successfully (it fails over rather
+      // than silently ending); at maxRetry: 0 that surfaces as no audio.
+      expect(
+        await synthesizeTurn(cartesia, 'dropping turn.', {
+          ...DEFAULT_API_CONNECT_OPTIONS,
+          maxRetry: 0,
+        }),
+      ).toHaveLength(0);
+      // The dead socket is discarded, so the next turn opens a fresh one.
+      expect(await synthesizeTurn(cartesia, 'recovery turn.')).not.toHaveLength(0);
+      expect(server.connectionCount()).toBe(2);
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('replaces a websocket that closed while idle', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let firstConnectionClosed: (() => void) | undefined;

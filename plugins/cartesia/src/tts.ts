@@ -192,8 +192,8 @@ export class TTS extends tts.TTS {
 
   updateOptions(opts: Partial<TTSOptions>) {
     // Only these three fields reach Cartesia at WebSocket-handshake time (auth
-    // header, version header, host). Everything else — model, voice, encoding,
-    // sample rate, speed, emotion, volume, language — is sent in-band on each
+    // header, version header, host). Everything else (model, voice, encoding,
+    // sample rate, speed, emotion, volume, language) is sent in-band on each
     // generation, so a pooled socket serves the new value without reconnecting.
     // Reconnect only when one of the handshake inputs actually changes.
     const handshakeChanged =
@@ -481,6 +481,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       let timeout: NodeJS.Timeout | null = null;
       // Set when the chunk watchdog fires: the socket is discarded, not pooled.
       let timedOut = false;
+      // Set once this generation's `done` has been handled. Until then, a socket
+      // close or error is a mid-generation drop, not a normal end.
+      let completed = false;
+      // A socket close/error before completion. Thrown after the loop so the turn
+      // fails over (and the dead socket is discarded) instead of ending silently.
+      let streamError: Error | undefined;
 
       const clearTTSChunkTimeout = () => {
         if (timeout) {
@@ -498,14 +504,24 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       const onClose = (code: number, reason: Buffer) => {
         // A close during an active generation is unexpected: the pool owns the
-        // socket lifecycle and does not close it between turns.
+        // socket lifecycle and does not close it between turns. If it happens
+        // before `done`, surface it so the turn retries rather than ending mid
+        // speech, and so withConnection discards the dead socket.
         this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
         clearTTSChunkTimeout();
+        if (!completed && !timedOut && !streamError) {
+          streamError = new APIConnectionError({
+            message: `Cartesia WebSocket closed mid-generation (code=${code})`,
+          });
+        }
         void eventChannel.close();
       };
 
       const onError = (err: Error) => {
         this.#logger.error({ err }, 'Cartesia WebSocket error');
+        if (!completed && !timedOut && !streamError) {
+          streamError = err instanceof APIError ? err : toRetryableConnectionError(err);
+        }
         void eventChannel.close();
       };
 
@@ -610,6 +626,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
               if (segmentId === requestId) {
                 clearTTSChunkTimeout();
+                completed = true;
                 // Leave the socket open so the pool reuses it on the next turn.
                 break; // Exit the loop
               }
@@ -626,6 +643,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           throw new APITimeoutError({
             message: `Cartesia TTS chunk stream timed out after ${this.#opts.chunkTimeout}ms`,
           });
+        }
+        if (streamError) {
+          throw streamError;
         }
       } catch (err) {
         // Always propagate API errors so the base SynthesizeStream can retry
