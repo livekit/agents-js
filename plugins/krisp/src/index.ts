@@ -17,7 +17,7 @@
  * ```ts
  * import * as krisp from '@livekit/agents-plugin-krisp';
  *
- * const processor = new krisp.vivaFilter();
+ * const processor = krisp.vivaFilter();
  * ```
  *
  * @packageDocumentation
