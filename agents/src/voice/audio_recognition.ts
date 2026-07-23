@@ -1589,7 +1589,21 @@ export class AudioRecognition {
         }
 
         let extraSleep = endpointingDelay;
-        if (lastSpeakingTime !== undefined) {
+        // In STT-based turn detection, lastSpeakingTime is roughly when the
+        // user stopped, but bounceEOUTask runs from STT's INFERENCE_DONE
+        // event — subtracting elapsed time compensates for transcription
+        // latency so the post-speech window stays ~endpointingDelay long.
+        //
+        // In VAD-based turn detection, lastSpeakingTime is stamped at
+        // VAD INFERENCE_DONE and bounceEOUTask runs at VAD END_OF_SPEECH,
+        // which Silero emits `minSilenceDuration` later. Subtracting that
+        // elapsed silence collapses the grouping window to ~0 (or negative)
+        // and commits the turn the instant END_OF_SPEECH fires — so a
+        // mid-sentence pause splits into two segments and the post-EOS
+        // start-of-speech can no longer cancel the pending commit. Skip
+        // the adjustment in VAD mode so `minEndpointingDelay` actually
+        // provides a real post-EOS grouping window.
+        if (lastSpeakingTime !== undefined && !this.vadBaseTurnDetection) {
           extraSleep += lastSpeakingTime - Date.now();
         }
 
