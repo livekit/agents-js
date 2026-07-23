@@ -42,6 +42,7 @@ export async function mintAvatarJoinToken({
 
 const AVATAR_IDENTITY = 'anam-avatar-agent';
 const _AVATAR_NAME = 'anam-avatar-agent';
+const SAMPLE_RATE = 24000;
 
 /** @public */
 export class AvatarSession extends voice.AvatarSession {
@@ -132,6 +133,7 @@ export class AvatarSession extends voice.AvatarSession {
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
       destinationIdentity: this.avatarIdentity,
+      sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
   }
