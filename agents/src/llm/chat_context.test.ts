@@ -519,6 +519,38 @@ describe('ChatContext._summarize', () => {
   });
 });
 
+describe('ChatContext.remove', () => {
+  it('removes an item by id', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'system', content: 'system' });
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    ctx.remove(target.id);
+
+    expect(ctx.getById(target.id)).toBeUndefined();
+  });
+
+  it('removes an item by item', () => {
+    const ctx = new ChatContext();
+    const target = ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+    ctx.addMessage({ role: 'user', content: 'user again' });
+
+    ctx.remove(target);
+
+    expect(ctx.items).toHaveLength(2);
+  });
+
+  it('throws when removing a nonexistent item', () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: 'user', content: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'assistant' });
+
+    expect(() => ctx.remove('nonexistent_id')).toThrow('Item not found: nonexistent_id');
+  });
+});
+
 describe('ReadonlyChatContext with immutable array', () => {
   it('should have readonly property set to true', () => {
     const items: ChatItem[] = [
