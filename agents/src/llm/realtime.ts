@@ -182,21 +182,21 @@ export abstract class RealtimeSession extends EventEmitter {
       try {
         await this.updateInstructions(instructions);
       } catch (error) {
-        this.logger.error(error, 'failed to update the instructions');
+        this.logger.error({ 'lk.pii.error': error }, 'failed to update the instructions');
       }
     }
     if (chatCtx !== undefined) {
       try {
         await this.updateChatCtx(chatCtx);
       } catch (error) {
-        this.logger.error(error, 'failed to update the chat context');
+        this.logger.error({ 'lk.pii.error': error }, 'failed to update the chat context');
       }
     }
     if (tools !== undefined) {
       try {
         await this.updateTools(tools);
       } catch (error) {
-        this.logger.error(error, 'failed to update the tools');
+        this.logger.error({ 'lk.pii.error': error }, 'failed to update the tools');
       }
     }
   }

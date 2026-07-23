@@ -516,7 +516,7 @@ export class Task<T> {
           try {
             callback();
           } catch (error) {
-            this.#logger.error({ error }, 'Task done callback failed');
+            this.#logger.error({ 'lk.pii.error': error }, 'Task done callback failed');
           }
         }
         this.doneCallbacks.clear();
@@ -550,7 +550,7 @@ export class Task<T> {
   private async runTask() {
     const run = async () => {
       if (this.name) {
-        this.#logger.debug(`Task.runTask: task ${this.name} started`);
+        this.#logger.debug({ taskName: this.name }, 'Task.runTask: task started');
       }
       return await this.fn(this.controller);
     };
@@ -566,7 +566,7 @@ export class Task<T> {
       })
       .finally(() => {
         if (this.name) {
-          this.#logger.debug(`Task.runTask: task ${this.name} done`);
+          this.#logger.debug({ taskName: this.name }, 'Task.runTask: task done');
         }
       });
   }

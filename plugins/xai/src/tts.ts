@@ -381,7 +381,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             try {
               data = JSON.parse(event.data.toString()) as Record<string, unknown>;
             } catch (e) {
-              this.#logger.warn({ err: e }, 'Unexpected xAI message');
+              this.#logger.warn(
+                {
+                  'lk.pii.error': e,
+                  'lk.pii.data': event.data.toString(),
+                },
+                'Unexpected xAI message',
+              );
               continue;
             }
 
@@ -410,7 +416,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                   options: { body: data },
                 });
               default:
-                this.#logger.warn({ data }, 'Unexpected xAI message');
+                this.#logger.warn({ 'lk.pii.data': data }, 'Unexpected xAI message');
             }
           }
         };

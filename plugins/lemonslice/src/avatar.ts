@@ -440,7 +440,7 @@ export class AvatarSession extends voice.AvatarSession {
     try {
       await this.callLeaveMeeting(sessionId, meetingBotId);
     } catch (error) {
-      this.#logger.warn({ error }, 'failed to leave meeting via LemonSlice API');
+      this.#logger.warn({ 'lk.pii.error': error }, 'failed to leave meeting via LemonSlice API');
     }
   }
 
@@ -552,9 +552,9 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
+          this.#logger.warn({ 'lk.pii.error': e }, 'failed to call lemonslice api');
         } else {
-          this.#logger.error({ error: e }, 'failed to call lemonslice api');
+          this.#logger.error({ 'lk.pii.error': e }, 'failed to call lemonslice api');
         }
 
         if (i <= this.connOptions.maxRetry - 1) {
@@ -642,9 +642,9 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
+          this.#logger.warn({ 'lk.pii.error': e }, 'failed to call lemonslice api');
         } else {
-          this.#logger.error({ error: e }, 'failed to call lemonslice api');
+          this.#logger.error({ 'lk.pii.error': e }, 'failed to call lemonslice api');
         }
 
         if (i <= this.connOptions.maxRetry - 1) {

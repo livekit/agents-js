@@ -64,7 +64,10 @@ class SchedulingAgent extends voice.Agent {
             time: z.string().describe('The time of the appointment in the format HH:MM'),
           }),
           execute: async ({ date, time }) => {
-            log().info(`booking appointment for ${date} at ${time}`);
+            log().info(
+              { 'lk.pii.appointment_date': date, 'lk.pii.appointment_time': time },
+              'booking appointment',
+            );
             return `Appointment booked for ${date} at ${time}`;
           },
         }),

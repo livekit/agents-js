@@ -377,7 +377,11 @@ function extractConfidence(
   }
   if (value != null) {
     logger.debug(
-      `Unexpected language_probability type: ${typeof value} (value=${JSON.stringify(value)}); falling back to confidence=1.0`,
+      {
+        valueType: typeof value,
+        'lk.pii.value': value,
+      },
+      'unexpected language_probability type; falling back to confidence=1.0',
     );
   }
   return 1;
@@ -589,7 +593,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     while (!this.input.closed && !this.closed) {
       const wsUrl = buildWsUrl(this.#opts);
-      this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
+      this.#logger.info({ 'lk.pii.url': wsUrl }, 'Sarvam STT connecting');
       const ws = new WebSocket(wsUrl, {
         headers: { 'api-subscription-key': this.#opts.apiKey },
       });
@@ -625,12 +629,23 @@ export class SpeechStream extends stt.SpeechStream {
           const delay = Math.min(retries * 5, 10);
           retries++;
           this.#logger.warn(
-            `Failed to connect to Sarvam STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
+            {
+              delay,
+              retries,
+              maxRetry,
+              'lk.pii.error': e,
+            },
+            'Failed to connect to Sarvam STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Sarvam STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            {
+              inputClosed: this.input.closed,
+              isClosed: this.closed,
+              'lk.pii.error': e,
+            },
+            'Sarvam STT disconnected',
           );
         }
       }
@@ -661,7 +676,13 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code: number, reason: Buffer) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            this.#logger.error(
+              {
+                code,
+                'lk.pii.reason': reason.toString(),
+              },
+              'Sarvam STT WebSocket closed unexpectedly',
+            );
             reject(new Error('WebSocket closed'));
           }
         });
@@ -759,7 +780,10 @@ export class SpeechStream extends stt.SpeechStream {
         ws.on('message', (msg: RawData) => {
           try {
             const raw = msg.toString();
-            this.#logger.debug(`Sarvam STT raw WS message: ${raw.substring(0, 500)}`);
+            this.#logger.debug(
+              { 'lk.pii.raw_message': raw.substring(0, 500) },
+              'received Sarvam STT WebSocket message',
+            );
             const json = JSON.parse(raw);
             const msgType: string = json['type'] ?? '';
 
@@ -791,7 +815,11 @@ export class SpeechStream extends stt.SpeechStream {
               // Log metrics when available
               if (td.metrics) {
                 this.#logger.debug(
-                  `Sarvam STT metrics: audio_duration=${td.metrics.audio_duration}s, latency=${td.metrics.processing_latency}s`,
+                  {
+                    audioDurationSeconds: td.metrics.audio_duration,
+                    latencySeconds: td.metrics.processing_latency,
+                  },
+                  'Sarvam STT metrics',
                 );
               }
 
@@ -826,7 +854,13 @@ export class SpeechStream extends stt.SpeechStream {
                 json['message'] ??
                 'Unknown error';
               const errorCode = nested?.code ?? json['code'] ?? '';
-              this.#logger.error(`Sarvam STT WebSocket error [${errorCode}]: ${errorInfo}`);
+              this.#logger.error(
+                {
+                  errorCode,
+                  'lk.pii.error': errorInfo,
+                },
+                'Sarvam STT WebSocket returned an error',
+              );
               reject(new Error(`Sarvam STT API error [${errorCode}]: ${errorInfo}`));
               return;
             }
@@ -835,7 +869,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`Error processing Sarvam STT message: ${msg}`);
+            this.#logger.error(
+              {
+                'lk.pii.error': err,
+                'lk.pii.message': msg.toString(),
+              },
+              'Error processing Sarvam STT message',
+            );
             reject(err);
           }
         });

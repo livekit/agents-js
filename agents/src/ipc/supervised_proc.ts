@@ -131,19 +131,19 @@ export abstract class SupervisedProc {
 
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
         this.#logger
-          .child(this.memoryLoggingFields(memoryMB))
-          .error(`${this.processKind} process exceeded memory limit, killing it`);
+          .child({ ...this.memoryLoggingFields(memoryMB), processKind: this.processKind })
+          .error('process exceeded memory limit, killing it');
         this.close();
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
         if (this.shouldEmitMemoryWarning(memoryMB)) {
           const advisory = this.#opts.memoryLimitMB <= 0;
           this.#logger
-            .child(this.memoryLoggingFields(memoryMB))
-            .warn(
-              `${this.processKind} process memory usage is above the warning threshold${
-                advisory ? ' (advisory only, the process will not be terminated)' : ''
-              }`,
-            );
+            .child({
+              ...this.memoryLoggingFields(memoryMB),
+              processKind: this.processKind,
+              advisory,
+            })
+            .warn('process memory usage is above the warning threshold');
         }
       }
     }, MEMORY_MONITOR_INTERVAL);

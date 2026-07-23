@@ -64,7 +64,7 @@ import {
   setParticipantSpanAttributes,
 } from './utils.js';
 
-// Maximum number of chat items included in the `lk.chat_ctx` attribute of the
+// Maximum number of chat items included in the `lk.pii.chat_ctx` attribute of the
 // `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
 const EOU_MAX_HISTORY_TURNS = 6;
 
@@ -454,7 +454,7 @@ export class AudioRecognition {
               if (!this.warnedTurnDetectorPushFailure) {
                 this.warnedTurnDetectorPushFailure = true;
                 this.logger.warn(
-                  { err: err instanceof Error ? err.message : String(err) },
+                  { 'lk.pii.error': err },
                   'audio EOT stream pushAudio failed; dropping frames for this turn',
                 );
               }
@@ -639,14 +639,14 @@ export class AudioRecognition {
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
+      this.logger.error({ 'lk.pii.error': err }, 'error running VAD task');
     });
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
     );
     this.interruptionTask.result.catch((err) => {
-      this.logger.error(`Error running interruption task: ${err}`);
+      this.logger.error({ 'lk.pii.error': err }, 'error running interruption task');
     });
 
     // Open (or adopt) the audio EOT detector stream now that the activity is
@@ -974,9 +974,7 @@ export class AudioRecognition {
         await this.interruptionStreamChannel.write(frame);
         return true;
       } catch (e: unknown) {
-        this.logger.warn(
-          `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        this.logger.warn({ 'lk.pii.error': e }, 'could not forward interruption sentinel');
       }
     }
     return false;
@@ -1099,7 +1097,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: transcript,
+            'lk.pii.user_transcript': transcript,
             language: this.lastLanguage,
           },
           'received user transcript',
@@ -1123,7 +1121,7 @@ export class AudioRecognition {
         if (this.vadBaseTurnDetection || this.userTurnCommitted) {
           if (transcriptChanged) {
             this.logger.debug(
-              { transcript: this.audioTranscript },
+              { 'lk.pii.transcript': this.audioTranscript },
               'triggering preemptive generation (FINAL_TRANSCRIPT)',
             );
             this.hooks.onPreemptiveGeneration({
@@ -1167,7 +1165,7 @@ export class AudioRecognition {
 
         this.logger.debug(
           {
-            user_transcript: preflightTranscript,
+            'lk.pii.user_transcript': preflightTranscript,
             language: this.lastLanguage,
           },
           'received user preflight transcript',
@@ -1189,7 +1187,7 @@ export class AudioRecognition {
           const confidenceVals = [...this.finalTranscriptConfidence, preflightConfidence];
           this.logger.debug(
             {
-              transcript:
+              'lk.pii.transcript':
                 this.audioPreflightTranscript.length > 100
                   ? this.audioPreflightTranscript.slice(0, 100) + '...'
                   : this.audioPreflightTranscript,
@@ -1207,7 +1205,10 @@ export class AudioRecognition {
         }
         break;
       case SpeechEventType.INTERIM_TRANSCRIPT:
-        this.logger.debug({ transcript: ev.alternatives?.[0]?.text }, 'interim transcript');
+        this.logger.debug(
+          { 'lk.pii.transcript': ev.alternatives?.[0]?.text },
+          'interim transcript',
+        );
         this.hooks.onInterimTranscript(
           ev,
           this.hasUserVad || this.turnDetectionMode === 'stt' ? this.speaking : undefined,
@@ -1343,7 +1344,7 @@ export class AudioRecognition {
     this.logger.debug(
       {
         stt: this.stt,
-        audioTranscript: this.audioTranscript,
+        'lk.pii.audio_transcript': this.audioTranscript,
         turnDetectionMode: this.turnDetectionMode,
       },
       'running EOU detection',
@@ -1398,7 +1399,10 @@ export class AudioRecognition {
         if (turnDetector) {
           if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
             // Unsupported language: produce no span and emit no prediction event.
-            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
+            this.logger.debug(
+              { language: this.lastLanguage },
+              'turn detector does not support language',
+            );
           } else {
             await tracer.startActiveSpan(
               async (span) => {
@@ -1614,7 +1618,7 @@ export class AudioRecognition {
           return;
         }
 
-        this.logger.debug({ transcript: this.audioTranscript }, 'end of user turn');
+        this.logger.debug({ 'lk.pii.transcript': this.audioTranscript }, 'end of user turn');
 
         const confidenceAvg =
           this.finalTranscriptConfidence.length > 0
@@ -1756,12 +1760,12 @@ export class AudioRecognition {
 
     this.sttForwardTask = Task.from(({ signal }) => this.forwardInputAudioToStt(pipeline, signal));
     this.sttForwardTask.result.catch((err) => {
-      this.logger.error(`Error forwarding audio to STT pipeline: ${err}`);
+      this.logger.error({ 'lk.pii.error': err }, 'error forwarding audio to STT pipeline');
     });
 
     this.sttConsumerTask = Task.from(({ signal }) => this.consumeSttEvents(pipeline, signal));
     this.sttConsumerTask.result.catch((err) => {
-      this.logger.error(`Error running STT task: ${err}`);
+      this.logger.error({ 'lk.pii.error': err }, 'error running STT task');
     });
   }
 
@@ -2031,8 +2035,12 @@ export class AudioRecognition {
               ),
             );
             this.logger.warn(
-              { model: interruptionDetection.label, attempt: numRetries },
-              `failed to detect interruption, retrying in ${retryInterval}ms`,
+              {
+                model: interruptionDetection.label,
+                attempt: numRetries,
+                retryIntervalMs: retryInterval,
+              },
+              'failed to detect interruption, retrying',
             );
             numRetries++;
             await delay(retryInterval, { signal });
@@ -2048,7 +2056,7 @@ export class AudioRecognition {
       } finally {
         await cleanup();
         await forwardTask?.catch((e) => {
-          this.logger.debug({ err: e }, 'interruption task exited with error');
+          this.logger.debug({ 'lk.pii.error': e }, 'interruption task exited with error');
         });
       }
     }
@@ -2142,7 +2150,7 @@ export class AudioRecognition {
     };
 
     void restartStt().catch((err) => {
-      this.logger.error(`Error resetting STT task: ${err}`);
+      this.logger.error({ 'lk.pii.error': err }, 'error resetting STT task');
     });
   }
 
@@ -2158,7 +2166,7 @@ export class AudioRecognition {
       if (this.closed) return;
       this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
       this.vadTask.result.catch((err) => {
-        this.logger.error(`Error running VAD task: ${err}`);
+        this.logger.error({ 'lk.pii.error': err }, 'error running VAD task');
       });
     });
   }

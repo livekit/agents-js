@@ -150,7 +150,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
         await this.inputWriter.write(value);
       }
     } catch (e) {
-      this.logger.error(`Error pumping deferred stream: ${e}`);
+      this.logger.error({ 'lk.pii.error': e }, 'error pumping deferred stream');
       throw e;
     } finally {
       reader.releaseLock();

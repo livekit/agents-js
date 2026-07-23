@@ -306,8 +306,13 @@ export class STT extends stt.STT {
             });
           } else {
             this.#logger.warn(
-              { stt: this.label, attempt: i + 1, error },
-              `failed to recognize speech, retrying in ${retryInterval}ms`,
+              {
+                stt: this.label,
+                attempt: i + 1,
+                retryIntervalMs: retryInterval,
+                'lk.pii.error': error,
+              },
+              'failed to recognize speech, retrying',
             );
           }
 
@@ -625,7 +630,10 @@ export class SpeechStream extends stt.SpeechStream {
               try {
                 this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
               } catch (error) {
-                this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
+                this.#logger.error(
+                  { 'lk.pii.error': error },
+                  'failed to process ElevenLabs STT message',
+                );
               }
             };
             const onClose = (code: number, reason: Buffer) => {
@@ -804,7 +812,7 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     if (messageType === 'partial_transcript') {
-      this.#logger.debug({ data }, 'Received message type partial_transcript');
+      this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
       if (text) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
@@ -839,7 +847,7 @@ export class SpeechStream extends stt.SpeechStream {
     } else if (messageType === 'committed_transcript') {
       return;
     } else if (messageType === 'session_started') {
-      this.#logger.debug(`Session started with ID: ${data.session_id ?? 'unknown'}`);
+      this.#logger.debug({ sessionId: data.session_id }, 'session started');
     } else if (
       messageType === 'auth_error' ||
       messageType === 'quota_exceeded' ||
@@ -849,7 +857,13 @@ export class SpeechStream extends stt.SpeechStream {
     ) {
       const errorMsg = data.message ?? 'Unknown error';
       const detailsSuffix = data.details ? ` - ${data.details}` : '';
-      this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
+      this.#logger.error(
+        {
+          messageType,
+          'lk.pii.error': `${errorMsg}${detailsSuffix}`,
+        },
+        'ElevenLabs STT returned an error',
+      );
       throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
     } else if (
       messageType === 'committed_transcript_with_timestamps' &&
@@ -857,7 +871,13 @@ export class SpeechStream extends stt.SpeechStream {
     ) {
       return;
     } else {
-      this.#logger.warn(`ElevenLabs STT unknown message type: ${messageType}, data: ${data}`);
+      this.#logger.warn(
+        {
+          messageType,
+          'lk.pii.data': data,
+        },
+        'ElevenLabs STT returned an unknown message type',
+      );
     }
   }
 }

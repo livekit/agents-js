@@ -333,7 +333,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       await client.deleteRoom(targetRoomName);
       this.#logger.info({ roomName: targetRoomName }, 'room deleted');
     } catch (error) {
-      this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
+      this.#logger.warn(
+        { 'lk.pii.error': error, roomName: targetRoomName },
+        'error while deleting room',
+      );
     }
   }
 
@@ -390,7 +393,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
           JSON.stringify(sessionReportToJSON(report), null, 2),
         );
       } catch (error) {
-        this.#logger.error({ error }, 'failed to save the session report');
+        this.#logger.error({ 'lk.pii.error': error }, 'failed to save the session report');
       }
     }
 
@@ -415,7 +418,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
             'Session report uploaded to LiveKit Cloud',
           );
         } catch (error) {
-          this.#logger.error({ error }, 'Failed to upload session report');
+          this.#logger.error({ 'lk.pii.error': error }, 'Failed to upload session report');
         }
       }
     }
@@ -435,7 +438,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     try {
       await flushOtelLogs();
     } catch (error) {
-      this.#logger.error({ error }, 'Failed to flush OTEL logs');
+      this.#logger.error({ 'lk.pii.error': error }, 'Failed to flush OTEL logs');
     }
   }
 

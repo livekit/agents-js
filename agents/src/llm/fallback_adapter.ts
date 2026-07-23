@@ -233,9 +233,12 @@ class FallbackLLMStream extends LLMStream {
     } catch (error) {
       if (error instanceof APIError) {
         if (checkRecovery) {
-          this._log.warn({ llm: llm.label(), error }, 'recovery failed');
+          this._log.warn({ llm: llm.label(), 'lk.pii.error': error }, 'recovery failed');
         } else {
-          this._log.warn({ llm: llm.label(), error }, 'failed, switching to next LLM');
+          this._log.warn(
+            { llm: llm.label(), 'lk.pii.error': error },
+            'failed, switching to next LLM',
+          );
         }
         throw error;
       }
@@ -252,9 +255,12 @@ class FallbackLLMStream extends LLMStream {
 
       // Unexpected error
       if (checkRecovery) {
-        this._log.error({ llm: llm.label(), error }, 'recovery unexpected error');
+        this._log.error({ llm: llm.label(), 'lk.pii.error': error }, 'recovery unexpected error');
       } else {
-        this._log.error({ llm: llm.label(), error }, 'unexpected error, switching to next LLM');
+        this._log.error(
+          { llm: llm.label(), 'lk.pii.error': error },
+          'unexpected error, switching to next LLM',
+        );
       }
       throw error;
     } finally {
@@ -364,7 +370,10 @@ class FallbackLLMStream extends LLMStream {
 
           // Check if we sent data before failing
           if (textSent || toolCallsSent.length > 0) {
-            const extra = { textSent, toolCallsSent };
+            const extra = {
+              'lk.pii.response.text': textSent,
+              'lk.pii.response.function_calls': toolCallsSent,
+            };
 
             if (!this.adapter.retryOnChunkSent) {
               this._log.error(

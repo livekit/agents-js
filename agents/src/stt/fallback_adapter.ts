@@ -233,13 +233,16 @@ export class FallbackAdapter extends STT {
       try {
         await stt.recognize(frame, controller.signal);
         status.available = true;
-        this._logger.info({ stt: stt.label }, `${stt.label} recovered`);
+        this._logger.info({ stt: stt.label }, 'STT recovered');
         this.emitAvailabilityChanged(stt, true);
       } catch (e) {
         if (e instanceof APIError) {
-          this._logger.warn({ stt: stt.label, err: e }, `${stt.label} recovery failed`);
+          this._logger.warn({ stt: stt.label, 'lk.pii.error': e }, 'STT recovery failed');
         } else {
-          this._logger.debug({ stt: stt.label, err: e }, `${stt.label} recovery unexpected error`);
+          this._logger.debug(
+            { stt: stt.label, 'lk.pii.error': e },
+            'STT recovery unexpected error',
+          );
         }
       }
     });
@@ -278,13 +281,13 @@ export class FallbackAdapter extends STT {
         } catch (e) {
           if (e instanceof APIError) {
             this._logger.warn(
-              { stt: stt.label, err: e },
-              `${stt.label} failed, switching to next STT`,
+              { stt: stt.label, 'lk.pii.error': e },
+              'STT failed, switching to next STT',
             );
           } else {
             this._logger.warn(
-              { stt: stt.label, err: e },
-              `${stt.label} unexpected error, switching to next STT`,
+              { stt: stt.label, 'lk.pii.error': e },
+              'STT unexpected error, switching to next STT',
             );
           }
           if (status.available) {
@@ -392,18 +395,15 @@ class FallbackSpeechStream extends SpeechStream {
         }
         if (!gotTranscript) return;
         status.available = true;
-        this._logger.info({ stt: sttInstance.label }, `${sttInstance.label} recovered`);
+        this._logger.info({ stt: sttInstance.label }, 'STT recovered');
         this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
       } catch (e) {
         if (e instanceof APIError) {
-          this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} recovery failed`,
-          );
+          this._logger.warn({ stt: sttInstance.label, 'lk.pii.error': e }, 'STT recovery failed');
         } else {
           this._logger.debug(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} recovery unexpected error`,
+            { stt: sttInstance.label, 'lk.pii.error': e },
+            'STT recovery unexpected error',
           );
         }
       } finally {
@@ -452,7 +452,7 @@ class FallbackSpeechStream extends SpeechStream {
             if (typeof item === 'symbol') current.flush();
             else current.pushFrame(item);
           } catch (e) {
-            this._logger.debug({ err: e }, 'error forwarding input to main stream');
+            this._logger.debug({ 'lk.pii.error': e }, 'error forwarding input to main stream');
           }
         }
       }
@@ -525,20 +525,17 @@ class FallbackSpeechStream extends SpeechStream {
           status.available = false;
           this.fallbackAdapter.emitAvailabilityChanged(sttInstance, false);
         }
-        this._logger.warn(
-          { stt: sttInstance.label },
-          `${sttInstance.label} failed, switching to next STT`,
-        );
+        this._logger.warn({ stt: sttInstance.label }, 'STT failed, switching to next STT');
       } catch (e) {
         if (e instanceof APIError) {
           this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} failed, switching to next STT`,
+            { stt: sttInstance.label, 'lk.pii.error': e },
+            'STT failed, switching to next STT',
           );
         } else {
           this._logger.warn(
-            { stt: sttInstance.label, err: e },
-            `${sttInstance.label} unexpected error, switching to next STT`,
+            { stt: sttInstance.label, 'lk.pii.error': e },
+            'STT unexpected error, switching to next STT',
           );
         }
         if (status.available) {

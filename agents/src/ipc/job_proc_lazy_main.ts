@@ -30,7 +30,7 @@ const safeSend = (msg: IPCMessage): boolean => {
     if (error instanceof Error && error.message.includes('Channel closed')) {
       log().debug({ msgCase: msg.case }, 'IPC channel closed, message not sent');
     } else {
-      log().error({ error, msgCase: msg.case }, 'IPC send failed unexpectedly');
+      log().error({ 'lk.pii.error': error, msgCase: msg.case }, 'IPC send failed unexpectedly');
     }
     return false;
   }
@@ -63,7 +63,9 @@ class InfClient implements InferenceExecutor {
           const fut = this.#requests[msg.value.requestId];
           delete this.#requests[msg.value.requestId];
           if (!fut) {
-            this.#logger.child({ resp: msg.value }).warn('received unexpected inference response');
+            this.#logger
+              .child({ 'lk.pii.response': msg.value })
+              .warn('received unexpected inference response');
             return;
           }
           fut.resolve(msg.value);
@@ -158,7 +160,7 @@ const startJob = (
           clearTimeout(unconnectedTimeout);
         });
     } catch (error) {
-      logger.error({ error }, 'error in entry function');
+      logger.error({ 'lk.pii.error': error }, 'error in entry function');
       shutdown = true;
       safeSend({
         case: 'exiting',
@@ -178,7 +180,7 @@ const startJob = (
 
         void sessionClosePromise.catch((sessionCloseError) =>
           logger.debug(
-            { error: sessionCloseError },
+            { 'lk.pii.error': sessionCloseError },
             'AgentSession.close() rejected after shutdown timeout',
           ),
         );
@@ -193,7 +195,7 @@ const startJob = (
     try {
       await ctx._onSessionEnd();
     } catch (error) {
-      logger.error({ error }, 'error in ctx._onSessionEnd');
+      logger.error({ 'lk.pii.error': error }, 'error in ctx._onSessionEnd');
     }
 
     await room.disconnect();
@@ -204,7 +206,7 @@ const startJob = (
       shutdownTasks.push(callback());
     }
     await ThrowsPromise.all(shutdownTasks).catch((error) =>
-      logger.error({ error }, 'error while shutting down the job'),
+      logger.error({ 'lk.pii.error': error }, 'error while shutting down the job'),
     );
 
     safeSend({ case: 'done', value: undefined });
@@ -261,7 +263,7 @@ const startJob = (
     let logger = log().child({ pid: proc.pid });
 
     process.on('unhandledRejection', (reason) => {
-      logger.debug({ error: reason }, 'Unhandled promise rejection');
+      logger.debug({ 'lk.pii.error': reason }, 'Unhandled promise rejection');
     });
 
     logger.debug('initializing job runner');
@@ -322,7 +324,7 @@ const startJob = (
       await dispose();
       logger.debug('native resources disposed');
     } catch (error) {
-      logger.warn({ error }, 'failed to dispose native resources');
+      logger.warn({ 'lk.pii.error': error }, 'failed to dispose native resources');
     }
 
     logger.debug('Job process shutdown');

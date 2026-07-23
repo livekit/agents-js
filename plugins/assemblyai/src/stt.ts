@@ -161,7 +161,8 @@ export class STT extends stt.STT {
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
     if (opts.agentContextCarryover && !supportsCarryover) {
       log().warn(
-        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+        { model: rawModel },
+        'agentContextCarryover is enabled but the model does not support it; ignoring',
       );
     }
     super({
@@ -357,12 +358,23 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to AssemblyAI, retrying in ${retryDelaySeconds} seconds: ${e} (${retries}/${maxRetry})`,
+            {
+              retryDelaySeconds,
+              retries,
+              maxRetry,
+              'lk.pii.error': e,
+            },
+            'failed to connect to AssemblyAI, retrying',
           );
           await delay(retryDelaySeconds * 1000);
         } else {
           this.#logger.warn(
-            `AssemblyAI disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            {
+              inputClosed: this.input.closed,
+              isClosed: this.closed,
+              'lk.pii.error': e,
+            },
+            'AssemblyAI disconnected',
           );
         }
       }
@@ -450,7 +462,13 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            this.#logger.error(
+              {
+                code,
+                'lk.pii.reason': reason.toString(),
+              },
+              'AssemblyAI WebSocket closed unexpectedly',
+            );
             reject(new Error('WebSocket closed'));
           }
         });
@@ -517,7 +535,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`AssemblyAI: error processing message: ${msg}`);
+            this.#logger.error(
+              {
+                'lk.pii.error': err,
+                'lk.pii.message': msg.toString(),
+              },
+              'AssemblyAI failed to process message',
+            );
             reject(err);
           }
         };
@@ -574,7 +598,8 @@ export class SpeechStream extends stt.SpeechStream {
       this.#sessionId = data.id ?? null;
       this.#expiresAt = data.expires_at ?? null;
       this.#logger.info(
-        `AssemblyAI session started id=${this.#sessionId} expires_at=${this.#expiresAt}`,
+        { sessionId: this.#sessionId, expiresAt: this.#expiresAt },
+        'AssemblyAI session started',
       );
       return;
     }
@@ -586,7 +611,11 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (messageType === 'Termination') {
       this.#logger.debug(
-        `AssemblyAI session terminated audio_duration=${data.audio_duration_seconds}s session_duration=${data.session_duration_seconds}s`,
+        {
+          audioDurationSeconds: data.audio_duration_seconds,
+          sessionDurationSeconds: data.session_duration_seconds,
+        },
+        'AssemblyAI session terminated',
       );
       return;
     }

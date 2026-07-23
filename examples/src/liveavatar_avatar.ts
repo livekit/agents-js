@@ -67,7 +67,7 @@ export default defineAgent({
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info(
-        { final: ev.isFinal, transcript: ev.transcript, language: ev.language },
+        { final: ev.isFinal, 'lk.pii.transcript': ev.transcript, language: ev.language },
         'User transcript received',
       );
     });
@@ -77,7 +77,7 @@ export default defineAgent({
     });
 
     session.on(voice.AgentSessionEventTypes.Error, (ev) => {
-      logger.error({ error: ev.error, source: ev.source }, 'Session emitted error');
+      logger.error({ 'lk.pii.error': ev.error, source: ev.source }, 'Session emitted error');
     });
 
     ctx.addShutdownCallback(async () => {

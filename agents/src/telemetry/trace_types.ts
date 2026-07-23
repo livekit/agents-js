@@ -2,6 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * Span attribute and event name constants for LiveKit Agents telemetry.
+ *
+ * Attributes carrying conversational content, tool payloads, or other user data must include a
+ * dot-delimited `pii` segment (`lk.pii.<name>`). PII-enabled projects have these attributes
+ * stripped at the LiveKit Cloud collector, and the segment is the marker it honors. Such content
+ * must not be embedded in span names, event names, or log message bodies because those are not
+ * redactable.
+ */
+
 // LiveKit custom attributes
 export const ATTR_SPEECH_ID = 'lk.speech_id';
 export const ATTR_AGENT_LABEL = 'lk.agent_label';
@@ -32,29 +42,29 @@ export const ATTR_SESSION_OPTIONS = 'lk.session_options';
 // assistant turn
 export const ATTR_AGENT_TURN_ID = 'lk.generation_id';
 export const ATTR_AGENT_PARENT_TURN_ID = 'lk.parent_generation_id';
-export const ATTR_USER_INPUT = 'lk.user_input';
-export const ATTR_INSTRUCTIONS = 'lk.instructions';
+export const ATTR_USER_INPUT = 'lk.pii.user_input';
+export const ATTR_INSTRUCTIONS = 'lk.pii.instructions';
 export const ATTR_SPEECH_INTERRUPTED = 'lk.interrupted';
 
 // llm node
-export const ATTR_CHAT_CTX = 'lk.chat_ctx';
+export const ATTR_CHAT_CTX = 'lk.pii.chat_ctx';
 export const ATTR_FUNCTION_TOOLS = 'lk.function_tools';
 export const ATTR_PROVIDER_TOOLS = 'lk.provider_tools';
 export const ATTR_TOOL_SETS = 'lk.tool_sets';
-export const ATTR_RESPONSE_TEXT = 'lk.response.text';
-export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.response.function_calls';
+export const ATTR_RESPONSE_TEXT = 'lk.pii.response.text';
+export const ATTR_RESPONSE_FUNCTION_CALLS = 'lk.pii.response.function_calls';
 /** Time to first token in seconds. */
 export const ATTR_RESPONSE_TTFT = 'lk.response.ttft';
 
 // function tool
 export const ATTR_FUNCTION_TOOL_ID = 'lk.function_tool.id';
 export const ATTR_FUNCTION_TOOL_NAME = 'lk.function_tool.name';
-export const ATTR_FUNCTION_TOOL_ARGS = 'lk.function_tool.arguments';
+export const ATTR_FUNCTION_TOOL_ARGS = 'lk.pii.function_tool.arguments';
 export const ATTR_FUNCTION_TOOL_IS_ERROR = 'lk.function_tool.is_error';
-export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.function_tool.output';
+export const ATTR_FUNCTION_TOOL_OUTPUT = 'lk.pii.function_tool.output';
 
 // tts node
-export const ATTR_TTS_INPUT_TEXT = 'lk.input_text';
+export const ATTR_TTS_INPUT_TEXT = 'lk.pii.input_text';
 export const ATTR_TTS_STREAMING = 'lk.tts.streaming';
 export const ATTR_TTS_LABEL = 'lk.tts.label';
 /** Time to first byte in seconds. */
@@ -72,7 +82,7 @@ export const ATTR_EOU_SOURCE = 'lk.eou.source';
 export const ATTR_EOU_FROM_CACHE = 'lk.eou.from_cache';
 /** Latest input-audio creation time → prediction receive time (ms). */
 export const ATTR_EOU_DETECTION_DELAY = 'lk.eou.detection_delay';
-export const ATTR_USER_TRANSCRIPT = 'lk.user_transcript';
+export const ATTR_USER_TRANSCRIPT = 'lk.pii.user_transcript';
 export const ATTR_TRANSCRIPT_CONFIDENCE = 'lk.transcript_confidence';
 export const ATTR_TRANSCRIPTION_DELAY = 'lk.transcription_delay';
 export const ATTR_END_OF_TURN_DELAY = 'lk.end_of_turn_delay';
@@ -86,7 +96,7 @@ export const ATTR_AMD_INTERRUPT_ON_MACHINE = 'lk.amd.interrupt_on_machine';
 export const ATTR_AMD_SPEECH_DURATION = 'lk.amd.speech_duration';
 /** Time between speech end and the AMD verdict emission (milliseconds). */
 export const ATTR_AMD_DELAY = 'lk.amd.delay';
-export const ATTR_AMD_TRANSCRIPT = 'lk.amd.transcript';
+export const ATTR_AMD_TRANSCRIPT = 'lk.pii.amd.transcript';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';

@@ -138,7 +138,8 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
     return 0;
   }
   logger.info(
-    `discovered ${packages.length} plugin package(s): ${packages.map((p) => p.name).join(', ')}`,
+    { pluginCount: packages.length, plugins: packages.map((p) => p.name) },
+    'discovered plugin packages',
   );
 
   let importFailures = 0;
@@ -148,24 +149,30 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
       await import(pathToFileURL(entryAbs).href);
     } catch (error) {
       importFailures += 1;
-      logger.error(`failed to import ${pkg.name}: ${formatErrorMessage(error)}`);
+      logger.error({ 'lk.pii.error': error, package: pkg.name }, 'failed to import plugin package');
     }
   }
 
   const failures: PluginDownloadFailure[] = [];
   for (const plugin of Plugin.registeredPlugins) {
-    logger.info(`Downloading files for ${plugin.title}`);
+    logger.info({ plugin: plugin.title }, 'Downloading plugin files');
     try {
       await plugin.downloadFiles();
-      logger.info(`Finished downloading files for ${plugin.title}`);
+      logger.info({ plugin: plugin.title }, 'Finished downloading plugin files');
     } catch (error) {
       failures.push({ plugin, error });
-      logger.error(`Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`);
+      logger.error(
+        { 'lk.pii.error': error, plugin: plugin.title },
+        'failed to download plugin files',
+      );
     }
   }
 
   if (failures.length > 0) {
-    logger.fatal(formatDownloadFailureMessage(failures));
+    logger.fatal(
+      { 'lk.pii.error': formatDownloadFailureMessage(failures) },
+      'plugin file downloads failed',
+    );
   }
   return failures.length > 0 || importFailures > 0 ? 1 : 0;
 };

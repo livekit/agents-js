@@ -136,10 +136,7 @@ class InferenceVADStream extends BaseVADStream {
       this._windowSamples = mod.VAD_WINDOW_SAMPLES;
     }
     this._pumpTask = this._pump().catch((err) => {
-      this._logger.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        'VAD pump failed',
-      );
+      this._logger.error({ 'lk.pii.error': err }, 'VAD pump failed');
     });
   }
 

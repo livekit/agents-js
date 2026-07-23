@@ -39,4 +39,46 @@ describe('OTEL logging', () => {
       expect(messages).toContain('log from fresh logger');
     });
   });
+
+  it('exports sensitive content as a redactable attribute instead of log body text', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+
+    initPinoCloudExporter({
+      cloudHostname: 'example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+    enableOtelLogging();
+
+    log().info({ 'lk.pii.user_input': 'secret transcript' }, 'received user input');
+    log().error({ 'lk.pii.error': new Error('secret provider error') }, 'provider failed');
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find((logObj) => {
+          return logObj.msg === 'received user input';
+        });
+      expect(record).toMatchObject({
+        msg: 'received user input',
+        'lk.pii.user_input': 'secret transcript',
+      });
+      expect(record?.msg).not.toContain('secret transcript');
+
+      const errorRecord = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find((logObj) => {
+          return logObj.msg === 'provider failed';
+        });
+      expect(errorRecord).toMatchObject({
+        msg: 'provider failed',
+        'lk.pii.error': {
+          type: 'Error',
+          message: 'secret provider error',
+        },
+      });
+      expect(errorRecord?.msg).not.toContain('secret provider error');
+    });
+  });
 });
