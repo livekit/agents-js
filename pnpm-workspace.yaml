@@ -16,6 +16,8 @@ minimumReleaseAgeExclude:
   - form-data@4.0.6
   # Renovate security update: @opentelemetry/core@2.8.0
   - '@opentelemetry/core@2.8.0'
+  # Renovate security update: sharp@0.35.0
+  - sharp@0.35.0
 
 catalog:
   '@livekit/rtc-node': ^0.13.31
