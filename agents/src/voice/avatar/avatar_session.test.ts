@@ -115,6 +115,20 @@ describe('AvatarSession base', () => {
     expect(acloseSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('registers one shutdown callback across start retries', async () => {
+    const jobContext = mockJobContext();
+    const addShutdownCallback = vi.spyOn(jobContext, 'addShutdownCallback');
+    const session = new AvatarSession();
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
+
+    await session.start(agentSession.session, room.room);
+    await session.aclose();
+    await session.start(agentSession.session, room.room);
+
+    expect(addShutdownCallback).toHaveBeenCalledTimes(1);
+  });
+
   it('warns when avatar is started after AgentSession.start()', async () => {
     const warn = vi.fn();
     vi.spyOn(logModule.log(), 'warn').mockImplementation(warn);
