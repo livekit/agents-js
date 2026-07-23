@@ -1043,6 +1043,18 @@ describe('processBaseURL', () => {
     expect(url.pathname).toBe('/v1/realtime');
   });
 
+  it('preserves custom wss baseURL paths and query params while adding model', () => {
+    expect(
+      processBaseURL({
+        baseURL: 'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true',
+        model: 'gpt-4',
+        isAzure: false,
+      }),
+    ).toBe(
+      'wss://livekit.ai/voice/v1/chat/voice?client=oai&enable_noise_suppression=true&model=gpt-4',
+    );
+  });
+
   it('passes through an already-ws baseURL unchanged', () => {
     const url = new URL(
       processBaseURL({
