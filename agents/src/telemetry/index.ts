@@ -29,4 +29,9 @@ export {
   type SpanProcessorLike,
   type StartSpanOptions,
 } from './traces.js';
-export { recordException, recordRealtimeMetrics } from './utils.js';
+export {
+  REDACTED_EXCEPTION_MESSAGE,
+  recordException,
+  recordRealtimeMetrics,
+  type RecordExceptionOptions,
+} from './utils.js';

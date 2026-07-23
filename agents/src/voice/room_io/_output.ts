@@ -207,7 +207,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         }
       }
     } catch (error) {
-      this.logger.error(error, 'failed to publish transcription');
+      this.logger.error({ 'lk.pii.error': error }, 'failed to publish transcription');
     }
   }
 
@@ -274,7 +274,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         }
       }
     } catch (error) {
-      this.logger.error(error, 'failed to publish transcription');
+      this.logger.error({ 'lk.pii.error': error }, 'failed to publish transcription');
     }
   }
 }
@@ -333,7 +333,7 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
         });
       }
     } catch (error) {
-      this.logger.error(error, 'failed to publish transcription');
+      this.logger.error({ 'lk.pii.error': error }, 'failed to publish transcription');
     }
   }
 

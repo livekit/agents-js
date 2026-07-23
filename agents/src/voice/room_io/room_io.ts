@@ -286,7 +286,7 @@ export class RoomIO {
 
   private onUserInputTranscribed = (ev: UserInputTranscribedEvent) => {
     this.userTranscriptWriter.write(ev).catch((error) => {
-      this.logger.error({ error }, 'Failed to write transcript event to stream');
+      this.logger.error({ 'lk.pii.error': error }, 'failed to write transcript event to stream');
     });
   };
 
@@ -365,7 +365,7 @@ export class RoomIO {
     };
 
     readText().catch((error) => {
-      this.logger.error({ error }, 'Error reading text input');
+      this.logger.error({ 'lk.pii.error': error }, 'error reading text input');
     });
   };
 
@@ -384,7 +384,7 @@ export class RoomIO {
         }
       }
     } catch (error) {
-      this.logger.error({ error }, 'Error processing transcript stream');
+      this.logger.error({ 'lk.pii.error': error }, 'error processing transcript stream');
     }
   }
 
@@ -509,7 +509,7 @@ export class RoomIO {
         this.textStreamHandlerRegistered = true;
       } catch (error) {
         if (this.inputOptions.textEnabled) {
-          this.logger.warn(`text stream handler for topic "${TOPIC_CHAT}" already set, ignoring`);
+          this.logger.warn({ topic: TOPIC_CHAT }, 'text stream handler already set, ignoring');
         }
       }
     }
@@ -616,7 +616,7 @@ export class RoomIO {
     try {
       await this.userTranscriptWriter.close();
     } catch (e) {
-      this.logger.debug({ error: e }, 'userTranscriptWriter already closed or errored');
+      this.logger.debug({ 'lk.pii.error': e }, 'userTranscriptWriter already closed or errored');
     }
     await this.forwardUserTranscriptTask?.cancelAndWait();
 

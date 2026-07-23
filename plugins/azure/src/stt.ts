@@ -401,9 +401,9 @@ export class SpeechStream extends stt.SpeechStream {
         {
           code: evt.errorCode,
           reason: evt.reason,
-          errorDetails: evt.errorDetails,
+          'lk.pii.error_details': evt.errorDetails,
         },
-        `Speech recognition canceled: ${evt.errorDetails || evt.reason}`,
+        'Speech recognition canceled',
       );
       this._cancellationError = evt;
       this._sessionStoppedEvent.set();

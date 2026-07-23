@@ -187,8 +187,8 @@ export class LiveAvatarAPI {
           throw e;
         }
         this.#logger.warn(
-          { error: String(e), url, attempt: i },
-          `API request to ${url} failed on attempt ${i}`,
+          { 'lk.pii.error': e, 'lk.pii.url': url, attempt: i },
+          'LiveAvatar API request failed',
         );
       }
 

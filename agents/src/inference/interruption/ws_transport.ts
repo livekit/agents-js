@@ -184,7 +184,10 @@ export function createWsTransport(
         message = wsMessageSchema.parse(JSON.parse(data.toString()));
       } catch (err) {
         logger.warn(
-          { data: data.toString(), err: err instanceof Error ? err.message : String(err) },
+          {
+            'lk.pii.data': data.toString(),
+            'lk.pii.error': err instanceof Error ? err.message : String(err),
+          },
           'Failed to parse WebSocket message',
         );
         return;
@@ -195,7 +198,10 @@ export function createWsTransport(
         handleMessage(message);
       } catch (err) {
         logger.warn(
-          { type: message.type, err: err instanceof Error ? err.message : String(err) },
+          {
+            type: message.type,
+            'lk.pii.error': err instanceof Error ? err.message : String(err),
+          },
           'Failed to handle WebSocket message',
         );
       }
@@ -208,7 +214,7 @@ export function createWsTransport(
     });
 
     socket.on('close', (code: number, reason: Buffer) => {
-      logger.debug({ code, reason: reason.toString() }, 'WebSocket closed');
+      logger.debug({ code, 'lk.pii.reason': reason.toString() }, 'WebSocket closed');
     });
   }
 

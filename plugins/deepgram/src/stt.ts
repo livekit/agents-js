@@ -234,7 +234,8 @@ export class STT extends stt.STT {
       ].includes(model)
     ) {
       this.#logger.warn(
-        `${model} does not support language ${language}, falling back to nova-2-general`,
+        { model, language, fallbackModel: 'nova-2-general' },
+        'model does not support language, falling back',
       );
       return 'nova-2-general';
     }
@@ -339,12 +340,23 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            {
+              delay,
+              retries,
+              maxRetry,
+              'lk.pii.error': e,
+            },
+            'failed to connect to Deepgram, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            {
+              inputClosed: this.input.closed,
+              isClosed: this.closed,
+              'lk.pii.error': e,
+            },
+            'Deepgram disconnected',
           );
         }
       }
@@ -391,7 +403,13 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>(async (_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            this.#logger.error(
+              {
+                code,
+                'lk.pii.reason': reason.toString(),
+              },
+              'Deepgram STT WebSocket closed unexpectedly',
+            );
             reject(new Error('WebSocket closed'));
           }
         });
@@ -540,7 +558,9 @@ export class SpeechStream extends stt.SpeechStream {
                 break;
               }
               default: {
-                this.#logger.child({ msg: json }).warn('received unexpected message from Deepgram');
+                this.#logger
+                  .child({ 'lk.pii.message': json })
+                  .warn('received unexpected message from Deepgram');
                 break;
               }
             }
@@ -549,7 +569,7 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`STT: Error processing message: ${msg}`);
+            this.#logger.error({ 'lk.pii.message': msg }, 'Deepgram STT failed to process message');
             reject(err);
           }
         });

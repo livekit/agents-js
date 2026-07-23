@@ -157,7 +157,7 @@ export async function runConsole({
       try {
         await fn();
       } catch (error) {
-        logger.error({ error }, `error in ${step}`);
+        logger.error({ 'lk.pii.error': error, step }, 'error during teardown');
       }
     };
 
@@ -178,7 +178,7 @@ export async function runConsole({
       const results = await Promise.allSettled(jobCtx.shutdownCallbacks.map((cb) => cb()));
       for (const result of results) {
         if (result.status === 'rejected') {
-          logger.error({ error: result.reason }, 'error while running shutdown callback');
+          logger.error({ 'lk.pii.error': result.reason }, 'error while running shutdown callback');
         }
       }
     }

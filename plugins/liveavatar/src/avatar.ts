@@ -244,7 +244,7 @@ export class AvatarSession extends voice.AvatarSession {
     // protocol failure does not surface as an unhandled rejection. The main task
     // itself handles its own cleanup in finally.
     this.mainTaskPromise = this.mainTask().catch((e) => {
-      this.#logger.warn({ error: String(e) }, 'LiveAvatar main task failed');
+      this.#logger.warn({ 'lk.pii.error': e }, 'LiveAvatar main task failed');
     });
   }
 
@@ -462,7 +462,7 @@ export class AvatarSession extends voice.AvatarSession {
               wsRef.send(JSON.stringify(value));
               resetKeepAlive();
             } catch (e) {
-              this.#logger.warn({ error: String(e) }, 'failed to send LiveAvatar event');
+              this.#logger.warn({ 'lk.pii.error': e }, 'failed to send LiveAvatar event');
               break;
             }
           }
@@ -573,7 +573,7 @@ export class AvatarSession extends voice.AvatarSession {
 
       await Promise.race([forwardAudio(), sendTask(), recvTask(), keepAliveTask()]);
     } catch (e) {
-      this.#logger.warn({ error: String(e) }, 'LiveAvatar main task error');
+      this.#logger.warn({ 'lk.pii.error': e }, 'LiveAvatar main task error');
     } finally {
       this.closing = true;
       closingResolver.resolve();
@@ -587,7 +587,7 @@ export class AvatarSession extends voice.AvatarSession {
           }
         }
       } catch (e) {
-        this.#logger.warn({ error: String(e) }, 'Failed to stop LiveAvatar session');
+        this.#logger.warn({ 'lk.pii.error': e }, 'Failed to stop LiveAvatar session');
       }
 
       if (this.audioBuffer) {

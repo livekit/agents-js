@@ -82,7 +82,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
 
     this.logger.debug(
       {
-        baseUrl: this.options.baseUrl,
+        'lk.pii.base_url': this.options.baseUrl,
         detectionIntervalInS: this.options.detectionIntervalInS,
         audioPrefixDurationInS: this.options.audioPrefixDurationInS,
         maxAudioDurationInS: this.options.maxAudioDurationInS,

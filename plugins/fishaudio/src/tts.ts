@@ -461,7 +461,10 @@ export class ChunkedStream extends tts.ChunkedStream {
           });
           res.on('error', (err) => {
             if (err.message === 'aborted') return;
-            this.#logger.error({ err }, 'Fish Audio TTS error response stream error');
+            this.#logger.error(
+              { 'lk.pii.error': err },
+              'Fish Audio TTS error response stream error',
+            );
             if (!doneFut.done) {
               doneFut.reject(
                 new APIStatusError({
@@ -498,7 +501,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ err }, 'Fish Audio TTS response error');
+          this.#logger.error({ 'lk.pii.error': err }, 'Fish Audio TTS response error');
           if (!doneFut.done) doneFut.reject(err);
         });
       },
@@ -506,7 +509,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ err }, 'Fish Audio TTS request error');
+      this.#logger.error({ 'lk.pii.error': err }, 'Fish Audio TTS request error');
       if (!doneFut.done) doneFut.reject(err);
     });
     req.write(payload);
@@ -606,7 +609,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         try {
           parsed = decode(frame) as Record<string, unknown>;
         } catch (err) {
-          this.#logger.warn({ err }, 'Fish Audio failed to decode message');
+          this.#logger.warn({ 'lk.pii.error': err }, 'Fish Audio failed to decode message');
           return;
         }
 
@@ -643,7 +646,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
           if (!finished.done) finished.resolve();
         } else {
-          this.#logger.debug({ event }, 'unknown Fish Audio event');
+          this.#logger.debug({ 'lk.pii.event': event }, 'unknown Fish Audio event');
         }
       };
 

@@ -112,8 +112,7 @@ const checkGenerationConfig = (opts: TTSOptions) => {
     if (opts.speed || opts.emotion) {
       logger.warn(
         { model: opts.model, speed: opts.speed, emotion: opts.emotion },
-        `speed and emotion controls are only supported for model '${MODEL_WITH_EXPERIMENTAL_CONTROLS}' ` +
-          `or sonic-3 models, see https://docs.cartesia.ai/developer-tools/changelog for details`,
+        'speed and emotion controls are only supported for sonic-2-2025-04-16 or sonic-3 models',
       );
     }
   }
@@ -261,7 +260,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ err }, 'Cartesia TTS response error');
+          this.#logger.error({ 'lk.pii.error': err }, 'Cartesia TTS response error');
           if (!doneFut.done) doneFut.reject(err);
         });
       },
@@ -269,7 +268,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ err }, 'Cartesia TTS request error');
+      this.#logger.error({ 'lk.pii.error': err }, 'Cartesia TTS request error');
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
@@ -395,20 +394,29 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // Set up WebSocket listeners ONCE (not in a loop)
       const onMessage = (data: RawData) => {
         void eventChannel.write(data).catch((error: unknown) => {
-          this.#logger.debug({ error }, 'Failed writing Cartesia event to channel (likely closed)');
+          this.#logger.debug(
+            { 'lk.pii.error': error },
+            'Failed writing Cartesia event to channel (likely closed)',
+          );
         });
       };
 
       const onClose = (code: number, reason: Buffer) => {
         if (!closing) {
-          this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
+          this.#logger.debug(
+            {
+              code,
+              'lk.pii.reason': reason.toString(),
+            },
+            'Cartesia TTS WebSocket closed',
+          );
         }
         clearTTSChunkTimeout();
         void eventChannel.close();
       };
 
       const onError = (err: Error) => {
-        this.#logger.error({ err }, 'Cartesia WebSocket error');
+        this.#logger.error({ 'lk.pii.error': err }, 'Cartesia WebSocket error');
         void eventChannel.close();
       };
 
@@ -433,7 +441,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(rawMsg.toString());
             serverMsg = cartesiaMessageSchema.parse(json);
           } catch (parseErr) {
-            this.#logger.warn({ parseErr }, 'Failed to parse Cartesia message');
+            this.#logger.warn({ 'lk.pii.error': parseErr }, 'Failed to parse Cartesia message');
             continue;
           }
 
@@ -445,9 +453,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           // below. 5xx bubbles up so the base SynthesizeStream can retry.
           if (isErrorMessage(serverMsg)) {
             if (serverMsg.status_code >= 400 && serverMsg.status_code < 500) {
-              this.#logger.debug({ error: serverMsg.error }, 'Cartesia sent a non-fatal error');
+              this.#logger.debug(
+                { 'lk.pii.error': serverMsg.error },
+                'Cartesia sent a non-fatal error',
+              );
             } else {
-              this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
+              this.#logger.error({ 'lk.pii.error': serverMsg.error }, 'Cartesia returned error');
               throw new APIStatusError({
                 message: `Cartesia returned error: ${serverMsg.error}`,
                 options: { statusCode: serverMsg.status_code, retryable: true },
@@ -474,7 +485,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             timeout = setTimeout(() => {
               // cartesia chunk timeout quite often, so we make it a debug log
               this.#logger.debug(
-                `Cartesia WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+                { timeoutMs: this.#opts.chunkTimeout },
+                'Cartesia WebSocket TTS chunk stream timed out',
               );
               ws.close();
             }, this.#opts.chunkTimeout);
@@ -517,7 +529,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           } else if (!isFlushDoneMessage(serverMsg) && !isErrorMessage(serverMsg)) {
             // flush_done is an ack with nothing to do; error frames without
             // done:true were already logged above.
-            this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
+            this.#logger.warn({ 'lk.pii.message': serverMsg }, 'Unknown Cartesia message');
           }
         }
       } catch (err) {
@@ -531,11 +543,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             err.message.includes('Channel is closed')
           ) {
             this.#logger.warn(
-              { err },
+              { 'lk.pii.error': err },
               'Channel closed during transcript processing (expected during disconnect)',
             );
           } else {
-            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
+            this.#logger.error(
+              { 'lk.pii.error': err },
+              'Error in recvTask from Cartesia WebSocket',
+            );
           }
         }
       } finally {

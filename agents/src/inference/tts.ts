@@ -483,7 +483,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       };
     }
 
-    this.#logger.debug({ url }, 'inference.TTS creating new websocket connection (pool miss)');
+    this.#logger.debug(
+      { 'lk.pii.url': url },
+      'inference.TTS creating new websocket connection (pool miss)',
+    );
     const socket = await connectWs(url, headers, timeout);
     socket.send(JSON.stringify(params));
     return socket;
@@ -648,17 +651,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           // writer.write returns a promise; avoid unhandled rejections if stream is closed
           void eventChannel.write(validatedEvent).catch((error) => {
             this.#logger.debug(
-              { error },
+              { 'lk.pii.error': error },
               'Failed writing TTS event to stream channel (likely closed)',
             );
           });
         } catch (e) {
-          this.#logger.error({ error: e }, 'Error parsing WebSocket message');
+          this.#logger.error({ 'lk.pii.error': e }, 'Error parsing WebSocket message');
         }
       };
 
       const onError = (e: Error) => {
-        this.#logger.error({ error: e }, 'WebSocket error');
+        this.#logger.error({ 'lk.pii.error': e }, 'WebSocket error');
         void resourceCleanup();
         try {
           // If the ws is misbehaving, hard-stop it immediately to avoid buffering.
@@ -801,7 +804,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               return;
             case 'error':
               this.#logger.error(
-                { serverEvent },
+                { 'lk.pii.server_event': serverEvent },
                 'Received error message from LiveKit TTS WebSocket',
               );
               await resourceCleanup();

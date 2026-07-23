@@ -64,7 +64,7 @@ export default defineAgent({
     };
 
     session.on(voice.AgentSessionEventTypes.UserStateChanged, (event) => {
-      logger.info({ event }, 'User state changed');
+      logger.info({ oldState: event.oldState, newState: event.newState }, 'User state changed');
 
       if (task) {
         task.cancel();

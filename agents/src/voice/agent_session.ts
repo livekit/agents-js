@@ -770,7 +770,11 @@ export class AgentSession<
 
     // Log used IO configuration
     this.logger.debug(
-      `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
+      {
+        audioInput: this.input.audio?.constructor.name,
+        audioOutput: this.output.audio?.constructor.name,
+      },
+      'using audio io',
     );
 
     if (
@@ -787,7 +791,8 @@ export class AgentSession<
     }
 
     this.logger.debug(
-      `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
+      { transcriptionOutput: this.output.transcription?.constructor.name },
+      'using transcript io',
     );
 
     this.started = true;
@@ -1114,7 +1119,7 @@ export class AgentSession<
           throw error;
         }
         this.logger.debug(
-          { error },
+          { 'lk.pii.error': error },
           'generateReply scheduling raced with handoff drain; retrying on next activity',
         );
         return nextActivity.generateReply({ userMessage, ...options, inputDetails });
@@ -1675,7 +1680,7 @@ export class AgentSession<
         try {
           await this.activity.interrupt({ force: true }).await;
         } catch (error) {
-          this.logger.warn({ error }, 'Error interrupting activity');
+          this.logger.warn({ 'lk.pii.error': error }, 'Error interrupting activity');
         }
       }
 
@@ -1741,6 +1746,6 @@ export class AgentSession<
     await this._roomIO?.close();
     this._roomIO = undefined;
 
-    this.logger.info({ reason, error }, 'AgentSession closed');
+    this.logger.info({ reason, 'lk.pii.error': error }, 'AgentSession closed');
   }
 }

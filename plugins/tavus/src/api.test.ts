@@ -49,9 +49,14 @@ describe('Tavus TavusAPI.createConversation', () => {
     const body = sentBody(f);
     expect(body.face_id).toBe('r1');
     expect(body.pal_id).toBe('x1');
-    const msgs = warnMock.mock.calls.map((c) => String(c[0]));
-    expect(msgs.some((m) => m.includes('replicaId') && m.includes('faceId'))).toBe(true);
-    expect(msgs.some((m) => m.includes('personaId') && m.includes('palId'))).toBe(true);
+    expect(warnMock).toHaveBeenCalledWith(
+      { deprecatedName: 'replicaId', replacementName: 'faceId' },
+      'deprecated option used',
+    );
+    expect(warnMock).toHaveBeenCalledWith(
+      { deprecatedName: 'personaId', replacementName: 'palId' },
+      'deprecated option used',
+    );
   });
 
   it('does not warn when both the new and deprecated options are supplied', async () => {

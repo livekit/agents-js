@@ -19,7 +19,7 @@ export default defineAgent({
         location: z.string().describe('The location to get the weather for'),
       }),
       execute: async ({ location }) => {
-        logger.info(`getting weather for ${location}`);
+        logger.info({ 'lk.pii.location': location }, 'getting weather');
         return `The weather in ${location} is sunny, and the temperature is 20 degrees Celsius.`;
       },
     });

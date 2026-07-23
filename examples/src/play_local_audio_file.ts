@@ -34,13 +34,13 @@ export default defineAgent({
 
     await publication.waitForSubscription();
 
-    logger.info(`Audio track published: ${publication?.sid}`);
+    logger.info({ trackSid: publication?.sid }, 'Audio track published');
 
     const currentDir = dirname(fileURLToPath(import.meta.url));
     const resourcesPath = join(currentDir, '../../agents/resources');
     const audioFile = join(resourcesPath, 'office-ambience.ogg');
 
-    logger.info(`Playing: ${audioFile}`);
+    logger.info({ 'lk.pii.audio_file': audioFile }, 'Playing audio file');
 
     const abortController = new AbortController();
 
@@ -58,7 +58,10 @@ export default defineAgent({
       frameCount++;
 
       if (frameCount % 100 === 0) {
-        logger.info(`Played ${frameCount} frames (${(frameCount * 0.1).toFixed(1)}s)`);
+        logger.info(
+          { frameCount, durationSeconds: Number((frameCount * 0.1).toFixed(1)) },
+          'Played audio frames',
+        );
       }
     }
   },

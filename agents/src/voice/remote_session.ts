@@ -126,7 +126,7 @@ export class RoomSessionTransport extends SessionTransport {
       return;
     }
     this.readStream(reader).catch((e) => {
-      log().warn({ error: e }, 'failed to read binary stream message');
+      log().warn({ 'lk.pii.error': e }, 'failed to read binary stream message');
     });
   };
 
@@ -147,7 +147,7 @@ export class RoomSessionTransport extends SessionTransport {
       this.enqueue(msg);
     } catch (e) {
       if (!this.closed) {
-        log().warn({ error: e }, 'failed to parse binary stream message');
+        log().warn({ 'lk.pii.error': e }, 'failed to parse binary stream message');
       }
     }
   }
@@ -169,7 +169,7 @@ export class RoomSessionTransport extends SessionTransport {
       await writer.write(new Uint8Array(data));
       await writer.close();
     } catch (e) {
-      log().warn({ error: e }, 'failed to send binary stream message');
+      log().warn({ 'lk.pii.error': e }, 'failed to send binary stream message');
     }
   }
 
@@ -181,7 +181,7 @@ export class RoomSessionTransport extends SessionTransport {
       try {
         this.room.unregisterByteStreamHandler(TOPIC_SESSION_MESSAGES);
       } catch (e) {
-        log().debug({ error: e }, 'byte stream handler already unregistered');
+        log().debug({ 'lk.pii.error': e }, 'byte stream handler already unregistered');
       }
       this.handlerRegistered = false;
     }
@@ -340,7 +340,7 @@ export class TcpSessionTransport extends SessionTransport {
           try {
             msg = pb.AgentSessionMessage.fromBinary(payload);
           } catch (e) {
-            log().warn({ error: e }, 'failed to parse TCP session message');
+            log().warn({ 'lk.pii.error': e }, 'failed to parse TCP session message');
             continue;
           }
           yield msg;
@@ -348,7 +348,7 @@ export class TcpSessionTransport extends SessionTransport {
       }
     } catch (e) {
       if (!this.closed) {
-        log().warn({ error: e }, 'TCP session transport read error');
+        log().warn({ 'lk.pii.error': e }, 'TCP session transport read error');
       }
     }
   }
@@ -732,7 +732,7 @@ export class SessionHost {
       }
     } catch (e) {
       if (this.started) {
-        log().warn({ error: e }, 'error processing session message');
+        log().warn({ 'lk.pii.error': e }, 'error processing session message');
       }
     }
   }
@@ -917,7 +917,7 @@ export class SessionHost {
     try {
       await this.handleRequest(req);
     } catch (e) {
-      log().warn({ error: e, requestId: req.requestId }, 'error handling session request');
+      log().warn({ 'lk.pii.error': e, requestId: req.requestId }, 'error handling session request');
       try {
         const resp = new pb.AgentSessionMessage({
           message: {
@@ -930,7 +930,7 @@ export class SessionHost {
         });
         await this.transport.sendMessage(resp);
       } catch (e) {
-        log().debug({ error: e }, 'failed to send error response');
+        log().debug({ 'lk.pii.error': e }, 'failed to send error response');
       }
     }
   }
@@ -1186,7 +1186,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
       }
     } catch (e) {
       if (this.started) {
-        this._logger.warn({ error: e }, 'error in RemoteSession recv loop');
+        this._logger.warn({ 'lk.pii.error': e }, 'error in RemoteSession recv loop');
       }
     }
   }

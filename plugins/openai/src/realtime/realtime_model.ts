@@ -589,7 +589,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       );
       if (blockingErrors.length > 0) {
         this.#logger.error(
-          { issues: validation.issues, blockingErrors },
+          {
+            'lk.pii.issues': validation.issues,
+            'lk.pii.blocking_errors': blockingErrors,
+          },
           'Invalid chat context supplied to updateChatCtx',
         );
         throw new Error(
@@ -606,7 +609,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug(
           {
             warnings: validation.warnings,
-            issues: validation.issues,
+            'lk.pii.issues': validation.issues,
           },
           'Chat context warnings detected before realtime update',
         );
@@ -673,7 +676,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
     } catch (e) {
-      this.#logger.error((e as Error).message);
+      this.#logger.error(
+        { 'lk.pii.error': (e as Error).message },
+        'failed to update OpenAI Realtime chat context',
+      );
       throw e;
     } finally {
       unlock();
@@ -1027,7 +1033,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.currentGeneration._doneFut.done) {
       this.currentGeneration._doneFut.resolve();
     }
-    this.#logger.warn(`In-progress generation discarded due to ${reason}`);
+    this.#logger.warn({ 'lk.pii.reason': reason }, 'in-progress generation discarded');
     this.currentGeneration = undefined;
   }
 
@@ -1075,7 +1081,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     if (lkOaiDebug) {
-      this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
+      this.#logger.debug({ 'lk.pii.url': url }, 'connecting to OpenAI Realtime API');
     }
 
     return new Promise((resolve, reject) => {
@@ -1224,9 +1230,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             {
               attempt: numRetries,
               maxRetries,
-              error,
+              retryIntervalMs: retryInterval,
+              'lk.pii.error': error,
             },
-            `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
+            'OpenAI Realtime API connection failed, retrying',
           );
 
           await delay(retryInterval);
@@ -1254,7 +1261,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
 
           if (lkOaiDebug) {
-            this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
+            this.#logger.debug(
+              {
+                eventType: event.type,
+                'lk.pii.event': this.loggableEvent(event),
+              },
+              'sent OpenAI Realtime client event',
+            );
           }
 
           this.emit('openai_client_event_queued', event);
@@ -1285,7 +1298,13 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.emit('openai_server_event_received', event);
       if (lkOaiDebug) {
-        this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
+        this.#logger.debug(
+          {
+            eventType: event.type,
+            'lk.pii.event': this.loggableEvent(event),
+          },
+          'received OpenAI Realtime server event',
+        );
       }
 
       try {
@@ -1359,7 +1378,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
           default:
             if (lkOaiDebug) {
-              this.#logger.debug(`unhandled event: ${event.type}`);
+              this.#logger.debug({ eventType: event.type }, 'unhandled event');
             }
             break;
         }
@@ -1369,7 +1388,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           wsConn.close();
           return;
         }
-        this.#logger.error({ error, event }, 'Failed to handle OpenAI Realtime API event');
+        this.#logger.error(
+          {
+            'lk.pii.error': error,
+            'lk.pii.event': event,
+          },
+          'Failed to handle OpenAI Realtime API event',
+        );
       }
     };
 
@@ -1577,7 +1602,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
     } catch (error) {
-      this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
+      this.#logger.error(
+        { 'lk.pii.error': error, itemId: event.item.id },
+        'failed to insert conversation item',
+      );
     }
 
     const fut = pendingCreateFuture;
@@ -1599,7 +1627,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       this.remoteChatCtx.delete(event.item_id);
     } catch (error) {
-      this.#logger.error({ error, itemId: event.item_id }, 'failed to delete conversation item');
+      this.#logger.error(
+        { 'lk.pii.error': error, itemId: event.item_id },
+        'failed to delete conversation item',
+      );
     }
 
     const fut = this.itemDeleteFutures[event.item_id];
@@ -1665,7 +1696,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     this.#logger.error(
-      { error: event.error },
+      { 'lk.pii.error': event.error },
       'OpenAI Realtime API failed to transcribe input audio',
     );
     this.finalizePartialOnTranscriptionFailure(event.item_id, event.content_index ?? 0);
@@ -1694,7 +1725,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
-      this.#logger.warn(`itemGeneration not found for itemId=${itemId}`);
+      this.#logger.warn({ itemId }, 'itemGeneration not found');
       return;
     }
 
@@ -2010,9 +2041,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           eventId: event.response.id,
           eventResponseStatus: event.response.status,
           eventResponseStatusType: statusType,
-          eventResponseStatusReason: statusReason,
+          'lk.pii.event_response_status_reason': statusReason,
         },
-        `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
+        'OpenAI Realtime API response finished without completing',
       );
     } else {
       this.#logger.debug({ eventResponseStatus: event.response.status }, 'Unknown response status');
@@ -2023,7 +2054,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
-    this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
+    this.#logger.error({ 'lk.pii.error': event.error }, 'OpenAI Realtime API returned an error');
 
     const eventId = event.error.event_id;
     if (eventId) {

@@ -113,7 +113,7 @@ function jsToPythonFieldName(key: string): string {
  * through; `extra` dicts are emitted verbatim (Python keeps `extra` as a free-form dict, so its
  * provider-supplied keys must not be converted).
  *
- * @internal Exported so other Python-facing serialization boundaries (e.g. the `lk.chat_ctx`
+ * @internal Exported so other Python-facing serialization boundaries (e.g. the `lk.pii.chat_ctx`
  * span attribute) can emit the same snake_case wire shape as the session report.
  */
 export function toSnakeCaseDeep(value: unknown): unknown {

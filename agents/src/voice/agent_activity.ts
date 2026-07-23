@@ -195,9 +195,9 @@ export async function cleanupReusableResources(
     for (const output of outputs) {
       if (output.status === 'rejected') {
         if (logger) {
-          logger.error({ error: output.reason }, 'error cleaning up reusable resources');
+          logger.error({ 'lk.pii.error': output.reason }, 'error cleaning up reusable resources');
         } else {
-          console.error('error cleaning up reusable resources', output.reason);
+          console.error('error cleaning up reusable resources');
         }
       }
     }
@@ -424,7 +424,8 @@ export class AgentActivity implements RecognitionHooks {
         this.llm.capabilities.turnDetection
       ) {
         this.logger.warn(
-          `turnDetection is set to "${this.turnDetectionMode}", but the LLM is a RealtimeModel and server-side turn detection enabled, ignoring the turnDetection setting`,
+          { turnDetection: this.turnDetectionMode },
+          'LLM server-side turn detection is enabled, ignoring turnDetection setting',
         );
         this.turnDetectionMode = undefined;
       }
@@ -556,7 +557,7 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
-        this.logger.error(error, 'failed to update realtime session');
+        this.logger.error({ 'lk.pii.error': error }, 'failed to update realtime session');
       }
 
       if (!capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
@@ -574,7 +575,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (error) {
-        this.logger.error('failed to update the instructions', error);
+        this.logger.error({ 'lk.pii.error': error }, 'failed to update the instructions');
       }
     }
 
@@ -1657,7 +1658,7 @@ export class AgentActivity implements RecognitionHooks {
 
     this.logger.info(
       {
-        newTranscript: info.newTranscript,
+        'lk.pii.new_transcript': info.newTranscript,
         transcriptConfidence: info.transcriptConfidence,
       },
       'starting preemptive generation',
@@ -1759,7 +1760,7 @@ export class AgentActivity implements RecognitionHooks {
     try {
       await this.agent.onUserTurnExceeded(ev);
     } catch (error) {
-      this.logger.error({ error }, 'error in onUserTurnExceeded callback');
+      this.logger.error({ 'lk.pii.error': error }, 'error in onUserTurnExceeded callback');
     } finally {
       this.userTurnExceededLocked = false;
       this.userTurnExceededTask = undefined;
@@ -1846,7 +1847,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.cancelPreemptiveGeneration();
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping user input, speech scheduling is paused',
       );
       // TODO(shubhra): should we "forward" this new turn to the next agent/activity?
@@ -1975,7 +1976,10 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.race([promise, waitForAbort(signal)]);
     } catch (error) {
       if (!signal.aborted) {
-        this.logger.error({ error }, errorMessage);
+        this.logger.error(
+          { 'lk.pii.error': error, operation: errorMessage },
+          'operation failed while waiting',
+        );
       }
     }
   }
@@ -2331,7 +2335,7 @@ export class AgentActivity implements RecognitionHooks {
     if (currentSpeech) {
       if (!currentSpeech.allowInterruptions) {
         this.logger.warn(
-          { user_input: info.newTranscript },
+          { 'lk.pii.user_input': info.newTranscript },
           'skipping user input, current speech generation cannot be interrupted',
         );
         return;
@@ -2356,7 +2360,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping onUserTurnCompleted, speech scheduling is paused',
       );
       if (this.agentSession._closing) {
@@ -2378,7 +2382,7 @@ export class AgentActivity implements RecognitionHooks {
       if (e instanceof StopResponse) {
         return;
       }
-      this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+      this.logger.error({ 'lk.pii.error': e }, 'error occurred during onUserTurnCompleted');
     }
 
     const callbackDuration = Date.now() - startTime;
@@ -2392,7 +2396,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.logger.warn(
-        { user_input: info.newTranscript },
+        { 'lk.pii.user_input': info.newTranscript },
         'skipping reply to user input, speech scheduling is paused',
       );
       if (userMessage && this.agentSession._closing) {
@@ -2736,7 +2740,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (e) {
-        this.logger.error({ error: e }, 'error occurred during updateInstructions');
+        this.logger.error({ 'lk.pii.error': e }, 'error occurred during updateInstructions');
       }
     }
 
@@ -3171,7 +3175,7 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
+        { speech_id: speechHandle.id, 'lk.pii.message': forwardedText },
         'playout completed with interrupt',
       );
       if (speechHandle._hasGenerations) {
@@ -3202,7 +3206,7 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, forwardedText);
       this.logger.info(
-        { speech_id: speechHandle.id, message: forwardedText },
+        { speech_id: speechHandle.id, 'lk.pii.message': forwardedText },
         'playout completed without interruption',
       );
     }
@@ -3620,7 +3624,10 @@ export class AgentActivity implements RecognitionHooks {
           if (output.played === 'partial') break;
         }
       } catch (error) {
-        this.logger.error(error, 'error reading messages from the realtime API');
+        this.logger.error(
+          { 'lk.pii.error': error },
+          'error reading messages from the realtime API',
+        );
       }
     };
 
@@ -3699,7 +3706,10 @@ export class AgentActivity implements RecognitionHooks {
           const { done, value } = await reader.read();
           if (done) break;
 
-          this.logger.debug({ tool_call: value }, 'received tool call from the realtime API');
+          this.logger.debug(
+            { 'lk.pii.tool_call': value },
+            'received tool call from the realtime API',
+          );
           toolCalls.push(value);
         }
       } finally {
@@ -3755,7 +3765,7 @@ export class AgentActivity implements RecognitionHooks {
           await realtimeSession.updateChatCtx(this.agent._chatCtx);
         } catch (error) {
           this.logger.warn(
-            { error },
+            { 'lk.pii.error': error },
             'failed to sync chat context to remove never-played messages',
           );
         }
@@ -3889,7 +3899,7 @@ export class AgentActivity implements RecognitionHooks {
         await realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
         this.logger.warn(
-          { error },
+          { 'lk.pii.error': error },
           'failed to update chat context before generating the function calls results',
         );
         if (fut && !fut.done) {
@@ -4037,8 +4047,8 @@ export class AgentActivity implements RecognitionHooks {
         {
           speechId: speechHandle.id,
           name: sanitizedOut.toolCall?.name,
-          args: sanitizedOut.toolCall.args,
-          output: sanitizedOut.toolCallOutput?.output,
+          'lk.pii.arguments': sanitizedOut.toolCall.args,
+          'lk.pii.output': sanitizedOut.toolCallOutput?.output,
           isError: sanitizedOut.toolCallOutput?.isError,
         },
         'Tool call execution finished',
@@ -4132,14 +4142,14 @@ export class AgentActivity implements RecognitionHooks {
         try {
           this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
         } catch (error) {
-          this.logger.error({ error }, 'failed to reset tool_choice');
+          this.logger.error({ 'lk.pii.error': error }, 'failed to reset tool_choice');
         }
       }
       if (originalTools !== undefined) {
         try {
           await this.realtimeSession.updateTools(originalTools);
         } catch (error) {
-          this.logger.error({ error }, 'failed to reset tools');
+          this.logger.error({ 'lk.pii.error': error }, 'failed to reset tools');
         }
       }
     }
@@ -4424,7 +4434,10 @@ export class AgentActivity implements RecognitionHooks {
 
       return detector;
     } catch (error: unknown) {
-      this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
+      this.logger.warn(
+        { 'lk.pii.error': error },
+        'could not instantiate AdaptiveInterruptionDetector',
+      );
     }
     return undefined;
   }
@@ -4588,13 +4601,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.audioRecognition) {
       this.audioRecognition.disableInterruptionDetection().catch((err) => {
-        this.logger.warn({ err }, 'error while disabling interruption detection');
+        this.logger.warn({ 'lk.pii.error': err }, 'error while disabling interruption detection');
       });
     }
 
     this.logger.info(
       {
-        error: error?.message,
+        'lk.pii.error': error?.message,
         label: error?.label,
       },
       'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
@@ -4730,7 +4743,10 @@ export class AgentActivity implements RecognitionHooks {
             void activity
               .onToolsetToolsChanged()
               .catch((error) =>
-                activity.logger.error({ error }, 'error re-advertising toolset tools'),
+                activity.logger.error(
+                  { 'lk.pii.error': error },
+                  'error re-advertising toolset tools',
+                ),
               );
           },
         }),
@@ -4738,7 +4754,7 @@ export class AgentActivity implements RecognitionHooks {
     );
     for (const output of outputs) {
       if (output.status === 'rejected') {
-        this.logger.error({ error: output.reason }, 'error setting up toolset');
+        this.logger.error({ 'lk.pii.error': output.reason }, 'error setting up toolset');
       }
     }
   }
@@ -4747,7 +4763,7 @@ export class AgentActivity implements RecognitionHooks {
     const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
     for (const output of outputs) {
       if (output.status === 'rejected') {
-        this.logger.error({ error: output.reason }, 'error closing toolset');
+        this.logger.error({ 'lk.pii.error': output.reason }, 'error closing toolset');
       }
     }
   }

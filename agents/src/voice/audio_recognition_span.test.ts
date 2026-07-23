@@ -178,7 +178,7 @@ describe('AudioRecognition user_turn span', () => {
     expect(userTurn.attributes['gen_ai.provider.name']).toBe('deepgram');
 
     // end-of-turn attributes
-    expect(userTurn.attributes['lk.user_transcript']).toContain('hello');
+    expect(userTurn.attributes['lk.pii.user_transcript']).toContain('hello');
     expect(userTurn.attributes['lk.transcript_confidence']).toBeGreaterThan(0);
   });
 
@@ -255,7 +255,7 @@ describe('AudioRecognition user_turn span', () => {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = JSON.parse(String(eou.attributes['lk.chat_ctx'])).items as any[];
+    const items = JSON.parse(String(eou.attributes['lk.pii.chat_ctx'])).items as any[];
     expect(items.length).toBeLessThanOrEqual(6);
     // only non-empty, non-system messages survive; the pending user transcript is last
     expect(items.every((i) => i.type === 'message')).toBe(true);

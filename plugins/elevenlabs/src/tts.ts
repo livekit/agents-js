@@ -302,7 +302,7 @@ class Connection {
       });
 
       this.#ws.on('error', (error) => {
-        this.#logger.error({ error }, 'WebSocket connection error');
+        this.#logger.error({ 'lk.pii.error': error }, 'WebSocket connection error');
         reject(new APIConnectionError({ message: `WebSocket error: ${error.message}` }));
       });
     });
@@ -423,7 +423,7 @@ class Connection {
         }
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'send loop error');
+      this.#logger.warn({ 'lk.pii.error': e }, 'send loop error');
     } finally {
       if (!this.#closed) {
         await this.close();
@@ -441,7 +441,7 @@ class Connection {
         const parsed = JSON.parse(rawData.toString());
         messageChannel.write(parsed);
       } catch (e) {
-        this.#logger.warn({ error: e }, 'failed to parse WebSocket message');
+        this.#logger.warn({ 'lk.pii.error': e }, 'failed to parse WebSocket message');
       }
     };
 
@@ -479,7 +479,11 @@ class Connection {
 
         if (data.error) {
           this.#logger.error(
-            { context_id: contextId, error: data.error, data },
+            {
+              context_id: contextId,
+              'lk.pii.error': data.error,
+              'lk.pii.data': data,
+            },
             'elevenlabs tts returned error',
           );
           if (contextId) {
@@ -494,13 +498,16 @@ class Connection {
         if (!ctx) {
           if (data.type === 'flush_done') {
             this.#logger.debug(
-              { context_id: contextId, data },
+              { context_id: contextId, 'lk.pii.data': data },
               'ignoring elevenlabs flush_done message for inactive context',
             );
             continue;
           }
 
-          this.#logger.warn({ data }, 'unexpected message received from elevenlabs tts');
+          this.#logger.warn(
+            { 'lk.pii.data': data },
+            'unexpected message received from elevenlabs tts',
+          );
           continue;
         }
 
@@ -601,7 +608,7 @@ class Connection {
         }
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'recv loop error');
+      this.#logger.warn({ 'lk.pii.error': e }, 'recv loop error');
       for (const ctx of this.#contextData.values()) {
         ctx.waiter.reject(asError(e));
       }
