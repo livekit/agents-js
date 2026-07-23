@@ -267,7 +267,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       sendLastFrame(true);
     } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         return;
       }
       if (isAPIError(error)) throw error;
