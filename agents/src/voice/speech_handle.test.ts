@@ -116,6 +116,47 @@ describe('SpeechHandle - awaitable protocol', () => {
   });
 });
 
+describe('SpeechHandle.exception', () => {
+  it('does not throw from await when generation failed', async () => {
+    const handle = SpeechHandle.create();
+    const error = new Error('generate_reply timed out.');
+
+    handle._markDone(error);
+
+    const result = await handle;
+    expect(result).toBe(handle);
+
+    await handle.waitForPlayout();
+    expect(handle.exception()).toBe(error);
+  });
+
+  it('returns undefined when generation did not fail', async () => {
+    const handle = SpeechHandle.create();
+    handle._markDone();
+
+    await handle;
+    expect(handle.exception()).toBeUndefined();
+  });
+
+  it('throws if the handle is not done yet', () => {
+    const handle = SpeechHandle.create();
+
+    expect(() => handle.exception()).toThrow('SpeechHandle is not done yet');
+  });
+
+  it('ignores errors after the handle is already done', () => {
+    const handle = SpeechHandle.create();
+    const first = new Error('first');
+    const second = new Error('second');
+
+    handle._markDone(first);
+    handle._markDone();
+    handle._markDone(second);
+
+    expect(handle.exception()).toBe(first);
+  });
+});
+
 describe('SpeechHandle - simulated tool-call deadlock scenario', () => {
   // Models the previously-broken pattern:
   //

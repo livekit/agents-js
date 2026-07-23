@@ -93,6 +93,8 @@ export class SpeechHandle {
   /** @internal - used by AgentTask/RunResult final output plumbing */
   _maybeRunFinalOutput?: unknown;
 
+  private error?: Error;
+
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
 
@@ -181,6 +183,20 @@ export class SpeechHandle {
 
   done(): boolean {
     return this.doneFut.done;
+  }
+
+  /**
+   * Return the error that caused this speech to fail, if any.
+   *
+   * Awaiting a SpeechHandle never throws; call this method after the handle is
+   * done to check whether the generation failed.
+   */
+  exception(): Error | undefined {
+    if (!this.doneFut.done) {
+      throw new Error('SpeechHandle is not done yet');
+    }
+
+    return this.error;
   }
 
   get chatItems(): ChatItem[] {
@@ -357,8 +373,9 @@ export class SpeechHandle {
   }
 
   /** @internal */
-  _markDone(): void {
+  _markDone(error?: Error): void {
     if (!this.doneFut.done) {
+      this.error = error;
       this.doneFut.resolve();
     }
 

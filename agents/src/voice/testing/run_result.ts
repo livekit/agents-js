@@ -280,6 +280,12 @@ export class RunResult<T = unknown> {
       return;
     }
 
+    const speechError = this.lastSpeechHandle.exception();
+    if (speechError) {
+      this.doneFut.reject(speechError);
+      return;
+    }
+
     const finalOutput = this.lastSpeechHandle._maybeRunFinalOutput;
     if (finalOutput instanceof Error) {
       this.doneFut.reject(finalOutput);
