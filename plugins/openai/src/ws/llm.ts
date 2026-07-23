@@ -334,6 +334,7 @@ export class WSLLM extends llm.LLM {
 
       if (
         diff.toRemove.length === 0 &&
+        diff.toUpdate.length === 0 &&
         diff.toCreate.length > 0 &&
         diff.toCreate[0]![0] === lastPrevItemId
       ) {

@@ -305,6 +305,56 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
+describe('ChatMessage text content', () => {
+  const mixed =
+    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    '<expr type="prosody" label="whisper">keep it secret</expr>';
+  const mixedClean =
+    ' Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    'keep it secret';
+
+  it('strips only expr markup from assistant textContent', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+
+    expect(msg.textContent).toBe(mixedClean);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixed] });
+
+    expect(msg.textContent).toBe(mixed);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it('returns undefined without text content', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixed] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+    ]);
+
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+    ]);
+  });
+});
+
 describe('ChatContext._summarize', () => {
   it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();

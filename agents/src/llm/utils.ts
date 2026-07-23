@@ -783,26 +783,37 @@ function computeLCS(oldIds: string[], newIds: string[]): string[] {
 interface DiffOps {
   toRemove: string[];
   toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
+  toUpdate: Array<[string | null, string]>; // (previous_item_id, id), the items with the same id but different content
 }
 
 /**
- * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
+ * Compute the minimal list of create/remove/update operations to transform oldCtx into newCtx.
  *
  * @param oldCtx - The old chat context.
  * @param newCtx - The new chat context.
- * @returns The minimal list of create/remove operations to transform oldCtx into newCtx.
+ * @returns The minimal list of create/remove/update operations to transform oldCtx into newCtx.
  */
 export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps {
   const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
   const newIds = newCtx.items.map((item: ChatItem) => item.id);
   const lcsIds = new Set(computeLCS(oldIds, newIds));
+  const oldCtxById = new Map(oldCtx.items.map((item) => [item.id, item]));
 
   const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
   const toCreate: Array<[string | null, string]> = [];
+  const toUpdate: Array<[string | null, string]> = [];
 
   let lastIdInSequence: string | null = null;
   for (const newItem of newCtx.items) {
     if (lcsIds.has(newItem.id)) {
+      const oldItem = oldCtxById.get(newItem.id);
+      if (
+        oldItem?.type === 'message' &&
+        newItem.type === 'message' &&
+        oldItem.rawTextContent !== newItem.rawTextContent
+      ) {
+        toUpdate.push([lastIdInSequence, newItem.id]);
+      }
       lastIdInSequence = newItem.id;
     } else {
       const prevId = lastIdInSequence; // null if root
@@ -814,6 +825,7 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   return {
     toRemove,
     toCreate,
+    toUpdate,
   };
 }
 

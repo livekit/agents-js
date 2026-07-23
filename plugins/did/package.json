@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-did",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "description": "D-ID avatar plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
