@@ -18,7 +18,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from 'pino';
-import { ATTRIBUTE_SIMULATOR, ATTRIBUTE_SIMULATOR_DISPATCH } from './constants.js';
+import { ATTRIBUTE_SIMULATOR } from './constants.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';

@@ -439,15 +439,10 @@ export class AgentSession<
    */
   _usingDefaultVad: boolean = false;
 
-  /**
-   * True when running under a text simulation: the session uses no audio
-   * I/O and no audio models (STT/TTS/VAD). Resolved once in the constructor —
-   * the session must be created inside the job entrypoint for the job context
-   * to be visible (it always is in practice).
-   *
-   * @internal
-   */
-  _textOnly: boolean = false;
+  /** @internal True when the current job is a text simulation. */
+  get _textOnly(): boolean {
+    return resolveTextOnly();
+  }
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
@@ -539,20 +534,13 @@ export class AgentSession<
         DEFAULT_SESSION_CONNECT_OPTIONS.maxUnrecoverableErrors,
     };
 
-    // Under a text simulation the session uses no audio models: STT/TTS/VAD
-    // are dropped here regardless of what the caller supplied (audio I/O is
-    // disabled at start(), and AgentActivity gates agent-level overrides).
-    this._textOnly = resolveTextOnly();
-
     // VAD: undefined → auto-provision bundled inference.VAD (silero). The
     // `_usingDefaultVad` marker is the single source of truth for "this VAD
     // was framework-provisioned" — code paths that should ignore a default
     // VAD read it via `AgentActivity.usingDefaultVad`. null → leave VAD off
     // entirely. Otherwise use what the caller supplied.
-    this._usingDefaultVad = vad === undefined && !this._textOnly;
-    if (this._textOnly) {
-      this.vad = undefined;
-    } else if (vad === undefined) {
+    this._usingDefaultVad = vad === undefined;
+    if (vad === undefined) {
       this.vad = new InferenceVAD({ model: 'silero' });
     } else if (vad === null) {
       this.vad = undefined;
@@ -560,9 +548,7 @@ export class AgentSession<
       this.vad = vad;
     }
 
-    if (this._textOnly) {
-      this.stt = undefined;
-    } else if (typeof stt === 'string') {
+    if (typeof stt === 'string') {
       this.stt = InferenceSTT.fromModelString(stt);
     } else {
       this.stt = stt;
@@ -574,9 +560,7 @@ export class AgentSession<
       this.llm = llm;
     }
 
-    if (this._textOnly) {
-      this.tts = undefined;
-    } else if (typeof tts === 'string') {
+    if (typeof tts === 'string') {
       this.tts = InferenceTTS.fromModelString(tts);
     } else {
       this.tts = tts;
@@ -864,6 +848,9 @@ export class AgentSession<
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this._recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session

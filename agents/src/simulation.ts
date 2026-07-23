@@ -1,10 +1,24 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Scenario, SimulationDispatch, SimulationMode } from '@livekit/protocol';
+import {
+  Scenario,
+  ScenarioGroup,
+  SimulationDispatch,
+  SimulationMode,
+  SimulationRun,
+  SimulationRun_Job,
+} from '@livekit/protocol';
 import type { JobContext } from './job.js';
 
-export { Scenario, SimulationDispatch, SimulationMode };
+export {
+  Scenario,
+  ScenarioGroup,
+  SimulationDispatch,
+  SimulationMode,
+  SimulationRun,
+  SimulationRun_Job,
+};
 
 /** A pass/fail verdict for a scenario, with a human-readable reason. */
 export interface SimulationVerdict {
@@ -42,7 +56,8 @@ export class SimulationContext {
   _dispatch: SimulationDispatch;
 
   #jobCtx: JobContext;
-  #run?: { id: string };
+  #run?: SimulationRun;
+  #job?: SimulationRun_Job;
   #simulatorVerdict?: SimulationVerdict;
   #userVerdict?: SimulationVerdict;
 
@@ -65,8 +80,12 @@ export class SimulationContext {
     return this._dispatch.mode;
   }
 
-  get simulationRun(): { id: string } | undefined {
+  get simulationRun(): SimulationRun | undefined {
     return this.#run;
+  }
+
+  get simulationJob(): SimulationRun_Job | undefined {
+    return this.#job;
   }
 
   /** The simulator's verdict (its LLM judgment of the conversation). Read-only;
@@ -90,9 +109,14 @@ export class SimulationContext {
   }
 
   /** @internal Populate the simulator verdict / run before `onSimulationEnd`. */
-  _beginFinalize(opts: { simulatorVerdict: SimulationVerdict; run?: { id: string } }): void {
+  _beginFinalize(opts: {
+    simulatorVerdict: SimulationVerdict;
+    run?: SimulationRun;
+    job?: SimulationRun_Job;
+  }): void {
     this.#simulatorVerdict = opts.simulatorVerdict;
     this.#run = opts.run;
+    this.#job = opts.job;
   }
 
   /** The scenario's `userdata` decoded from its JSON string (`{}` if empty). */

@@ -14,7 +14,12 @@ import {
 import { initializeLogger } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
-import { SessionHost, SessionTransport, TcpSessionTransport } from './remote_session.js';
+import {
+  RemoteSession,
+  SessionHost,
+  SessionTransport,
+  TcpSessionTransport,
+} from './remote_session.js';
 
 beforeAll(() => {
   initializeLogger({ pretty: true, level: 'info' });
@@ -223,6 +228,54 @@ class FakeTransport extends SessionTransport {
   }
 }
 
+describe('RemoteSession finalizeSimulation', () => {
+  it('round-trips the provisional verdict and returns the agent verdict', async () => {
+    const transport = new FakeTransport();
+    const remote = new RemoteSession(transport);
+    await remote.start();
+
+    const finalize = remote.finalizeSimulation({
+      provisionalSuccess: true,
+      provisionalReason: 'conversation passed',
+    });
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const request = transport.sent[0]!.message.value as pb.SessionRequest;
+    expect(request.request.case).toBe('finalizeSimulation');
+    expect(request.request.value).toEqual(
+      new pb.SessionRequest_FinalizeSimulation({
+        provisionalSuccess: true,
+        provisionalReason: 'conversation passed',
+      }),
+    );
+
+    transport.push(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'response',
+          value: new pb.SessionResponse({
+            requestId: request.requestId,
+            response: {
+              case: 'finalizeSimulation',
+              value: new pb.SessionResponse_FinalizeSimulationResponse({
+                userVerdict: new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
+                  success: false,
+                  reason: 'backend state diverged',
+                }),
+              }),
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(finalize).resolves.toMatchObject({
+      userVerdict: { success: false, reason: 'backend state diverged' },
+    });
+    await remote.close();
+  });
+});
+
 describe('SessionHost updateIo', () => {
   it('toggles input/output enabled flags and acks', async () => {
     const setInputAudio = vi.fn();
@@ -401,7 +454,7 @@ describe('SessionHost finalizeSimulation', () => {
     await vi.waitFor(() => expect(transport.sent.length).toBe(1));
 
     expect(seen).toBeDefined();
-    expect(seen!.simulationRun).toEqual({ id: 'SR_9' });
+    expect(seen!.simulationRun).toMatchObject({ id: 'SR_9' });
     const resp = transport.sent[0]!.message.value as pb.SessionResponse;
     expect(resp.requestId).toBe('f1');
     expect(resp.response.case).toBe('finalizeSimulation');
@@ -443,6 +496,30 @@ describe('SessionHost finalizeSimulation', () => {
 
     const resp = transport.sent[0]!.message.value as pb.SessionResponse;
     expect(resp.response.case).toBe('finalizeSimulation');
+    expect(resp.error).toBe('user callback exploded');
+
+    await host.close();
+  });
+
+  it('preserves a failure veto when onSimulationEnd throws after fail()', async () => {
+    const ctx = fakeSimJobContext((simCtx) => {
+      simCtx.fail('backend state diverged');
+      throw new Error('cleanup exploded');
+    });
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession(fakeAgentSession());
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f4', true, 'fine'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict).toMatchObject({
+      success: false,
+      reason: 'backend state diverged',
+    });
 
     await host.close();
   });
@@ -453,7 +530,7 @@ describe('SessionHost finalizeSimulation', () => {
     host.registerSession(fakeAgentSession());
     await host.start();
 
-    transport.push(finalizeMessage('f4', true, 'fine'));
+    transport.push(finalizeMessage('f5', true, 'fine'));
     await vi.waitFor(() => expect(transport.sent.length).toBe(1));
 
     const value = (transport.sent[0]!.message.value as pb.SessionResponse).response

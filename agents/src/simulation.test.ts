@@ -3,7 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import type { JobContext } from './job.js';
-import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
+import {
+  ScenarioGroup,
+  SimulationContext,
+  SimulationMode,
+  SimulationRun,
+  SimulationRun_Job,
+  parseSimulationDispatch,
+} from './simulation.js';
 
 const fakeJobCtx = {} as unknown as JobContext;
 
@@ -69,6 +76,16 @@ describe('parseSimulationDispatch', () => {
 });
 
 describe('SimulationContext', () => {
+  it('exports the generated scenario group, run, and job data models', () => {
+    const job = new SimulationRun_Job({ id: 'AJ_1', label: 'refund flow' });
+    const run = new SimulationRun({ id: 'SR_1', jobs: [job] });
+    const group = new ScenarioGroup({ name: 'billing' });
+
+    expect(run.jobs).toEqual([job]);
+    expect(run.jobs[0]?.label).toBe('refund flow');
+    expect(group.name).toBe('billing');
+  });
+
   it('treats UNSPECIFIED mode as TEXT (pre-mode simulations were text-only)', () => {
     const d = parseSimulationDispatch(dispatchJson({ mode: undefined }));
     const ctx = new SimulationContext(d, fakeJobCtx);
@@ -100,12 +117,16 @@ describe('SimulationContext', () => {
   it('simulatorVerdict throws before finalize and reads after', () => {
     const ctx = new SimulationContext(parseSimulationDispatch(dispatchJson()), fakeJobCtx);
     expect(() => ctx.simulatorVerdict).toThrow(/onSimulationEnd/);
+    const run = new SimulationRun({ id: 'SR_1' });
+    const job = new SimulationRun_Job({ id: 'AJ_1' });
     ctx._beginFinalize({
       simulatorVerdict: { success: true, reason: 'looked good' },
-      run: { id: 'SR_1' },
+      run,
+      job,
     });
     expect(ctx.simulatorVerdict).toEqual({ success: true, reason: 'looked good' });
-    expect(ctx.simulationRun).toEqual({ id: 'SR_1' });
+    expect(ctx.simulationRun).toBe(run);
+    expect(ctx.simulationJob).toBe(job);
   });
 
   it('fail() records a veto; last call wins; no veto by default', () => {

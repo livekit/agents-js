@@ -2,14 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Room } from '@livekit/rtc-node';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
-import { JobContext, type JobProcess, type RunningJobInfo, runWithJobContext } from '../job.js';
+import {
+  JobContext,
+  type JobProcess,
+  type RunningJobInfo,
+  runWithJobContext,
+  runWithJobContextAsync,
+} from '../job.js';
 import type { LLM } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { STT } from '../stt/index.js';
 import type { TTS } from '../tts/index.js';
 import type { VAD } from '../vad.js';
+import { Agent } from './agent.js';
+import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
 
 beforeAll(() => {
@@ -68,18 +76,37 @@ const newSession = () =>
   });
 
 describe('AgentSession text-only gating', () => {
+  it('resolves text mode when an activity is created after the session', () => {
+    const session = newSession();
+    expect(session._textOnly).toBe(false);
+
+    runWithJobContext(jobCtxWithMode('SIMULATION_MODE_TEXT'), () => {
+      const activity = new AgentActivity(new Agent({ instructions: 'help the user' }), session);
+      expect(session._textOnly).toBe(true);
+      expect(activity.stt).toBeUndefined();
+      expect(activity.tts).toBeUndefined();
+      expect(activity.vad).toBeUndefined();
+    });
+  });
+
   it('drops STT/TTS/VAD under a TEXT simulation', () => {
-    const session = runWithJobContext(jobCtxWithMode('SIMULATION_MODE_TEXT'), newSession);
-    expect(session._textOnly).toBe(true);
-    expect(session.stt).toBeUndefined();
-    expect(session.tts).toBeUndefined();
-    expect(session.vad).toBeUndefined();
+    runWithJobContext(jobCtxWithMode('SIMULATION_MODE_TEXT'), () => {
+      const session = newSession();
+      const activity = new AgentActivity(new Agent({ instructions: 'help the user' }), session);
+      expect(session._textOnly).toBe(true);
+      expect(activity.stt).toBeUndefined();
+      expect(activity.tts).toBeUndefined();
+      expect(activity.vad).toBeUndefined();
+    });
   });
 
   it('treats a dispatch without mode as text', () => {
-    const session = runWithJobContext(jobCtxWithMode(null), newSession);
-    expect(session._textOnly).toBe(true);
-    expect(session.stt).toBeUndefined();
+    runWithJobContext(jobCtxWithMode(null), () => {
+      const session = newSession();
+      const activity = new AgentActivity(new Agent({ instructions: 'help the user' }), session);
+      expect(session._textOnly).toBe(true);
+      expect(activity.stt).toBeUndefined();
+    });
   });
 
   it('keeps components under an AUDIO simulation', () => {
@@ -94,5 +121,28 @@ describe('AgentSession text-only gating', () => {
     const session = newSession();
     expect(session._textOnly).toBe(false);
     expect(session.stt).toBe(fakeStt);
+  });
+
+  it('explicitly disables audio recording for text simulations', async () => {
+    const ctx = jobCtxWithMode('SIMULATION_MODE_TEXT');
+    const initRecording = vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    const session = newSession();
+
+    await runWithJobContextAsync(ctx, async () => {
+      await session.start({
+        agent: new Agent({ instructions: 'help the user' }),
+        record: true,
+      });
+    });
+
+    expect(session._recordingOptions).toEqual({
+      audio: false,
+      traces: true,
+      logs: true,
+      transcript: true,
+      redaction: false,
+    });
+    expect(initRecording).toHaveBeenCalledWith(session._recordingOptions);
+    await session.close();
   });
 });

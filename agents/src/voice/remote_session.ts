@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentSession as pb } from '@livekit/protocol';
+import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
@@ -25,7 +25,8 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
-import { Future, Task, shortuuid } from '../utils.js';
+import type { SimulationContext } from '../simulation.js';
+import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -984,37 +985,44 @@ export class SessionHost {
     // The simulator's verdict is passed in so onSimulationEnd can read it
     // (ctx.simulatorVerdict); the agent records its OWN verdict via ctx.fail().
     let userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+    let simCtx: SimulationContext | undefined;
+    let simError: string | undefined;
     try {
       // Imported lazily to keep this module free of a static cycle with job.ts.
       const { getJobContext } = await import('../job.js');
       const jobCtx = getJobContext(false);
-      const simCtx = jobCtx?.simulationContext();
+      simCtx = jobCtx?.simulationContext();
       if (jobCtx && simCtx) {
         simCtx._beginFinalize({
           simulatorVerdict: {
             success: req.provisionalSuccess,
             reason: req.provisionalReason,
           },
-          run: { id: simCtx._dispatch.simulationRunId },
+          run: new SimulationRun({ id: simCtx._dispatch.simulationRunId }),
         });
         const fnc = jobCtx._simulationEndFnc;
         if (fnc) {
           await fnc(simCtx);
         }
-        if (simCtx.userVerdict) {
-          userVerdict = new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
-            success: simCtx.userVerdict.success,
-            reason: simCtx.userVerdict.reason,
-          });
-        }
       }
     } catch (error) {
+      simError = asError(error).message;
       log().error({ error }, 'error while executing the onSimulationEnd callback');
     }
-    return this.sendResponse(requestId, {
-      case: 'finalizeSimulation',
-      value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
-    });
+    if (simCtx?.userVerdict) {
+      userVerdict = new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
+        success: simCtx.userVerdict.success,
+        reason: simCtx.userVerdict.reason,
+      });
+    }
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'finalizeSimulation',
+        value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
+      },
+      simError,
+    );
   }
 
   private async handleUpdateIo(
@@ -1397,6 +1405,35 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
     );
     if (resp.response.case !== 'getSessionUsage') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async finalizeSimulation({
+    provisionalSuccess,
+    provisionalReason = '',
+    timeout = 60000,
+  }: {
+    provisionalSuccess: boolean;
+    provisionalReason?: string;
+    timeout?: number;
+  }): Promise<pb.SessionResponse_FinalizeSimulationResponse> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'finalizeSimulation',
+            value: new pb.SessionRequest_FinalizeSimulation({
+              provisionalSuccess,
+              provisionalReason,
+            }),
+          },
+        }),
+      timeout,
+    );
+    if (resp.response.case !== 'finalizeSimulation') {
       throw new Error('unexpected response type');
     }
     return resp.response.value;
