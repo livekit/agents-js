@@ -47,7 +47,7 @@ jobs:
       - name: Build
         run: pnpm build
       - name: Test agents
-        run: pnpm test -- agents --silent
+        run: pnpm test agents --silent
       - name: Test LiveKit inference
         env:
           LIVEKIT_INFERENCE_TESTS: '1'
@@ -55,7 +55,7 @@ jobs:
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
         run: >-
-          pnpm test --
+          pnpm test
           agents/src/inference/llm.test.ts
           agents/src/inference/stt.test.ts
           agents/src/inference/tts.test.ts
