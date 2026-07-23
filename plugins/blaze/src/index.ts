@@ -1,0 +1,66 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * `@livekit/agents-plugin-blaze`
+ *
+ * LiveKit Agent Framework plugin for Blaze AI services (STT, TTS, LLM).
+ *
+ * @example
+ * ```typescript
+ * import { STT, TTS, LLM } from '@livekit/agents-plugin-blaze';
+ *
+ * // Create plugins (reads BLAZE_* env vars automatically)
+ * const stt = new STT({ language: 'vi' });
+ * const tts = new TTS({ speakerId: 'speaker-1' });
+ * const llm = new LLM({ botId: 'my-chatbot' });
+ *
+ * // Or with shared configuration
+ * import type { BlazeConfig } from '@livekit/agents-plugin-blaze';
+ * const config: BlazeConfig = { apiUrl: 'http://gateway:8080', authToken: 'tok' };
+ * const stt2 = new STT({ config, language: 'vi' });
+ * ```
+ */
+import { Plugin } from '@livekit/agents';
+
+export { STT, SpeechStream } from './stt.js';
+export type { STTOptions } from './stt.js';
+
+export { TTS, ChunkedStream, SynthesizeStream } from './tts.js';
+export type { TTSOptions } from './tts.js';
+
+export { LLM, LLMStream } from './llm.js';
+export type { LLMOptions, BlazeDemographics } from './llm.js';
+
+export type { BlazeConfig } from './config.js';
+
+export type {
+  BlazeTTSModel,
+  BlazeSTTModel,
+  BlazeLanguage,
+  BlazeAudioFormat,
+  BlazeGender,
+  BlazeDemographics as BlazeDemographicsModel,
+  BlazeSTTResponse,
+  BlazeChatMessage,
+  BlazeLLMData,
+} from './models.js';
+
+export {
+  DEFAULT_TTS_MODEL,
+  DEFAULT_STT_BATCH_MODEL,
+  DEFAULT_STT_STREAM_MODEL,
+} from './models.js';
+
+class BlazePlugin extends Plugin {
+  constructor() {
+    super({
+      title: 'Blaze',
+      version: __PACKAGE_VERSION__,
+      package: __PACKAGE_NAME__,
+    });
+  }
+}
+
+Plugin.registerPlugin(new BlazePlugin());
