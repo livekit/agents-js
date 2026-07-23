@@ -39,9 +39,10 @@ export default defineAgent({
       },
     });
     await avatar.start(session, ctx.room);
-    await avatar.waitForJoin();
 
+    // waitForJoin() only waits once the room is connected, which session.start() does.
     await session.start({ agent: new Agent({ instructions: 'Talk to me!' }), room: ctx.room });
+    await avatar.waitForJoin();
     session.generateReply({ instructions: 'say hello to the user' });
   },
 });

@@ -28,7 +28,6 @@ import {
 } from './utils.js';
 
 const DEFAULT_SAMPLE_RATE = 16000;
-const REQUEST_TIMEOUT_MS = 60000;
 const ATTRIBUTE_AVATAR_PROVIDER = 'lk.avatar_provider';
 
 export interface LemonSliceOptions {
@@ -204,7 +203,9 @@ export class AvatarSession extends BaseAvatarSession {
       );
     }
     const jobCtx = getJobContext(false);
-    const roomName = room.name ?? jobCtx?.job.room?.name;
+    // `@livekit/rtc-node` `Room.name` is an empty string (not undefined) before the room
+    // connects, so use `||` to fall back to the job's room name in that case.
+    const roomName = room.name || jobCtx?.job.room?.name;
     if (!roomName) {
       throw new Error('failed to get room name');
     }
@@ -422,7 +423,7 @@ export class AvatarSession extends BaseAvatarSession {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(this.connOptions.timeoutMs),
     });
     if (!response.ok) {
       const text = await response.text();

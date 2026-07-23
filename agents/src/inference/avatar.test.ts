@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { APIStatusError } from '../_exceptions.js';
+import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { runWithJobContextAsync } from '../job.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions } from '../types.js';
@@ -96,7 +96,8 @@ class FakeConnectedRoom extends FakeRoom {
 }
 
 class FakeJobRoom extends FakeRoom {
-  override name = undefined as never;
+  // `@livekit/rtc-node` reports an empty string (not undefined) before the room connects.
+  override name = '';
 }
 
 describe('parseAvatarModel', () => {
@@ -293,6 +294,24 @@ it('retries server errors then raises', async () => {
 
   await expect(callCreate(av)).rejects.toBeInstanceOf(APIStatusError);
   expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('aborts gateway requests using the configured connOptions timeout', async () => {
+  // A fetch that never resolves on its own, so the only way this settles is the
+  // request timeout signal. With the old hard-coded 60s the test would hang; the
+  // small connOptions.timeoutMs proves the caller-provided timeout is honored.
+  const fetchMock = vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject((init.signal as AbortSignal).reason));
+      }),
+  );
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10 },
+  });
+
+  await expect(callCreate(av)).rejects.toBeInstanceOf(APITimeoutError);
 });
 
 it('start uses response sample rate and captures terminate token', async () => {
