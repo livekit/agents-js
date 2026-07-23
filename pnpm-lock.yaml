@@ -1429,6 +1429,34 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  plugins/speechify:
+    dependencies:
+      '@speechify/api':
+        specifier: ^3.0.1
+        version: 3.0.1
+    devDependencies:
+      '@livekit/agents':
+        specifier: workspace:*
+        version: link:../../agents
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
+      '@livekit/agents-plugins-test':
+        specifier: workspace:*
+        version: link:../test
+      '@livekit/rtc-node':
+        specifier: 'catalog:'
+        version: 0.13.30
+      '@microsoft/api-extractor':
+        specifier: ^7.35.0
+        version: 7.43.7(@types/node@25.6.0)
+      tsup:
+        specifier: ^8.3.5
+        version: 8.4.0(@microsoft/api-extractor@7.43.7(@types/node@25.6.0))(postcss@8.5.9)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   plugins/tavus:
     dependencies:
       livekit-server-sdk:
@@ -3019,6 +3047,10 @@ packages:
 
   '@rushstack/ts-command-line@4.21.0':
     resolution: {integrity: sha512-z38FLUCn8M9FQf19gJ9eltdwkvc47PxvJmVZS6aKwbBAa3Pis3r3A+ZcBCVPNb9h/Tbga+i0tHdzoSGUoji9GQ==}
+
+  '@speechify/api@3.0.1':
+    resolution: {integrity: sha512-bEqbyvwGW0A/cgq+ZsQJVP3Hm4/0Bm1sniVtPLBh7vDNG2f/YY8y8sweWojoUnhIeIAL6bHBde43+VZLA2MYpA==}
+    engines: {node: '>=18.0.0'}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -6163,7 +6195,7 @@ snapshots:
   '@eslint/eslintrc@2.1.4':
     dependencies:
       ajv: 6.12.6
-      debug: 4.4.1
+      debug: 4.4.3
       espree: 9.6.1
       globals: 13.24.0
       ignore: 5.3.1
@@ -6208,7 +6240,7 @@ snapshots:
   '@humanwhocodes/config-array@0.11.14':
     dependencies:
       '@humanwhocodes/object-schema': 2.0.3
-      debug: 4.4.1
+      debug: 4.4.3
       minimatch: 3.1.2
     transitivePeerDependencies:
       - supports-color
@@ -7141,6 +7173,8 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
+  '@speechify/api@3.0.1': {}
+
   '@standard-schema/spec@1.1.0': {}
 
   '@trivago/prettier-plugin-sort-imports@4.3.0(prettier@3.2.5)':
@@ -7272,7 +7306,7 @@ snapshots:
     dependencies:
       '@typescript-eslint/typescript-estree': 6.21.0(typescript@5.9.3)
       '@typescript-eslint/utils': 6.21.0(eslint@8.57.0)(typescript@5.9.3)
-      debug: 4.4.1
+      debug: 4.4.3
       eslint: 8.57.0
       ts-api-utils: 1.3.0(typescript@5.9.3)
     optionalDependencies:
@@ -7286,7 +7320,7 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 6.21.0
       '@typescript-eslint/visitor-keys': 6.21.0
-      debug: 4.4.1
+      debug: 4.4.3
       globby: 11.1.0
       is-glob: 4.0.3
       minimatch: 9.0.3
@@ -8059,7 +8093,7 @@ snapshots:
 
   eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0):
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.3
       enhanced-resolve: 5.16.1
       eslint: 8.57.0
       eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0))(eslint@8.57.0)
@@ -9866,7 +9900,7 @@ snapshots:
       cac: 6.7.14
       chokidar: 4.0.3
       consola: 3.4.2
-      debug: 4.4.1
+      debug: 4.4.3
       esbuild: 0.25.2
       joycon: 3.1.1
       picocolors: 1.1.1
@@ -9894,7 +9928,7 @@ snapshots:
       cac: 6.7.14
       chokidar: 4.0.3
       consola: 3.4.2
-      debug: 4.4.1
+      debug: 4.4.3
       esbuild: 0.25.2
       joycon: 3.1.1
       picocolors: 1.1.1
