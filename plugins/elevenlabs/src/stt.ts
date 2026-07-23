@@ -62,6 +62,7 @@ export interface STTOptions {
   modelId?: ElevenLabsSTTModels | string;
   keyterms?: string[];
   noVerbatim?: boolean;
+  enableLogging?: boolean;
 }
 
 interface ResolvedSTTOptions {
@@ -75,6 +76,7 @@ interface ResolvedSTTOptions {
   serverVad?: VADOptions | null;
   keyterms?: string[];
   noVerbatim: boolean;
+  enableLogging: boolean;
 }
 
 export interface STTRecognizeOptions {
@@ -249,6 +251,7 @@ export class STT extends stt.STT {
       modelId,
       keyterms: opts.keyterms,
       noVerbatim: opts.noVerbatim ?? false,
+      enableLogging: opts.enableLogging ?? true,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -367,12 +370,15 @@ export class STT extends stt.STT {
 
     try {
       const fetchFn = this.#session.fetch ?? fetch;
-      const response = await fetchFn(`${this.#opts.baseURL}/speech-to-text`, {
-        method: 'POST',
-        headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
-        body: form,
-        signal: abortSignal ?? null,
-      });
+      const response = await fetchFn(
+        `${this.#opts.baseURL}/speech-to-text?enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
+        {
+          method: 'POST',
+          headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
+          body: form,
+          signal: abortSignal ?? null,
+        },
+      );
       const responseJson = parseBatchResponse(await response.json());
       if (response.status !== 200) {
         throw new APIStatusError({
@@ -684,6 +690,7 @@ export class SpeechStream extends stt.SpeechStream {
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
       `commit_strategy=${commitStrategy}`,
+      `enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
     ];
 
     if (!this.#language) {

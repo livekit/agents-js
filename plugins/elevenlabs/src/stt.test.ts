@@ -203,7 +203,7 @@ describe('ElevenLabs STT', () => {
       });
 
       expect(request?.method).toBe('POST');
-      expect(request?.url).toBe('/speech-to-text');
+      expect(request?.url).toBe('/speech-to-text?enable_logging=true');
       expect(request?.apiKey).toBe('test-key');
       expect(request?.body).toContain('name="model_id"');
       expect(request?.body).toContain('scribe_v2');
