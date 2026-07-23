@@ -999,6 +999,99 @@ describe('RealtimeSession.updateOptions', () => {
   });
 });
 
+describe('RealtimeSession.createChatCtxUpdateEvents', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('skips agent_config_update items so the realtime sync does not throw', async () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as {
+      createChatCtxUpdateEvents: (chatCtx: llm.ChatContext) => Promise<api_proto.ClientEvent[]>;
+    };
+
+    const systemMessage = llm.ChatMessage.create({
+      id: 'item_system',
+      role: 'system',
+      content: ['You are a helpful agent.'],
+    });
+    const configUpdate = llm.AgentConfigUpdate.create({
+      id: 'item_config',
+      instructions: 'updated instructions',
+      toolsAdded: ['lookup'],
+    });
+    const userMessage = llm.ChatMessage.create({
+      id: 'item_user',
+      role: 'user',
+      content: ['hello there'],
+    });
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.items.push(systemMessage, configUpdate, userMessage);
+
+    const events = await session.createChatCtxUpdateEvents(chatCtx);
+
+    const createdIds = events
+      .filter(
+        (e): e is api_proto.ConversationItemCreateEvent => e.type === 'conversation.item.create',
+      )
+      .map((e) => e.item.id);
+
+    expect(createdIds).toEqual(expect.arrayContaining(['item_system', 'item_user']));
+    expect(createdIds).not.toContain('item_config');
+  });
+
+  it('returns no create events for a ChatContext containing only agent_config_update items', async () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as {
+      createChatCtxUpdateEvents: (chatCtx: llm.ChatContext) => Promise<api_proto.ClientEvent[]>;
+    };
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.items.push(
+      llm.AgentConfigUpdate.create({ id: 'item_config_a', toolsAdded: ['a'] }),
+      llm.AgentConfigUpdate.create({ id: 'item_config_b', toolsRemoved: ['b'] }),
+    );
+
+    await expect(session.createChatCtxUpdateEvents(chatCtx)).resolves.toEqual([]);
+  });
+
+  it('also skips agent_handoff items (defense-in-depth, no OpenAI Realtime representation)', async () => {
+    stubTaskRuntime();
+
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = model.session() as unknown as {
+      createChatCtxUpdateEvents: (chatCtx: llm.ChatContext) => Promise<api_proto.ClientEvent[]>;
+    };
+
+    const userMessage = llm.ChatMessage.create({
+      id: 'item_user',
+      role: 'user',
+      content: ['hand me off please'],
+    });
+    const handoff = llm.AgentHandoffItem.create({
+      id: 'item_handoff',
+      oldAgentId: 'triage',
+      newAgentId: 'billing',
+    });
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.items.push(userMessage, handoff);
+
+    const events = await session.createChatCtxUpdateEvents(chatCtx);
+    const createdIds = events
+      .filter(
+        (e): e is api_proto.ConversationItemCreateEvent => e.type === 'conversation.item.create',
+      )
+      .map((e) => e.item.id);
+
+    expect(createdIds).toContain('item_user');
+    expect(createdIds).not.toContain('item_handoff');
+  });
+});
+
 describe('processBaseURL', () => {
   it('upgrades https baseURL to wss and appends /realtime with model', () => {
     const url = new URL(
