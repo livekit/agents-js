@@ -10,11 +10,7 @@ import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '.
 import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../constants.js';
 import { getJobContext } from '../job.js';
 import { log } from '../log.js';
-import {
-  type APIConnectOptions,
-  DEFAULT_API_CONNECT_OPTIONS,
-  intervalForRetry,
-} from '../types.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
 import type { AgentSession } from '../voice/agent_session.js';
 import {
   AvatarSession as BaseAvatarSession,
