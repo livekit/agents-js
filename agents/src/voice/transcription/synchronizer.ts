@@ -205,7 +205,7 @@ class SegmentSynchronizerImpl {
           this.outputStreamWriter.close();
         })
         .catch((error) => {
-          this.logger.error({ error }, 'mainTask SegmentSynchronizerImpl');
+          this.logger.error({ 'lk.pii.error': error }, 'mainTask SegmentSynchronizerImpl');
         });
     }
     this.captureTask = this.captureTaskImpl();

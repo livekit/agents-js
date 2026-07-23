@@ -64,10 +64,10 @@ export class AnamAPI {
 
         logger.debug(
           {
-            url,
+            'lk.pii.url': url,
             method: 'POST',
             headers: redactedHeaders,
-            body: redactedBody,
+            'lk.pii.body': redactedBody,
             attempt: attempt + 1,
           },
           'calling Anam API',
@@ -83,32 +83,32 @@ export class AnamAPI {
           const text = await res.text();
           logger.error(
             {
-              url,
+              'lk.pii.url': url,
               method: 'POST',
               headers: redactedHeaders,
-              body: redactedBody,
+              'lk.pii.body': redactedBody,
               status: res.status,
-              response: text,
+              'lk.pii.response': text,
             },
             'Anam API request failed',
           );
           throw new AnamException(`Anam ${path} failed: ${res.status} ${text}`);
         }
         const json = (await res.json()) as T;
-        logger.debug({ url }, 'Anam API request succeeded');
+        logger.debug({ 'lk.pii.url': url }, 'Anam API request succeeded');
         return json;
       } catch (e) {
         lastErr = e;
         if (attempt === maxRetry - 1) break;
         logger.warn(
           {
-            url,
+            'lk.pii.url': url,
             method: 'POST',
-            body:
+            'lk.pii.body':
               body && typeof body === 'object'
                 ? { ...(body as Record<string, unknown>), livekitToken: '****' }
                 : body,
-            error: (e as Error)?.message,
+            'lk.pii.error': (e as Error)?.message,
             nextRetrySec: retryInterval,
           },
           'Anam API error, retrying',

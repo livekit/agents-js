@@ -374,7 +374,7 @@ export class ChunkedStream extends tts.ChunkedStream {
           buffer = buffer.slice(newlineIdx + 1);
           if (!line) continue;
           if (!line.startsWith('data:')) {
-            this.#logger.warn({ line }, 'unexpected MiniMax SSE line');
+            this.#logger.warn({ 'lk.pii.line': line }, 'unexpected MiniMax SSE line');
             continue;
           }
 
@@ -520,7 +520,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         try {
           data = JSON.parse(rawMsg);
         } catch (e) {
-          this.#logger.warn({ err: e, rawMsg }, 'failed to parse MiniMax WS message');
+          this.#logger.warn(
+            {
+              'lk.pii.error': e,
+              'lk.pii.raw_message': rawMsg,
+            },
+            'failed to parse MiniMax WS message',
+          );
           continue;
         }
 
@@ -588,7 +594,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             { retryable: false },
           );
         }
-        this.#logger.warn({ data }, 'unexpected MiniMax WS event');
+        this.#logger.warn({ 'lk.pii.data': data }, 'unexpected MiniMax WS event');
       }
     };
 

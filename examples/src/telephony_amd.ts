@@ -175,7 +175,7 @@ export default defineAgent({
       try {
         await rooms.deleteRoom(roomName);
       } catch (err) {
-        logger.warn({ err }, 'failed to delete room during hangup');
+        logger.warn({ 'lk.pii.error': err }, 'failed to delete room during hangup');
       }
     });
   },

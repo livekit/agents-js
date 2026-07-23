@@ -355,9 +355,7 @@ export class ToolExecutor {
       if (settled) return;
       log().error(
         { tool: call.name, callId: call.callId, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
-        `tool ${call.name} was cancelled but its execute() is still running after the deadline; it likely ` +
-          'does not honor the abort signal. Observe the provided abortSignal in execute() so ' +
-          'cancellation actually stops the work.',
+        'cancelled tool is still running after the deadline; its execute() may not honor the abort signal',
       );
     }, DRAIN_TOOL_TIMEOUT_MS);
     timer.unref?.();
@@ -431,7 +429,7 @@ export class ToolExecutor {
       this._replyTaskDone = false;
       this._replyTask = this.deliverReply(ctx.session).catch((error) => {
         log().warn(
-          { error },
+          { 'lk.pii.error': error },
           'deliverReply failed; async tool result may not trigger a follow-up reply',
         );
       });
@@ -513,7 +511,7 @@ export class ToolExecutor {
         {
           function: runCtx.functionCall.name,
           callId: runCtx.functionCall.callId,
-          error: exception,
+          'lk.pii.error': exception,
         },
         'exception occurred while executing tool after a progress update',
       );

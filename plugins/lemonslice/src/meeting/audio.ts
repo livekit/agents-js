@@ -90,7 +90,7 @@ export class MeetingAudioInput extends voice.AudioInput {
 
     for (const out of this.resample(downmixToMono(frame))) {
       void this.channel.write(out).catch((error) => {
-        this.#logger.warn({ error }, 'failed to write meeting audio frame');
+        this.#logger.warn({ 'lk.pii.error': error }, 'failed to write meeting audio frame');
       });
     }
   }
@@ -191,7 +191,7 @@ export async function streamMeetingRelay(
       if (stop.aborted) {
         return;
       }
-      logger.warn({ error, backoffMs }, 'meeting relay disconnected; retrying');
+      logger.warn({ 'lk.pii.error': error, backoffMs }, 'meeting relay disconnected; retrying');
     }
 
     if (stop.aborted) {

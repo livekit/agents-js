@@ -121,7 +121,7 @@ export class StreamAdapterWrapper extends SpeechStream {
               } else {
                 logger = logger.child({ error });
               }
-              logger.error(`${this.label}: provider recognize task failed`);
+              logger.error({ stt: this.label }, 'provider recognize task failed');
               continue;
             }
         }

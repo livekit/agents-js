@@ -195,7 +195,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
           res.on('error', (err) => {
             if (err.message === 'aborted') return;
-            this.#logger.error({ err }, 'Deepgram TTS response error');
+            this.#logger.error({ 'lk.pii.error': err }, 'Deepgram TTS response error');
             settle(() => reject(err));
           });
 
@@ -220,7 +220,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       req.on('error', (err) => {
         if (err.name === 'AbortError') return;
-        this.#logger.error({ err }, 'Deepgram TTS request error');
+        this.#logger.error({ 'lk.pii.error': err }, 'Deepgram TTS request error');
         settle(() => reject(err));
       });
 
@@ -282,7 +282,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
     } catch (e) {
-      console.warn(`Error during WebSocket close sequence: ${e}`);
+      this.#logger.warn({ 'lk.pii.error': e }, 'error during WebSocket close sequence');
     } finally {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
@@ -417,12 +417,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               resolve();
               return;
             } else if (message.type === 'Warning') {
-              this.#logger.warn(`Deepgram warning: ${message.warn_msg}`);
+              this.#logger.warn(
+                { 'lk.pii.warning': message.warn_msg },
+                'Deepgram returned a warning',
+              );
             } else if (message.type === 'Error' || message.type === 'error') {
               reject(new APIError('Deepgram TTS returned error', { body: message }));
               return;
             } else if (message.type !== 'Metadata') {
-              this.#logger.warn({ message }, 'Unknown Deepgram message type');
+              this.#logger.warn({ 'lk.pii.message': message }, 'Unknown Deepgram message type');
             }
 
             resetMessageTimeout(reject);

@@ -59,7 +59,7 @@ export class HTTPServer {
         if (err) reject(err);
         const address = this.app.address();
         if (typeof address! !== 'string') {
-          this.#logger.info(`Server is listening on port ${address!.port}`);
+          this.#logger.info({ port: address!.port }, 'Server is listening');
         }
         resolve();
       });

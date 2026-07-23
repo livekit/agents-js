@@ -293,7 +293,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     try {
       const url = this.#getCartesiaUrl();
-      this.#logger.debug(`Connecting to Cartesia STT: ${url}`);
+      this.#logger.debug({ 'lk.pii.url': url }, 'connecting to Cartesia STT');
 
       const ws = new WebSocket(url, {
         headers: {
@@ -355,7 +355,7 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.all([sendPromise, recvPromise]);
       if (firstError !== undefined) throw firstError;
     } catch (error) {
-      this.#logger.error('Cartesia STT stream error', { error });
+      this.#logger.error({ 'lk.pii.error': error }, 'Cartesia STT stream error');
       throw error;
     } finally {
       abortController.abort();
@@ -419,7 +419,8 @@ export class SpeechStream extends stt.SpeechStream {
       // the stream wait forever.
       const drainTimer = setTimeout(() => {
         this.#logger.warn(
-          `Cartesia STT did not close within ${DRAIN_TIMEOUT_MS}ms after done; forcing close`,
+          { timeoutMs: DRAIN_TIMEOUT_MS },
+          'Cartesia STT did not close after done; forcing close',
         );
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CLOSING) {
           ws.terminate();
@@ -447,12 +448,12 @@ export class SpeechStream extends stt.SpeechStream {
         try {
           msg = JSON.parse(data.toString());
         } catch (error) {
-          this.#logger.error('Failed to parse Cartesia STT message', { error });
+          this.#logger.error({ 'lk.pii.error': error }, 'Failed to parse Cartesia STT message');
           return;
         }
         try {
           if (msg.type === 'error') {
-            this.#logger.error('Cartesia sent an error', msg);
+            this.#logger.error({ 'lk.pii.message': msg }, 'Cartesia sent an error');
 
             // do not close the websocket on bad requests since that may be caused by invalid messages
             if (msg.status_code === undefined || msg.status_code >= 500) {
@@ -472,7 +473,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.#processStreamEvent(msg);
           }
         } catch (error) {
-          this.#logger.error('Failed to process Cartesia STT message', { error });
+          this.#logger.error({ 'lk.pii.error': error }, 'Failed to process Cartesia STT message');
         }
       });
 
@@ -513,7 +514,13 @@ export class SpeechStream extends stt.SpeechStream {
           settle();
           return;
         }
-        this.#logger.warn(`Cartesia STT WebSocket closed: ${code} ${reason.toString()}`);
+        this.#logger.warn(
+          {
+            code,
+            'lk.pii.reason': reason.toString(),
+          },
+          'Cartesia STT WebSocket closed',
+        );
         settle(
           new APIConnectionError({
             message: `Cartesia STT connection closed unexpectedly (code=${code})`,
@@ -610,7 +617,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
 
       default:
-        this.#logger.warn('received unexpected message from Cartesia STT', { data });
+        this.#logger.warn({ 'lk.pii.data': data }, 'received unexpected message from Cartesia STT');
     }
   }
 

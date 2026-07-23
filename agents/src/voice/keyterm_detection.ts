@@ -139,7 +139,7 @@ function resolveDetectionLLM(configured?: LLM | string): LLM | undefined {
     return InferenceLLM.fromModelString(model);
   } catch {
     // never let detection setup break the session
-    log().warn(`keyterm detection: could not create detection LLM ${model}; skipping`);
+    log().warn({ model }, 'keyterm detection: could not create detection LLM; skipping');
     return undefined;
   }
 }
@@ -532,7 +532,7 @@ export async function detectKeyterms(
   }
   if (raced === timedOut) {
     stream.close();
-    log().warn(`keyterm detection: pass timed out after ${timeout}ms; skipping`);
+    log().warn({ timeoutMs: timeout }, 'keyterm detection: pass timed out; skipping');
     return [[], [], []];
   }
   const result = parseToolCall(raced.toolCalls);
@@ -625,14 +625,12 @@ export function parseToolCall(toolCalls: FunctionCall[]): [string[], string[], s
 function debugDump(userMsg: string, result: [string[], string[], string[]]): void {
   const [pending, confirm, remove] = result;
   log().debug(
-    [
-      '──────── keyterm detection ────────',
-      userMsg,
-      '──── output ────',
-      `pending: ${JSON.stringify(pending)}`,
-      `confirm: ${JSON.stringify(confirm)}`,
-      `remove:  ${JSON.stringify(remove)}`,
-      '───────────────────────────────────',
-    ].join('\n'),
+    {
+      'lk.pii.user_message': userMsg,
+      'lk.pii.pending_keyterms': pending,
+      'lk.pii.confirmed_keyterms': confirm,
+      'lk.pii.removed_keyterms': remove,
+    },
+    'keyterm detection result',
   );
 }

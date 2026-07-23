@@ -376,7 +376,7 @@ export class BackgroundAudioPlayer {
     );
 
     this.publication = publication;
-    this.#logger.debug(`Background audio track published: ${this.publication.sid}`);
+    this.#logger.debug({ trackSid: this.publication.sid }, 'Background audio track published');
   }
 
   private async runMixerTask(): Promise<void> {

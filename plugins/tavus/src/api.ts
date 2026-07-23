@@ -53,7 +53,7 @@ function coalesceWithDeprecated(
 ): string | undefined {
   // Prefer the new option; fall back to the deprecated alias and warn only when it's used.
   if (!newValue && deprecatedValue) {
-    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+    log().warn({ deprecatedName, replacementName: newName }, 'deprecated option used');
   }
   return newValue || deprecatedValue;
 }
@@ -62,7 +62,10 @@ function deprecatedEnv(deprecatedName: string, newName: string): string | undefi
   // Read a deprecated env var, warning if it's set so callers migrate to `newName`.
   const value = process.env[deprecatedName];
   if (value) {
-    log().warn(`\`${deprecatedName}\` is deprecated, use \`${newName}\` instead`);
+    log().warn(
+      { deprecatedName, replacementName: newName },
+      'deprecated environment variable used',
+    );
   }
   return value;
 }
@@ -221,9 +224,9 @@ export class TavusAPI {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call tavus api');
+          this.#logger.warn({ 'lk.pii.error': e }, 'failed to call tavus api');
         } else {
-          this.#logger.error({ error: e }, 'failed to call tavus api');
+          this.#logger.error({ 'lk.pii.error': e }, 'failed to call tavus api');
         }
 
         if (i < this.connOptions.maxRetry) {

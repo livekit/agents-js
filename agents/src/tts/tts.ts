@@ -296,8 +296,13 @@ export abstract class SynthesizeStream
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
-              { tts: this.#tts.label, attempt: i + 1, error },
-              `failed to synthesize speech, retrying in ${retryInterval}ms`,
+              {
+                tts: this.#tts.label,
+                attempt: i + 1,
+                retryIntervalMs: retryInterval,
+                'lk.pii.error': error,
+              },
+              'failed to synthesize speech, retrying',
             );
           }
 
@@ -701,8 +706,13 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
           // Don't emit error event for recoverable errors during retry loop
           // to avoid ERR_UNHANDLED_ERROR or premature session termination
           this.logger.warn(
-            { tts: this.#tts.label, attempt: i + 1, error },
-            `failed to generate TTS completion, retrying in ${retryInterval}ms`,
+            {
+              tts: this.#tts.label,
+              attempt: i + 1,
+              retryIntervalMs: retryInterval,
+              'lk.pii.error': error,
+            },
+            'failed to generate TTS completion, retrying',
           );
 
           if (retryInterval > 0) {

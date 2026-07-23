@@ -314,7 +314,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#reconnectEvent.clear();
 
         const url = this.#getDeepgramUrl();
-        this.#logger.debug(`Connecting to Deepgram: ${url}`);
+        this.#logger.debug({ 'lk.pii.url': url }, 'connecting to Deepgram');
 
         this.#ws = new WebSocket(url, {
           headers: { Authorization: `Token ${this.#opts.apiKey}` },
@@ -357,7 +357,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error('Deepgram stream error', { error });
+        this.#logger.error({ 'lk.pii.error': error }, 'Deepgram stream error');
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
@@ -451,12 +451,18 @@ class SpeechStreamv2 extends stt.SpeechStream {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
         } catch (error) {
-          this.#logger.error('Failed to parse Deepgram message', { error });
+          this.#logger.error({ 'lk.pii.error': error }, 'Failed to parse Deepgram message');
         }
       });
 
       this.#ws.on('close', (code, reason) => {
-        this.#logger.debug(`Deepgram WebSocket closed: ${code} ${reason}`);
+        this.#logger.debug(
+          {
+            code,
+            'lk.pii.reason': reason.toString(),
+          },
+          'Deepgram WebSocket closed',
+        );
         resolve();
       });
 
@@ -504,7 +510,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {
-      this.#logger.warn('deepgram sent an error', { data });
+      this.#logger.warn({ 'lk.pii.data': data }, 'deepgram sent an error');
       const desc = (data.description as string) || 'unknown error from deepgram';
       throw new Error(`Deepgram API Error: ${desc}`);
     }

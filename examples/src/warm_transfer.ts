@@ -75,11 +75,14 @@ Examples on when the tool should be called:
               ctx.session.shutdown();
             } catch (error) {
               if (error instanceof llm.ToolError) {
-                logger.error({ error }, 'failed to transfer to human agent with tool error');
+                logger.error(
+                  { 'lk.pii.error': error },
+                  'failed to transfer to human agent with tool error',
+                );
                 throw error;
               }
 
-              logger.error({ error }, 'failed to transfer to human agent');
+              logger.error({ 'lk.pii.error': error }, 'failed to transfer to human agent');
               throw new llm.ToolError(`failed to transfer to human agent with error: ${error}`);
             }
           },

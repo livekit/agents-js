@@ -180,7 +180,7 @@ describe('AvatarSession base', () => {
 
     expect(removeParticipantMock).toHaveBeenCalledWith('test-room', 'avatar-identity');
     expect(warn).toHaveBeenCalledWith(
-      { error, identity: 'avatar-identity' },
+      { 'lk.pii.error': error, identity: 'avatar-identity' },
       'failed to remove avatar participant',
     );
     expect(debug).not.toHaveBeenCalledWith(

@@ -362,7 +362,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
-        this.#logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
+        this.#logger.info(
+          {
+            function: item.name,
+            callId: item.callId,
+            'lk.pii.output': item.output,
+          },
+          'sending tool call output',
+        );
         this.socket?.sendToolCallOutput({
           type: 'tool_call_output',
           tool_call_id: item.callId,
@@ -375,7 +382,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.rawTextContent) {
-          this.#logger.debug(`Sending add system message: ${item.rawTextContent}`);
+          this.#logger.debug(
+            { 'lk.pii.system_message': item.rawTextContent },
+            'sending add system message',
+          );
           this.socket?.sendAddSystemMessage({
             type: 'add_system_message',
             system_message: item.rawTextContent,
@@ -385,7 +395,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         // Only treat a user message as text input when it's appended at the tail of the context.
         if (item.role === 'user' && itemId === lastItemId && item.rawTextContent) {
-          this.#logger.debug(`Received user text input: ${item.rawTextContent}`);
+          this.#logger.debug({ 'lk.pii.text': item.rawTextContent }, 'received user text input');
           this.pendingUserText = item.rawTextContent;
           bufferedUserText = true;
         }
@@ -720,7 +730,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         break;
       case 'conversation_created':
         this.conversationId = message.conversation_id;
-        this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        this.#logger.info({ conversationId: this.conversationId }, 'Phonic conversation began');
         this.options.onConversationCreated?.(this.conversationId);
         break;
       case 'tool_call_interrupted':
@@ -828,7 +838,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleToolCallInterrupted(message: Phonic.ToolCallInterruptedPayload): void {
     this.pendingToolCallIds.delete(message.tool_call_id);
     this.#logger.warn(
-      `Tool call for ${message.tool_name} (call_id: ${message.tool_call_id}) was cancelled due to user interruption.`,
+      {
+        toolName: message.tool_name,
+        callId: message.tool_call_id,
+      },
+      'tool call was cancelled due to user interruption',
     );
   }
 

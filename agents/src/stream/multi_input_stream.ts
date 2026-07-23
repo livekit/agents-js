@@ -158,7 +158,7 @@ export class MultiInputStream<T> {
         return;
       }
 
-      this.logger.error({ error: e }, 'Error pumping input stream from MultiInputStream');
+      this.logger.error({ 'lk.pii.error': e }, 'Error pumping input stream from MultiInputStream');
     } finally {
       try {
         reader.releaseLock();

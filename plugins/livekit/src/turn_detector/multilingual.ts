@@ -104,7 +104,7 @@ export class MultilingualModel extends EOUModel {
 
     const startedAt = performance.now();
 
-    this.#logger.debug({ url, request }, '=== remote EOU inference');
+    this.#logger.debug({ 'lk.pii.url': url, 'lk.pii.request': request }, 'remote EOU inference');
 
     const resp = await fetch(url, {
       method: 'POST',

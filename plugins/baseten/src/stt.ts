@@ -138,12 +138,23 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            {
+              delay,
+              retries,
+              maxRetry,
+              'lk.pii.error': e,
+            },
+            'failed to connect to Baseten, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Baseten disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            {
+              inputClosed: this.input.closed,
+              isClosed: this.closed,
+              'lk.pii.error': e,
+            },
+            'Baseten disconnected',
           );
         }
       }
@@ -242,7 +253,7 @@ export class SpeechStream extends stt.SpeechStream {
 
             // Skip if no transcript text
             if (!transcript) {
-              this.#logger.debug('Received non-transcript message:', msg);
+              this.#logger.debug({ 'lk.pii.message': msg }, 'Received non-transcript message');
               return;
             }
 
@@ -307,7 +318,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`STT: Error processing message: ${data}`);
+            this.#logger.error(
+              {
+                'lk.pii.error': err,
+                'lk.pii.message': String(data),
+              },
+              'Baseten STT failed to process message',
+            );
             reject(err);
           }
         });

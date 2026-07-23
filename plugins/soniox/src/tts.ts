@@ -134,7 +134,7 @@ export class TTS extends tts.TTS {
 
   prewarm(): void {
     void currentConnection(this, this.#opts.websocketUrl, 20000).catch((error: unknown) => {
-      log().debug({ error }, 'Soniox TTS prewarm failed');
+      log().debug({ 'lk.pii.error': error }, 'Soniox TTS prewarm failed');
     });
   }
 
@@ -480,7 +480,7 @@ class Connection {
 
     this.#ws.on('message', (data) => this.#handleMessage(data.toString()));
     this.#ws.on('error', (error) => {
-      this.#logger.warn({ error }, 'Soniox TTS WebSocket error');
+      this.#logger.warn({ 'lk.pii.error': error }, 'Soniox TTS WebSocket error');
       this.#failAll(new APIConnectionError({ message: `Soniox TTS WebSocket error: ${error}` }));
     });
     this.#ws.on('close', (code) => {
@@ -630,7 +630,7 @@ class Connection {
         }
       }
     } catch (error) {
-      this.#logger.warn({ error }, 'Soniox TTS send loop error');
+      this.#logger.warn({ 'lk.pii.error': error }, 'Soniox TTS send loop error');
       this.#failAll(new APIConnectionError({ message: `Soniox TTS send loop error: ${error}` }));
     }
   }
@@ -640,7 +640,13 @@ class Connection {
     try {
       response = JSON.parse(raw) as Record<string, unknown>;
     } catch (error) {
-      this.#logger.warn({ error, raw }, 'Failed to parse Soniox TTS response');
+      this.#logger.warn(
+        {
+          'lk.pii.error': error,
+          'lk.pii.raw_response': raw,
+        },
+        'Failed to parse Soniox TTS response',
+      );
       return;
     }
 
@@ -648,8 +654,12 @@ class Connection {
     if (typeof streamId !== 'string') {
       if (response.error_code !== undefined) {
         this.#logger.error(
-          { response },
-          `Soniox TTS connection-level error: ${response.error_code} - ${response.error_message}`,
+          {
+            errorCode: response.error_code,
+            'lk.pii.error_message': response.error_message,
+            'lk.pii.response': response,
+          },
+          'Soniox TTS connection-level error',
         );
       }
       return;
@@ -657,7 +667,7 @@ class Connection {
 
     const stream = this.#streams.get(streamId);
     if (stream === undefined) {
-      this.#logger.debug(`Ignoring message for unknown Soniox TTS stream ${streamId}`);
+      this.#logger.debug({ streamId }, 'Ignoring message for unknown Soniox TTS stream');
       return;
     }
 

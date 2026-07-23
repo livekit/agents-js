@@ -484,8 +484,14 @@ export class AgentServer {
           const delay = Math.min(retries * 2, 10);
 
           this.#logger.warn(
-            { error: e, retry_count: retries, max_retry: this.#opts.maxRetry },
-            `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
+            {
+              'lk.pii.url': this.#opts.wsURL,
+              'lk.pii.error': e,
+              retry_count: retries,
+              max_retry: this.#opts.maxRetry,
+              retryDelaySeconds: delay,
+            },
+            'failed to connect to LiveKit server, retrying',
           );
 
           await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, delay * 1000));
@@ -570,7 +576,8 @@ export class AgentServer {
         )) as unknown as ParticipantInfo;
       } catch (e) {
         this.#logger.fatal(
-          `participant with identity ${participantIdentity} not found in room ${roomName}`,
+          { participantIdentity, roomName, 'lk.pii.error': e },
+          'participant not found in room',
         );
         throw e;
       }
@@ -627,7 +634,7 @@ export class AgentServer {
     });
 
     ws.addEventListener('error', (event) => {
-      this.#logger.error('worker error:', event.message);
+      this.#logger.error({ 'lk.pii.error': event.message }, 'worker WebSocket error');
     });
 
     ws.addEventListener('message', (event) => {
@@ -644,7 +651,10 @@ export class AgentServer {
           wsData = `${wsData.slice(0, 128)}...(+${wsData.length - 128} more)`;
         }
         const type = typeof event.data;
-        this.#logger.warn({ type, ws_data: wsData }, `unexpected message type: ${type}`);
+        this.#logger.warn(
+          { type, 'lk.pii.ws_data': wsData },
+          'received unexpected worker message type',
+        );
         return;
       }
 
@@ -698,7 +708,7 @@ export class AgentServer {
             delete this.#pending[job.id];
             task?.resolve(msg.message.value);
           } else {
-            this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
+            this.#logger.child({ job }).warn('received assignment for unknown job');
           }
           break;
         }
@@ -794,7 +804,7 @@ export class AgentServer {
           );
         })
         .catch((e) => {
-          this.#logger.warn({ error: e }, 'failed to measure CPU load');
+          this.#logger.warn({ 'lk.pii.error': e }, 'failed to measure CPU load');
         });
     }, UPDATE_LOAD_INTERVAL);
 
@@ -853,7 +863,7 @@ export class AgentServer {
       this.#pending[req.id] = new PendingAssignment();
 
       const timer = setTimeout(() => {
-        this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
+        this.#logger.child({ req }).warn('job assignment timed out');
         return;
       }, ASSIGNMENT_TIMEOUT);
       const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
@@ -873,7 +883,9 @@ export class AgentServer {
             apiSecret: this.#opts.apiSecret,
           });
         } catch (e) {
-          this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
+          this.#logger
+            .child({ requestId: req.id })
+            .error({ 'lk.pii.error': e }, 'error launching job');
         }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');

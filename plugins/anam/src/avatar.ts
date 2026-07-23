@@ -97,11 +97,11 @@ export class AvatarSession extends voice.AvatarSession {
 
     logger.debug(
       {
-        personaName: this.opts.personaConfig?.name,
-        avatarId: this.opts.personaConfig?.avatarId,
-        personaId: this.opts.personaConfig?.personaId,
-        apiUrl: apiUrl ?? '(default https://api.anam.ai)',
-        livekitUrl,
+        'lk.pii.persona_name': this.opts.personaConfig?.name,
+        'lk.pii.avatar_id': this.opts.personaConfig?.avatarId,
+        'lk.pii.persona_id': this.opts.personaConfig?.personaId,
+        'lk.pii.api_url': apiUrl ?? '(default https://api.anam.ai)',
+        'lk.pii.livekit_url': livekitUrl,
         avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',
         publishOnBehalf: localIdentity,
       },
@@ -117,7 +117,7 @@ export class AvatarSession extends voice.AvatarSession {
     });
 
     const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
-    logger.debug({ livekitUrl }, 'requesting Anam session token');
+    logger.debug({ 'lk.pii.livekit_url': livekitUrl }, 'requesting Anam session token');
 
     const { sessionToken } = await anam.createSessionToken({
       personaConfig: this.opts.personaConfig,

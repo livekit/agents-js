@@ -76,7 +76,7 @@ async function getBranchHeadCommit(
     return null;
   } catch (error) {
     logger.error(
-      { error: (error as Error).message, repo: toRepoId(repo), revision },
+      { 'lk.pii.error': error, repo: toRepoId(repo), revision },
       'Error getting HEAD commit',
     );
     throw error;
@@ -122,7 +122,7 @@ async function createSymlink(sourcePath: string, targetPath: string): Promise<vo
       logger.debug({ source: absSrc, target: absDst }, 'File copied successfully');
     } catch (copyError) {
       logger.error(
-        { error: (copyError as Error).message, source: absSrc, target: absDst },
+        { 'lk.pii.error': copyError, source: absSrc, target: absDst },
         'Failed to copy file',
       );
       // If copy also fails, throw the original symlink error

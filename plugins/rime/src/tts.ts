@@ -497,7 +497,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       try {
         void messageChannel.write(JSON.parse(rawData.toString()));
       } catch (error) {
-        this.#logger.warn({ error }, 'failed to parse Rime WebSocket message');
+        this.#logger.warn({ 'lk.pii.error': error }, 'failed to parse Rime WebSocket message');
       }
     };
     const onClose = (code: number, reason: Buffer) => {

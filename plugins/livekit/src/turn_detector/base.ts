@@ -93,7 +93,13 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
     const text = this.formatChatCtx(data);
 
     const inputs = this.tokenizer!.encode(text, { add_special_tokens: false });
-    this.#logger.debug({ inputs: JSON.stringify(inputs), text }, 'EOU inputs');
+    this.#logger.debug(
+      {
+        'lk.pii.inputs': inputs,
+        'lk.pii.text': text,
+      },
+      'EOU inputs',
+    );
 
     const outputs = await this.session!.run(
       { input_ids: new Tensor('int64', inputs, [1, inputs.length]) },
@@ -111,7 +117,13 @@ export abstract class EOURunnerBase extends InferenceRunner<RawChatItem[], EOUOu
       duration: (endTime - startTime) / 1000,
     };
 
-    this.#logger.child({ result }).debug('eou prediction');
+    this.#logger
+      .child({
+        eouProbability: result.eouProbability,
+        duration: result.duration,
+        'lk.pii.input': result.input,
+      })
+      .debug('eou prediction');
     return result;
   }
 
@@ -219,7 +231,7 @@ export abstract class EOUModel {
     }
 
     if (langData === undefined) {
-      this.#logger.warn(`Language ${language} not supported by EOU model`);
+      this.#logger.warn({ language }, 'language not supported by EOU model');
       return undefined;
     }
 

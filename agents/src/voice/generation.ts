@@ -346,7 +346,7 @@ export class _JsOutput {
           callId: this.toolCall.callId,
           function: this.toolCall.name,
         },
-        `AI function ${this.toolCall.name} returned an invalid output`,
+        'AI function returned an invalid output',
       );
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
@@ -431,9 +431,10 @@ export function createToolOutput(params: {
     logger.error(
       {
         callId: toolCall.callId,
-        output: finalOutput,
+        function: toolCall.name,
+        'lk.pii.output': finalOutput,
       },
-      `AI function ${toolCall.name} returned an invalid output`,
+      'AI function returned an invalid output',
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
@@ -653,7 +654,7 @@ export function performLLMInference(
         return;
       }
       // surface inference silent errors even when this task's rejection is never awaited
-      logger.error({ error }, 'error in llm node');
+      logger.error({ 'lk.pii.error': error }, 'error in llm node');
       throw error;
     } finally {
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
@@ -965,7 +966,7 @@ async function forwardAudio(
   let resampler: AudioResampler | null = null;
   const cancelReader = () => {
     void reader.cancel().catch((error) => {
-      logger.debug({ error }, 'failed to cancel TTS stream reader after abort');
+      logger.debug({ 'lk.pii.error': error }, 'failed to cancel TTS stream reader after abort');
     });
   };
   signal?.addEventListener('abort', cancelReader, { once: true });
@@ -1172,7 +1173,7 @@ export function performToolExecutions({
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
-          `unknown AI function ${toolCall.name}`,
+          'unknown AI function',
         );
         toolCompleted(
           createToolOutput({
@@ -1188,8 +1189,9 @@ export function performToolExecutions({
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
+            toolType: typeof tool,
           },
-          `unknown tool type: ${typeof tool}`,
+          'unknown tool type',
         );
         continue;
       }
@@ -1220,11 +1222,11 @@ export function performToolExecutions({
         logger.error(
           {
             function: toolCall.name,
-            arguments: toolCall.args,
+            'lk.pii.arguments': toolCall.args,
             speech_id: speechHandle.id,
-            error: error.message,
+            'lk.pii.error': error.message,
           },
-          `tried to call AI function ${toolCall.name} with invalid arguments`,
+          'tried to call AI function with invalid arguments',
         );
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
@@ -1250,7 +1252,7 @@ export function performToolExecutions({
       logger.info(
         {
           function: toolCall.name,
-          arguments: parsedArgs,
+          'lk.pii.arguments': parsedArgs,
           speech_id: speechHandle.id,
         },
         'Executing LLM tool call',
@@ -1287,7 +1289,7 @@ export function performToolExecutions({
             {
               function: toolCall.name,
               speech_id: speechHandle.id,
-              error: toError(rawError).message,
+              'lk.pii.error': toError(rawError).message,
             },
             'exception occurred while executing tool',
           );
@@ -1341,7 +1343,7 @@ export function performToolExecutions({
                 logger.debug(
                   {
                     function: toolCall.name,
-                    arguments: parsedArgs,
+                    'lk.pii.arguments': parsedArgs,
                     speech_id: speechHandle.id,
                   },
                   'executing mock tool',
