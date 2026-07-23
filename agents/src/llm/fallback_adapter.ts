@@ -241,7 +241,7 @@ class FallbackLLMStream extends LLMStream {
       }
 
       // Handle timeout errors
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         if (checkRecovery) {
           this._log.warn({ llm: llm.label() }, 'recovery timed out');
         } else {

@@ -1689,8 +1689,8 @@ export class AudioRecognition {
         this.logger.debug('EOU detection task completed');
       })
       .catch((err: unknown) => {
-        if (err instanceof Error && err.name === 'AbortError') {
-          // ignore aborted errors
+        if ((err as { name?: string })?.name === 'AbortError') {
+          // ignore aborted errors (DOMException from AbortSignal is not instanceof Error)
           return;
         }
         this.logger.error(err, 'Error in EOU detection task:');
@@ -1705,7 +1705,7 @@ export class AudioRecognition {
     try {
       await this.bounceEOUTask.result;
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if ((error as { name?: string })?.name === 'AbortError') {
         return;
       }
       throw error;
@@ -2199,7 +2199,7 @@ export class AudioRecognition {
         this.logger.debug('User turn committed');
       })
       .catch((err: unknown) => {
-        if (err instanceof Error && err.name === 'AbortError') {
+        if ((err as { name?: string })?.name === 'AbortError') {
           this.logger.debug('User turn commit task cancelled');
           return;
         }
