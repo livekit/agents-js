@@ -243,6 +243,44 @@ function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
   return [client, host];
 }
 
+describe('RemoteSession RPCs', () => {
+  it('fetches framework info', async () => {
+    const transport = new FakeTransport();
+    const remote = new RemoteSession(transport);
+    await remote.start();
+
+    const frameworkInfo = remote.fetchFrameworkInfo();
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const request = transport.sent[0]!.message.value as pb.SessionRequest;
+    expect(request.request.case).toBe('getFrameworkInfo');
+
+    transport.push(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'response',
+          value: new pb.SessionResponse({
+            requestId: request.requestId,
+            response: {
+              case: 'getFrameworkInfo',
+              value: new pb.SessionResponse_GetFrameworkInfoResponse({
+                sdk: 'js',
+                sdkVersion: '1.5.5',
+              }),
+            },
+          }),
+        },
+      }),
+    );
+
+    await expect(frameworkInfo).resolves.toMatchObject({
+      sdk: 'js',
+      sdkVersion: '1.5.5',
+    });
+    await remote.close();
+  });
+});
+
 async function startConnectedClientHost(ctx: JobContext) {
   const [clientTransport, hostTransport] = createConnectedTransportPair();
   const remote = new RemoteSession(clientTransport);
