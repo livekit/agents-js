@@ -49,6 +49,7 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+const WS_CLOSE_CONTEXT_EXHAUSTED = 1007;
 /**
  * Default image encoding options for Google Realtime API
  */
@@ -465,6 +466,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
+  private sessionError?: Error;
   private hasReceivedAudioInput = false;
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
@@ -547,6 +549,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.sessionShouldClose.set();
       this.messageChannel = new Queue();
     }
+  }
+
+  private toError(error: unknown): Error {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  private isContextExhaustedError(error: unknown): boolean {
+    return (
+      (typeof error === 'object' &&
+        error !== null &&
+        'statusCode' in error &&
+        error.statusCode === WS_CLOSE_CONTEXT_EXHAUSTED) ||
+      String(error).includes(String(WS_CLOSE_CONTEXT_EXHAUSTED))
+    );
   }
 
   private isNonBlockingToolBehavior(): boolean {
@@ -1012,19 +1028,23 @@ export class RealtimeSession extends llm.RealtimeSession {
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
                 this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
 
-                this.emitError(
-                  new APIStatusError({
-                    message: `${errorMsg}${truncationNote}`,
-                    options: {
-                      statusCode: event.code,
-                      retryable: false,
-                      body: event.reason
-                        ? { reason: event.reason, code: event.code, truncated: isTruncated }
-                        : null,
-                    },
-                  }),
-                  false,
-                );
+                const error = new APIStatusError({
+                  message: `${errorMsg}${truncationNote}`,
+                  options: {
+                    statusCode: event.code,
+                    retryable: false,
+                    body: event.reason
+                      ? { reason: event.reason, code: event.code, truncated: isTruncated }
+                      : null,
+                  },
+                });
+
+                if (event.code === WS_CLOSE_CONTEXT_EXHAUSTED) {
+                  this.sessionError = error;
+                  this.markRestartNeeded();
+                } else {
+                  this.emitError(error, false);
+                }
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               }
@@ -1073,25 +1093,47 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
 
         await cancelAndWait([sendTask, restartWaitTask], 2000);
+
+        if (this.sessionError) {
+          const error = this.sessionError;
+          this.sessionError = undefined;
+          throw error;
+        }
       } catch (error) {
-        this.#logger.error(`Gemini Realtime API error: ${error}`);
+        const err = this.toError(error);
+        this.#logger.error(`Gemini Realtime API error: ${err}`);
 
         if (this.#closed) break;
 
+        // Gemini Live closes with 1007 when the session context is exhausted. Reconnecting
+        // would replay the same oversized context and fail again, so terminate the session.
+        if (this.isContextExhaustedError(err)) {
+          this.#logger.error(
+            err,
+            'Gemini Live closed the session: context exhausted (1007). Reconnecting would replay the same context and fail again; terminating the session.',
+          );
+          this.emitError(err, false);
+          throw new APIConnectionError({
+            message: 'Gemini Live session context exhausted (1007)',
+            options: { retryable: false },
+          });
+        }
+
         if (maxRetries === 0) {
-          this.emitError(error as Error, false);
+          this.emitError(err, false);
           throw new APIConnectionError({
             message: 'Failed to connect to Gemini Live',
           });
         }
 
         if (this.numRetries >= maxRetries) {
-          this.emitError(error as Error, false);
+          this.emitError(err, false);
           throw new APIConnectionError({
             message: `Failed to connect to Gemini Live after ${maxRetries} attempts`,
           });
         }
 
+        this.emitError(err, true);
         const retryInterval =
           this.numRetries === 100 ? 0 : this.options.connOptions.retryIntervalMs;
 
@@ -1179,6 +1221,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in send task: ${e}`);
+        this.sessionError = this.toError(e);
         this.markRestartNeeded();
       }
     } finally {
@@ -1292,6 +1335,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in onReceiveMessage: ${e}`);
+        this.sessionError = this.toError(e);
         this.markRestartNeeded();
       }
     }
