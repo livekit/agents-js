@@ -7,11 +7,11 @@ import type { VideoGrant } from 'livekit-server-sdk';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
 import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
+import { ATTRIBUTE_PUBLISH_ON_BEHALF } from '../constants.js';
 import { getJobContext } from '../job.js';
 import { log } from '../log.js';
 import {
   type APIConnectOptions,
-  ATTRIBUTE_PUBLISH_ON_BEHALF,
   DEFAULT_API_CONNECT_OPTIONS,
   intervalForRetry,
 } from '../types.js';
