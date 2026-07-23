@@ -70,7 +70,7 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
     const sampleRate = buffer[0]!.sampleRate;
     const channels = buffer[0]!.channels;
     let samplesPerChannel = 0;
-    let data = new Int16Array();
+    let dataLength = 0;
 
     for (const frame of buffer) {
       if (frame.sampleRate !== sampleRate) {
@@ -81,8 +81,15 @@ export const mergeFrames = (buffer: AudioBuffer): AudioFrame => {
         throw new TypeError('channel count mismatch');
       }
 
-      data = new Int16Array([...data, ...frame.data]);
+      dataLength += frame.data.length;
       samplesPerChannel += frame.samplesPerChannel;
+    }
+
+    const data = new Int16Array(dataLength);
+    let offset = 0;
+    for (const frame of buffer) {
+      data.set(frame.data, offset);
+      offset += frame.data.length;
     }
 
     return new AudioFrame(data, sampleRate, channels, samplesPerChannel);

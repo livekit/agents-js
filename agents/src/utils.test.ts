@@ -13,6 +13,7 @@ import {
   dedent,
   delay,
   isPending,
+  mergeFrames,
   resampleStream,
   toStream,
 } from '../src/utils.js';
@@ -931,6 +932,45 @@ world
       const outputFrames = await streamToArray(outputStream);
 
       expect(outputFrames).toEqual([]);
+    });
+  });
+
+  describe('mergeFrames', () => {
+    const frame = (samples: number[], sampleRate = 16000, channels = 1): AudioFrame =>
+      new AudioFrame(new Int16Array(samples), sampleRate, channels, samples.length / channels);
+
+    it('returns a non-array frame as-is', () => {
+      const f = frame([1, 2, 3]);
+      expect(mergeFrames(f)).toBe(f);
+    });
+
+    it('concatenates frame data in order', () => {
+      const merged = mergeFrames([frame([1, 2]), frame([3]), frame([4, 5, 6])]);
+      expect(Array.from(merged.data)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(merged.samplesPerChannel).toBe(6);
+      expect(merged.sampleRate).toBe(16000);
+      expect(merged.channels).toBe(1);
+    });
+
+    it('handles multi-channel frames', () => {
+      const merged = mergeFrames([frame([1, 2, 3, 4], 48000, 2), frame([5, 6], 48000, 2)]);
+      expect(Array.from(merged.data)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(merged.samplesPerChannel).toBe(3);
+      expect(merged.channels).toBe(2);
+    });
+
+    it('throws on empty buffer', () => {
+      expect(() => mergeFrames([])).toThrow(TypeError);
+    });
+
+    it('throws on sample rate mismatch', () => {
+      expect(() => mergeFrames([frame([1]), frame([2], 48000)])).toThrow('sample rate mismatch');
+    });
+
+    it('throws on channel count mismatch', () => {
+      expect(() => mergeFrames([frame([1, 2], 16000, 1), frame([3, 4], 16000, 2)])).toThrow(
+        'channel count mismatch',
+      );
     });
   });
 });
