@@ -293,7 +293,7 @@ export class AvatarSession extends BaseAvatarSession {
     } catch (error) {
       if (!sessionCreated) {
         try {
-          await super.aclose();
+          await this._rollbackStart();
         } finally {
           this._started = false;
         }

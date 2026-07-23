@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { runWithJobContextAsync } from '../job.js';
@@ -512,6 +513,54 @@ it('allows retry after gateway create fails', async () => {
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(new Set(idempotencyKeys).size).toBe(1);
+  expect(av.providerSessionId).toBe('ls_1');
+});
+
+it('retries an ambiguous create failure without removing the avatar participant', async () => {
+  const removeParticipant = vi
+    .spyOn(RoomServiceClient.prototype, 'removeParticipant')
+    .mockResolvedValue(undefined as never);
+  const idempotencyKeys: string[] = [];
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '');
+    return idempotencyKeys.length === 1
+      ? jsonResponse({ error: 'response lost after create' }, { status: 503 })
+      : jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
+  const room = new FakeConnectedRoom();
+  const jobCtx = {
+    job: { room: { name: 'job-room', sid: 'RM_job' } },
+    info: {
+      url: 'wss://example.livekit.cloud',
+      apiKey: 'devkey',
+      apiSecret: 'devsecret',
+      acceptArguments: { identity: 'job-agent' },
+    },
+    room,
+    addShutdownCallback() {},
+  };
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5 },
+  });
+  const agentSession = new FakeAgentSession();
+  const opts = {
+    livekitUrl: 'wss://example.livekit.cloud',
+    livekitApiKey: 'devkey',
+    livekitApiSecret: 'devsecret',
+  };
+
+  await runWithJobContextAsync(jobCtx as never, async () => {
+    await expect(av.start(agentSession as never, room as never, opts)).rejects.toBeInstanceOf(
+      APIStatusError,
+    );
+    expect(removeParticipant).not.toHaveBeenCalled();
+
+    await expect(av.start(agentSession as never, room as never, opts)).resolves.toBeUndefined();
+  });
+
+  expect(new Set(idempotencyKeys).size).toBe(1);
+  expect(removeParticipant).not.toHaveBeenCalled();
   expect(av.providerSessionId).toBe('ls_1');
 });
 

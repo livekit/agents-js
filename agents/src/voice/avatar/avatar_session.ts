@@ -149,6 +149,17 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       }
     }
 
+    await this._rollbackStart();
+  }
+
+  /**
+   * Roll back base start lifecycle state without removing the avatar participant.
+   *
+   * Subclasses may use this when provisioning has an ambiguous outcome and must be retried.
+   *
+   * @internal
+   */
+  protected async _rollbackStart(): Promise<void> {
     if (this.#agentSession) {
       this.#agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
