@@ -24,6 +24,9 @@ export const ATTRIBUTE_SIMULATOR = 'lk.simulator';
 /** Job attribute carrying the simulation dispatch proto JSON. */
 export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
 
+/** Participant attribute allowing an avatar worker to publish on behalf of the agent. */
+export const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
+
 /** Telemetry metadata key marking the session as a simulation. */
 export const ATTRIBUTE_SIMULATION_ENABLED = 'lk.simulation.enabled';
 
