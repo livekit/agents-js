@@ -485,6 +485,32 @@ it('guards overlapping concurrent start calls (only one provider session)', asyn
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it('allows retry after gateway create fails', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(jsonResponse({ error: 'unavailable' }, { status: 503 }))
+    .mockResolvedValueOnce(jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' }));
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5 },
+  });
+  const agentSession = new FakeAgentSession();
+  const room = new FakeConnectedRoom();
+  const opts = {
+    livekitUrl: 'wss://example.livekit.cloud',
+    livekitApiKey: 'devkey',
+    livekitApiSecret: 'devsecret',
+  };
+
+  await expect(av.start(agentSession as never, room as never, opts)).rejects.toBeInstanceOf(
+    APIStatusError,
+  );
+  await expect(av.start(agentSession as never, room as never, opts)).resolves.toBeUndefined();
+
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(av.providerSessionId).toBe('ls_1');
+});
+
 it('sets ids before audio rebind failures', async () => {
   const fetchMock = vi.fn(async () =>
     jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1', terminate_token: 'tt_1' }),

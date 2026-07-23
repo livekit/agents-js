@@ -193,99 +193,112 @@ export class AvatarSession extends BaseAvatarSession {
     }
     this._started = true;
 
-    await super.start(agentSession, room);
+    let sessionCreated = false;
+    try {
+      await super.start(agentSession, room);
 
-    const livekitUrl = options.livekitUrl ?? process.env.LIVEKIT_URL;
-    const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
-    const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
-      throw new Error(
-        'livekitUrl, livekitApiKey, and livekitApiSecret must be set by arguments or the LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET environment variables',
-      );
-    }
-    const jobCtx = getJobContext(false);
-    // `@livekit/rtc-node` `Room.name` is an empty string (not undefined) before the room
-    // connects, so use `||` to fall back to the job's room name in that case.
-    const roomName = room.name || jobCtx?.job.room?.name;
-    if (!roomName) {
-      throw new Error('failed to get room name');
-    }
+      const livekitUrl = options.livekitUrl ?? process.env.LIVEKIT_URL;
+      const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
+      const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
+      if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+        throw new Error(
+          'livekitUrl, livekitApiKey, and livekitApiSecret must be set by arguments or the LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET environment variables',
+        );
+      }
+      const jobCtx = getJobContext(false);
+      // `@livekit/rtc-node` `Room.name` is an empty string (not undefined) before the room
+      // connects, so use `||` to fall back to the job's room name in that case.
+      const roomName = room.name || jobCtx?.job.room?.name;
+      if (!roomName) {
+        throw new Error('failed to get room name');
+      }
 
-    let localParticipantIdentity: string | undefined;
-    let roomSid: string | undefined;
-    if (jobCtx) {
-      localParticipantIdentity =
-        jobCtx.agent?.identity ??
-        room.localParticipant?.identity ??
-        jobCtx.info.acceptArguments.identity;
-      roomSid = jobCtx.job.room?.sid;
-    } else if (room.isConnected) {
-      localParticipantIdentity = room.localParticipant?.identity;
-      roomSid = await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret);
-    } else {
-      throw new Error(
-        'AvatarSession.start() needs a connected room or an agent job context; connect the room before calling start()',
-      );
-    }
-    if (!localParticipantIdentity) {
-      throw new Error('failed to get local participant identity');
-    }
-    if (!roomSid) {
-      throw new Error('failed to get room sid');
-    }
+      let localParticipantIdentity: string | undefined;
+      let roomSid: string | undefined;
+      if (jobCtx) {
+        localParticipantIdentity =
+          jobCtx.agent?.identity ??
+          room.localParticipant?.identity ??
+          jobCtx.info.acceptArguments.identity;
+        roomSid = jobCtx.job.room?.sid;
+      } else if (room.isConnected) {
+        localParticipantIdentity = room.localParticipant?.identity;
+        roomSid = await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret);
+      } else {
+        throw new Error(
+          'AvatarSession.start() needs a connected room or an agent job context; connect the room before calling start()',
+        );
+      }
+      if (!localParticipantIdentity) {
+        throw new Error('failed to get local participant identity');
+      }
+      if (!roomSid) {
+        throw new Error('failed to get room sid');
+      }
 
-    const workerToken = await this.createWorkerToken({
-      livekitApiKey,
-      livekitApiSecret,
-      roomName,
-      localParticipantIdentity,
-    });
+      const workerToken = await this.createWorkerToken({
+        livekitApiKey,
+        livekitApiSecret,
+        roomName,
+        localParticipantIdentity,
+      });
 
-    const createResp = await this._createSession({
-      roomName,
-      roomSid,
-      livekitUrl,
-      workerToken,
-      agentIdentity: localParticipantIdentity,
-    });
+      const createResp = await this._createSession({
+        roomName,
+        roomSid,
+        livekitUrl,
+        workerToken,
+        agentIdentity: localParticipantIdentity,
+      });
+      sessionCreated = true;
 
-    this._sessionId = createResp.session_id ?? null;
-    this._providerSessionId = createResp.provider_session_id ?? null;
-    this._terminateToken = createResp.terminate_token ?? null;
-    const sampleRate = createResp.sample_rate ?? DEFAULT_SAMPLE_RATE;
+      this._sessionId = createResp.session_id ?? null;
+      this._providerSessionId = createResp.provider_session_id ?? null;
+      this._terminateToken = createResp.terminate_token ?? null;
+      const sampleRate = createResp.sample_rate ?? DEFAULT_SAMPLE_RATE;
 
-    if (!this._providerSessionId) {
-      this.logger.warn(
-        { provider: this.providerName, sessionId: this._sessionId },
-        'avatar gateway create response had no provider_session_id; this session cannot be explicitly terminated and will bill until its provider idle timeout',
-      );
-    } else if (!this._terminateToken) {
-      this.logger.warn(
+      if (!this._providerSessionId) {
+        this.logger.warn(
+          { provider: this.providerName, sessionId: this._sessionId },
+          'avatar gateway create response had no provider_session_id; this session cannot be explicitly terminated and will bill until its provider idle timeout',
+        );
+      } else if (!this._terminateToken) {
+        this.logger.warn(
+          {
+            provider: this.providerName,
+            sessionId: this._sessionId,
+            providerSessionId: this._providerSessionId,
+          },
+          'avatar gateway create response had no terminate_token; this session cannot be explicitly terminated and will bill until its provider idle timeout',
+        );
+      }
+
+      agentSession.output.audio = new DataStreamAudioOutput({
+        room,
+        destinationIdentity: this.avatarParticipantIdentity,
+        sampleRate,
+        waitRemoteTrack: TrackKind.KIND_VIDEO,
+        waitPlaybackStart: true,
+      });
+
+      this.logger.debug(
         {
           provider: this.providerName,
           sessionId: this._sessionId,
           providerSessionId: this._providerSessionId,
         },
-        'avatar gateway create response had no terminate_token; this session cannot be explicitly terminated and will bill until its provider idle timeout',
+        'inference avatar session created',
       );
+    } catch (error) {
+      if (!sessionCreated) {
+        try {
+          await super.aclose();
+        } finally {
+          this._started = false;
+        }
+      }
+      throw error;
     }
-
-    agentSession.output.audio = new DataStreamAudioOutput({
-      room,
-      destinationIdentity: this.avatarParticipantIdentity,
-      sampleRate,
-      waitRemoteTrack: TrackKind.KIND_VIDEO,
-      waitPlaybackStart: true,
-    });
-
-    this.logger.debug(
-      {
-        provider: this.providerName,
-        sessionId: this._sessionId,
-        providerSessionId: this._providerSessionId,
-      },
-      'inference avatar session created',
-    );
   }
 
   override async aclose(): Promise<void> {
