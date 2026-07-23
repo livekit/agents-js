@@ -1364,6 +1364,23 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     return resp.response.value;
   }
 
+  async fetchFrameworkInfo(): Promise<pb.SessionResponse_GetFrameworkInfoResponse> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'getFrameworkInfo',
+            value: new pb.SessionRequest_GetFrameworkInfo(),
+          },
+        }),
+    );
+    if (resp.response.case !== 'getFrameworkInfo') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
   async sendMessage(
     text: string,
     responseTimeout = 60000,
