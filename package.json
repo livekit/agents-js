@@ -51,10 +51,5 @@
     "vite": "^7.3.1",
     "vitest": "^4.0.17"
   },
-  "packageManager": "pnpm@9.7.0",
-  "pnpm": {
-    "patchedDependencies": {
-      "@changesets/assemble-release-plan": "patches/@changesets__assemble-release-plan.patch"
-    }
-  }
+  "packageManager": "pnpm@11.13.1"
 }
