@@ -91,6 +91,10 @@ describe('AvatarSession base', () => {
     override get avatarIdentity(): string {
       return 'avatar-identity';
     }
+
+    async rollbackStart(): Promise<void> {
+      await this._rollbackStart();
+    }
   }
 
   it('registers aclose with job shutdown callback', async () => {
@@ -113,6 +117,56 @@ describe('AvatarSession base', () => {
 
     await shutdownCallback?.();
     expect(acloseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers one shutdown callback across start retries', async () => {
+    const jobContext = mockJobContext();
+    const addShutdownCallback = vi.spyOn(jobContext, 'addShutdownCallback');
+    const session = new AvatarSession();
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
+
+    await session.start(agentSession.session, room.room);
+    await session.aclose();
+    await session.start(agentSession.session, room.room);
+
+    expect(addShutdownCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers a shutdown callback when retried in a different job context', async () => {
+    const firstJobContext = mockJobContext();
+    const firstAddShutdownCallback = vi.spyOn(firstJobContext, 'addShutdownCallback');
+    const session = new TestAvatarSession();
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
+
+    await session.start(agentSession.session, room.room);
+    await session.rollbackStart();
+
+    const secondJobContext = mockJobContext();
+    const secondAddShutdownCallback = vi.spyOn(secondJobContext, 'addShutdownCallback');
+    await session.start(agentSession.session, room.room);
+
+    expect(firstAddShutdownCallback).toHaveBeenCalledTimes(1);
+    expect(secondAddShutdownCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back start lifecycle without removing the avatar participant', async () => {
+    mockJobContext();
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
+    const session = new TestAvatarSession();
+    await session.start(agentSession.session, room.room);
+    room.connect();
+
+    await session.rollbackStart();
+
+    expect(removeParticipantMock).not.toHaveBeenCalled();
+    expect(agentSession.off).toHaveBeenCalledWith(...agentSession.on.mock.calls[0]!);
+    expect(room.off).toHaveBeenCalledWith(...room.on.mock.calls[0]!);
+
+    await session.start(agentSession.session, room.room);
+    expect(agentSession.on).toHaveBeenCalledTimes(2);
   });
 
   it('warns when avatar is started after AgentSession.start()', async () => {

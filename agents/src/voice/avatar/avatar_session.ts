@@ -37,6 +37,7 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   #room?: Room;
   #waitAvatarJoinAbort?: AbortController;
   #waitAvatarJoinPromise?: Promise<void>;
+  #shutdownCallbackContexts = new WeakSet<object>();
 
   get avatarIdentity(): string {
     return 'unknown';
@@ -56,7 +57,10 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   async start(agentSession: AgentSession, room: Room): Promise<unknown> {
     const jobCtx = getJobContext(false);
     if (jobCtx !== undefined) {
-      jobCtx.addShutdownCallback(() => this.aclose());
+      if (!this.#shutdownCallbackContexts.has(jobCtx)) {
+        jobCtx.addShutdownCallback(() => this.aclose());
+        this.#shutdownCallbackContexts.add(jobCtx);
+      }
     } else {
       this.#logger.debug(
         'AvatarSession started outside a job context; call aclose() manually to ' +
@@ -145,6 +149,17 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       }
     }
 
+    await this._rollbackStart();
+  }
+
+  /**
+   * Roll back base start lifecycle state without removing the avatar participant.
+   *
+   * Subclasses may use this when provisioning has an ambiguous outcome and must be retried.
+   *
+   * @internal
+   */
+  protected async _rollbackStart(): Promise<void> {
     if (this.#agentSession) {
       this.#agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
