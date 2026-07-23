@@ -444,7 +444,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    *
    * @param reason - Optional reason for shutdown
    */
-  shutdown(reason = '') {
+  shutdown(reason = 'user requested') {
     this.#onShutdown(reason);
   }
 
