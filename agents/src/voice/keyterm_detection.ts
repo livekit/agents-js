@@ -17,16 +17,8 @@ import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './event
 /**
  * Keyterm biasing for STTs that accept a term list.
  *
- * Can be passed as a plain object:
- *
- * ```ts
- * new AgentSession({
- *   keytermsOptions: {
- *     keyterms: ['LiveKit', 'Acme Corp'],
- *     keytermDetection: { enabled: true, turnInterval: 1 },
- *   },
- * });
- * ```
+ * @deprecated Use {@link STTContextOptions} (`new AgentSession({ sttContextOptions: ... })`)
+ * instead; its `keyterms` and `keytermDetection` keys are identical.
  */
 export interface KeytermsOptions {
   /** Static keyterms applied wherever the STT accepts a term list; never touched by detection. */
@@ -63,6 +55,33 @@ export interface KeytermDetectionOptions {
   timeout?: number;
 }
 
+/**
+ * Conversation-aware context for the STT.
+ *
+ * Can be passed as a plain object:
+ *
+ * ```ts
+ * new AgentSession({
+ *   sttContextOptions: {
+ *     keyterms: ['LiveKit', 'Acme Corp'],
+ *     keytermDetection: { enabled: true, turnInterval: 1 },
+ *     forwardChatContext: true,
+ *   },
+ * });
+ * ```
+ */
+export interface STTContextOptions {
+  /** Static keyterms applied wherever the STT accepts a term list; never touched by detection. */
+  keyterms?: string[];
+  /** LLM-based keyterm extraction, for STTs that accept a term list. */
+  keytermDetection?: KeytermDetectionOptions;
+  /**
+   * Forward conversation turns to STTs that consume context directly (e.g. AssemblyAI U3 Pro).
+   * Defaults to `true`; only STTs that advertise the `chatContext` capability act on it.
+   */
+  forwardChatContext?: boolean;
+}
+
 // bound a single pass so a stuck LLM call can't hold the single-flight guard forever and
 // stall detection for the rest of the call; a timed-out pass simply makes no change
 const DETECTION_TIMEOUT = 10_000;
@@ -86,10 +105,11 @@ export interface ResolvedKeytermDetectionOptions {
   timeout: number;
 }
 
-/** A fully-defaulted keyterms config. @internal */
-export interface ResolvedKeytermsOptions {
+/** A fully-defaulted STT-context config. @internal */
+export interface ResolvedSTTContextOptions {
   keyterms: string[];
   keytermDetection: ResolvedKeytermDetectionOptions;
+  forwardChatContext: boolean;
 }
 
 /** A pending term not confirmed within this many passes is dropped. @internal */
@@ -117,13 +137,26 @@ export function resolveDetection(
   };
 }
 
-/** Return a fully-defaulted keyterms config. @internal */
-export function resolveKeytermsOptions(config?: KeytermsOptions): ResolvedKeytermsOptions {
+/** Return a fully-defaulted STT-context config. @internal */
+export function resolveSTTContextOptions(config?: STTContextOptions): ResolvedSTTContextOptions {
   const cfg = config ?? {};
   return {
     keyterms: [...(cfg.keyterms ?? [])],
     keytermDetection: resolveDetection(cfg.keytermDetection),
+    forwardChatContext: cfg.forwardChatContext ?? true,
   };
+}
+
+/** Map deprecated `keytermsOptions` onto the new {@link STTContextOptions} shape. @internal */
+export function sttContextFromKeytermsOptions(config?: KeytermsOptions): STTContextOptions {
+  const out: STTContextOptions = {};
+  if (config?.keyterms !== undefined) {
+    out.keyterms = config.keyterms;
+  }
+  if (config?.keytermDetection !== undefined) {
+    out.keytermDetection = config.keytermDetection;
+  }
+  return out;
 }
 
 /**

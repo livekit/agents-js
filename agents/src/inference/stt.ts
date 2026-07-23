@@ -7,6 +7,7 @@ import type { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
+import { ChatMessage } from '../llm/index.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -19,6 +20,7 @@ import {
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -120,8 +122,10 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
-  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1750 chars. */
   agent_context?: string;
+  /** Prior turns carried as context; 0 disables carryover. Only supported with u3-rt-pro. */
+  previous_context_n_turns?: number;
   /** Isolate the primary voice. Only supported with u3-rt-pro. */
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
@@ -270,6 +274,17 @@ function keytermsExtraForModel(
   return { [key]: [...new Set([...existing, ...sessionKeyterms])] };
 }
 
+const ASSEMBLYAI_CARRYOVER_MODELS = [
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+] as const;
+
+const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
+
+function supportsChatContext(model: string | undefined): boolean {
+  return model === ASSEMBLYAI_CARRYOVER_MODELS[0] || model === ASSEMBLYAI_CARRYOVER_MODELS[1];
+}
+
 type _STTModels =
   | DeepgramModels
   | DeepgramFluxModels
@@ -412,19 +427,32 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
+    // Parse language from model string if provided: "provider/model:language".
+    let nextModel = opts?.model;
+    let nextLanguage = opts?.language;
+    let hasLanguageConflict = false;
+    if (typeof nextModel === 'string') {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(nextModel);
+      if (parsedLanguage !== undefined) {
+        hasLanguageConflict =
+          !!nextLanguage && !areLanguagesEquivalent(nextLanguage, parsedLanguage);
+        if (!hasLanguageConflict) {
+          nextLanguage = parsedLanguage as STTLanguages;
+        }
+        nextModel = parsedModel as TModel;
+      }
+    }
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms:
-        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
-        undefined,
+        keytermsExtraForModel(typeof nextModel === 'string' ? nextModel : undefined) !== undefined,
+      chatContext: supportsChatContext(typeof nextModel === 'string' ? nextModel : undefined),
     });
 
     const {
-      model,
-      language,
       baseURL,
       encoding = DEFAULT_ENCODING,
       sampleRate = DEFAULT_SAMPLE_RATE,
@@ -447,22 +475,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
-    // Parse language from model string if provided: "provider/model:language"
-    let nextModel = model;
-    let nextLanguage = language;
-    if (typeof nextModel === 'string') {
-      const [parsedModel, parsedLanguage] = parseSTTModelString(nextModel);
-      if (parsedLanguage !== undefined) {
-        if (nextLanguage && !areLanguagesEquivalent(nextLanguage, parsedLanguage)) {
-          this.#logger.warn(
-            '`language` is provided via both argument and model, using the one from the argument',
-            { language: nextLanguage, model: nextModel },
-          );
-        } else {
-          nextLanguage = parsedLanguage as STTLanguages;
-        }
-        nextModel = parsedModel as TModel;
-      }
+    if (hasLanguageConflict) {
+      this.#logger.warn(
+        '`language` is provided via both argument and model, using the one from the argument',
+        { language: nextLanguage, model: opts?.model },
+      );
     }
     const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
     this.vad = resolveVADForModel(nextModel, vad);
@@ -531,6 +548,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this._vadPromise = undefined;
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        chatContext: supportsChatContext(this.opts.model),
       });
     }
 
@@ -584,6 +602,25 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       } else {
         stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
       }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) {
+      return;
+    }
+
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      let text = chatItem.textContent;
+      if (text.length > ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS) {
+        this.#logger.debug(
+          { fromChars: text.length, toChars: ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS },
+          'truncating agent_context carryover',
+        );
+        text = text.slice(-ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS);
+      }
+      this.updateOptions({ modelOptions: { agent_context: text } as STTOptions<TModel> });
     }
   }
 

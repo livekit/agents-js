@@ -154,6 +154,7 @@ export interface STTError {
 export type STTCallbacks = {
   ['metrics_collected']: (metrics: STTMetrics) => void;
   ['error']: (error: STTError) => void;
+  ['capabilities_changed']: (capabilities: STTCapabilities) => void;
 };
 
 /**
@@ -180,7 +181,20 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   }
 
   protected updateCapabilities(caps: Partial<STTCapabilities>): void {
-    this.#capabilities = { ...this.#capabilities, ...caps };
+    const next = { ...this.#capabilities, ...caps };
+    const changed =
+      next.streaming !== this.#capabilities.streaming ||
+      next.interimResults !== this.#capabilities.interimResults ||
+      next.alignedTranscript !== this.#capabilities.alignedTranscript ||
+      next.diarization !== this.#capabilities.diarization ||
+      next.keyterms !== this.#capabilities.keyterms ||
+      next.chatContext !== this.#capabilities.chatContext;
+    if (!changed) {
+      return;
+    }
+
+    this.#capabilities = next;
+    this.emit('capabilities_changed', next);
   }
 
   /**

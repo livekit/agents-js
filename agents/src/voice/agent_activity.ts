@@ -619,18 +619,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.stt instanceof STT) {
       // bind the session's keyterm detector to this activity's STT (detection uses its
-      // own LLM, configured via keytermsOptions, not the agent's)
+      // own LLM, configured via sttContextOptions, not the agent's)
       this.agentSession._keytermDetector.start(this.agentSession, this.stt);
 
-      // forward conversation turns to STTs that consume context natively; gated by the
-      // STT's own capability (toggled via the STT's args). stateless and activity-scoped,
-      // so it lives here rather than in the detector.
-      if (this.stt.capabilities.chatContext) {
-        this.agentSession.on(
-          AgentSessionEventTypes.ConversationItemAdded,
-          this.pushConversationItemToStt,
-        );
-      }
+      // Forward conversation turns to STTs that consume context natively. Keep the
+      // listener synchronized with dynamic capability changes and the session opt-out.
+      this.stt.on('capabilities_changed', this.syncConversationItemForwarding);
+      this.syncConversationItemForwarding();
     }
 
     // Bundled-default VAD is treated as absent when the RealtimeModel does
@@ -1217,6 +1212,23 @@ export class AgentActivity implements RecognitionHooks {
   private pushConversationItemToStt = (ev: ConversationItemAddedEvent): void => {
     if (this.stt instanceof STT) {
       this.stt._pushConversationItem(ev);
+    }
+  };
+
+  private syncConversationItemForwarding = (): void => {
+    this.agentSession.off(
+      AgentSessionEventTypes.ConversationItemAdded,
+      this.pushConversationItemToStt,
+    );
+    if (
+      this.stt instanceof STT &&
+      this.stt.capabilities.chatContext &&
+      this.agentSession.sessionOptions.sttContextOptions.forwardChatContext
+    ) {
+      this.agentSession.on(
+        AgentSessionEventTypes.ConversationItemAdded,
+        this.pushConversationItemToStt,
+      );
     }
   };
 
@@ -4640,6 +4652,7 @@ export class AgentActivity implements RecognitionHooks {
     if (this.stt instanceof STT) {
       this.stt.off('metrics_collected', this.onMetricsCollected);
       this.stt.off('error', this.onModelError);
+      this.stt.off('capabilities_changed', this.syncConversationItemForwarding);
       this.agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
         this.pushConversationItemToStt,
