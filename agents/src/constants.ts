@@ -11,12 +11,6 @@ export const TOPIC_CHAT = 'lk.chat';
 export const ATTRIBUTE_AGENT_STATE = 'lk.agent.state';
 export const ATTRIBUTE_AGENT_NAME = 'lk.agent.name';
 
-/** Marks the simulator participant; the SDK shuts the job down when it leaves. */
-export const ATTRIBUTE_SIMULATOR = 'lk.simulator';
-/** The job attribute carrying the run's protojson `SimulationDispatch`,
- * resolved by `JobContext.simulationContext()`. */
-export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
-
 export const TOPIC_CLIENT_EVENTS = 'lk.agent.events';
 export const RPC_GET_SESSION_STATE = 'lk.agent.get_session_state';
 export const RPC_GET_CHAT_HISTORY = 'lk.agent.get_chat_history';
