@@ -445,6 +445,7 @@ describe('RealtimeSession input_audio_transcription delta handling', () => {
     item_id: string,
     transcript: string,
     content_index = 0,
+    status?: string,
   ): api_proto.ConversationItemInputAudioTranscriptionCompletedEvent {
     return {
       type: 'conversation.item.input_audio_transcription.completed',
@@ -452,8 +453,23 @@ describe('RealtimeSession input_audio_transcription delta handling', () => {
       item_id,
       content_index,
       transcript,
+      status,
     };
   }
+
+  it('emits in-progress completed events as interim transcripts', () => {
+    const chatMessage = new llm.ChatMessage({ role: 'user', content: '', id: 'item_a' });
+    const session = createTranscriptSession({ chatItems: { item_a: chatMessage } });
+    const emissions: llm.InputTranscriptionCompleted[] = [];
+    session.on('input_audio_transcription_completed', (ev) => emissions.push(ev));
+
+    session.handleConversationItemInputAudioTranscriptionCompleted(
+      completed('item_a', 'partial', 0, 'in_progress'),
+    );
+
+    expect(emissions).toEqual([{ itemId: 'item_a', transcript: 'partial', isFinal: false }]);
+    expect(chatMessage.content).toEqual(['']);
+  });
 
   it('accumulates partial transcripts across delta events for the same item_id', () => {
     const session = createTranscriptSession();
