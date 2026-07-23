@@ -1174,6 +1174,27 @@ export class SessionHost {
 // RemoteSession (protobuf-based client-side interface)
 // ===========================================================================
 
+/** Error returned by {@link RemoteSession.finalizeSimulation} when the agent's
+ * `onSimulationEnd` callback fails.
+ *
+ * The callback error remains the thrown error, while `userVerdict` preserves a
+ * verdict recorded before that failure.
+ *
+ * @experimental
+ */
+export class FinalizeSimulationError extends Error {
+  readonly userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+
+  constructor(
+    message: string,
+    userVerdict?: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict,
+  ) {
+    super(message);
+    this.name = 'FinalizeSimulationError';
+    this.userVerdict = userVerdict;
+  }
+}
+
 /** @experimental */
 export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<RemoteSessionCallbacks>) {
   private readonly transport: SessionTransport;
@@ -1288,7 +1309,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }
   }
 
-  private async sendRequest(
+  private async sendRequestRaw(
     buildReq: (requestId: string) => pb.SessionRequest,
     timeout = 60000,
   ): Promise<pb.SessionResponse> {
@@ -1312,14 +1333,21 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }, timeout);
 
     try {
-      const response = await future.await;
-      if (response.error) {
-        throw new Error(response.error);
-      }
-      return response;
+      return await future.await;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async sendRequest(
+    buildReq: (requestId: string) => pb.SessionRequest,
+    timeout = 60000,
+  ): Promise<pb.SessionResponse> {
+    const response = await this.sendRequestRaw(buildReq, timeout);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response;
   }
 
   async fetchSessionState(): Promise<pb.SessionResponse_GetSessionStateResponse> {
@@ -1419,7 +1447,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     provisionalReason?: string;
     timeout?: number;
   }): Promise<pb.SessionResponse_FinalizeSimulationResponse> {
-    const resp = await this.sendRequest(
+    const resp = await this.sendRequestRaw(
       (id) =>
         new pb.SessionRequest({
           requestId: id,
@@ -1433,6 +1461,11 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
       timeout,
     );
+    const userVerdict =
+      resp.response.case === 'finalizeSimulation' ? resp.response.value.userVerdict : undefined;
+    if (resp.error) {
+      throw new FinalizeSimulationError(resp.error, userVerdict);
+    }
     if (resp.response.case !== 'finalizeSimulation') {
       throw new Error('unexpected response type');
     }

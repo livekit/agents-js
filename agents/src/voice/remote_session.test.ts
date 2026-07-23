@@ -14,6 +14,7 @@ import {
 import { initializeLogger } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
+import { FinalizeSimulationError } from './index.js';
 import {
   RemoteSession,
   SessionHost,
@@ -185,6 +186,11 @@ class FakeTransport extends SessionTransport {
   private readonly inbound: pb.AgentSessionMessage[] = [];
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
   private closed = false;
+  private peer?: FakeTransport;
+
+  connect(peer: FakeTransport): void {
+    this.peer = peer;
+  }
 
   push(msg: pb.AgentSessionMessage): void {
     if (this.waitingResolve) {
@@ -198,6 +204,7 @@ class FakeTransport extends SessionTransport {
 
   override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
     this.sent.push(msg);
+    this.peer?.push(msg);
   }
 
   override async close(): Promise<void> {
@@ -228,51 +235,131 @@ class FakeTransport extends SessionTransport {
   }
 }
 
-describe('RemoteSession finalizeSimulation', () => {
-  it('round-trips the provisional verdict and returns the agent verdict', async () => {
-    const transport = new FakeTransport();
-    const remote = new RemoteSession(transport);
-    await remote.start();
+function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
+  const client = new FakeTransport();
+  const host = new FakeTransport();
+  client.connect(host);
+  host.connect(client);
+  return [client, host];
+}
 
-    const finalize = remote.finalizeSimulation({
-      provisionalSuccess: true,
-      provisionalReason: 'conversation passed',
+async function startConnectedClientHost(ctx: JobContext) {
+  const [clientTransport, hostTransport] = createConnectedTransportPair();
+  const remote = new RemoteSession(clientTransport);
+  const host = new SessionHost(hostTransport);
+  host.registerSession(fakeAgentSession());
+  await runWithJobContextAsync(ctx, async () => host.start());
+  await remote.start();
+
+  return { remote, host, clientTransport, hostTransport };
+}
+
+describe('RemoteSession and SessionHost finalizeSimulation', () => {
+  it('round-trips a normal finalize through connected transports', async () => {
+    const ctx = fakeSimJobContext((simCtx) => {
+      expect(simCtx.simulatorVerdict).toEqual({
+        success: true,
+        reason: 'conversation passed',
+      });
+      simCtx.fail('backend state diverged');
     });
-    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+    const { remote, host, clientTransport, hostTransport } = await startConnectedClientHost(ctx);
 
-    const request = transport.sent[0]!.message.value as pb.SessionRequest;
-    expect(request.request.case).toBe('finalizeSimulation');
-    expect(request.request.value).toEqual(
-      new pb.SessionRequest_FinalizeSimulation({
-        provisionalSuccess: true,
-        provisionalReason: 'conversation passed',
-      }),
-    );
+    try {
+      await expect(
+        remote.finalizeSimulation({
+          provisionalSuccess: true,
+          provisionalReason: 'conversation passed',
+        }),
+      ).resolves.toMatchObject({
+        userVerdict: { success: false, reason: 'backend state diverged' },
+      });
+      expect(clientTransport.sent).toHaveLength(1);
+      expect(hostTransport.sent).toHaveLength(1);
+    } finally {
+      await remote.close();
+      await host.close();
+    }
+  });
 
-    transport.push(
-      new pb.AgentSessionMessage({
-        message: {
-          case: 'response',
-          value: new pb.SessionResponse({
-            requestId: request.requestId,
-            response: {
-              case: 'finalizeSimulation',
-              value: new pb.SessionResponse_FinalizeSimulationResponse({
-                userVerdict: new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
-                  success: false,
-                  reason: 'backend state diverged',
-                }),
-              }),
-            },
-          }),
+  it('propagates a callback error through connected transports', async () => {
+    const ctx = fakeSimJobContext(() => {
+      throw new Error('user callback exploded');
+    });
+    const { remote, host } = await startConnectedClientHost(ctx);
+
+    try {
+      const error = await remote
+        .finalizeSimulation({ provisionalSuccess: true })
+        .catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(FinalizeSimulationError);
+      expect(error).toMatchObject({
+        name: 'FinalizeSimulationError',
+        message: 'user callback exploded',
+        userVerdict: undefined,
+      });
+    } finally {
+      await remote.close();
+      await host.close();
+    }
+  });
+
+  it('propagates the callback error without losing a fail-then-throw veto', async () => {
+    const ctx = fakeSimJobContext((simCtx) => {
+      simCtx.fail('backend state diverged');
+      throw new Error('cleanup exploded');
+    });
+    const { remote, host } = await startConnectedClientHost(ctx);
+
+    try {
+      const error = await remote
+        .finalizeSimulation({ provisionalSuccess: true })
+        .catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(FinalizeSimulationError);
+      expect(error).toMatchObject({
+        name: 'FinalizeSimulationError',
+        message: 'cleanup exploded',
+        userVerdict: {
+          success: false,
+          reason: 'backend state diverged',
         },
-      }),
-    );
+      });
+    } finally {
+      await remote.close();
+      await host.close();
+    }
+  });
 
-    await expect(finalize).resolves.toMatchObject({
-      userVerdict: { success: false, reason: 'backend state diverged' },
-    });
-    await remote.close();
+  it('keeps generic request errors generic', async () => {
+    const [clientTransport, serverTransport] = createConnectedTransportPair();
+    const remote = new RemoteSession(clientTransport);
+    await remote.start();
+    const respond = (async () => {
+      const { value: message } = await serverTransport[Symbol.asyncIterator]().next();
+      const request = message.message.value as pb.SessionRequest;
+      await serverTransport.sendMessage(
+        new pb.AgentSessionMessage({
+          message: {
+            case: 'response',
+            value: new pb.SessionResponse({
+              requestId: request.requestId,
+              error: 'generic request exploded',
+            }),
+          },
+        }),
+      );
+    })();
+
+    try {
+      const error = await remote.fetchSessionState().catch((error: unknown) => error);
+      await respond;
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(FinalizeSimulationError);
+      expect(error).toMatchObject({ message: 'generic request exploded' });
+    } finally {
+      await remote.close();
+      await serverTransport.close();
+    }
   });
 });
 
