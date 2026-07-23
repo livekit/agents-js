@@ -56,6 +56,7 @@ export interface AttachedToolExecutor<UserData = UnknownUserData> {
 export class RunContext<UserData = UnknownUserData> {
   private readonly initialStepIdx: number;
   private _executor?: AttachedToolExecutor<UserData>;
+  private _executorAttachment?: object;
   private _firstUpdateFuture?: Future<unknown>;
   private _updates: Array<[FunctionCall, FunctionCallOutput]> = [];
   private _fillerSchedulers: FillerScheduler<UserData>[] = [];
@@ -206,16 +207,21 @@ export class RunContext<UserData = UnknownUserData> {
   _attachExecutor(
     executor: AttachedToolExecutor<UserData>,
     firstUpdateFuture: Future<unknown>,
-  ): void {
+  ): object {
     if (this._firstUpdateFuture !== undefined) {
       throw new Error('Executor already attached');
     }
+    const attachment = {};
     this._executor = executor;
+    this._executorAttachment = attachment;
     this._firstUpdateFuture = firstUpdateFuture;
+    return attachment;
   }
 
-  _detachExecutor(): void {
+  _detachExecutor(attachment: object): void {
+    if (this._executorAttachment !== attachment) return;
     this._executor = undefined;
+    this._executorAttachment = undefined;
     this._firstUpdateFuture = undefined;
   }
 

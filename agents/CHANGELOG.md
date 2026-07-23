@@ -1,5 +1,43 @@
 # @livekit/agents
 
+## 1.5.5
+
+### Patch Changes
+
+- Default AMD to wait for endpointing backstop before settling after speech. - [#2089](https://github.com/livekit/agents-js/pull/2089) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent interrupted voice replies from deadlocking when audio recording wraps synchronized playout. - [#2091](https://github.com/livekit/agents-js/pull/2091) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add raw chat message text access and strip LiveKit expression markup from assistant text content. - [#2087](https://github.com/livekit/agents-js/pull/2087) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve custom OpenTelemetry tracer providers when LiveKit Cloud tracing is enabled, and support sharing an OpenTelemetry 2.x provider with LiveKit Cloud via the `registerSpanProcessor` and `createCloudSpanProcessor` options of `setTracerProvider` together with the new `FanoutSpanProcessor` helper. - [#2051](https://github.com/livekit/agents-js/pull/2051) ([@dtran26](https://github.com/dtran26))
+
+- Prevent in-flight tool calls from being re-issued on later turns and preserve completed tool outputs when a turn is interrupted. - [#2077](https://github.com/livekit/agents-js/pull/2077) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(stt): propagate fallback stream start offset - [#1928](https://github.com/livekit/agents-js/pull/1928) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add job, simulation, and redaction telemetry metadata to session recording uploads. - [#2079](https://github.com/livekit/agents-js/pull/2079) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.4
+
+### Patch Changes
+
+- Skip warning when avatar participant removal finds no participant in the room. - [#2072](https://github.com/livekit/agents-js/pull/2072) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- End uncommitted `user_turn` spans when audio recognition closes so speech detected without a transcript is still exported to observability. - [#2062](https://github.com/livekit/agents-js/pull/2062) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Keep dynamic endpointing maxDelay fixed while learning minDelay. - [#2073](https://github.com/livekit/agents-js/pull/2073) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Include function names in remote session function call output protos. - [#2078](https://github.com/livekit/agents-js/pull/2078) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Reset the user-away timer when a final STT transcript arrives while the user and agent are listening. - [#2063](https://github.com/livekit/agents-js/pull/2063) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Respect `outputOptions.audioPublishOptions` when publishing the agent's audio track. `ParticipantAudioOutput.publishTrack()` previously ignored the configured `trackPublishOptions` and always published with hardcoded defaults, making it impossible to disable DTX/RED on the output track. - [#2076](https://github.com/livekit/agents-js/pull/2076) ([@adaro](https://github.com/adaro))
+
+- Strip Gemma reasoning markers from streamed inference output. - [#2071](https://github.com/livekit/agents-js/pull/2071) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add an optional `roomName` option to `WarmTransferTask`, allowing the human-agent briefing room to be pre-created with custom configuration (e.g. an egress request to record the transfer leg) before the task dials the human agent. - [#2056](https://github.com/livekit/agents-js/pull/2056) ([@toubatbrian](https://github.com/toubatbrian))
+
 ## 1.5.3
 
 ### Patch Changes

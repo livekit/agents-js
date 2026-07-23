@@ -14,7 +14,7 @@ import {
   logMetrics,
   tool,
 } from '@livekit/agents';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -135,7 +135,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: {
         deleteRoomOnClose: true,
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: krisp.voiceIsolation(),
       },
     });
 

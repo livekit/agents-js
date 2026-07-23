@@ -38,6 +38,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   type MessageGeneration,
+  RealtimeError,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -122,6 +123,8 @@ import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './gene
 import {
   type _AudioOut,
   type _TextOut,
+  _injectRunningToolCalls,
+  _stripRunningToolCalls,
   applyInstructionsModality,
   forwardedTextFor,
   performAudioForwarding,
@@ -137,6 +140,7 @@ import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
   cancelTaskTool,
+  getRunningTasks,
   getRunningTasksTool,
   hasCancellableTool,
 } from './tool_executor.js';
@@ -2156,7 +2160,7 @@ export class AgentActivity implements RecognitionHooks {
           this.realtimeReplyTask({
             speechHandle: handle,
             // TODO(brian): support llm.ChatMessage for the realtime model
-            userInput: userMessage?.textContent,
+            userInput: userMessage?.rawTextContent,
             instructions,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
@@ -2432,7 +2436,7 @@ export class AgentActivity implements RecognitionHooks {
       // make sure the onUserTurnCompleted didn't change some request parameters
       // otherwise invalidate the preemptive generation
       if (
-        preemptive.info.newTranscript === userMessage?.textContent &&
+        preemptive.info.newTranscript === userMessage?.rawTextContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
         preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
@@ -2710,7 +2714,7 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
     if (newMessage) {
-      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
+      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.rawTextContent || '');
     }
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
@@ -2749,6 +2753,8 @@ export class AgentActivity implements RecognitionHooks {
     // apply the correct variant of the instructions for the turn's input modality
     applyInstructionsModality(chatCtx, { modality: speechHandle.inputDetails.modality });
 
+    const runningCalls = getRunningTasks(this.agentSession);
+    _injectRunningToolCalls(chatCtx, runningCalls);
     const tasks: Array<Task<void>> = [];
     const [llmTask, llmGenData] = performLLMInference(
       // preserve  `this` context in llmNode
@@ -3182,6 +3188,7 @@ export class AgentActivity implements RecognitionHooks {
         speechHandle._markGenerationDone();
       }
       await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle, replyStartedAt);
       return;
     }
 
@@ -3227,17 +3234,13 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle._markGenerationDone();
     }
 
-    if (speechHandle.interrupted) {
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
-      return;
-    }
-
-    this._backgroundSpeeches.add(speechHandle);
-    try {
-      await executeToolsTask.result;
-    } finally {
-      this._backgroundSpeeches.delete(speechHandle);
-    }
+    const toolExecutionCompleted = await this._waitForToolExecution({
+      executeToolsTask,
+      toolOutput,
+      speechHandle,
+      createdAt: replyStartedAt,
+    });
+    if (!toolExecutionCompleted) return;
 
     if (toolOutput.output.length === 0) return;
 
@@ -3270,6 +3273,7 @@ export class AgentActivity implements RecognitionHooks {
       ...functionToolsExecutedEvent.functionCallOutputs,
     ] as ChatItem[];
     if (shouldGenerateToolReply) {
+      _stripRunningToolCalls(chatCtx);
       chatCtx.insert(toolMessages);
 
       // Increment step count on the existing handle.
@@ -3667,12 +3671,18 @@ export class AgentActivity implements RecognitionHooks {
 
         traceTextParts.push(forwardedText);
         if (addToChatCtx) {
+          const assistantMetrics: MetricsReport = {};
+          if (ev.responseId) {
+            assistantMetrics.providerRequestIds = [ev.responseId];
+          }
+
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
             id: output.message.messageId,
             interrupted,
             createdAt: startedSpeakingAt,
+            metrics: assistantMetrics,
           });
           this.agent._chatCtx.insert(message);
           speechHandle._itemAdded([message]);
@@ -3937,6 +3947,75 @@ export class AgentActivity implements RecognitionHooks {
     this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
+  /** @internal */
+  async _waitForToolExecution({
+    executeToolsTask,
+    toolOutput,
+    speechHandle,
+    createdAt,
+  }: {
+    executeToolsTask: Pick<Task<void>, 'result' | 'cancelAndWait'>;
+    toolOutput: ToolOutput;
+    speechHandle: SpeechHandle;
+    createdAt: number;
+  }): Promise<boolean> {
+    if (speechHandle.interrupted) {
+      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
+      return false;
+    }
+
+    this._backgroundSpeeches.add(speechHandle);
+    try {
+      await executeToolsTask.result;
+    } finally {
+      this._backgroundSpeeches.delete(speechHandle);
+    }
+
+    if (speechHandle.interrupted) {
+      this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
+      return false;
+    }
+    return true;
+  }
+
+  /** @internal */
+  _commitInterruptedToolOutputs(
+    toolOutput: ToolOutput,
+    speechHandle: SpeechHandle,
+    createdAt: number,
+  ): void {
+    const interruptedHandoffCallIds = toolOutput.output
+      .filter((output) => output.agentTask !== undefined)
+      .map((output) => output.toolCall.callId);
+    if (interruptedHandoffCallIds.length > 0) {
+      const interruptedHandoffCallIdSet = new Set(interruptedHandoffCallIds);
+      for (const chatCtx of [this.agent._chatCtx, this.agentSession.history]) {
+        chatCtx.items = chatCtx.items.filter(
+          (item) => item.type !== 'function_call' || !interruptedHandoffCallIdSet.has(item.callId),
+        );
+      }
+    }
+    const completedOutputs = toolOutput.output.filter((output) => output.agentTask === undefined);
+    if (completedOutputs.length === 0) return;
+    const { functionToolsExecutedEvent } = this.summarizeToolExecutionOutput(
+      { ...toolOutput, output: completedOutputs },
+      speechHandle,
+    );
+    this.agentSession.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      functionToolsExecutedEvent,
+    );
+    const outputs = functionToolsExecutedEvent.functionCallOutputs;
+    for (const output of outputs) {
+      output.createdAt = createdAt;
+    }
+    if (outputs.length > 0) {
+      this.agent._chatCtx.insert(outputs);
+      this.agentSession._toolItemsAdded(outputs);
+    }
+  }
+
   private summarizeToolExecutionOutput(toolOutput: ToolOutput, speechHandle: SpeechHandle) {
     const functionToolsExecutedEvent = createFunctionToolsExecutedEvent({
       functionCalls: [],
@@ -4014,7 +4093,23 @@ export class AgentActivity implements RecognitionHooks {
         role: 'user',
         content: userInput,
       });
-      await this.realtimeSession.updateChatCtx(chatCtx);
+      try {
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        if (error instanceof RealtimeError) {
+          this.logger.warn(
+            { error: error.message },
+            'failed to update the chat context before generating the reply',
+          );
+        } else {
+          this.logger.error(
+            { error },
+            'failed to update the chat context before generating the reply',
+          );
+          speechHandle._markDone(error);
+          return;
+        }
+      }
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }

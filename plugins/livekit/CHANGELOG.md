@@ -1,5 +1,21 @@
 # @livekit/agents-plugin-livekit
 
+## 1.5.5
+
+### Patch Changes
+
+- Add raw chat message text access and strip LiveKit expression markup from assistant text content. - [#2087](https://github.com/livekit/agents-js/pull/2087) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`8d0f5ae`](https://github.com/livekit/agents-js/commit/8d0f5ae72ff15ab245e77ec466f2fe746dd2d151), [`82d93d0`](https://github.com/livekit/agents-js/commit/82d93d02914a81f216e22c10eb9a28e79885416a), [`4c718be`](https://github.com/livekit/agents-js/commit/4c718be49cf5b83f3c0e55ce8ef654bf5eb047d1), [`687ddf7`](https://github.com/livekit/agents-js/commit/687ddf7703401ab59d99c008bafb6c529dfcf6f6), [`3346ff1`](https://github.com/livekit/agents-js/commit/3346ff16e2a09b223286794a5e0d1e1b2b6d8758), [`71a19e0`](https://github.com/livekit/agents-js/commit/71a19e0a7bfb6035d4ab9f797cfc5fe69fda1ab2), [`f4190ec`](https://github.com/livekit/agents-js/commit/f4190ec583e224e0942e2a594b6a332846f84ac7)]:
+  - @livekit/agents@1.5.5
+
+## 1.5.4
+
+### Patch Changes
+
+- Updated dependencies [[`41411c8`](https://github.com/livekit/agents-js/commit/41411c8d61712297b5b89320f93782dda0d3274b), [`3750be5`](https://github.com/livekit/agents-js/commit/3750be58e037c8a209e80ee86b467f8ee1237c2f), [`0f1e7ca`](https://github.com/livekit/agents-js/commit/0f1e7ca9dccf7028c9c5441fe2f7294c22375c25), [`f7eaf9c`](https://github.com/livekit/agents-js/commit/f7eaf9c46344e8dc6cbf459bb5757ec860d5f087), [`1e111d7`](https://github.com/livekit/agents-js/commit/1e111d73800482bab71c4509a56e2e24e8fe2271), [`5724826`](https://github.com/livekit/agents-js/commit/5724826141fc8e69cb66afc65121183c41c5623a), [`65aa60f`](https://github.com/livekit/agents-js/commit/65aa60fadc9676af9585ab2df427ba19690c89d1), [`d34130f`](https://github.com/livekit/agents-js/commit/d34130ff3f5c70bd30165dd93dc245693e918184)]:
+  - @livekit/agents@1.5.4
+
 ## 1.5.3
 
 ### Patch Changes

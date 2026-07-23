@@ -55,6 +55,7 @@ import {
   DEFAULT_SESSION_CONNECT_OPTIONS,
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
+  recordingEnabled,
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
@@ -127,12 +128,14 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * All keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Redaction defaults to the project setting; `false` is ignored when
+ * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
  * - `record: { audio: true, traces: false }` — granular
+ * - `record: { redaction: true }` — enable redaction for the session
  */
 export interface RecordingOptions {
   /** Record session audio. Defaults to `true`. */
@@ -143,6 +146,8 @@ export interface RecordingOptions {
   logs?: boolean;
   /** Upload the conversation transcript (chat history). Defaults to `true`. */
   transcript?: boolean;
+  /** Enable redaction. `false` does not disable project redaction. */
+  redaction?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -153,6 +158,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   traces: true,
   logs: true,
   transcript: true,
+  redaction: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -160,6 +166,7 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   traces: false,
   logs: false,
   transcript: false,
+  redaction: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
@@ -481,12 +488,7 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return (
-      this._recordingOptions.audio ||
-      this._recordingOptions.traces ||
-      this._recordingOptions.logs ||
-      this._recordingOptions.transcript
-    );
+    return recordingEnabled(this._recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -868,7 +870,7 @@ export class AgentSession<
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
+      } else if (recordingEnabled(this._recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
@@ -1669,9 +1671,13 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this._userState === 'away' && ev.isFinal) {
-      this.logger.debug('User returned from away state due to speech input');
-      this._updateUserState('listening');
+    if (ev.isFinal && this._userState !== 'speaking') {
+      if (this._userState === 'away') {
+        this.logger.debug('User returned from away state due to speech input');
+        this._updateUserState('listening');
+      } else if (this._userState === 'listening' && this._agentState === 'listening') {
+        this._setUserAwayTimer();
+      }
     }
   }
 

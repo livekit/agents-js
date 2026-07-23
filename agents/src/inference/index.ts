@@ -24,6 +24,15 @@ export {
 export { VAD, type VADOptions, type VADModels } from './vad.js';
 
 export {
+  AvatarSession,
+  parseAvatarModel,
+  type AvatarModel,
+  type AvatarSessionOptions,
+  type AvatarSessionStartOptions,
+  type LemonSliceOptions,
+} from './avatar.js';
+
+export {
   LLM,
   LLMStream,
   type ChatCompletionOptions,

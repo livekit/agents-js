@@ -249,3 +249,33 @@ describe('simulator participant lifecycle', () => {
     expect(onShutdown).not.toHaveBeenCalled();
   });
 });
+
+describe('JobContext telemetry metadata', () => {
+  it('includes redaction when the recording option enables it', () => {
+    const ctx = createJobContext();
+
+    expect(
+      ctx._otelMetadata({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: true,
+      }),
+    ).toEqual({ 'lk.redaction.enabled': true });
+  });
+
+  it('includes simulation when the job has simulation dispatch metadata', () => {
+    const ctx = createJobContext({
+      job: {
+        id: 'job-id',
+        room: { name: 'assigned-room' },
+        attributes: {
+          'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'sim-run' }),
+        },
+      },
+    } as unknown as Partial<RunningJobInfo>);
+
+    expect(ctx._otelMetadata()).toEqual({ 'lk.simulation.enabled': true });
+  });
+});
