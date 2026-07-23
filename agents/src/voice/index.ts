@@ -12,6 +12,7 @@ export {
   type AgentOptions,
   type AgentTaskContext,
   type AgentTaskCreateOptions,
+  type AgentUpdateOptions,
   type ModelSettings,
 } from './agent.js';
 export * from './amd.js';
