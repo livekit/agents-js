@@ -120,6 +120,7 @@ export class AvatarSession extends BaseAvatarSession {
   private readonly avatarParticipantIdentity: string;
   private readonly avatarParticipantName: string;
 
+  private _started = false;
   private _sessionId: string | null = null;
   private _providerSessionId: string | null = null;
   private _terminateToken: string | null = null;
@@ -186,11 +187,15 @@ export class AvatarSession extends BaseAvatarSession {
     room: Room,
     options: AvatarSessionStartOptions = {},
   ): Promise<void> {
-    if (this._sessionId !== null || this._providerSessionId !== null) {
+    // Set synchronously before any await: two overlapping start() calls must not both
+    // pass the guard and create two separately-billed provider sessions. The session ids
+    // used to arrive only after several awaits (token mint, sid resolution, gateway create).
+    if (this._started) {
       throw new Error(
         'AvatarSession.start() may only be called once per instance; create a new AvatarSession to start another avatar',
       );
     }
+    this._started = true;
 
     await super.start(agentSession, room);
 
@@ -290,6 +295,7 @@ export class AvatarSession extends BaseAvatarSession {
   override async aclose(): Promise<void> {
     const providerSessionId = this._providerSessionId;
     const terminateToken = this._terminateToken;
+    let terminateError: unknown;
     try {
       if (providerSessionId && terminateToken) {
         try {
@@ -297,10 +303,7 @@ export class AvatarSession extends BaseAvatarSession {
           this._providerSessionId = null;
           this._terminateToken = null;
         } catch (error) {
-          this.logger.warn(
-            { error, provider: this.providerName, providerSessionId },
-            'failed to terminate inference avatar session; it will keep billing until its provider idle timeout unless aclose() is called again',
-          );
+          terminateError = error;
         }
       } else if (providerSessionId) {
         this.logger.debug(
@@ -310,6 +313,19 @@ export class AvatarSession extends BaseAvatarSession {
       }
     } finally {
       await super.aclose();
+    }
+
+    if (terminateError !== undefined) {
+      // Rethrow after base cleanup so a failed terminate escalates through the
+      // job-shutdown handler (logger.error 'error while shutting down the job')
+      // rather than being a silent warn. _terminateSession has already retried; the
+      // provider session will keep billing until its idle timeout.
+      throw new Error(
+        `failed to terminate inference avatar session after retries ` +
+          `(provider=${this.providerName}, providerSessionId=${providerSessionId}); ` +
+          `it will keep billing until its provider idle timeout`,
+        { cause: terminateError },
+      );
     }
   }
 
@@ -353,48 +369,26 @@ export class AvatarSession extends BaseAvatarSession {
       payload.extra_kwargs = extra;
     }
 
+    // Idempotency-Key stays stable across retries so a replayed create resolves to the
+    // same gateway session instead of provisioning a second paid one.
     const idempotencyKey = randomUUID().replaceAll('-', '');
     const url = `${this.baseURL.replace(/\/$/, '')}/avatar/sessions`;
-    let lastError: Error | undefined;
-    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
-      try {
-        const response = await this.postJson(url, payload, {
-          ...(await this.authHeaders()),
-          'Idempotency-Key': idempotencyKey,
-        });
-        return (await response.json()) as CreateSessionResponse;
-      } catch (error) {
-        const apiError = toAPIError(
-          error,
-          `avatar gateway create timed out after attempt ${i + 1}`,
-        );
-        lastError = apiError;
-        if (apiError instanceof APIError && !apiError.retryable) {
-          throw apiError;
-        }
-        this.logger.warn(
-          { provider: this.providerName, error: String(apiError) },
-          apiError instanceof APITimeoutError
-            ? 'avatar gateway request timed out'
-            : 'failed to call avatar gateway',
-        );
-      }
-
-      if (i < this.connOptions.maxRetry) {
-        await new Promise((resolve) => setTimeout(resolve, intervalForRetry(this.connOptions, i)));
-      }
-    }
-
-    throw (
-      lastError ??
-      new APIConnectionError({ message: 'failed to create avatar session after all retries' })
+    const response = await this.postJsonRetrying(
+      url,
+      payload,
+      { ...(await this.authHeaders()), 'Idempotency-Key': idempotencyKey },
+      'avatar gateway create',
     );
+    return (await response.json()) as CreateSessionResponse;
   }
 
   /** @internal */
   async _terminateSession(providerSessionId: string, terminateToken: string): Promise<void> {
     const url = `${this.baseURL.replace(/\/$/, '')}/avatar/sessions/terminate`;
-    await this.postJson(
+    // Retry with the same policy as create: terminate is safe to replay (the gateway
+    // treats an already-torn-down session as success), so a transient failure at
+    // shutdown shouldn't silently leak an idle-timeout window of billing.
+    await this.postJsonRetrying(
       url,
       {
         provider: this.providerName,
@@ -402,6 +396,7 @@ export class AvatarSession extends BaseAvatarSession {
         terminate_token: terminateToken,
       },
       await this.authHeaders(),
+      'avatar gateway terminate',
     );
   }
 
@@ -412,6 +407,46 @@ export class AvatarSession extends BaseAvatarSession {
       [INFERENCE_PROVIDER_HEADER]: this.providerName,
       'Content-Type': 'application/json',
     };
+  }
+
+  /**
+   * POST with the shared retry/backoff policy (up to `connOptions.maxRetry` retries).
+   * Rethrows immediately on a non-retryable error, and prefers a gateway `Retry-After`
+   * hint over the default backoff interval.
+   */
+  private async postJsonRetrying(
+    url: string,
+    payload: Record<string, unknown>,
+    headers: Record<string, string>,
+    label: string,
+  ): Promise<Response> {
+    let lastError: Error | undefined;
+    for (let i = 0; i <= this.connOptions.maxRetry; i++) {
+      let retryAfterMs: number | undefined;
+      try {
+        return await this.postJson(url, payload, headers);
+      } catch (error) {
+        const apiError = toAPIError(error, `${label} timed out after attempt ${i + 1}`);
+        lastError = apiError;
+        if (apiError instanceof APIError && !apiError.retryable) {
+          throw apiError;
+        }
+        retryAfterMs = (apiError as { retryAfterMs?: number }).retryAfterMs;
+        this.logger.warn(
+          { provider: this.providerName, error: String(apiError) },
+          apiError instanceof APITimeoutError
+            ? 'avatar gateway request timed out'
+            : 'failed to call avatar gateway',
+        );
+      }
+
+      if (i < this.connOptions.maxRetry) {
+        const backoffMs = retryAfterMs ?? intervalForRetry(this.connOptions, i);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+
+    throw lastError ?? new APIConnectionError({ message: `${label} failed after all retries` });
   }
 
   private async postJson(
@@ -427,10 +462,17 @@ export class AvatarSession extends BaseAvatarSession {
     });
     if (!response.ok) {
       const text = await response.text();
-      throw new APIStatusError({
+      const error = new APIStatusError({
         message: `avatar gateway returned an error: ${text}`,
         options: { statusCode: response.status, body: { error: text } },
       });
+      // Surface the gateway's backoff hint (e.g. 60s on 429) so the retry loop can
+      // honor it instead of hammering with the default ~2s interval.
+      const retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After'));
+      if (retryAfterMs !== undefined) {
+        (error as APIStatusError & { retryAfterMs?: number }).retryAfterMs = retryAfterMs;
+      }
+      throw error;
     }
     return response;
   }
@@ -472,6 +514,27 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
+/**
+ * Parse an HTTP `Retry-After` header (RFC 7231: delta-seconds or an HTTP-date) into
+ * milliseconds. Returns undefined when absent or unparseable.
+ */
+function parseRetryAfterMs(headerValue: string | null): number | undefined {
+  if (!headerValue) return undefined;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return undefined;
+
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, Math.round(seconds * 1000));
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+  return undefined;
+}
+
 async function resolveRoomSid(
   room: Room,
   roomName: string,
@@ -479,9 +542,11 @@ async function resolveRoomSid(
   livekitApiKey: string,
   livekitApiSecret: string,
 ): Promise<string | undefined> {
-  const maybeRoom = room as Room & { sid?: string | Promise<string> };
-  if (typeof maybeRoom.sid === 'string') return maybeRoom.sid;
-  if (maybeRoom.sid) return await maybeRoom.sid;
+  // `@livekit/rtc-node` `Room` exposes `getSid()` (not a `sid` property); for a connected
+  // room it resolves to the server-assigned sid without any extra RPC. Fall back to a
+  // RoomService lookup only if it comes back empty (e.g. sid not yet assigned).
+  const sid = await room.getSid();
+  if (sid) return sid;
 
   const client = new RoomServiceClient(livekitUrl, livekitApiKey, livekitApiSecret);
   const rooms = await client.listRooms([roomName]);

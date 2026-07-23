@@ -84,7 +84,11 @@ class FakeRoom {
   name = 'my-room';
   isConnected = false;
   localParticipant?: { identity: string };
-  sid?: string;
+  // Mirrors `@livekit/rtc-node` `Room.getSid()` (there is no public `sid` property);
+  // an unconnected room resolves to an empty string.
+  async getSid(): Promise<string> {
+    return '';
+  }
   on() {}
   off() {}
 }
@@ -92,7 +96,9 @@ class FakeRoom {
 class FakeConnectedRoom extends FakeRoom {
   override isConnected = true;
   override localParticipant = { identity: 'standalone-agent' };
-  override sid = 'RM_789';
+  override async getSid(): Promise<string> {
+    return 'RM_789';
+  }
 }
 
 class FakeJobRoom extends FakeRoom {
@@ -296,6 +302,44 @@ it('retries server errors then raises', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
+it('honors the gateway Retry-After hint over the default backoff interval', async () => {
+  vi.useFakeTimers();
+  try {
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse(
+          { error: 'rate limited' },
+          { status: 429, headers: { 'Retry-After': '30' } },
+        );
+      }
+      return jsonResponse({ session_id: 'AVS_1' });
+    });
+    // Default backoff would retry after ~2s; the gateway asked for 30s.
+    const av = makeAvatar({
+      fetch: fetchMock as typeof fetch,
+      connOptions: { maxRetry: 1, retryIntervalMs: 2000, timeoutMs: 60000 },
+    });
+
+    const promise = callCreate(av);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The default 2s interval must NOT trigger the retry.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Once the 30s Retry-After elapses, the retry fires and succeeds.
+    await vi.advanceTimersByTimeAsync(28000);
+    const resp = await promise;
+    expect(resp.session_id).toBe('AVS_1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it('aborts gateway requests using the configured connOptions timeout', async () => {
   // A fetch that never resolves on its own, so the only way this settles is the
   // request timeout signal. With the old hard-coded 60s the test would hang; the
@@ -415,6 +459,32 @@ it('start twice raises without creating a second provider session', async () => 
   expect(av.providerSessionId).toBe('ls_1');
 });
 
+it('guards overlapping concurrent start calls (only one provider session)', async () => {
+  const fetchMock = vi.fn(async () =>
+    jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' }),
+  );
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  const agentSession = new FakeAgentSession();
+  const opts = {
+    livekitUrl: 'wss://example.livekit.cloud',
+    livekitApiKey: 'devkey',
+    livekitApiSecret: 'devsecret',
+  };
+
+  // Both calls start before either awaits its gateway create; the synchronous guard
+  // must let exactly one through so only one billed session is provisioned.
+  const results = await Promise.allSettled([
+    av.start(agentSession as never, new FakeConnectedRoom() as never, opts),
+    av.start(agentSession as never, new FakeConnectedRoom() as never, opts),
+  ]);
+
+  expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+  const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+  expect(rejected).toHaveLength(1);
+  expect(String(rejected[0]?.reason)).toMatch(/only be called once/);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 it('sets ids before audio rebind failures', async () => {
   const fetchMock = vi.fn(async () =>
     jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1', terminate_token: 'tt_1' }),
@@ -478,14 +548,21 @@ it('aclose skips terminate without token', async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it('aclose terminate failure keeps ids and runs base cleanup', async () => {
+it('aclose retries terminate then escalates, keeping ids and running base cleanup', async () => {
   const fetchMock = vi.fn(async () => jsonResponse({ error: 'boom' }, { status: 500 }));
-  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5 },
+  });
   av['_providerSessionId'] = 'ls_abc';
   av['_terminateToken'] = 'tt_abc';
 
-  await av.aclose();
-
+  // The failure now propagates (instead of a silent warn) so the job-shutdown handler
+  // escalates it.
+  await expect(av.aclose()).rejects.toThrow(/keep billing/);
+  // Retried with the same policy as create: 1 initial + maxRetry attempts.
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  // Ids are retained so a later aclose() can still attempt termination.
   expect(av.providerSessionId).toBe('ls_abc');
   expect(av['_terminateToken']).toBe('tt_abc');
 });
