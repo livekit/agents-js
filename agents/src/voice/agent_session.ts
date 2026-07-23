@@ -1670,25 +1670,26 @@ export class AgentSession<
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    const activity = this.activity;
+    if (activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
+      await activity.drain();
       // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      await activity.currentSpeech?.waitForPlayout();
 
       if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
