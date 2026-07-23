@@ -1387,9 +1387,32 @@ export async function* readStream<T>(
   const reader = stream.getReader();
   try {
     if (signal) {
-      const abortPromise = waitForAbort(signal);
       while (true) {
+        // Create a fresh per-iteration abort promise with explicit cleanup.
+        //
+        // A single `waitForAbort(signal)` hoisted outside the loop leaks: every
+        // `ThrowsPromise.race([reader.read(), abortPromise])` registers a new
+        // reaction on the long-lived promise, and because that promise only
+        // settles when the signal aborts (normally at stream teardown), each
+        // reaction - and the settled read result it transitively holds - stays
+        // reachable for the lifetime of the stream. On audio streams this pins
+        // every AudioFrame ever read (#2046; same mechanism as #1950).
+        //
+        // A per-iteration promise + `removeEventListener` after each race means
+        // the signal holds at most one listener at a time and no reaction
+        // outlives its iteration.
+        let abortCleanup: (() => void) | undefined;
+        const abortPromise = new Promise<undefined>((resolve) => {
+          if (signal.aborted) {
+            resolve(undefined);
+            return;
+          }
+          const handler = () => resolve(undefined);
+          signal.addEventListener('abort', handler, { once: true });
+          abortCleanup = () => signal.removeEventListener('abort', handler);
+        });
         const result = await ThrowsPromise.race([reader.read(), abortPromise]);
+        abortCleanup?.();
         if (!result) {
           break;
         }
