@@ -280,6 +280,16 @@ export class RunResult<T = unknown> {
       return;
     }
 
+    // Propagate speech-handle errors (e.g. LLM or realtime failures), matching
+    // Python RunResult which rejects on SpeechHandle._error before final output.
+    const handleError = this.lastSpeechHandle.exception();
+    if (handleError !== undefined && handleError !== null) {
+      this.doneFut.reject(
+        handleError instanceof Error ? handleError : new Error(String(handleError)),
+      );
+      return;
+    }
+
     const finalOutput = this.lastSpeechHandle._maybeRunFinalOutput;
     if (finalOutput instanceof Error) {
       this.doneFut.reject(finalOutput);

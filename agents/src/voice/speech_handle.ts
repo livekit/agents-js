@@ -80,6 +80,7 @@ export class SpeechHandle {
   private doneFut = new Future<void>();
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
+  private _error: unknown;
 
   /** @internal */
   _tasks: Task<void>[] = [];
@@ -181,6 +182,19 @@ export class SpeechHandle {
 
   done(): boolean {
     return this.doneFut.done;
+  }
+
+  /**
+   * Returns the error that caused this SpeechHandle to complete, if any.
+   *
+   * @throws Error if the SpeechHandle is not done yet.
+   */
+  exception(): unknown {
+    if (!this.doneFut.done) {
+      throw new Error('SpeechHandle is not done yet');
+    }
+
+    return this._error;
   }
 
   get chatItems(): ChatItem[] {
@@ -357,8 +371,11 @@ export class SpeechHandle {
   }
 
   /** @internal */
-  _markDone(): void {
+  _markDone(error?: unknown): void {
     if (!this.doneFut.done) {
+      if (error !== undefined) {
+        this._error = error;
+      }
       this.doneFut.resolve();
     }
 

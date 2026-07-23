@@ -23,6 +23,7 @@ import {
   FunctionCallOutput,
 } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
+import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
@@ -1093,6 +1094,103 @@ describe('AgentActivity - interrupted tool completion', () => {
         functionCallOutputs: [completedOutput],
       }),
     );
+  });
+});
+
+describe('AgentActivity - realtime reply chat context push', () => {
+  function buildRealtimeReplyActivity(updateError?: unknown) {
+    const generationEvent = {} as GenerationCreatedEvent;
+    const realtimeSession = {
+      chatCtx: ChatContext.empty(),
+      tools: ToolContext.empty(),
+      updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
+        if (updateError) {
+          throw updateError;
+        }
+        realtimeSession.chatCtx = chatCtx.copy();
+      }),
+      updateTools: vi.fn(async () => {}),
+      updateOptions: vi.fn(),
+      generateReply: vi.fn(async () => generationEvent),
+    };
+    const activity = {
+      realtimeSession,
+      toolChoice: undefined,
+      _onEnterIgnoredTools: () => [],
+      agent: { _chatCtx: ChatContext.empty() },
+      agentSession: {
+        _conversationItemAdded: vi.fn(),
+      },
+      realtimeGenerationTask: vi.fn(async () => {}),
+      logger: { info() {}, debug() {}, warn: vi.fn(), error: vi.fn() },
+    };
+    Object.setPrototypeOf(activity, AgentActivity.prototype);
+
+    return { activity, realtimeSession };
+  }
+
+  async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
+    const realtimeReplyTask = (
+      AgentActivity.prototype as unknown as {
+        realtimeReplyTask(
+          this: unknown,
+          args: {
+            speechHandle: SpeechHandle;
+            modelSettings: { toolChoice?: never };
+            abortController: AbortController;
+            userInput: string;
+          },
+        ): Promise<void>;
+      }
+    ).realtimeReplyTask;
+
+    await realtimeReplyTask.call(activity, {
+      speechHandle,
+      modelSettings: {},
+      abortController: new AbortController(),
+      userInput: 'hello',
+    });
+  }
+
+  it('generates a reply when updateChatCtx succeeds', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity();
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+  });
+
+  it('still generates a reply when updateChatCtx raises RealtimeError', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(
+      new RealtimeError('update_chat_ctx timed out.'),
+    );
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+    expect(activity.agent._chatCtx.items.some((item) => item.type === 'message')).toBe(true);
+  });
+
+  it('marks the speech handle failed for unexpected updateChatCtx errors', async () => {
+    const error = new Error('boom');
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(error);
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).not.toHaveBeenCalled();
+    expect(activity.realtimeGenerationTask).not.toHaveBeenCalled();
+    expect(handle.done()).toBe(true);
+    expect(handle.exception()).toBe(error);
   });
 });
 
