@@ -881,7 +881,15 @@ export class AgentSession<
         }
       }
 
-      await this._updateActivity(agent);
+      await this._updateActivity(agent, { waitOnEnter: false });
+
+      // Watch onEnter so run() captures its output without awaiting long-lived
+      // onEnter flows that need a future user turn to complete.
+      const onEnterTask = this.activity?._onEnterTask;
+      const runState = this._globalRunState;
+      if (onEnterTask && runState && !runState.done()) {
+        runState._watchHandle(onEnterTask);
+      }
     };
 
     const oldTask = this.updateActivityTask;
