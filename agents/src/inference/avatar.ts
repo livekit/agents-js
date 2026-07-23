@@ -115,6 +115,7 @@ export class AvatarSession extends BaseAvatarSession {
   private readonly apiSecret: string;
   private readonly avatarParticipantIdentity: string;
   private readonly avatarParticipantName: string;
+  private readonly createIdempotencyKey = randomUUID().replaceAll('-', '');
 
   private _started = false;
   private _sessionId: string | null = null;
@@ -378,14 +379,13 @@ export class AvatarSession extends BaseAvatarSession {
       payload.extra_kwargs = extra;
     }
 
-    // Idempotency-Key stays stable across retries so a replayed create resolves to the
-    // same gateway session instead of provisioning a second paid one.
-    const idempotencyKey = randomUUID().replaceAll('-', '');
+    // Idempotency-Key stays stable across both internal request retries and start() retries
+    // so an ambiguous failure cannot provision a second paid provider session.
     const url = `${this.baseURL.replace(/\/$/, '')}/avatar/sessions`;
     const response = await this.postJsonRetrying(
       url,
       payload,
-      { ...(await this.authHeaders()), 'Idempotency-Key': idempotencyKey },
+      { ...(await this.authHeaders()), 'Idempotency-Key': this.createIdempotencyKey },
       'avatar gateway create',
     );
     return (await response.json()) as CreateSessionResponse;

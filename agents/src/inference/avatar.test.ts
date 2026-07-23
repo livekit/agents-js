@@ -486,10 +486,13 @@ it('guards overlapping concurrent start calls (only one provider session)', asyn
 });
 
 it('allows retry after gateway create fails', async () => {
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce(jsonResponse({ error: 'unavailable' }, { status: 503 }))
-    .mockResolvedValueOnce(jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' }));
+  const idempotencyKeys: string[] = [];
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '');
+    return idempotencyKeys.length === 1
+      ? jsonResponse({ error: 'unavailable' }, { status: 503 })
+      : jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
   const av = makeAvatar({
     fetch: fetchMock as typeof fetch,
     connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5 },
@@ -508,6 +511,7 @@ it('allows retry after gateway create fails', async () => {
   await expect(av.start(agentSession as never, room as never, opts)).resolves.toBeUndefined();
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(new Set(idempotencyKeys).size).toBe(1);
   expect(av.providerSessionId).toBe('ls_1');
 });
 
