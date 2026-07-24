@@ -493,6 +493,8 @@ class FallbackSpeechStream extends SpeechStream {
             retryIntervalMs: this.fallbackAdapter.retryIntervalMs,
           },
         });
+        // Keep child timestamps anchored to the parent stream's current retry attempt.
+        child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
         mainRef.current = child;
         // If the forwarder has already drained and exited (input EOF), it
         // will never call endInput() on this child. End it here so the

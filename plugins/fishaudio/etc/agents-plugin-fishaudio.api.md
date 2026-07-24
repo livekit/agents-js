@@ -69,6 +69,11 @@ export class TTS extends tts.TTS {
         mp3Bitrate?: MP3Bitrate;
         opusBitrate?: OpusBitrate;
         normalize?: boolean;
+        normalizeLoudness?: boolean;
+        maxNewTokens?: number;
+        minChunkLength?: number;
+        conditionOnPreviousChunks?: boolean;
+        earlyStopThreshold?: number;
     }): void;
 }
 
@@ -82,12 +87,17 @@ export interface TTSOptions {
     // (undocumented)
     baseURL?: string;
     chunkLength?: number;
+    conditionOnPreviousChunks?: boolean;
+    earlyStopThreshold?: number;
     // (undocumented)
     latencyMode?: LatencyMode_2;
+    maxNewTokens?: number;
+    minChunkLength?: number;
     // (undocumented)
     model?: TTSModels | string;
     mp3Bitrate?: MP3Bitrate;
     normalize?: boolean;
+    normalizeLoudness?: boolean;
     opusBitrate?: OpusBitrate;
     // (undocumented)
     sampleRate?: number;

@@ -38,6 +38,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   type MessageGeneration,
+  RealtimeError,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -296,6 +297,7 @@ export class AgentActivity implements RecognitionHooks {
   private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
+  private interruptionDetected = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -331,6 +333,7 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.interruptionDetected = ev.isInterruption;
     this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
@@ -1381,6 +1384,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
+    this.interruptionDetected = false;
 
     if (this.falseInterruptionTimer) {
       // cancel the timer when user starts speaking but leave the paused state unchanged
@@ -1442,6 +1446,17 @@ export class AgentActivity implements RecognitionHooks {
       ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
     ) {
       this.interruptByAudioActivity();
+    }
+  }
+
+  onBackchannelConfirmed(): void {
+    if (
+      this.isInterruptionDetectionEnabled &&
+      this.realtimeSession !== undefined &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
+      this.realtimeSession.clearAudio();
     }
   }
 
@@ -1880,6 +1895,22 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    if (
+      !this.stt &&
+      this.turnDetection !== 'manual' &&
+      this.llm instanceof RealtimeModel &&
+      !this.llm.capabilities.turnDetection &&
+      this.isInterruptionDetectionEnabled &&
+      (info.backchannelOverAgent ||
+        (!this.interruptionDetected &&
+          this._currentSpeech !== undefined &&
+          !this._currentSpeech.interrupted))
+    ) {
+      this.cancelPreemptiveGeneration();
+      this.realtimeSession?.clearAudio();
+      return false;
+    }
+
     const oldTask = this._userTurnCompletedTask;
     this._userTurnCompletedTask = this.createSpeechTask({
       taskFn: () => this.userTurnCompleted(info, oldTask),
@@ -2150,7 +2181,7 @@ export class AgentActivity implements RecognitionHooks {
           this.realtimeReplyTask({
             speechHandle: handle,
             // TODO(brian): support llm.ChatMessage for the realtime model
-            userInput: userMessage?.textContent,
+            userInput: userMessage?.rawTextContent,
             instructions,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
@@ -2426,7 +2457,7 @@ export class AgentActivity implements RecognitionHooks {
       // make sure the onUserTurnCompleted didn't change some request parameters
       // otherwise invalidate the preemptive generation
       if (
-        preemptive.info.newTranscript === userMessage?.textContent &&
+        preemptive.info.newTranscript === userMessage?.rawTextContent &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
         preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
@@ -2704,7 +2735,7 @@ export class AgentActivity implements RecognitionHooks {
       span.setAttribute(traceTypes.ATTR_INSTRUCTIONS, renderInstructions(instructions));
     }
     if (newMessage) {
-      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.textContent || '');
+      span.setAttribute(traceTypes.ATTR_USER_INPUT, newMessage.rawTextContent || '');
     }
 
     const localParticipant = this.agentSession._roomIO?.localParticipant;
@@ -3661,12 +3692,18 @@ export class AgentActivity implements RecognitionHooks {
 
         traceTextParts.push(forwardedText);
         if (addToChatCtx) {
+          const assistantMetrics: MetricsReport = {};
+          if (ev.responseId) {
+            assistantMetrics.providerRequestIds = [ev.responseId];
+          }
+
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
             id: output.message.messageId,
             interrupted,
             createdAt: startedSpeakingAt,
+            metrics: assistantMetrics,
           });
           this.agent._chatCtx.insert(message);
           speechHandle._itemAdded([message]);
@@ -4077,7 +4114,23 @@ export class AgentActivity implements RecognitionHooks {
         role: 'user',
         content: userInput,
       });
-      await this.realtimeSession.updateChatCtx(chatCtx);
+      try {
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        if (error instanceof RealtimeError) {
+          this.logger.warn(
+            { error: error.message },
+            'failed to update the chat context before generating the reply',
+          );
+        } else {
+          this.logger.error(
+            { error },
+            'failed to update the chat context before generating the reply',
+          );
+          speechHandle._markDone(error);
+          return;
+        }
+      }
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }
@@ -4365,16 +4418,25 @@ export class AgentActivity implements RecognitionHooks {
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
-    if (
-      !(
+
+    let canGatekeep: boolean;
+    if (this.llm instanceof RealtimeModel) {
+      // Realtime commits turns manually; barge-in withholds the commit, so no STT is needed.
+      canGatekeep = !this.llm.capabilities.turnDetection;
+    } else {
+      // The STT pipeline gatekeeps by holding and flushing transcripts.
+      canGatekeep = !!(
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
-        this.stt.capabilities.streaming &&
-        this.vad !== undefined &&
-        this.turnDetection !== 'manual' &&
-        this.turnDetection !== 'realtime_llm' &&
-        !(this.llm instanceof RealtimeModel)
-      )
+        this.stt.capabilities.streaming
+      );
+    }
+
+    if (
+      !canGatekeep ||
+      this.vad === undefined ||
+      this.turnDetection === 'manual' ||
+      this.turnDetection === 'realtime_llm'
     ) {
       if (
         agentInterruptionDetection === 'adaptive' ||

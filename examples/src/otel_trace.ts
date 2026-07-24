@@ -50,12 +50,19 @@ function setupOtel(options?: {
     url: options?.url,
     headers: options?.headers,
   });
+  // OTel SDK 2.x providers accept span processors only at construction, so include a
+  // FanoutSpanProcessor and hand its `add` to setTracerProvider — that's how the framework
+  // attaches the metadata processor (and the LiveKit Cloud exporter, when enabled) later.
+  const fanout = new telemetry.FanoutSpanProcessor();
   const traceProvider = new NodeTracerProvider({
-    spanProcessors: [new BatchSpanProcessor(traceExporter)],
+    spanProcessors: [new BatchSpanProcessor(traceExporter), fanout],
   });
 
   traceProvider.register();
-  telemetry.setTracerProvider(traceProvider, { metadata: options?.metadata });
+  telemetry.setTracerProvider(traceProvider, {
+    metadata: options?.metadata,
+    registerSpanProcessor: (processor) => fanout.add(processor),
+  });
   return traceProvider;
 }
 

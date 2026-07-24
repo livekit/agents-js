@@ -184,3 +184,23 @@ describe('SpeechHandle._markDone - generation completion', () => {
     expect(outcome).toBe('resolved');
   });
 });
+
+describe('SpeechHandle.exception', () => {
+  it('throws when the handle is not done yet', () => {
+    const handle = SpeechHandle.create();
+    expect(() => handle.exception()).toThrow(/not done yet/);
+  });
+
+  it('returns undefined when the handle completed without an error', () => {
+    const handle = SpeechHandle.create();
+    handle._markDone();
+    expect(handle.exception()).toBeUndefined();
+  });
+
+  it('returns the error passed to _markDone', () => {
+    const handle = SpeechHandle.create();
+    const error = new Error('realtime failed');
+    handle._markDone(error);
+    expect(handle.exception()).toBe(error);
+  });
+});

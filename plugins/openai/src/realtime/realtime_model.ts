@@ -662,7 +662,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const timeoutController = new AbortController();
       const timeoutPromise = delay(5000, { signal: timeoutController.signal }).then(() => {
         cleanupTimedOutFutures();
-        throw new Error('Chat ctx update events timed out');
+        throw new llm.RealtimeError('update_chat_ctx timed out.');
       });
 
       try {
@@ -714,7 +714,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       } as api_proto.ConversationItemDeleteEvent);
     }
 
-    for (const [previousId, id] of diffOps.toCreate) {
+    const createItem = async (previousId: string | null, id: string) => {
       const chatItem = newChatCtx.getById(id);
       if (!chatItem) {
         throw new Error(`Chat item ${id} not found`);
@@ -725,6 +725,27 @@ export class RealtimeSession extends llm.RealtimeSession {
         previous_item_id: previousId ?? undefined,
         event_id: shortuuid('chat_ctx_create_'),
       } as api_proto.ConversationItemCreateEvent);
+    };
+
+    const isContentEmpty = (id: string) => {
+      const remoteItem = remoteCtx.getById(id);
+      return remoteItem?.type === 'message' && remoteItem.content.length === 0;
+    };
+
+    for (const [previousId, id] of diffOps.toCreate) {
+      await createItem(previousId, id);
+    }
+
+    for (const [previousId, id] of diffOps.toUpdate) {
+      if (isContentEmpty(id)) {
+        continue;
+      }
+      events.push({
+        type: 'conversation.item.delete',
+        item_id: id,
+        event_id: shortuuid('chat_ctx_delete_'),
+      } as api_proto.ConversationItemDeleteEvent);
+      await createItem(previousId, id);
     }
     return events;
   }

@@ -113,7 +113,7 @@ export class LLM extends llm.LLM {
 
     for (const msg of chatCtx.items) {
       if (msg.type === 'message') {
-        const textContent = msg.textContent || '';
+        const textContent = msg.rawTextContent || '';
         if (msg.role === 'system' || msg.role === 'developer') {
           system.push({ type: 'text', text: textContent });
         } else if (msg.role === 'user' || msg.role === 'assistant') {
