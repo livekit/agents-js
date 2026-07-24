@@ -10,6 +10,7 @@ import EventEmitter from 'events';
 import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatItem,
   FunctionCall as FCItem,
@@ -988,8 +989,6 @@ export class SessionHost {
     let simCtx: SimulationContext | undefined;
     let simError: string | undefined;
     try {
-      // Imported lazily to keep this module free of a static cycle with job.ts.
-      const { getJobContext } = await import('../job.js');
       const jobCtx = getJobContext(false);
       simCtx = jobCtx?.simulationContext();
       if (jobCtx && simCtx) {
