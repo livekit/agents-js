@@ -1,60 +1,75 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type * as googleGenai from '@google/genai';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { GoogleAuth } from 'google-auth-library';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
 
-const googleMocks = vi.hoisted(() => ({
-  constructorOptions: [] as unknown[],
-  modelLists: [] as Array<{ mock: { calls: unknown[][] } }>,
-}));
-
-vi.mock('@google/genai', async (importOriginal) => {
-  const actual = await importOriginal<typeof googleGenai>();
-  return {
-    ...actual,
-    GoogleGenAI: class {
-      models: { list: ReturnType<typeof vi.fn> };
-
-      constructor(options: unknown) {
-        const list = vi.fn(async () => {});
-        this.models = { list };
-        googleMocks.constructorOptions.push(options);
-        googleMocks.modelLists.push(list);
-      }
-    },
-  };
-});
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 500): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timed out waiting for SDK request')), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 describe('Google LLM prewarm', () => {
-  beforeEach(() => {
-    googleMocks.constructorOptions.length = 0;
-    googleMocks.modelLists.length = 0;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
-  it('lists one model with the prewarm cancellation signal', async () => {
-    const llm = new LLM({ model: 'gemini-2.5-flash', apiKey: 'test-key' });
+  it('acquires a Vertex token before the cancellable models-list request', async () => {
+    vi.stubEnv('GOOGLE_API_KEY', '');
+    vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '');
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', '');
+    vi.stubEnv('GOOGLE_CLOUD_LOCATION', '');
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', '');
 
-    llm.prewarm();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    const events: string[] = [];
+    const getAccessToken = vi.fn(async () => {
+      events.push('token');
+      return { token: 'test-access-token' };
+    });
+    const authClient = {
+      getAccessToken,
+      getRequestHeaders: vi.fn(async () => {
+        const { token } = await getAccessToken();
+        return new Headers({ authorization: `Bearer ${token}` });
+      }),
+    };
+    const getClient = vi
+      .spyOn(GoogleAuth.prototype, 'getClient')
+      .mockResolvedValue(authClient as never);
 
-    const modelsList = googleMocks.modelLists[0]!;
-    expect(modelsList.mock.calls).toEqual([
-      [{ config: { pageSize: 1, abortSignal: expect.any(AbortSignal) } }],
-    ]);
-    const signal = (
-      modelsList.mock.calls[0]![0] as {
-        config: { abortSignal: AbortSignal };
-      }
-    ).config.abortSignal;
-    expect(signal.aborted).toBe(false);
+    let fetchSignal: AbortSignal | undefined;
+    let resolveFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      resolveFetchStarted = resolve;
+    });
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        events.push('models-list');
+        fetchSignal = init?.signal instanceof AbortSignal ? init.signal : undefined;
+        resolveFetchStarted();
+        return await new Promise<Response>((_resolve, reject) => {
+          if (fetchSignal?.aborted) {
+            reject(new DOMException('aborted', 'AbortError'));
+            return;
+          }
+          fetchSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
-    await llm.aclose();
-    expect(signal.aborted).toBe(true);
-  });
-
-  it('uses the same models request on the Vertex auth warmup path', async () => {
     const llm = new LLM({
       model: 'gemini-2.5-flash',
       vertexai: true,
@@ -62,20 +77,25 @@ describe('Google LLM prewarm', () => {
       location: 'test-location',
     });
 
-    llm.prewarm();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      llm.prewarm();
+      await withTimeout(fetchStarted);
 
-    expect(googleMocks.constructorOptions).toEqual([
-      {
-        vertexai: true,
-        project: 'test-project',
-        location: 'test-location',
-      },
-    ]);
-    expect(googleMocks.modelLists[0]!.mock.calls).toEqual([
-      [{ config: { pageSize: 1, abortSignal: expect.any(AbortSignal) } }],
-    ]);
+      expect(getClient).toHaveBeenCalledTimes(1);
+      expect(getAccessToken).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(['token', 'models-list']);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await llm.aclose();
+      const [input, init] = fetchMock.mock.calls[0]!;
+      const url = new URL(String(input));
+      expect(url.pathname).toContain('/publishers/google/models');
+      expect(url.searchParams.get('pageSize')).toBe('1');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-access-token');
+      expect(fetchSignal?.aborted).toBe(false);
+    } finally {
+      await llm.aclose();
+    }
+
+    expect(fetchSignal?.aborted).toBe(true);
   });
 });
