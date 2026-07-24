@@ -9,11 +9,16 @@ import { initializeLogger } from '../log.js';
 import { type APIConnectOptions } from '../types.js';
 import type * as AvatarIndex from '../voice/avatar/index.js';
 import { AvatarSession, parseAvatarModel } from './avatar.js';
+import type * as InferenceUtils from './utils.js';
 import { INFERENCE_PROVIDER_HEADER } from './utils.js';
 
-const { fakeSinks } = vi.hoisted(() => ({
-  fakeSinks: [] as Array<{ sampleRate?: number; destinationIdentity: string }>,
-}));
+const { fakeSinks, mintAccessToken } = vi.hoisted(() => {
+  let tokenSequence = 0;
+  return {
+    fakeSinks: [] as Array<{ sampleRate?: number; destinationIdentity: string }>,
+    mintAccessToken: vi.fn(async () => `gateway-token-${++tokenSequence}`),
+  };
+});
 
 vi.mock('../voice/avatar/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof AvatarIndex>();
@@ -30,6 +35,11 @@ vi.mock('../voice/avatar/index.js', async (importOriginal) => {
       }
     },
   };
+});
+
+vi.mock('./utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof InferenceUtils>();
+  return { ...actual, createAccessToken: mintAccessToken };
 });
 
 beforeAll(() => {
@@ -263,10 +273,12 @@ it('sends avatar_id from model string', async () => {
   expect(captured).not.toHaveProperty('image_url');
 });
 
-it('keeps idempotency key stable across retries', async () => {
+it('refreshes authorization while keeping the idempotency key stable across retries', async () => {
+  const authorizations: string[] = [];
   const keys: string[] = [];
   const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
+    authorizations.push(headers.get('Authorization') ?? '');
     keys.push(headers.get('Idempotency-Key') ?? '');
     if (keys.length < 3) return jsonResponse({ error: 'unavailable' }, { status: 503 });
     return jsonResponse({ session_id: 'AVS_1' });
@@ -278,6 +290,7 @@ it('keeps idempotency key stable across retries', async () => {
 
   expect(resp.session_id).toBe('AVS_1');
   expect(keys).toHaveLength(3);
+  expect(new Set(authorizations).size).toBe(3);
   expect(new Set(keys).size).toBe(1);
 });
 
@@ -435,6 +448,32 @@ it('start uses job room name and sid before the rtc room is connected', async ()
   expect(captured?.room_name).toBe('job-room');
   expect(captured?.room_sid).toBe('RM_job');
   expect(captured?.agent_identity).toBe('job-agent');
+});
+
+it('start falls back to the connected room sid when the job room sid is absent', async () => {
+  let captured: Record<string, unknown> | undefined;
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
+  const room = new FakeConnectedRoom();
+  const jobCtx = {
+    job: { room: { name: 'job-room' } },
+    info: { acceptArguments: { identity: 'job-agent' } },
+    room,
+    addShutdownCallback() {},
+  };
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  await runWithJobContextAsync(jobCtx as never, async () => {
+    await av.start(new FakeAgentSession() as never, room as never, {
+      livekitUrl: 'wss://example.livekit.cloud',
+      livekitApiKey: 'devkey',
+      livekitApiSecret: 'devsecret',
+    });
+  });
+
+  expect(captured?.room_sid).toBe('RM_789');
 });
 
 it('start twice raises without creating a second provider session', async () => {

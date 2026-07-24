@@ -64,7 +64,7 @@ export interface AvatarSessionOptions {
   apiSecret?: string;
   /** Optional fetch implementation, primarily for tests. */
   fetch?: typeof fetch;
-  /** Retry and connect-timeout options for gateway calls. */
+  /** Retry and whole-request timeout options for gateway calls. */
   connOptions?: APIConnectOptions;
 }
 
@@ -221,7 +221,9 @@ export class AvatarSession extends BaseAvatarSession {
           jobCtx.agent?.identity ??
           room.localParticipant?.identity ??
           jobCtx.info.acceptArguments.identity;
-        roomSid = jobCtx.job.room?.sid;
+        roomSid =
+          jobCtx.job.room?.sid ||
+          (await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret));
       } else if (room.isConnected) {
         localParticipantIdentity = room.localParticipant?.identity;
         roomSid = await resolveRoomSid(room, roomName, livekitUrl, livekitApiKey, livekitApiSecret);
@@ -385,7 +387,10 @@ export class AvatarSession extends BaseAvatarSession {
     const response = await this.postJsonRetrying(
       url,
       payload,
-      { ...(await this.authHeaders()), 'Idempotency-Key': this.createIdempotencyKey },
+      async () => ({
+        ...(await this.authHeaders()),
+        'Idempotency-Key': this.createIdempotencyKey,
+      }),
       'avatar gateway create',
     );
     return (await response.json()) as CreateSessionResponse;
@@ -404,7 +409,7 @@ export class AvatarSession extends BaseAvatarSession {
         provider_session_id: providerSessionId,
         terminate_token: terminateToken,
       },
-      await this.authHeaders(),
+      () => this.authHeaders(),
       'avatar gateway terminate',
     );
   }
@@ -426,14 +431,14 @@ export class AvatarSession extends BaseAvatarSession {
   private async postJsonRetrying(
     url: string,
     payload: Record<string, unknown>,
-    headers: Record<string, string>,
+    getHeaders: () => Promise<Record<string, string>>,
     label: string,
   ): Promise<Response> {
     let lastError: Error | undefined;
     for (let i = 0; i <= this.connOptions.maxRetry; i++) {
       let retryAfterMs: number | undefined;
       try {
-        return await this.postJson(url, payload, headers);
+        return await this.postJson(url, payload, await getHeaders());
       } catch (error) {
         const apiError = toAPIError(error, `${label} timed out after attempt ${i + 1}`);
         lastError = apiError;
