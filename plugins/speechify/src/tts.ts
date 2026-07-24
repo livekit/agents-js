@@ -23,6 +23,7 @@ const SAMPLE_RATE = 24000;
 const AUDIO_FORMAT: Speechify.GetSpeechRequest.AudioFormat = 'pcm';
 const DEFAULT_VOICE_ID = 'dominic_32';
 const DEFAULT_MODEL: TTSModels = 'simba-3.2';
+const CALLER_HEADER = 'Speechify-Caller';
 
 export interface TTSOptions {
   voiceId: string;
@@ -128,7 +129,10 @@ export class TTS extends tts.TTS {
     offsetSeconds: number,
     params: { abortSignal: AbortSignal; timeoutInSeconds?: number },
   ): Promise<{ audio: Buffer; timed: ReturnType<typeof createTimedString>[] }> {
-    const response = await this.#client.audio.speech(buildSpeechRequest(text, opts), params);
+    const response = await this.#client.audio.speech(buildSpeechRequest(text, opts), {
+      ...params,
+      headers: { [CALLER_HEADER]: 'livekit' },
+    });
     return {
       audio: Buffer.from(response.audio_data, 'base64'),
       timed: timedStringsFromMarks(response.speech_marks, offsetSeconds),
