@@ -19,5 +19,5 @@ minimumReleaseAgeExclude:
 
 catalog:
   '@livekit/rtc-node': ^0.13.31
-  ws: ^8.18.0
+  ws: ^8.21.0
   '@types/ws': ^8.5.10

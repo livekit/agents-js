@@ -17,7 +17,7 @@ import {
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
@@ -52,6 +52,7 @@ class DynamicTracer {
   private tracerProvider: TracerProvider;
   private tracer: Tracer;
   private readonly instrumentingModuleName: string;
+  private extraAttributes: Attributes = {};
 
   constructor(instrumentingModuleName: string) {
     this.instrumentingModuleName = instrumentingModuleName;
@@ -66,6 +67,15 @@ class DynamicTracer {
   setProvider(provider: TracerProvider): void {
     this.tracerProvider = provider;
     this.tracer = this.tracerProvider.getTracer(this.instrumentingModuleName);
+  }
+
+  /**
+   * Merge attributes into every span created through this tracer. Used to inject
+   * metadata (e.g. room_id/job_id) when the provider's SDK no longer supports
+   * attaching a span processor after construction (OTel SDK 2.0 and later).
+   */
+  addAttributes(attributes: Attributes): void {
+    this.extraAttributes = { ...this.extraAttributes, ...attributes };
   }
 
   /**
@@ -97,7 +107,7 @@ class DynamicTracer {
     const span = this.tracer.startSpan(
       options.name,
       {
-        attributes: options.attributes,
+        attributes: this.mergeAttributes(options.attributes),
         startTime: options.startTime,
       },
       ctx,
@@ -117,7 +127,10 @@ class DynamicTracer {
   async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: this.mergeAttributes(options.attributes),
+      startTime: options.startTime,
+    };
 
     // Directly return the tracer's startActiveSpan result - it handles async correctly
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
@@ -141,7 +154,10 @@ class DynamicTracer {
   startActiveSpanSync<T>(fn: (span: Span) => T, options: StartSpanOptions): T {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: this.mergeAttributes(options.attributes),
+      startTime: options.startTime,
+    };
 
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {
@@ -152,6 +168,13 @@ class DynamicTracer {
         }
       }
     });
+  }
+
+  private mergeAttributes(attributes?: Attributes): Attributes | undefined {
+    if (Object.keys(this.extraAttributes).length === 0) {
+      return attributes;
+    }
+    return { ...this.extraAttributes, ...attributes };
   }
 }
 
@@ -184,6 +207,33 @@ class MetadataSpanProcessor implements SpanProcessor {
 }
 
 /**
+ * Attach span processors to an already-constructed tracer provider.
+ *
+ * OTel SDK 1.x exposes addSpanProcessor() for this. SDK 2.x removed it — processors can
+ * only be passed at construction — so as a fallback we push into the provider's internal
+ * MultiSpanProcessor, which iterates its processor list on every span event (including
+ * forceFlush/shutdown). Returns false when neither path is available.
+ */
+function attachSpanProcessors(provider: unknown, processors: SpanProcessor[]): boolean {
+  const legacy = provider as { addSpanProcessor?: (processor: SpanProcessor) => void };
+  if (typeof legacy.addSpanProcessor === 'function') {
+    for (const processor of processors) {
+      legacy.addSpanProcessor(processor);
+    }
+    return true;
+  }
+
+  const active = (provider as { _activeSpanProcessor?: { _spanProcessors?: SpanProcessor[] } })
+    ._activeSpanProcessor;
+  if (active && Array.isArray(active._spanProcessors)) {
+    active._spanProcessors.push(...processors);
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Set the tracer provider for the livekit-agents framework.
  * This should be called before agent session start if using custom tracer providers.
  *
@@ -206,7 +256,11 @@ export function setTracerProvider(
   options?: { metadata?: Attributes },
 ): void {
   if (options?.metadata) {
-    provider.addSpanProcessor(new MetadataSpanProcessor(options.metadata));
+    if (!attachSpanProcessors(provider, [new MetadataSpanProcessor(options.metadata)])) {
+      // Last resort: inject the metadata on every span created through the framework
+      // tracer instead of via a span processor on the provider.
+      tracer.addAttributes(options.metadata);
+    }
   }
 
   tracer.setProvider(provider);
@@ -254,7 +308,7 @@ export async function setupCloudTracer(options: {
       job_id: jobId,
     };
 
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: 'livekit-agents',
       room_id: roomId,
       job_id: jobId,
@@ -273,18 +327,20 @@ export async function setupCloudTracer(options: {
       // both the user's backend and LiveKit Cloud.
       const currentProvider = tracer.getProvider();
       const existingProvider =
-        currentProvider instanceof ProxyTracerProvider
-          ? undefined
-          : (currentProvider as Partial<NodeTracerProvider>);
+        currentProvider instanceof ProxyTracerProvider ? undefined : currentProvider;
 
-      if (existingProvider && typeof existingProvider.addSpanProcessor === 'function') {
-        // The user's provider keeps its own Resource (incl. service.name): a provider has one
-        // Resource shared by all exporters, so applying `resource` here would also relabel the
-        // spans going to the user's own backend. room_id/job_id — the keys Cloud correlates on —
-        // still ride along as span attributes via MetadataSpanProcessor.
-        existingProvider.addSpanProcessor(new MetadataSpanProcessor(metadata));
-        existingProvider.addSpanProcessor(new BatchSpanProcessor(spanExporter));
-      } else {
+      // The user's provider keeps its own Resource (incl. service.name): a provider has one
+      // Resource shared by all exporters, so applying `resource` here would also relabel the
+      // spans going to the user's own backend. room_id/job_id — the keys Cloud correlates on —
+      // still ride along as span attributes via MetadataSpanProcessor.
+      const attached =
+        existingProvider !== undefined &&
+        attachSpanProcessors(existingProvider, [
+          new MetadataSpanProcessor(metadata),
+          new BatchSpanProcessor(spanExporter),
+        ]);
+
+      if (!attached) {
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
