@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ExportResultCode } from '@opentelemetry/core';
+import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
 import {
   createOtlpHttpExportDelegate,
   httpAgentFactoryFromOptions,
 } from '@opentelemetry/otlp-exporter-base/node-http';
+import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
 import http from 'node:http';
 import { PassThrough } from 'node:stream';
@@ -13,7 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import { uploadSessionReport } from './traces.js';
+import { PinoCloudExporter } from './pino_otel_transport.js';
+import {
+  FanoutSpanProcessor,
+  setTracerProvider,
+  setupCloudTracer,
+  tracer,
+  uploadSessionReport,
+} from './traces.js';
 import {
   fetchWithUploadGate,
   registerOtlpHttpUploadGateTarget,
@@ -62,6 +71,87 @@ function mockFormSubmit(statusCode: number, body: Buffer = Buffer.alloc(0)) {
   });
 }
 
+async function createCustomTraceHarness(
+  responseForRequest: (requestCount: number) => { status: number; body: string },
+) {
+  let requestCount = 0;
+  const server = http.createServer((_request, response) => {
+    requestCount += 1;
+    const { status, body } = responseForRequest(requestCount);
+    response.statusCode = status;
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (typeof address === 'string' || address === null) throw new Error('missing server address');
+
+  const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
+  const fanout = new FanoutSpanProcessor();
+  const provider = new NodeTracerProvider({ spanProcessors: [fanout] });
+  const resultPromises: Promise<ExportResult>[] = [];
+
+  setTracerProvider(provider, {
+    registerSpanProcessor: (processor) => fanout.add(processor),
+    createCloudSpanProcessor: () => {
+      registerOtlpHttpUploadGateTarget(url);
+      const exporter = createOtlpHttpExportDelegate<ReadableSpan, object>(
+        {
+          url,
+          headers: async () => ({}),
+          compression: 'none',
+          concurrencyLimit: 1,
+          timeoutMillis: 1_000,
+          agentFactory: httpAgentFactoryFromOptions({}),
+        },
+        {
+          serializeRequest: () => new Uint8Array([1]),
+          deserializeResponse: () => ({}),
+        },
+      );
+      const processor: SpanProcessor = {
+        onStart: () => undefined,
+        onEnd: (span) => {
+          resultPromises.push(
+            new Promise<ExportResult>((resolve) => {
+              exporter.export(span, resolve);
+            }),
+          );
+        },
+        forceFlush: async () => {
+          await Promise.all(resultPromises);
+        },
+        shutdown: async () => {
+          await exporter.shutdown();
+        },
+      };
+      return processor;
+    },
+  });
+  await setupCloudTracer({
+    roomId: 'room1',
+    jobId: 'job1',
+    cloudHostname: 'example.livekit.cloud',
+    enableLogs: false,
+  });
+
+  return {
+    exportSpan: async (name: string) => {
+      const span = tracer.startSpan({ name });
+      span.end();
+      const result = resultPromises.at(-1);
+      if (!result) throw new Error('custom processor did not export the span');
+      return result;
+    },
+    requestCount: () => requestCount,
+    close: async () => {
+      await provider.shutdown();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    },
+  };
+}
+
 describe('recording disabled upload gate', () => {
   const originalEnv = { ...process.env };
 
@@ -99,6 +189,16 @@ describe('recording disabled upload gate', () => {
 
     expect(response.ok).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('restores patched HTTP requests when the gate resets', () => {
+    const originalRequest = http.request;
+
+    registerOtlpHttpUploadGateTarget('http://127.0.0.1/observability/traces/otlp/v0');
+    expect(http.request).not.toBe(originalRequest);
+
+    uploadGate.reset();
+    expect(http.request).toBe(originalRequest);
   });
 
   it('warns once per session', () => {
@@ -166,21 +266,48 @@ describe('recording disabled upload gate', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('pino exporter latches and then short-circuits uploads', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(statusProto(DISABLED_MSG), { status: 401 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const exporter = new PinoCloudExporter({
+      cloudHostname: 'example.livekit.cloud',
+      roomId: 'room1',
+      jobId: 'job1',
+    });
+
+    exporter.emit({ level: 30, time: 0, msg: 'first' });
+    await exporter.flush();
+    exporter.emit({ level: 30, time: 1, msg: 'second' });
+    await exporter.flush();
+
+    expect(uploadGate.disabled).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   it('recording upload latches disabled responses without throwing', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockFormSubmit(401, statusProto(DISABLED_MSG));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const report = makeReport({
+      audio: false,
+      traces: false,
+      logs: false,
+      transcript: true,
+      redaction: false,
+    });
 
     await uploadSessionReport({
       agentName: 'agent',
       cloudHostname: 'example.livekit.cloud',
-      report: makeReport({
-        audio: false,
-        traces: false,
-        logs: false,
-        transcript: true,
-        redaction: false,
-      }),
+      report,
+    });
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report,
     });
 
     expect(uploadGate.disabled).toBe(true);
@@ -249,6 +376,43 @@ describe('recording disabled upload gate', () => {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
+    }
+  });
+
+  it('short-circuits custom cloud processor exports after recording is disabled', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const harness = await createCustomTraceHarness(() => ({
+      status: 401,
+      body: DISABLED_MSG,
+    }));
+
+    try {
+      const first = await harness.exportSpan('first');
+      const second = await harness.exportSpan('second');
+
+      expect(first.code).toBe(ExportResultCode.SUCCESS);
+      expect(second.code).toBe(ExportResultCode.SUCCESS);
+      expect(harness.requestCount()).toBe(1);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('does not suppress unrelated custom cloud processor 401 responses', async () => {
+    const harness = await createCustomTraceHarness((requestCount) =>
+      requestCount === 1 ? { status: 401, body: 'invalid token' } : { status: 200, body: 'ok' },
+    );
+
+    try {
+      const first = await harness.exportSpan('first');
+      const second = await harness.exportSpan('second');
+
+      expect(first.code).toBe(ExportResultCode.FAILED);
+      expect(second.code).toBe(ExportResultCode.SUCCESS);
+      expect(uploadGate.disabled).toBe(false);
+      expect(harness.requestCount()).toBe(2);
+    } finally {
+      await harness.close();
     }
   });
 });
