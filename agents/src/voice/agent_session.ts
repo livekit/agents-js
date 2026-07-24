@@ -42,6 +42,7 @@ import type {
   ToolContextLike,
 } from '../llm/index.js';
 import { ToolContext, toToolContext } from '../llm/index.js';
+import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -544,6 +545,11 @@ export class AgentSession<
       this.llm = InferenceLLM.fromModelString(llm);
     } else {
       this.llm = llm;
+    }
+
+    // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
+    if (this.llm instanceof BaseLLM) {
+      this.llm.prewarm();
     }
 
     if (typeof tts === 'string') {

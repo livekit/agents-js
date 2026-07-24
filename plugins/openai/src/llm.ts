@@ -101,6 +101,10 @@ export class LLM extends llm.LLM {
     }
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list({ signal });
+  }
+
   /**
    * Create a new instance of OpenAI LLM with Azure.
    *
