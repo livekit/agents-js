@@ -575,6 +575,10 @@ class RecorderAudioOutput extends AudioOutput {
   private accFrames: AudioFrame[] = [];
   private _startedWallTime?: number;
   private _logger = log();
+  // Downstream playback events can fire before this wrapper registers its segment.
+  private captureDeferredPlaybackFinished?: PlaybackFinishedEvent[];
+  // Dropped segments settle only after earlier downstream segments complete.
+  private droppedPlayoutSegments: number[] = [];
 
   _lastSpeechEndTime?: number;
   private _lastSpeechStartTime?: number;
@@ -631,6 +635,11 @@ class RecorderAudioOutput extends AudioOutput {
   }
 
   onPlaybackFinished(options: PlaybackFinishedEvent): void {
+    if (this.captureDeferredPlaybackFinished && this.pendingPlayoutSegments === 0) {
+      this.captureDeferredPlaybackFinished.push(options);
+      return;
+    }
+
     const finishTime = this.currentPauseStart ?? Date.now();
     const trailingSilenceDuration = Math.max(0, Date.now() - finishTime);
 
@@ -771,30 +780,73 @@ class RecorderAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    if (this.nextInChain) {
-      await this.nextInChain.captureFrame(frame);
+    const downstreamCapturedBefore = this.nextInChain?.capturedPlayoutSegments;
+    const recorderCapturedBefore = this.capturedPlayoutSegments;
+    const deferredPlaybackFinished: PlaybackFinishedEvent[] = [];
+
+    this.captureDeferredPlaybackFinished = deferredPlaybackFinished;
+    try {
+      if (this.nextInChain) {
+        await this.nextInChain.captureFrame(frame);
+      }
+
+      await super.captureFrame(frame);
+
+      if (this.recorderIO.recording) {
+        this.accFrames.push(frame);
+      }
+
+      if (this._startedWallTime === undefined) {
+        this._startedWallTime = Date.now();
+      }
+
+      if (this._lastSpeechStartTime === undefined) {
+        this._lastSpeechStartTime = Date.now();
+      }
+    } finally {
+      this.captureDeferredPlaybackFinished = undefined;
     }
 
-    await super.captureFrame(frame);
-
-    if (this.recorderIO.recording) {
-      this.accFrames.push(frame);
+    // Replay before the drop check below: a deferred event settles the segment this frame just
+    // opened, which means the segment must not also be queued for a synthetic finish.
+    for (const event of deferredPlaybackFinished) {
+      this.onPlaybackFinished(event);
     }
 
-    if (this._startedWallTime === undefined) {
-      this._startedWallTime = Date.now();
+    const segment = this.capturedPlayoutSegments;
+    const downstreamAcceptedSegment =
+      this.nextInChain === undefined ||
+      this.nextInChain.capturedPlayoutSegments > (downstreamCapturedBefore ?? 0);
+
+    if (downstreamAcceptedSegment) {
+      // The downstream output may start accepting frames mid-segment (e.g. a paused output that
+      // dropped the opening frame and then resumed). Its real finish now covers this segment, so
+      // drop the queued synthetic one instead of settling the segment twice.
+      const queued = this.droppedPlayoutSegments.indexOf(segment);
+      if (queued >= 0) {
+        this.droppedPlayoutSegments.splice(queued, 1);
+      }
+      return;
     }
 
-    if (this._lastSpeechStartTime === undefined) {
-      this._lastSpeechStartTime = Date.now();
+    const openedRecorderSegment = segment > recorderCapturedBefore;
+    if (openedRecorderSegment && this.pendingPlayoutSegments > 0) {
+      this.droppedPlayoutSegments.push(segment);
     }
   }
 
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const target = this.capturedPlayoutSegments;
     const waitForRecorder = super.waitForPlayout();
     if (this.nextInChain) {
       await this.nextInChain.waitForPlayout();
     }
+
+    while (this.droppedPlayoutSegments.length > 0 && this.droppedPlayoutSegments[0]! <= target) {
+      this.droppedPlayoutSegments.shift();
+      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+
     return waitForRecorder;
   }
 

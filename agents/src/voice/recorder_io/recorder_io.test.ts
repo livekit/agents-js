@@ -5,12 +5,12 @@ import { AudioFrame } from '@livekit/rtc-node';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, isWritableStreamClosedError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
-import { AudioInput, AudioOutput } from '../io.js';
+import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { RecorderIO } from './recorder_io.js';
 
 class FakeAudioInput extends AudioInput {
@@ -49,6 +49,32 @@ class WaitAwareAudioOutput extends FakeAudioOutput {
   releaseWait() {
     this.continueWait.resolve();
   }
+}
+
+interface CaptureStep {
+  accept: boolean;
+  finish?: PlaybackFinishedEvent;
+}
+
+class ScriptedAudioOutput extends AudioOutput {
+  constructor(private readonly captureSteps: CaptureStep[]) {
+    super(24000);
+  }
+
+  async captureFrame(frame: AudioFrame) {
+    const step = this.captureSteps.shift();
+    if (!step) {
+      throw new Error('unexpected audio capture');
+    }
+    if (step.accept) {
+      await super.captureFrame(frame);
+    }
+    if (step.finish) {
+      this.onPlaybackFinished(step.finish);
+    }
+  }
+
+  clearBuffer(): void {}
 }
 
 function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioFrame {
@@ -139,6 +165,207 @@ describe('RecorderIO close', () => {
 });
 
 describe('RecorderAudioOutput', () => {
+  it('settles when playback finishes during first-frame capture', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const output = recorder.recordOutput(
+      new ScriptedAudioOutput([
+        { accept: true, finish: { playbackPosition: 0, interrupted: true } },
+      ]),
+    );
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+  }, 1000);
+
+  it('settles as interrupted when the downstream output drops the first frame', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const output = recorder.recordOutput(new ScriptedAudioOutput([{ accept: false }]));
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+  }, 1000);
+
+  it('settles subsequent segments after an early first-frame finish', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const finish = { playbackPosition: 0, interrupted: true };
+    const output = recorder.recordOutput(
+      new ScriptedAudioOutput([
+        { accept: true, finish },
+        { accept: true, finish },
+      ]),
+    );
+
+    for (let i = 0; i < 2; i++) {
+      await output.captureFrame(makeFrame(20, 24000));
+      output.flush();
+      await expect(output.waitForPlayout()).resolves.toEqual({
+        playbackPosition: 0,
+        interrupted: true,
+      });
+    }
+  });
+
+  it('settles the next segment after the downstream output drops a frame', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ScriptedAudioOutput([{ accept: false }, { accept: true }]);
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForSecondSegment = output.waitForPlayout();
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: false });
+
+    await expect(waitForSecondSegment).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: false,
+    });
+  });
+
+  it('preserves a previous completion that arrives during the next capture', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ScriptedAudioOutput([
+      { accept: true },
+      { accept: true, finish: { playbackPosition: 0, interrupted: false } },
+    ]);
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForFirstSegment = output.waitForPlayout();
+
+    await output.captureFrame(makeFrame(20, 24000));
+    await expect(waitForFirstSegment).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: false,
+    });
+
+    output.flush();
+    const waitForSecondSegment = output.waitForPlayout();
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    await expect(waitForSecondSegment).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+  }, 1000);
+
+  it('settles a dropped segment after a previous completion arrives during its capture', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ScriptedAudioOutput([
+      { accept: true },
+      {
+        accept: false,
+        finish: { playbackPosition: 0, interrupted: false },
+      },
+    ]);
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForFirstSegment = output.waitForPlayout();
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+
+    await expect(waitForFirstSegment).resolves.toBeDefined();
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+  }, 1000);
+
+  it('preserves a delayed previous completion before settling a dropped segment', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ScriptedAudioOutput([{ accept: true }, { accept: false }]);
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForFirstSegment = output.waitForPlayout();
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForSecondSegment = output.waitForPlayout();
+
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: false });
+
+    await expect(waitForFirstSegment).resolves.toBeDefined();
+    await expect(waitForSecondSegment).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+  }, 1000);
+
+  it('keeps an owed completion reported during the capture of a dropped frame', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    // The downstream output segments finer than this wrapper, so it still owes a completion for
+    // its second segment once the wrapper's first segment has settled.
+    const downstream = new ScriptedAudioOutput([
+      { accept: true },
+      { accept: true },
+      { accept: false, finish: { playbackPosition: 0.5, interrupted: false } },
+    ]);
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    downstream.flush();
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: false });
+
+    // The owed completion lands while the frame that opens the next segment is dropped: it must
+    // settle that segment instead of being replaced by a synthetic interrupted finish.
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: false,
+    });
+  }, 1000);
+
+  it('settles once when the downstream output accepts a later frame of the segment', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ScriptedAudioOutput([{ accept: false }, { accept: true }]);
+    const output = recorder.recordOutput(downstream);
+    const warn = vi.spyOn(
+      (output as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger,
+      'warn',
+    );
+
+    // The opening frame is dropped downstream, the second one is accepted, so the downstream
+    // output reports a real finish for a segment this wrapper had written off as dropped.
+    await output.captureFrame(makeFrame(20, 24000));
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: false });
+
+    await expect(output.waitForPlayout()).resolves.toEqual({
+      playbackPosition: 0,
+      interrupted: false,
+    });
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('playback_finished called more times'),
+    );
+    warn.mockRestore();
+  }, 1000);
+
   it('snapshots its segment before delegating the playout wait', async () => {
     const recorder = new RecorderIO({ agentSession: {} as AgentSession });
     const downstream = new WaitAwareAudioOutput();
