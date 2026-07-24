@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MetricsRecordingHeader } from '@livekit/protocol';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { ProxyTracerProvider, context as otelContext, trace } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import {
   InMemorySpanExporter,
+  type ReadableSpan,
   SimpleSpanProcessor,
   type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
@@ -247,6 +248,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       roomId: 'room1',
       jobId: 'job1',
       cloudHostname: 'example.livekit.cloud',
+      agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
     });
@@ -259,9 +261,12 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(registeredProcessors).toHaveLength(3);
     const setAttributes = vi.fn();
     registeredProcessors[1]!.onStart({ setAttributes } as never, otelContext.active());
+    // agent_name rides the session metadata so spans (and logs) carry it even on
+    // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
       room_id: 'room1',
       job_id: 'job1',
+      'lk.agent_name': 'my-agent',
     });
     expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
   });
@@ -475,5 +480,84 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('setupCloudTracer resource identity (fresh provider)', () => {
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+  let prevOtelAttrs: string | undefined;
+
+  // OTel 2.x providers no longer expose their resource; read it off a probe
+  // span (started but never ended, so nothing is enqueued for export).
+  const providerResourceAttrs = () => {
+    const provider = tracer.getProvider();
+    expect(provider).toBeInstanceOf(NodeTracerProvider);
+    const span = provider.getTracer('resource-probe').startSpan('probe');
+    return (span as unknown as ReadableSpan).resource.attributes;
+  };
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    prevOtelAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+    // no user-configured provider: reset the module tracer to the API proxy so
+    // setupCloudTracer takes the fresh-provider path
+    setTracerProvider(new ProxyTracerProvider());
+  });
+
+  afterEach(async () => {
+    const provider = tracer.getProvider();
+    // No span is created/ended in these tests, so shutting down the cloud
+    // BatchSpanProcessor has nothing to flush over the network.
+    if (provider instanceof NodeTracerProvider) {
+      await provider.shutdown();
+    }
+    otelContext.disable();
+    trace.disable();
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+    if (prevOtelAttrs === undefined) delete process.env.OTEL_RESOURCE_ATTRIBUTES;
+    else process.env.OTEL_RESOURCE_ATTRIBUTES = prevOtelAttrs;
+  });
+
+  it('stamps lk.agent_name and merges OTEL_RESOURCE_ATTRIBUTES, explicit attrs winning', async () => {
+    process.env.OTEL_RESOURCE_ATTRIBUTES =
+      'lk.cloud_agent_id=CA_test,lk.agent_name=env-name,lk.deployment_id=v42';
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: 'sdk-name',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBe('CA_test');
+    expect(attrs['lk.deployment_id']).toBe('v42');
+    expect(attrs['lk.agent_name']).toBe('sdk-name'); // explicit beats env on collision
+    expect(attrs['room_id']).toBe('room1');
+    expect(attrs['job_id']).toBe('job1');
+  });
+
+  it('omits lk.agent_name for default dispatch (empty name)', async () => {
+    await setupCloudTracer({
+      roomId: 'room2',
+      jobId: 'job2',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.agent_name']).toBeUndefined();
+    expect(attrs['room_id']).toBe('room2');
   });
 });
