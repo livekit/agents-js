@@ -503,6 +503,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomId: this.job.room!.sid,
       jobId: this.job.id,
       cloudHostname: url.hostname,
+      agentName: this.job.agentName,
       enableTraces: options.traces,
       enableLogs: options.logs,
       metadata: this._otelMetadata(options),

@@ -17,7 +17,7 @@ import {
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
-import { Resource } from '@opentelemetry/resources';
+import { Resource, envDetectorSync } from '@opentelemetry/resources';
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
@@ -36,6 +36,7 @@ import {
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
+import { ATTR_AGENT_NAME } from './trace_types.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -426,11 +427,19 @@ export async function setupCloudTracer(options: {
   roomId: string;
   jobId: string;
   cloudHostname: string;
+  agentName?: string;
   enableTraces?: boolean;
   enableLogs?: boolean;
   metadata?: Attributes;
 }): Promise<void> {
-  const { roomId, jobId, cloudHostname, enableTraces = true, enableLogs = true } = options;
+  const {
+    roomId,
+    jobId,
+    cloudHostname,
+    agentName,
+    enableTraces = true,
+    enableLogs = true,
+  } = options;
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -459,10 +468,21 @@ export async function setupCloudTracer(options: {
 
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
 
-    const resource = new Resource({
+    const explicitAttributes: Attributes = {
       [ATTR_SERVICE_NAME]: 'livekit-agents',
       ...baseMetadata,
-    });
+    };
+    if (agentName) {
+      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
+      // only; the default dispatch has no agent name)
+      explicitAttributes[ATTR_AGENT_NAME] = agentName;
+    }
+    // Unlike Python's Resource.create(), the raw Resource constructor does not read
+    // OTEL_RESOURCE_ATTRIBUTES. envDetectorSync brings those env attributes in — on
+    // LiveKit Cloud the launcher injects agent identity (lk.cloud_agent_id,
+    // lk.deployment_id) through that env var. merge() gives the explicit
+    // attributes precedence on collision.
+    const resource = envDetectorSync.detect().merge(new Resource(explicitAttributes));
 
     if (enableTraces) {
       const cloudExporterOptions: CloudSpanProcessorOptions = {
