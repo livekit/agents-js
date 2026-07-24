@@ -175,7 +175,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   label = 'speechify.ChunkedStream';
   #opts: TTSOptions;
   #tts: TTS;
-  #timeoutInSeconds?: number;
+  #timeoutInSeconds: number;
 
   constructor(
     ttsInstance: TTS,
@@ -187,8 +187,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     super(text, ttsInstance, connOptions, abortSignal);
     this.#tts = ttsInstance;
     this.#opts = opts;
-    this.#timeoutInSeconds =
-      connOptions?.timeoutMs !== undefined ? connOptions.timeoutMs / 1000 : undefined;
+    // this.connOptions (set by the base class) always falls back to
+    // DEFAULT_API_CONNECT_OPTIONS, unlike the raw connOptions param above.
+    this.#timeoutInSeconds = this.connOptions.timeoutMs / 1000;
   }
 
   protected async run() {
