@@ -477,11 +477,6 @@ export async function setupCloudTracer(options: {
       // only; the default dispatch has no agent name)
       explicitAttributes[ATTR_AGENT_NAME] = agentName;
     }
-    // Unlike Python's Resource.create(), the raw Resource constructor does not read
-    // OTEL_RESOURCE_ATTRIBUTES. envDetectorSync brings those env attributes in — on
-    // LiveKit Cloud the launcher injects agent identity (lk.cloud_agent_id,
-    // lk.deployment_id) through that env var. merge() gives the explicit
-    // attributes precedence on collision.
     const resource = envDetectorSync.detect().merge(new Resource(explicitAttributes));
 
     if (enableTraces) {
