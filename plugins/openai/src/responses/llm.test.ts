@@ -20,6 +20,7 @@ import {
   WSLLMStream,
   WS_HEARTBEAT,
   buildResponsesWsUrl,
+  connectWs,
 } from '../ws/llm.js';
 import { wsServerEventSchema } from '../ws/types.js';
 import { LLM } from './llm.js';
@@ -53,6 +54,11 @@ function sendSuccessfulResponse(ws: WebSocket, responseId: string): void {
       },
     }),
   );
+}
+
+function sendInvalidMaskedFrame(ws: WebSocket): void {
+  const socket = (ws as unknown as { _socket: Socket })._socket;
+  socket.write(Buffer.from([0x81, 0x81, 0, 0, 0, 0, 0x61]));
 }
 
 async function startResponsesServer(
@@ -146,6 +152,7 @@ async function startUpgradeBoundary(mode: 'hang' | 'unauthorized') {
         'HTTP/1.1 401 Unauthorized',
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
+        'x-request-id: req_unauthorized',
         'Connection: keep-alive',
         '',
         body,
@@ -188,8 +195,16 @@ async function connectResponsesWebSocket(baseURL: string): Promise<ResponsesWebS
     headers: { Authorization: 'Bearer test-key' },
   });
   await new Promise<void>((resolve, reject) => {
-    ws.once('open', resolve);
-    ws.once('error', reject);
+    const onOpen = () => {
+      ws.removeListener('error', onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      ws.removeListener('open', onOpen);
+      reject(error);
+    };
+    ws.once('open', onOpen);
+    ws.once('error', onError);
   });
   return new ResponsesWebSocket(ws);
 }
@@ -305,6 +320,24 @@ describe('OpenAI Responses WebSocket', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
       await model.aclose();
+      await boundary.close();
+    }
+  });
+
+  it('preserves request IDs from unauthorized WebSocket upgrades', async () => {
+    const boundary = await startUpgradeBoundary('unauthorized');
+
+    try {
+      const error = await connectWs(
+        buildResponsesWsUrl(boundary.baseURL, 'gpt-4.1'),
+        'invalid-key',
+        500,
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).requestId).toBe('req_unauthorized');
+      await waitFor(() => boundary.openSockets === 0);
+    } finally {
       await boundary.close();
     }
   });
@@ -581,6 +614,41 @@ describe('OpenAI Responses WebSocket', () => {
 
       await waitFor(() => server.connections[0]?.readyState === WebSocket.CLOSED);
     } finally {
+      await model.aclose();
+      await server.close();
+    }
+  });
+
+  it('routes a post-open WebSocket protocol error through the pending request', async () => {
+    const server = await startResponsesServer(({ ws }) => sendInvalidMaskedFrame(ws));
+    const model = new WSLLM({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'gpt-4.1',
+    });
+    const connectCb = vi.fn((_timeout: number, _signal?: AbortSignal) =>
+      connectResponsesWebSocket(server.baseURL),
+    );
+    const pool = new ConnectionPool<ResponsesWebSocket>({
+      connectCb,
+      closeCb: async (connection) => connection.close(),
+    });
+    const stream = createManualStream(model, pool);
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error) => uncaught.push(error);
+    process.prependListener('uncaughtException', onUncaught);
+
+    try {
+      const error = await stream.execute().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).retryable).toBe(false);
+      expect(server.received).toHaveLength(1);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener('uncaughtException', onUncaught);
+      stream.close();
+      await pool.close();
       await model.aclose();
       await server.close();
     }
