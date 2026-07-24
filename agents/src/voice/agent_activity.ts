@@ -297,6 +297,7 @@ export class AgentActivity implements RecognitionHooks {
   private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
+  private interruptionDetected = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -332,6 +333,7 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.interruptionDetected = ev.isInterruption;
     this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
@@ -786,6 +788,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get vad(): VAD | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.vad || this.agentSession.vad;
   }
 
@@ -802,6 +807,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get stt(): STT | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.stt || this.agentSession.stt;
   }
 
@@ -821,6 +829,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tts(): TTS | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.tts || this.agentSession.tts;
   }
 
@@ -1382,6 +1393,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
+    this.interruptionDetected = false;
 
     if (this.falseInterruptionTimer) {
       // cancel the timer when user starts speaking but leave the paused state unchanged
@@ -1443,6 +1455,17 @@ export class AgentActivity implements RecognitionHooks {
       ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
     ) {
       this.interruptByAudioActivity();
+    }
+  }
+
+  onBackchannelConfirmed(): void {
+    if (
+      this.isInterruptionDetectionEnabled &&
+      this.realtimeSession !== undefined &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
+      this.realtimeSession.clearAudio();
     }
   }
 
@@ -1879,6 +1902,22 @@ export class AgentActivity implements RecognitionHooks {
         );
         return false;
       }
+    }
+
+    if (
+      !this.stt &&
+      this.turnDetection !== 'manual' &&
+      this.llm instanceof RealtimeModel &&
+      !this.llm.capabilities.turnDetection &&
+      this.isInterruptionDetectionEnabled &&
+      (info.backchannelOverAgent ||
+        (!this.interruptionDetected &&
+          this._currentSpeech !== undefined &&
+          !this._currentSpeech.interrupted))
+    ) {
+      this.cancelPreemptiveGeneration();
+      this.realtimeSession?.clearAudio();
+      return false;
     }
 
     const oldTask = this._userTurnCompletedTask;
@@ -4388,16 +4427,25 @@ export class AgentActivity implements RecognitionHooks {
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
-    if (
-      !(
+
+    let canGatekeep: boolean;
+    if (this.llm instanceof RealtimeModel) {
+      // Realtime commits turns manually; barge-in withholds the commit, so no STT is needed.
+      canGatekeep = !this.llm.capabilities.turnDetection;
+    } else {
+      // The STT pipeline gatekeeps by holding and flushing transcripts.
+      canGatekeep = !!(
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
-        this.stt.capabilities.streaming &&
-        this.vad !== undefined &&
-        this.turnDetection !== 'manual' &&
-        this.turnDetection !== 'realtime_llm' &&
-        !(this.llm instanceof RealtimeModel)
-      )
+        this.stt.capabilities.streaming
+      );
+    }
+
+    if (
+      !canGatekeep ||
+      this.vad === undefined ||
+      this.turnDetection === 'manual' ||
+      this.turnDetection === 'realtime_llm'
     ) {
       if (
         agentInterruptionDetection === 'adaptive' ||

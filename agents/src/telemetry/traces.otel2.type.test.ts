@@ -2,17 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { context as otelContext, trace } from '@opentelemetry/api';
-// Real OpenTelemetry SDK 2.x packages, installed under aliases so they can coexist with this
-// package's SDK 1.x dependency. Included in `pnpm typecheck`, this file is the compile-time
-// regression test that the telemetry API composes with an SDK 2.x provider without type errors,
-// and the runtime regression test that spans flushed through such a provider actually reach both
-// the user's exporter and the cloud span processor.
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type SpanProcessor,
-} from 'otel-v2-sdk-trace-base';
-import { NodeTracerProvider } from 'otel-v2-sdk-trace-node';
+} from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CloudSpanProcessorOptions,
@@ -22,6 +17,8 @@ import {
   tracer,
 } from './traces.js';
 
+// Included in `pnpm typecheck`, this suite verifies that the public telemetry API composes
+// directly with the OpenTelemetry SDK 2.x dependencies shipped by the package.
 describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   let userExporter: InMemorySpanExporter;
   let cloudExporter: InMemorySpanExporter;
@@ -60,6 +57,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   it('exports spans to both the user exporter and the cloud span processor', async () => {
     let cloudOptions: CloudSpanProcessorOptions | undefined;
     setTracerProvider(provider, {
+      metadata: { 'livekit.test.custom': true },
       registerSpanProcessor: (processor) => fanout.add(processor),
       createCloudSpanProcessor: (options) => {
         cloudOptions = options;
@@ -87,7 +85,11 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(cloudSpans.map((s) => s.name)).toEqual(['otel2-span']);
     // room_id/job_id are the attributes LiveKit Cloud correlates traces on; their presence
     // proves the metadata span processor works against SDK 2.x spans at runtime.
-    expect(cloudSpans[0]!.attributes).toMatchObject({ room_id: 'room1', job_id: 'job1' });
+    expect(cloudSpans[0]!.attributes).toMatchObject({
+      room_id: 'room1',
+      job_id: 'job1',
+      'livekit.test.custom': true,
+    });
 
     expect(userExporter.getFinishedSpans().map((s) => s.name)).toEqual(['otel2-span']);
   });
@@ -127,11 +129,32 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(userSpan!.attributes['livekit.test.on_ending']).toBe(true);
   });
 
-  it('disables cloud tracing but keeps the user pipeline when no processor factory is supplied', async () => {
+  it('forwards forceFlush and shutdown to dynamically registered processors', async () => {
+    const forceFlush = vi.fn(async () => undefined);
+    const shutdown = vi.fn(async () => undefined);
+    const processor: SpanProcessor = {
+      forceFlush,
+      onStart: () => undefined,
+      onEnd: () => undefined,
+      shutdown,
+    };
+    const lifecycleFanout = new FanoutSpanProcessor();
+    lifecycleFanout.add(processor);
+
+    await lifecycleFanout.forceFlush();
+    await lifecycleFanout.shutdown();
+
+    expect(forceFlush).toHaveBeenCalledOnce();
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the built-in cloud exporter when no processor factory is supplied', async () => {
+    // The built-in cloud exporter is SDK 2.x, matching the provider, so a factory is optional.
+    // The registrar records instead of attaching so the test never flushes over the network.
+    const registered: unknown[] = [];
     setTracerProvider(provider, {
-      registerSpanProcessor: (processor) => fanout.add(processor),
+      registerSpanProcessor: (processor) => registered.push(processor),
     });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -141,12 +164,9 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
       enableLogs: false,
     });
 
-    const span = tracer.startSpan({ name: 'otel2-user-only' });
-    span.end();
-    await provider.forceFlush();
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('createCloudSpanProcessor'));
-    expect(cloudExporter.getFinishedSpans()).toHaveLength(0);
-    expect(userExporter.getFinishedSpans().map((s) => s.name)).toEqual(['otel2-user-only']);
+    expect(tracer.getProvider()).toBe(provider);
+    // session metadata processor + built-in cloud span processor
+    expect(registered).toHaveLength(2);
+    expect(registered[1]).toBeInstanceOf(BatchSpanProcessor);
   });
 });
