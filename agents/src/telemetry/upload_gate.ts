@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type * as httpTypes from 'node:http';
 import type * as httpsTypes from 'node:https';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
@@ -84,6 +84,8 @@ function installOtlpHttpInterceptor(): void {
 
   httpModule.request = wrapRequest(httpModule.request as RequestFn) as typeof httpModule.request;
   httpsModule.request = wrapRequest(httpsModule.request as RequestFn) as typeof httpsModule.request;
+  // OpenTelemetry 2.x loads request through ESM, which may already have cached the old binding.
+  syncBuiltinESMExports();
 }
 
 type RequestArg =

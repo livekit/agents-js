@@ -1,14 +1,24 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { ExportResultCode } from '@opentelemetry/core';
+import {
+  createOtlpHttpExportDelegate,
+  httpAgentFactoryFromOptions,
+} from '@opentelemetry/otlp-exporter-base/node-http';
 import FormData from 'form-data';
+import http from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { uploadSessionReport } from './traces.js';
-import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
+import {
+  fetchWithUploadGate,
+  registerOtlpHttpUploadGateTarget,
+  uploadGate,
+} from './upload_gate.js';
 
 const DISABLED_MSG = 'project data recording is disabled by owner';
 
@@ -197,5 +207,48 @@ describe('recording disabled upload gate', () => {
     });
 
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it('intercepts OpenTelemetry 2.x after the node:http ESM binding is loaded', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const server = http.createServer((_request, response) => {
+      response.statusCode = 401;
+      response.end(DISABLED_MSG);
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('missing server address');
+
+    const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
+    registerOtlpHttpUploadGateTarget(url);
+    const exporter = createOtlpHttpExportDelegate<string, object>(
+      {
+        url,
+        headers: async () => ({}),
+        compression: 'none',
+        concurrencyLimit: 1,
+        timeoutMillis: 1_000,
+        agentFactory: httpAgentFactoryFromOptions({}),
+      },
+      {
+        serializeRequest: () => new Uint8Array([1]),
+        deserializeResponse: () => ({}),
+      },
+    );
+
+    try {
+      const result = await new Promise<{ code: ExportResultCode }>((resolve) => {
+        exporter.export('payload', resolve);
+      });
+
+      expect(result.code).toBe(ExportResultCode.SUCCESS);
+      expect(uploadGate.disabled).toBe(true);
+    } finally {
+      await exporter.shutdown();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });
