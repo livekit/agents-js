@@ -10,6 +10,7 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface SimpleLogRecord {
   /** Log message body */
@@ -77,6 +78,7 @@ export class SimpleOTLPHttpLogExporter {
    */
   async export(records: SimpleLogRecord[]): Promise<void> {
     if (records.length === 0) return;
+    if (uploadGate.disabled) return;
 
     await this.ensureJwt();
 
@@ -84,7 +86,7 @@ export class SimpleOTLPHttpLogExporter {
     const payload = this.buildPayload(records);
     const payloadJson = JSON.stringify(payload);
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.jwt}`,
