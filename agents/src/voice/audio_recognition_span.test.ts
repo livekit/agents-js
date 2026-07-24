@@ -104,6 +104,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -199,6 +200,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -272,6 +274,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -373,6 +376,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
