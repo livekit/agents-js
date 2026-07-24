@@ -22,6 +22,85 @@ import {
 } from './tool_context.js';
 import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
 
+export const THINK_TAG_START = '<think>';
+export const THINK_TAG_END = '</think>';
+
+export class ThinkingTokenFilter {
+  startTag: string;
+  endTag: string;
+  buffer = '';
+  endMarker?: string;
+
+  constructor(startTag: string = THINK_TAG_START, endTag: string = THINK_TAG_END) {
+    this.startTag = startTag;
+    this.endTag = endTag;
+  }
+}
+
+function partialMarkerLength(content: string, markers: string[]): number {
+  let longest = 0;
+
+  for (const marker of markers) {
+    for (let length = 1; length <= Math.min(content.length, marker.length - 1); length += 1) {
+      if (content.endsWith(marker.slice(0, length))) {
+        longest = Math.max(longest, length);
+      }
+    }
+  }
+
+  return longest;
+}
+
+export function stripThinkingTokens(
+  content: string | null | undefined,
+  state: ThinkingTokenFilter,
+  { final = false }: { final?: boolean } = {},
+): string | undefined {
+  if (content !== null && content !== undefined) {
+    state.buffer += content;
+  }
+
+  const visible: string[] = [];
+  while (state.buffer) {
+    if (state.endMarker !== undefined) {
+      const idx = state.buffer.indexOf(state.endMarker);
+      if (idx < 0) {
+        const keep = partialMarkerLength(state.buffer, [state.endMarker]);
+        state.buffer = keep ? state.buffer.slice(-keep) : '';
+        break;
+      }
+
+      state.buffer = state.buffer.slice(idx + state.endMarker.length);
+      state.endMarker = undefined;
+      continue;
+    }
+
+    const idx = state.buffer.indexOf(state.startTag);
+    if (idx >= 0) {
+      visible.push(state.buffer.slice(0, idx));
+      state.buffer = state.buffer.slice(idx + state.startTag.length);
+      state.endMarker = state.endTag;
+      continue;
+    }
+
+    const keep = partialMarkerLength(state.buffer, [state.startTag]);
+    visible.push(keep ? state.buffer.slice(0, -keep) : state.buffer);
+    state.buffer = keep ? state.buffer.slice(-keep) : '';
+    break;
+  }
+
+  if (final) {
+    if (state.endMarker === undefined) {
+      visible.push(state.buffer);
+    }
+    state.buffer = '';
+    state.endMarker = undefined;
+  }
+
+  const result = visible.join('');
+  return result || (content === '' ? '' : undefined);
+}
+
 export interface SerializedImage {
   inferenceDetail: 'auto' | 'high' | 'low';
   mimeType?: string;
@@ -704,26 +783,15 @@ function computeLCS(oldIds: string[], newIds: string[]): string[] {
 interface DiffOps {
   toRemove: string[];
   toCreate: Array<[string | null, string]>; // (previous_item_id, id), if previous_item_id is null, add to the root
-}
-
-function isUnchangedChatItem(oldItem: ChatItem | undefined, newItem: ChatItem): boolean {
-  if (!oldItem || oldItem.type !== newItem.type) {
-    return false;
-  }
-
-  if (oldItem.type === 'message' && newItem.type === 'message') {
-    return oldItem.rawTextContent === newItem.rawTextContent;
-  }
-
-  return true;
+  toUpdate: Array<[string | null, string]>; // (previous_item_id, id), the items with the same id but different content
 }
 
 /**
- * Compute the minimal list of create/remove operations to transform oldCtx into newCtx.
+ * Compute the minimal list of create/remove/update operations to transform oldCtx into newCtx.
  *
  * @param oldCtx - The old chat context.
  * @param newCtx - The new chat context.
- * @returns The minimal list of create/remove operations to transform oldCtx into newCtx.
+ * @returns The minimal list of create/remove/update operations to transform oldCtx into newCtx.
  */
 export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): DiffOps {
   const oldIds = oldCtx.items.map((item: ChatItem) => item.id);
@@ -731,18 +799,21 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   const lcsIds = new Set(computeLCS(oldIds, newIds));
   const oldCtxById = new Map(oldCtx.items.map((item) => [item.id, item]));
 
-  for (const newItem of newCtx.items) {
-    if (lcsIds.has(newItem.id) && !isUnchangedChatItem(oldCtxById.get(newItem.id), newItem)) {
-      lcsIds.delete(newItem.id);
-    }
-  }
-
   const toRemove = oldCtx.items.filter((msg) => !lcsIds.has(msg.id)).map((msg) => msg.id);
   const toCreate: Array<[string | null, string]> = [];
+  const toUpdate: Array<[string | null, string]> = [];
 
   let lastIdInSequence: string | null = null;
   for (const newItem of newCtx.items) {
     if (lcsIds.has(newItem.id)) {
+      const oldItem = oldCtxById.get(newItem.id);
+      if (
+        oldItem?.type === 'message' &&
+        newItem.type === 'message' &&
+        oldItem.rawTextContent !== newItem.rawTextContent
+      ) {
+        toUpdate.push([lastIdInSequence, newItem.id]);
+      }
       lastIdInSequence = newItem.id;
     } else {
       const prevId = lastIdInSequence; // null if root
@@ -754,6 +825,7 @@ export function computeChatCtxDiff(oldCtx: ChatContext, newCtx: ChatContext): Di
   return {
     toRemove,
     toCreate,
+    toUpdate,
   };
 }
 

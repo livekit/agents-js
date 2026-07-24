@@ -4,6 +4,12 @@ Support for avatar generation and animation with [LemonSlice](https://lemonslice
 
 See [https://docs.livekit.io/agents/models/avatar/plugins/lemonslice/](https://docs.livekit.io/agents/models/avatar/plugins/lemonslice/) for more information.
 
+> **Inference variant:** [`inference_avatar.ts`](../../examples/src/inference_avatar.ts) is a
+> minimal example that provisions the avatar through **LiveKit Inference** instead of this BYOK
+> plugin. The agent needs only `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` (no `LEMONSLICE_API_KEY`);
+> the gateway creates the provider session with LiveKit's wholesale key. Requires the
+> `avatar_lemonslice` feature flag on your project. Run it with `LEMONSLICE_IMAGE_URL` set.
+
 ## Installation
 
 ```bash
@@ -43,6 +49,18 @@ Find a complete working example [here](../../examples/src/lemonslice_realtime_av
 
 Set `LEMONSLICE_API_KEY` and `LEMONSLICE_IMAGE_URL` to get up and running.
 
+### Video Meeting Example (Zoom/Meet/Teams/Webex)
+
+To send your LemonSlice avatar into a third-party video meeting platform, use [`lemonslice_realtime_avatar_meeting.ts`](../../examples/src/lemonslice_realtime_avatar_meeting.ts). The avatar joins the call, listens to meeting audio, and responds through the meeting relay. Zoom, Google Meet, Microsoft Teams, and Webex are supported.
+
+Set the meeting URL via job metadata when dispatching the agent. For password-protected meetings, include the password in the URL (for example, Zoom links use a `pwd` query parameter):
+
+```bash
+lk dispatch create \
+  --new-room \
+  --agent-name lemonslice-meeting \
+  --metadata '{"meeting_url":"https://zoom.us/j/123456789?pwd=abcdef", "bot_name": "LemonSlice Avatar"}'
+```
 
 ## Configuration Options
 

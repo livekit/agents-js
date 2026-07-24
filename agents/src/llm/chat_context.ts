@@ -272,6 +272,13 @@ export function createAudioContent(params: {
 }
 
 export interface MetricsReport {
+  /**
+   * Provider-known request or response IDs associated with this turn.
+   *
+   * Assistant `ChatMessage` only. These IDs can be used to correlate a turn with
+   * provider-side logs.
+   */
+  providerRequestIds?: string[];
   startedSpeakingAt?: number;
   stoppedSpeakingAt?: number;
   transcriptionDelay?: number;
@@ -357,19 +364,21 @@ export class ChatMessage {
   }
 
   /**
-   * Returns text content with LiveKit expressive `<expr/>` tags removed from assistant messages.
-   * Use {@link rawTextContent} for the exact model-facing content.
+   * Returns a single string with all text parts of the message joined by new
+   * lines, with LiveKit's expressive `<expr/>` tags removed from assistant
+   * messages. If no string content is present, returns `undefined`.
    */
   get textContent(): string | undefined {
     const raw = this.rawTextContent;
-    if (raw === undefined || this.role !== 'assistant') {
-      return raw;
-    }
-
+    if (raw === undefined || this.role !== 'assistant') return raw;
     return stripExprMarkup(raw);
   }
 
-  /** Returns the exact text content as generated, joined by new lines. */
+  /**
+   * Returns a single string with all text parts of the message joined by new
+   * lines, exactly as generated. Assistant messages may contain expressive
+   * `<expr/>` tags.
+   */
   get rawTextContent(): string | undefined {
     const parts = this.content
       .filter((c): c is string | Instructions => typeof c === 'string' || isInstructions(c))

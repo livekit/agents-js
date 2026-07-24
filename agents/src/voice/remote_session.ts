@@ -817,6 +817,7 @@ export class SessionHost {
         (fco: FCOItem) =>
           new pb.FunctionCallOutput({
             callId: fco.callId,
+            name: fco.name,
             output: fco.output,
             isError: fco.isError,
           }),

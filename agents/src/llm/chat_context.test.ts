@@ -341,35 +341,41 @@ describe('stripExprMarkup and ChatMessage text content', () => {
 
   it('strips expr tags from assistant textContent only', () => {
     const msg = ChatMessage.create({ role: 'assistant', content: [mixedMarkup] });
+
     expect(msg.textContent).toBe(mixedMarkupClean);
     expect(msg.rawTextContent).toBe(mixedMarkup);
   });
 
-  for (const role of ['user', 'system', 'developer'] as const) {
-    it(`keeps ${role} textContent raw`, () => {
-      const msg = ChatMessage.create({ role, content: [mixedMarkup] });
-      expect(msg.textContent).toBe(mixedMarkup);
-      expect(msg.rawTextContent).toBe(mixedMarkup);
-    });
-  }
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixedMarkup] });
 
-  it('returns undefined without text', () => {
+    expect(msg.textContent).toBe(mixedMarkup);
+    expect(msg.rawTextContent).toBe(mixedMarkup);
+  });
+
+  it('returns undefined without text content', () => {
     const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
     expect(msg.textContent).toBeUndefined();
     expect(msg.rawTextContent).toBeUndefined();
   });
 
-  it('toJSON stripMarkup strips expr tags from assistant messages only', () => {
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
     const chatCtx = new ChatContext();
     chatCtx.addMessage({ role: 'user', content: [mixedMarkup] });
     chatCtx.addMessage({ role: 'assistant', content: [mixedMarkup] });
 
-    const strippedItems = chatCtx.toJSON({ stripMarkup: true }).items;
-    expect(strippedItems[0]).toMatchObject({ content: [mixedMarkup] });
-    expect(strippedItems[1]).toMatchObject({ content: [mixedMarkupClean] });
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixedMarkup], role: 'user' }),
+      expect.objectContaining({ content: [mixedMarkupClean], role: 'assistant' }),
+    ]);
 
-    const rawItems = chatCtx.toJSON().items;
-    expect(rawItems[1]).toMatchObject({ content: [mixedMarkup] });
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixedMarkup], role: 'user' }),
+      expect.objectContaining({ content: [mixedMarkup], role: 'assistant' }),
+    ]);
   });
 });
 

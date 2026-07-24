@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { Future } from '../../utils.js';
 import { ParticipantAudioOutput } from './_output.js';
@@ -218,5 +219,43 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     expect(output.playbackSegmentsCount).toBe(1);
     expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
     expect(output.pushedDuration).toBeGreaterThan(0);
+  });
+});
+
+describe('ParticipantAudioOutput publishTrack', () => {
+  it('publishes with the configured trackPublishOptions', async () => {
+    const trackPublishOptions = new TrackPublishOptions({
+      source: TrackSource.SOURCE_MICROPHONE,
+      dtx: false,
+      red: false,
+    });
+
+    const output = Object.create(ParticipantAudioOutput.prototype) as ParticipantAudioOutput & {
+      options: { trackPublishOptions: TrackPublishOptions };
+      audioSource: unknown;
+      startedFuture: Future<void>;
+      room: unknown;
+      publishTrack: (signal: AbortSignal) => Promise<void>;
+    };
+
+    const fakeTrack = {} as LocalAudioTrack;
+    const createAudioTrack = vi
+      .spyOn(LocalAudioTrack, 'createAudioTrack')
+      .mockReturnValue(fakeTrack);
+    const publishTrack = vi.fn(async () => ({ waitForSubscription: async () => {} }));
+
+    output.options = { trackPublishOptions };
+    output.audioSource = {};
+    output.startedFuture = new Future<void>();
+    output.room = { localParticipant: { publishTrack } };
+
+    try {
+      await output.publishTrack(new AbortController().signal);
+    } finally {
+      createAudioTrack.mockRestore();
+    }
+
+    expect(publishTrack).toHaveBeenCalledWith(fakeTrack, trackPublishOptions);
+    expect(output.startedFuture.done).toBe(true);
   });
 });

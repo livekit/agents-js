@@ -36,6 +36,40 @@ async function* singleResponseAsyncIter(): AsyncGenerator<types.GenerateContentR
   yield response;
 }
 
+async function* thoughtSummaryResponseAsyncIter(): AsyncGenerator<types.GenerateContentResponse> {
+  const response = new GenerateContentResponse();
+  response.candidates = [
+    {
+      content: {
+        role: 'model',
+        parts: [
+          {
+            text: "**Calculating Refill Dates** I'm processing the timeline",
+            thought: true,
+          },
+          { text: 'Visible response' },
+        ],
+      },
+      finishReason: FinishReason.STOP,
+    },
+  ];
+  yield response;
+}
+
+async function* thoughtOnlyResponseAsyncIter(): AsyncGenerator<types.GenerateContentResponse> {
+  const response = new GenerateContentResponse();
+  response.candidates = [
+    {
+      content: {
+        role: 'model',
+        parts: [{ text: 'Internal reasoning', thought: true }],
+      },
+      finishReason: FinishReason.STOP,
+    },
+  ];
+  yield response;
+}
+
 async function captureConfig(
   google: LLM,
   chatOptions: Omit<Parameters<LLM['chat']>[0], 'chatCtx'> = {},
@@ -88,6 +122,33 @@ function serverSideEnabled(config: types.GenerateContentConfig): boolean {
 describe('Google mixed tools request construction', () => {
   beforeEach(() => {
     generateContentStreamMock.mockReset();
+  });
+
+  it('drops thought summary parts from generated content', async () => {
+    generateContentStreamMock.mockResolvedValue(thoughtSummaryResponseAsyncIter());
+
+    const google = new LLM({ model: 'gemini-2.5-flash', apiKey: 'test' });
+    const stream = google.chat({ chatCtx: llm.ChatContext.empty() });
+    const response = await stream.collect();
+
+    expect(response.text).toBe('Visible response');
+  });
+
+  it('retries when a response contains only thought summary parts', async () => {
+    generateContentStreamMock
+      .mockResolvedValueOnce(thoughtOnlyResponseAsyncIter())
+      .mockResolvedValueOnce(singleResponseAsyncIter());
+
+    const google = new LLM({ model: 'gemini-2.5-flash', apiKey: 'test' });
+    google.on('error', () => {});
+    const stream = google.chat({
+      chatCtx: llm.ChatContext.empty(),
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const response = await stream.collect();
+
+    expect(response.text).toBe('ok');
+    expect(generateContentStreamMock).toHaveBeenCalledTimes(2);
   });
 
   it('enables server-side invocations on the Gemini 3 Developer API', async () => {

@@ -371,6 +371,7 @@ export class AudioRecognition {
   private transcriptBuffer: SpeechEvent[];
   private isInterruptionEnabled: boolean;
   private isAgentSpeaking: boolean;
+  private agentSpeechStartedAt?: number;
   private interruptionDetected?: boolean;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
@@ -711,6 +712,7 @@ export class AudioRecognition {
 
   async onStartOfAgentSpeech(startedAt: number) {
     this.isAgentSpeaking = true;
+    this.agentSpeechStartedAt = startedAt;
     this.endpointing.onStartOfAgentSpeech(startedAt);
     this.userTurnTracker = { words: 0, transcript: '' };
 
@@ -852,7 +854,7 @@ export class AudioRecognition {
         return;
       }
 
-      if (this.#alternativeEndsBeforeIgnoreWindow(firstAlternative)) {
+      if (this.#alternativeEndsWithinIgnoreWindow(firstAlternative)) {
         emitFromIndex = null;
       } else {
         emitFromIndex = Math.min(emitFromIndex ?? i, i);
@@ -898,22 +900,31 @@ export class AudioRecognition {
   private resetInterruptionDetection(): void {
     this.transcriptBuffer = [];
     this.ignoreUserTranscriptUntil = undefined;
+    // Keep the anchor while a newer agent-speech cycle is active, so a stale flush
+    // can't clear an anchor that cycle has already set.
+    if (!this.isAgentSpeaking) {
+      this.agentSpeechStartedAt = undefined;
+    }
   }
 
-  #alternativeEndsBeforeIgnoreWindow(
-    alternative: NonNullable<SpeechEvent['alternatives']>[number],
-  ): boolean {
-    if (
-      this.ignoreUserTranscriptUntil === undefined ||
-      !this.inputStartedAt ||
-      alternative.endTime <= 0
-    ) {
+  private withinIgnoreWindow(eventTime: number): boolean {
+    if (this.ignoreUserTranscriptUntil === undefined) {
       return false;
     }
 
-    // `SpeechData.endTime` is in seconds relative to audio start, while `inputStartedAt` and
-    // `ignoreUserTranscriptUntil` are epoch milliseconds.
-    return alternative.endTime * 1000 + this.inputStartedAt < this.ignoreUserTranscriptUntil;
+    const lower = this.agentSpeechStartedAt ?? 0;
+    const upper = Math.min(Date.now(), this.ignoreUserTranscriptUntil);
+    return lower < eventTime && eventTime < upper;
+  }
+
+  #alternativeEndsWithinIgnoreWindow(
+    alternative: NonNullable<SpeechEvent['alternatives']>[number],
+  ) {
+    return (
+      alternative.endTime > 0 &&
+      this.inputStartedAt !== undefined &&
+      this.withinIgnoreWindow(alternative.endTime * 1000 + this.inputStartedAt)
+    );
   }
 
   private shouldHoldSttEvent(ev: SpeechEvent): boolean {
@@ -926,8 +937,7 @@ export class AudioRecognition {
 
     // reset when the user starts speaking after the agent speech
     if (ev.type === SpeechEventType.START_OF_SPEECH) {
-      this.ignoreUserTranscriptUntil = undefined;
-      this.transcriptBuffer = [];
+      this.resetInterruptionDetection();
       return false;
     }
 
@@ -943,7 +953,9 @@ export class AudioRecognition {
 
     if (
       alternative.startTime !== alternative.endTime &&
-      this.#alternativeEndsBeforeIgnoreWindow(alternative)
+      this.inputStartedAt !== undefined &&
+      alternative.startTime > 0 &&
+      this.withinIgnoreWindow(alternative.startTime * 1000 + this.inputStartedAt)
     ) {
       return true;
     }
@@ -2106,11 +2118,7 @@ export class AudioRecognition {
       this.turnDetectorFlushed = true;
     }
 
-    if (this.userTurnSpan?.isRecording()) {
-      this.userTurnSpan.end();
-    }
-    this.userTurnSpan = undefined;
-    this.sttRequestIds = [];
+    this._endUserTurnSpan();
 
     const restartStt = async () => {
       const unlock = await this.sttLifecycleLock.lock();
@@ -2234,33 +2242,34 @@ export class AudioRecognition {
 
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
+
+    // A speech segment may never produce a transcript or committed turn. End
+    // its span after all recognition tasks stop so it is still exported.
+    this._endUserTurnSpan();
   }
 
-  private _endUserTurnSpan({
-    transcript,
-    confidence,
-    transcriptionDelay,
-    endOfUtteranceDelay,
-  }: {
+  private _endUserTurnSpan(info?: {
     transcript: string;
     confidence: number;
     transcriptionDelay: number;
     endOfUtteranceDelay: number;
   }): void {
-    if (this.userTurnSpan) {
+    if (this.userTurnSpan && info) {
       this.userTurnSpan.setAttributes({
-        [traceTypes.ATTR_USER_TRANSCRIPT]: transcript,
-        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: confidence,
-        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: transcriptionDelay,
-        [traceTypes.ATTR_END_OF_TURN_DELAY]: endOfUtteranceDelay,
+        [traceTypes.ATTR_USER_TRANSCRIPT]: info.transcript,
+        [traceTypes.ATTR_TRANSCRIPT_CONFIDENCE]: info.confidence,
+        [traceTypes.ATTR_TRANSCRIPTION_DELAY]: info.transcriptionDelay,
+        [traceTypes.ATTR_END_OF_TURN_DELAY]: info.endOfUtteranceDelay,
       });
       if (this.sttRequestIds.length) {
         this.userTurnSpan.setAttribute(traceTypes.ATTR_PROVIDER_REQUEST_IDS, this.sttRequestIds);
       }
-      this.userTurnSpan.end();
-      this.userTurnSpan = undefined;
-      this.userTurnStart = undefined;
     }
+    if (this.userTurnSpan?.isRecording()) {
+      this.userTurnSpan.end();
+    }
+    this.userTurnSpan = undefined;
+    this.userTurnStart = undefined;
     this.sttRequestIds = [];
   }
 

@@ -29,6 +29,7 @@ configureFfmpeg();
 
 const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
+const CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS = 2000;
 
 export interface RecorderOptions {
   agentSession: AgentSession;
@@ -59,6 +60,7 @@ export class RecorderIO {
   private lock: Mutex = new Mutex();
   private started: boolean = false;
   private closing: boolean = false;
+  private closePlayoutFlushTimeoutMs: number = CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS;
 
   // FFmpeg streaming state
   private pcmStream?: PassThrough;
@@ -111,6 +113,26 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
+      // On a force-interrupted shutdown, the session marks the speech done
+      // before playout settles, so the playout finished event may still be in flight.
+      // Give it a bounded window to land before fencing writers out.
+      if (this.outRecord?.hasPendingData) {
+        const timeoutController = new AbortController();
+        await Promise.race([
+          this.outRecord.waitForPlayout(),
+          delay(this.closePlayoutFlushTimeoutMs, { signal: timeoutController.signal }).catch(
+            () => {},
+          ),
+        ]);
+        timeoutController.abort();
+
+        if (this.outRecord.hasPendingData) {
+          this.logger.warn(
+            'RecorderIO closed before the last playback finished; dropping unflushed agent audio',
+          );
+        }
+      }
+
       // Establish shutdown fence before any async operations, so no writer can proceed.
       this.closing = true;
       this.started = false;
@@ -118,6 +140,19 @@ export class RecorderIO {
       if (this.forwardTask) {
         await cancelAndWait([this.forwardTask]);
         this.forwardTask = undefined;
+      }
+
+      // Flush input captured since the last write so the recording tail isn't dropped.
+      const inputBuf = this.inRecord?.takeBuf(this.outRecord?._lastSpeechEndTime) ?? [];
+      if (inputBuf.length > 0) {
+        try {
+          await this.inChan.write(inputBuf);
+          await this.outChan.write([]);
+        } catch (err) {
+          if (!isWritableStreamClosedError(err)) {
+            this.logger.error({ err }, 'Error writing final RecorderIO input buffer');
+          }
+        }
       }
 
       await this.inChan.close();
@@ -753,6 +788,14 @@ class RecorderAudioOutput extends AudioOutput {
     if (this._lastSpeechStartTime === undefined) {
       this._lastSpeechStartTime = Date.now();
     }
+  }
+
+  async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const waitForRecorder = super.waitForPlayout();
+    if (this.nextInChain) {
+      await this.nextInChain.waitForPlayout();
+    }
+    return waitForRecorder;
   }
 
   flush(): void {

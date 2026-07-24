@@ -368,6 +368,68 @@ describe('AudioRecognition user_turn span', () => {
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
   });
 
+  it('ends an uncommitted user_turn span when audio recognition closes', async () => {
+    const { exporter } = setupInMemoryTracing();
+
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+      onVADInferenceDone: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onInterimTranscript: vi.fn(),
+      onFinalTranscript: vi.fn(),
+      onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
+      retrieveChatCtx: () => ChatContext.empty(),
+      onEndOfTurn: vi.fn(async () => true),
+    };
+
+    const now = Date.now();
+    const vadEvents: VADEvent[] = [
+      {
+        type: VADEventType.START_OF_SPEECH,
+        samplesIndex: 0,
+        timestamp: now,
+        speechDuration: 100,
+        silenceDuration: 0,
+        frames: [],
+        probability: 0,
+        inferenceDuration: 0,
+        speaking: true,
+        rawAccumulatedSilence: 0,
+        rawAccumulatedSpeech: 0,
+      },
+    ];
+
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+    const ar = new AudioRecognition({
+      recognitionHooks: hooks,
+      stt: sttNode,
+      vad: new FakeVAD(vadEvents),
+      turnDetector: alwaysTrueTurnDetector,
+      turnDetectionMode: 'vad',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+
+    await ar.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeUndefined();
+
+    await ar.close();
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeTruthy();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+  });
+
   it('parents user_speaking under user_turn when an explicit speech context is provided', () => {
     const { exporter } = setupInMemoryTracing();
     const sessionSpan = tracer.startSpan({ name: 'agent_session', context: ROOT_CONTEXT });
