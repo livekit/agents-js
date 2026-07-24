@@ -8,8 +8,8 @@ minimumReleaseAgeExclude:
   - '@livekit/*'
   # Renovate security update: vite@7.3.2 || 7.3.5
   - vite@7.3.2 || 7.3.5
-  # Renovate security update: ws@8.20.1
-  - ws@8.20.1
+  # Renovate security update: ws@8.20.1 || 8.21.0
+  - ws@8.20.1 || 8.21.0
   # Renovate security update: vitest@4.1.0
   - vitest@4.1.0
   # Renovate security update: form-data@4.0.6
