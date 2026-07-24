@@ -1,5 +1,21 @@
 # @livekit/agents
 
+## 1.5.6
+
+### Patch Changes
+
+- Expose realtime provider response IDs on assistant message metrics as `providerRequestIds`. - [#2084](https://github.com/livekit/agents-js/pull/2084) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Fish Audio model and option types to inference TTS. - [#2102](https://github.com/livekit/agents-js/pull/2102) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support adaptive interruption gating for realtime models without server-side turn detection. - [#2099](https://github.com/livekit/agents-js/pull/2099) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `inference.AvatarSession` for provisioning avatar sessions through the LiveKit Inference gateway. - [#2101](https://github.com/livekit/agents-js/pull/2101) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Do not drop realtime replies when the pre-reply chat context update times out. - [#2083](https://github.com/livekit/agents-js/pull/2083) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix updateAgent handoffs so run() captures onEnter output without waiting indefinitely on long-lived onEnter flows. - [#2098](https://github.com/livekit/agents-js/pull/2098) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.5.5
 
 ### Patch Changes

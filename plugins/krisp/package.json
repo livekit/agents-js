@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-krisp",
-  "version": "1.4.9",
+  "version": "1.5.6",
   "description": "Krisp Audio plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
