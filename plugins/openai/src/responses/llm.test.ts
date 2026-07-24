@@ -133,21 +133,25 @@ async function startUpgradeBoundary(mode: 'hang' | 'unauthorized') {
 
   server.on('connection', (socket) => {
     sockets.add(socket);
-    socket.once('close', () => sockets.delete(socket));
+    socket.once('end', () => socket.destroy());
+    socket.once('close', () => {
+      sockets.delete(socket);
+    });
   });
   server.on('upgrade', (_request, socket) => {
     upgrades += 1;
     const body = JSON.stringify({ error: { code: 'invalid_api_key' } });
-    socket.end(
+    socket.write(
       [
         'HTTP/1.1 401 Unauthorized',
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
-        'Connection: close',
+        'Connection: keep-alive',
         '',
         body,
       ].join('\r\n'),
     );
+    socket.resume();
   });
 
   server.listen(0, '127.0.0.1');
@@ -297,6 +301,7 @@ describe('OpenAI Responses WebSocket', () => {
       await waitFor(() => boundary.upgrades === 1);
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(unhandled).toEqual([]);
+      await waitFor(() => boundary.openSockets === 0);
     } finally {
       process.off('unhandledRejection', onUnhandled);
       await model.aclose();
@@ -404,6 +409,49 @@ describe('OpenAI Responses WebSocket', () => {
       expect(metricRequestIds).toContain('resp_initial');
       expect(metricRequestIds).toContain('resp_reconnected');
     } finally {
+      await model.aclose();
+      await server.close();
+    }
+  });
+
+  it('does not retry websocket_closed from a fresh WebSocket', async () => {
+    const server = await startResponsesServer(({ ws }) => {
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          status: 401,
+          error: {
+            code: 'websocket_closed',
+            message: 'fresh WebSocket rejected',
+          },
+        }),
+      );
+    });
+    const model = new WSLLM({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'gpt-4.1',
+    });
+    const connectCb = vi.fn((_timeout: number, _signal?: AbortSignal) =>
+      connectResponsesWebSocket(server.baseURL),
+    );
+    const pool = new ConnectionPool<ResponsesWebSocket>({
+      connectCb,
+      closeCb: async (connection) => connection.close(),
+    });
+    const stream = createManualStream(model, pool);
+
+    try {
+      const error = await stream.execute().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(401);
+      expect((error as APIStatusError).retryable).toBe(false);
+      expect(connectCb).toHaveBeenCalledTimes(1);
+      expect(server.received).toHaveLength(1);
+    } finally {
+      stream.close();
+      await pool.close();
       await model.aclose();
       await server.close();
     }

@@ -12,6 +12,7 @@ import {
   stream,
   toError,
 } from '@livekit/agents';
+import type { ClientRequest, IncomingMessage } from 'node:http';
 import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
 import type { ChatModels, Reasoning } from '../models.js';
@@ -531,13 +532,18 @@ export class WSLLMStream extends llm.LLMStream {
         );
 
         try {
-          const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
+          const needsRetry = await this.#runWithConn(
+            conn,
+            reused,
+            this.chatCtx,
+            this.#prevResponseId,
+          );
 
           if (needsRetry) {
             // previous_response_id was evicted from the server-side cache.
             // Retry once on the same connection with the full context and no ID.
             retryable = true;
-            await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+            await this.#runWithConn(conn, reused, this.#fullChatCtx, undefined);
           }
 
           this.#pool.put(conn);
@@ -587,6 +593,7 @@ export class WSLLMStream extends llm.LLMStream {
    */
   async #runWithConn(
     conn: ResponsesWebSocket,
+    reused: boolean,
     chatCtx: llm.ChatContext,
     prevResponseId: string | undefined,
   ): Promise<boolean> {
@@ -624,7 +631,7 @@ export class WSLLMStream extends llm.LLMStream {
 
         switch (event.type) {
           case 'error': {
-            const retry = this.#handleError(event, conn);
+            const retry = this.#handleError(event, conn, reused);
             if (retry) return true;
             break;
           }
@@ -662,7 +669,11 @@ export class WSLLMStream extends llm.LLMStream {
    * Returns `true` when the caller should retry with full context
    * (`previous_response_not_found`), throws for all other errors.
    */
-  #handleError(event: WsServerEvent & { type: 'error' }, conn: ResponsesWebSocket): boolean {
+  #handleError(
+    event: WsServerEvent & { type: 'error' },
+    conn: ResponsesWebSocket,
+    reused: boolean,
+  ): boolean {
     const code = event.error?.code ?? event.code;
 
     if (code === 'previous_response_not_found') {
@@ -671,7 +682,7 @@ export class WSLLMStream extends llm.LLMStream {
       return true;
     }
 
-    if (code === 'websocket_connection_limit_reached' || code === 'websocket_closed') {
+    if (reused && (code === 'websocket_connection_limit_reached' || code === 'websocket_closed')) {
       // Transient connection issue (timeout, network drop, or 60-min limit).
       // Evict this connection so the pool opens a fresh one on retry.
       conn.close();
@@ -779,56 +790,47 @@ async function connectWs(
 
     let settled = false;
 
-    const cleanup = () => {
+    const cleanup = (keepErrorListener = false) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
+      ws.removeListener('open', onOpen);
+      if (!keepErrorListener) {
+        ws.removeListener('error', onError);
+      }
+      ws.removeListener('close', onClose);
+      ws.removeListener('unexpected-response', onUnexpectedResponse);
     };
-    const rejectOnce = (error: Error) => {
+    const rejectOnce = (error: Error, keepErrorListener = false) => {
       if (settled) return;
       settled = true;
-      cleanup();
+      cleanup(keepErrorListener);
       reject(error);
     };
     const onAbort = () => {
-      rejectOnce(abortError(signal));
+      rejectOnce(abortError(signal), true);
       ws.terminate();
     };
-    const timer = setTimeout(() => {
-      rejectOnce(
-        new APIConnectionError({ message: 'Timeout connecting to OpenAI Responses WebSocket' }),
-      );
-      ws.terminate();
-    }, timeoutMs);
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    ws.once('open', () => {
+    const onOpen = () => {
       if (settled) return;
       settled = true;
       cleanup();
       resolve(ws);
-    });
-
-    ws.once('error', (err) => {
+    };
+    const onError = (error: Error) => {
       rejectOnce(
         new APIConnectionError({
-          message: `Error connecting to OpenAI Responses WebSocket: ${err.message}`,
+          message: `Error connecting to OpenAI Responses WebSocket: ${error.message}`,
         }),
       );
-    });
-
-    ws.once('close', (code) => {
+    };
+    const onClose = (code: number) => {
       rejectOnce(
         new APIConnectionError({
           message: `OpenAI Responses WebSocket closed unexpectedly during connect (code ${code})`,
         }),
       );
-    });
-
-    ws.once('unexpected-response', (_request, response) => {
+    };
+    const onUnexpectedResponse = (_request: ClientRequest, response: IncomingMessage) => {
       response.resume();
       rejectOnce(
         new APIStatusError({
@@ -842,8 +844,26 @@ async function connectWs(
             retryable: false,
           },
         }),
+        true,
       );
-    });
+      ws.terminate();
+    };
+    const timer = setTimeout(() => {
+      rejectOnce(
+        new APIConnectionError({ message: 'Timeout connecting to OpenAI Responses WebSocket' }),
+        true,
+      );
+      ws.terminate();
+    }, timeoutMs);
+    ws.once('open', onOpen);
+    ws.once('error', onError);
+    ws.once('close', onClose);
+    ws.once('unexpected-response', onUnexpectedResponse);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
   });
 }
 
