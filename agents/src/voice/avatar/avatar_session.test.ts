@@ -134,8 +134,13 @@ describe('AvatarSession base', () => {
   });
 
   it('registers a shutdown callback when retried in a different job context', async () => {
+    let firstShutdownCallback: (() => Promise<void>) | undefined;
     const firstJobContext = mockJobContext();
-    const firstAddShutdownCallback = vi.spyOn(firstJobContext, 'addShutdownCallback');
+    const firstAddShutdownCallback = vi
+      .spyOn(firstJobContext, 'addShutdownCallback')
+      .mockImplementation((callback) => {
+        firstShutdownCallback = callback;
+      });
     const session = new TestAvatarSession();
     const agentSession = mockAgentSession();
     const room = mockRoom();
@@ -143,12 +148,24 @@ describe('AvatarSession base', () => {
     await session.start(agentSession.session, room.room);
     await session.rollbackStart();
 
+    let secondShutdownCallback: (() => Promise<void>) | undefined;
     const secondJobContext = mockJobContext();
-    const secondAddShutdownCallback = vi.spyOn(secondJobContext, 'addShutdownCallback');
+    const secondAddShutdownCallback = vi
+      .spyOn(secondJobContext, 'addShutdownCallback')
+      .mockImplementation((callback) => {
+        secondShutdownCallback = callback;
+      });
     await session.start(agentSession.session, room.room);
+    const acloseSpy = vi.spyOn(session, 'aclose').mockResolvedValue();
 
     expect(firstAddShutdownCallback).toHaveBeenCalledTimes(1);
     expect(secondAddShutdownCallback).toHaveBeenCalledTimes(1);
+
+    await firstShutdownCallback?.();
+    expect(acloseSpy).not.toHaveBeenCalled();
+
+    await secondShutdownCallback?.();
+    expect(acloseSpy).toHaveBeenCalledTimes(1);
   });
 
   it('rolls back start lifecycle without removing the avatar participant', async () => {

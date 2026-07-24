@@ -38,6 +38,7 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
   #waitAvatarJoinAbort?: AbortController;
   #waitAvatarJoinPromise?: Promise<void>;
   #shutdownCallbackContexts = new WeakSet<object>();
+  #activeShutdownCallbackContext?: object;
 
   get avatarIdentity(): string {
     return 'unknown';
@@ -56,9 +57,14 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
    */
   async start(agentSession: AgentSession, room: Room): Promise<unknown> {
     const jobCtx = getJobContext(false);
+    this.#activeShutdownCallbackContext = jobCtx;
     if (jobCtx !== undefined) {
       if (!this.#shutdownCallbackContexts.has(jobCtx)) {
-        jobCtx.addShutdownCallback(() => this.aclose());
+        jobCtx.addShutdownCallback(async () => {
+          if (this.#activeShutdownCallbackContext === jobCtx) {
+            await this.aclose();
+          }
+        });
         this.#shutdownCallbackContexts.add(jobCtx);
       }
     } else {
@@ -160,6 +166,8 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
    * @internal
    */
   protected async _rollbackStart(): Promise<void> {
+    this.#activeShutdownCallbackContext = undefined;
+
     if (this.#agentSession) {
       this.#agentSession.off(
         AgentSessionEventTypes.ConversationItemAdded,
