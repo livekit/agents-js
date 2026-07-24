@@ -23,6 +23,9 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 // This example shows how to trace the agent session with OpenTelemetry.
+// It requires OpenTelemetry JS SDK 2.x and experimental packages 0.2xx. When migrating from
+// SDK 1.x, configure processors with `spanProcessors` and use `registerSpanProcessor` instead
+// of the removed provider `addSpanProcessor` method.
 // It exports spans over OTLP/HTTP, so it works with any OTLP-compatible backend
 // (Langfuse, Jaeger, Grafana Tempo, Honeycomb, etc.). To enable tracing, set the trace
 // provider with `telemetry.setTracerProvider` at the module level or inside the entrypoint
@@ -50,12 +53,19 @@ function setupOtel(options?: {
     url: options?.url,
     headers: options?.headers,
   });
+  // OTel SDK 2.x providers accept span processors only at construction, so include a
+  // FanoutSpanProcessor and hand its `add` to setTracerProvider — that's how the framework
+  // attaches the metadata processor (and the LiveKit Cloud exporter, when enabled) later.
+  const fanout = new telemetry.FanoutSpanProcessor();
   const traceProvider = new NodeTracerProvider({
-    spanProcessors: [new BatchSpanProcessor(traceExporter)],
+    spanProcessors: [new BatchSpanProcessor(traceExporter), fanout],
   });
 
   traceProvider.register();
-  telemetry.setTracerProvider(traceProvider, { metadata: options?.metadata });
+  telemetry.setTracerProvider(traceProvider, {
+    metadata: options?.metadata,
+    registerSpanProcessor: (processor) => fanout.add(processor),
+  });
   return traceProvider;
 }
 
@@ -137,9 +147,9 @@ export default defineAgent({
       },
     });
 
-    // Optional: add a shutdown callback to flush the trace before process exit.
+    // Shut down the provider to flush pending spans and release exporter resources.
     ctx.addShutdownCallback(async () => {
-      await traceProvider.forceFlush();
+      await traceProvider.shutdown();
     });
 
     const session = new voice.AgentSession({
