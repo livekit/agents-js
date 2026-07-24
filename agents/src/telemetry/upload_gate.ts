@@ -4,6 +4,7 @@
 import type * as httpTypes from 'node:http';
 import type * as httpsTypes from 'node:https';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { Readable, Writable } from 'node:stream';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
@@ -12,6 +13,7 @@ class UploadGate {
 
   reset(): void {
     this.isDisabled = false;
+    resetOtlpHttpInterceptor();
   }
 
   get disabled(): boolean {
@@ -67,6 +69,8 @@ function bodyToText(body: Uint8Array | ArrayBuffer | string): string {
 
 const otlpHttpTargets = new Set<string>();
 let otlpHttpInterceptorInstalled = false;
+let originalHttpRequest: RequestFn | undefined;
+let originalHttpsRequest: RequestFn | undefined;
 
 export function registerOtlpHttpUploadGateTarget(rawUrl: string): void {
   const url = new URL(rawUrl);
@@ -82,10 +86,31 @@ function installOtlpHttpInterceptor(): void {
   const httpModule = require('node:http') as typeof httpTypes;
   const httpsModule = require('node:https') as typeof httpsTypes;
 
-  httpModule.request = wrapRequest(httpModule.request as RequestFn) as typeof httpModule.request;
-  httpsModule.request = wrapRequest(httpsModule.request as RequestFn) as typeof httpsModule.request;
+  originalHttpRequest = httpModule.request as RequestFn;
+  originalHttpsRequest = httpsModule.request as RequestFn;
+  httpModule.request = wrapRequest(originalHttpRequest) as typeof httpModule.request;
+  httpsModule.request = wrapRequest(originalHttpsRequest) as typeof httpsModule.request;
   // OpenTelemetry 2.x loads request through ESM, which may already have cached the old binding.
   syncBuiltinESMExports();
+}
+
+function resetOtlpHttpInterceptor(): void {
+  otlpHttpTargets.clear();
+  if (!otlpHttpInterceptorInstalled) return;
+
+  const require = createRequire(import.meta.url);
+  const httpModule = require('node:http') as typeof httpTypes;
+  const httpsModule = require('node:https') as typeof httpsTypes;
+  if (originalHttpRequest) {
+    httpModule.request = originalHttpRequest as typeof httpModule.request;
+  }
+  if (originalHttpsRequest) {
+    httpsModule.request = originalHttpsRequest as typeof httpsModule.request;
+  }
+  syncBuiltinESMExports();
+  originalHttpRequest = undefined;
+  originalHttpsRequest = undefined;
+  otlpHttpInterceptorInstalled = false;
 }
 
 type RequestArg =
@@ -108,6 +133,10 @@ function wrapRequest(original: RequestFn) {
     }
 
     const callback = args[callbackIndex] as (res: httpTypes.IncomingMessage) => void;
+    if (uploadGate.disabled) {
+      return makeOkClientRequest(callback);
+    }
+
     args[callbackIndex] = (res: httpTypes.IncomingMessage) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
@@ -123,6 +152,26 @@ function wrapRequest(original: RequestFn) {
 
     return original(...args);
   };
+}
+
+function makeOkClientRequest(
+  callback: (res: httpTypes.IncomingMessage) => void,
+): httpTypes.ClientRequest {
+  const request = new Writable({
+    write(_chunk, _encoding, done) {
+      done();
+    },
+  }) as unknown as httpTypes.ClientRequest;
+  request.setTimeout = () => request;
+  request.setHeader = () => request;
+  request.once('finish', () => {
+    const response = Readable.from([]) as unknown as httpTypes.IncomingMessage;
+    response.statusCode = 200;
+    response.statusMessage = 'OK';
+    response.headers = {};
+    callback(response);
+  });
+  return request;
 }
 
 function matchesRegisteredTarget(args: unknown[]): boolean {
