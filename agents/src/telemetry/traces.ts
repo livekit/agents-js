@@ -410,10 +410,6 @@ export async function setupCloudTracer(options: {
 
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
 
-    // The SDK does not read OTEL_RESOURCE_ATTRIBUTES on its own (that's NodeSDK's
-    // job); envDetector brings those env attributes in — on LiveKit Cloud the
-    // launcher injects agent identity (lk.cloud_agent_id, lk.deployment_id)
-    // through that env var. merge() gives later resources precedence.
     const resource = defaultResource()
       .merge(detectResources({ detectors: [envDetector] }))
       .merge(
