@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { INSTRUCTIONS_MESSAGE_ID, applyInstructionsModality } from '../voice/generation.js';
 import { FakeLLM } from '../voice/testing/fake_llm.js';
 import {
@@ -25,6 +26,16 @@ initializeLogger({ pretty: false, level: 'error' });
 
 const summaryXml = (summary: string) =>
   ['<chat_history_summary>', summary, '</chat_history_summary>'].join('\n');
+
+const mixedMarkup =
+  '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+  'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+  '<expr type="prosody" label="whisper">keep it secret</expr>';
+
+const mixedMarkupClean =
+  ' Press [Enter] to see <b>bold</b>, ' +
+  'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+  'keep it secret';
 
 class TrackingFakeLLM extends FakeLLM {
   chatCalls = 0;
@@ -305,28 +316,41 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
-describe('ChatMessage text content', () => {
-  const mixed =
-    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
-    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
-    '<expr type="prosody" label="whisper">keep it secret</expr>';
-  const mixedClean =
-    ' Press [Enter] to see <b>bold</b>, ' +
-    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
-    'keep it secret';
+describe('stripExprMarkup and ChatMessage text content', () => {
+  it('stripExprMarkup only touches expr tags', () => {
+    expect(stripExprMarkup(mixedMarkup)).toBe(mixedMarkupClean);
+  });
 
-  it('strips only expr markup from assistant textContent', () => {
-    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+  it('stripExprMarkup is a noop without expr tags', () => {
+    const text = 'plain text with [brackets] and <sound value="laugh"/>';
+    expect(stripExprMarkup(text)).toBe(text);
+  });
 
-    expect(msg.textContent).toBe(mixedClean);
-    expect(msg.rawTextContent).toBe(mixed);
+  it('strips an unmatched opening expr marker', () => {
+    expect(stripExprMarkup('Alpha <expr type="prosody" label="whisper">bravo')).toBe('Alpha bravo');
+  });
+
+  it('strips an unmatched closing expr marker', () => {
+    expect(stripExprMarkup('Alpha </expr>bravo')).toBe('Alpha bravo');
+  });
+
+  it('strips a marker assembled from stream-split chunks', () => {
+    const chunks = ['Alpha <ex', 'pr type="break" label="1s"/> bravo'];
+    expect(stripExprMarkup(chunks.join(''))).toBe('Alpha  bravo');
+  });
+
+  it('strips expr tags from assistant textContent only', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixedMarkup] });
+
+    expect(msg.textContent).toBe(mixedMarkupClean);
+    expect(msg.rawTextContent).toBe(mixedMarkup);
   });
 
   it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
-    const msg = ChatMessage.create({ role, content: [mixed] });
+    const msg = ChatMessage.create({ role, content: [mixedMarkup] });
 
-    expect(msg.textContent).toBe(mixed);
-    expect(msg.rawTextContent).toBe(mixed);
+    expect(msg.textContent).toBe(mixedMarkup);
+    expect(msg.rawTextContent).toBe(mixedMarkup);
   });
 
   it('returns undefined without text content', () => {
@@ -338,19 +362,19 @@ describe('ChatMessage text content', () => {
 
   it('toJSON stripMarkup is expr-only and assistant-only', () => {
     const chatCtx = new ChatContext();
-    chatCtx.addMessage({ role: 'user', content: [mixed] });
-    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+    chatCtx.addMessage({ role: 'user', content: [mixedMarkup] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixedMarkup] });
 
     const stripped = chatCtx.toJSON({ stripMarkup: true });
     expect(stripped.items).toEqual([
-      expect.objectContaining({ content: [mixed], role: 'user' }),
-      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+      expect.objectContaining({ content: [mixedMarkup], role: 'user' }),
+      expect.objectContaining({ content: [mixedMarkupClean], role: 'assistant' }),
     ]);
 
     const raw = chatCtx.toJSON();
     expect(raw.items).toEqual([
-      expect.objectContaining({ content: [mixed], role: 'user' }),
-      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+      expect.objectContaining({ content: [mixedMarkup], role: 'user' }),
+      expect.objectContaining({ content: [mixedMarkup], role: 'assistant' }),
     ]);
   });
 });

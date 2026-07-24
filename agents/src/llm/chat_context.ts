@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import { stripExprMarkup } from '../tts/provider_format.js';
 import { createImmutableArray, shortuuid } from '../utils.js';
 import type { LLM } from './llm.js';
 import { type ProviderFormat, toChatCtx } from './provider_format/index.js';
@@ -227,10 +228,6 @@ export function concatInstructions(...parts: Array<string | Instructions>): stri
 }
 
 export type ChatContent = ImageContent | AudioContent | Instructions | string;
-
-function stripExprMarkup(text: string): string {
-  return text.replace(/<expr\b[^>]*>/g, '').replace(/<\/expr\s*>/g, '');
-}
 
 export function createImageContent(params: {
   image: string | VideoFrame;
