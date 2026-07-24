@@ -11,7 +11,7 @@ import {
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { setTracerProvider, tracer } from '../telemetry/index.js';
@@ -104,6 +104,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -182,11 +183,98 @@ describe('AudioRecognition user_turn span', () => {
     expect(userTurn.attributes['lk.transcript_confidence']).toBeGreaterThan(0);
   });
 
+  it('trims and filters the chat context on the eou_detection span', async () => {
+    const { exporter } = setupInMemoryTracing();
+
+    // A long conversation with items the EOU span must not re-emit: instructions,
+    // function calls, and empty messages (mirrors Python's `_EOU_MAX_HISTORY_TURNS`
+    // trim + copy() exclusions).
+    const bigCtx = ChatContext.empty();
+    bigCtx.addMessage({ role: 'system', content: 'you are a helpful agent' });
+    for (let i = 0; i < 8; i++) {
+      bigCtx.addMessage({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i}` });
+    }
+    bigCtx.items.push(FunctionCall.create({ callId: 'c1', name: 'lookup', args: '{}' }));
+    bigCtx.items.push(FunctionCallOutput.create({ callId: 'c1', output: 'ok', isError: false }));
+    bigCtx.addMessage({ role: 'user', content: [] });
+
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+      onVADInferenceDone: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onInterimTranscript: vi.fn(),
+      onFinalTranscript: vi.fn(),
+      onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
+      retrieveChatCtx: () => bigCtx,
+      onEndOfTurn: vi.fn(async () => true),
+    };
+
+    const sttEvents: SpeechEvent[] = [
+      { type: SpeechEventType.START_OF_SPEECH },
+      {
+        type: SpeechEventType.FINAL_TRANSCRIPT,
+        alternatives: [
+          { language: 'en', text: 'hello', startTime: 0, endTime: 0, confidence: 0.9 },
+        ],
+      },
+      { type: SpeechEventType.END_OF_SPEECH },
+    ];
+
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start(controller) {
+          for (const ev of sttEvents) controller.enqueue(ev);
+          controller.close();
+        },
+      });
+
+    const ar = new AudioRecognition({
+      recognitionHooks: hooks,
+      stt: sttNode,
+      vad: undefined,
+      turnDetector: alwaysTrueTurnDetector,
+      turnDetectionMode: 'stt',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+      sttModel: 'deepgram-nova2',
+      sttProvider: 'deepgram',
+      getLinkedParticipant: () => ({ sid: 'p1', identity: 'bob', kind: ParticipantKind.AGENT }),
+    });
+
+    await ar.start();
+    await new Promise((r) => setTimeout(r, 20));
+    await ar.close();
+
+    const spans = exporter.getFinishedSpans();
+    const eou = spanByName(spans, 'eou_detection');
+    expect(eou, 'eou_detection span missing').toBeTruthy();
+    if (!eou) {
+      throw new Error('expected eou_detection span');
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items = JSON.parse(String(eou.attributes['lk.chat_ctx'])).items as any[];
+    expect(items.length).toBeLessThanOrEqual(6);
+    // only non-empty, non-system messages survive; the pending user transcript is last
+    expect(items.every((i) => i.type === 'message')).toBe(true);
+    expect(items.every((i) => i.role !== 'system')).toBe(true);
+    expect(items.every((i) => i.content.length > 0)).toBe(true);
+    expect(items[items.length - 1]!.role).toBe('user');
+    expect(items[items.length - 1]!.content[0]).toBe('hello');
+    // snake_case wire shape with timestamps, matching Python's to_dict()
+    expect(items[0]!.created_at).toBeTypeOf('number');
+  });
+
   it('creates user_turn from VAD startTime (vad mode) and keeps same parenting', async () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -281,6 +369,69 @@ describe('AudioRecognition user_turn span', () => {
 
     expect(hooks.onStartOfSpeech).toHaveBeenCalled();
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
+  });
+
+  it('ends an uncommitted user_turn span when audio recognition closes', async () => {
+    const { exporter } = setupInMemoryTracing();
+
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+      onVADInferenceDone: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onInterimTranscript: vi.fn(),
+      onFinalTranscript: vi.fn(),
+      onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
+      retrieveChatCtx: () => ChatContext.empty(),
+      onEndOfTurn: vi.fn(async () => true),
+    };
+
+    const now = Date.now();
+    const vadEvents: VADEvent[] = [
+      {
+        type: VADEventType.START_OF_SPEECH,
+        samplesIndex: 0,
+        timestamp: now,
+        speechDuration: 100,
+        silenceDuration: 0,
+        frames: [],
+        probability: 0,
+        inferenceDuration: 0,
+        speaking: true,
+        rawAccumulatedSilence: 0,
+        rawAccumulatedSpeech: 0,
+      },
+    ];
+
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+    const ar = new AudioRecognition({
+      recognitionHooks: hooks,
+      stt: sttNode,
+      vad: new FakeVAD(vadEvents),
+      turnDetector: alwaysTrueTurnDetector,
+      turnDetectionMode: 'vad',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+
+    await ar.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeUndefined();
+
+    await ar.close();
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeTruthy();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
   });
 
   it('parents user_speaking under user_turn when an explicit speech context is provided', () => {

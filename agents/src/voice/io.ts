@@ -15,7 +15,7 @@ import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
 
 export type STTNode = (
-  audio: ReadableStream<AudioFrame>,
+  audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
 
@@ -26,7 +26,7 @@ export type LLMNode = (
 ) => Promise<ReadableStream<ChatChunk | string | FlushSentinel> | null>;
 
 export type TTSNode = (
-  text: ReadableStream<string>,
+  text: ReadableStream<string> | AsyncIterable<string>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<AudioFrame> | null>;
 
@@ -176,6 +176,15 @@ export abstract class AudioOutput extends EventEmitter {
    */
   get pendingPlayoutSegments(): number {
     return this.playbackSegmentsCount - this.playbackFinishedCount;
+  }
+
+  /**
+   * Monotonic count of playback segments ever captured. Lets chained outputs detect — free of
+   * races with concurrent finishes — whether this output accepted a segment they forwarded.
+   * @internal
+   */
+  get capturedPlayoutSegments(): number {
+    return this.playbackSegmentsCount;
   }
 
   /**

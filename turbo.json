@@ -7,6 +7,9 @@
     "AZURE_OPENAI_DEPLOYMENT",
     "AZURE_OPENAI_ENDPOINT",
     "AZURE_OPENAI_ENTRA_TOKEN",
+    "AZURE_SPEECH_HOST",
+    "AZURE_SPEECH_KEY",
+    "AZURE_SPEECH_REGION",
     "BEY_API_KEY",
     "BEY_API_URL",
     "BEY_AVATAR_ID",
@@ -28,6 +31,9 @@
     "HEDRA_API_KEY",
     "HEDRA_API_URL",
     "HEDRA_AVATAR_ID",
+    "HOTEL_TODAY",
+    "KRISP_VIVA_SDK_LICENSE_KEY",
+    "KRISP_VIVA_FILTER_MODEL_PATH",
     "LEMONSLICE_API_KEY",
     "LEMONSLICE_API_URL",
     "LEMONSLICE_IMAGE_URL",
@@ -36,6 +42,7 @@
     "LIVEAVATAR_AVATAR_ID",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
+    "LIVEKIT_INFERENCE_TESTS",
     "LIVEKIT_INFERENCE_API_KEY",
     "LIVEKIT_INFERENCE_API_SECRET",
     "LIVEKIT_DEV_MODE",
@@ -64,6 +71,9 @@
     "NEUPHONIC_API_KEY",
     "NUM_CPUS",
     "PHONIC_API_KEY",
+    "PROTOFACE_API_KEY",
+    "PROTOFACE_API_URL",
+    "PROTOFACE_AVATAR_ID",
     "RESEMBLE_API_KEY",
     "LIVEKIT_REMOTE_EOT_URL",
     "LIVEKIT_SIP_NUMBER",
@@ -90,6 +100,9 @@
     "SIP_PHONE_NUMBER",
     "LK_OPENAI_DEBUG",
     "LK_GOOGLE_DEBUG",
+    "LK_KEYTERMS_DEBUG",
+    "KEYTERM_STT",
+    "LK_DRAIN_PLAYOUT_TIMEOUT_MS",
     "LIVEKIT_EVALS_VERBOSE",
     "OVHCLOUD_API_KEY",
     "INWORLD_API_KEY",
@@ -115,6 +128,10 @@
       "outputs": ["dist/**"]
     },
     "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
       "outputs": []
     },
     "api:check": {

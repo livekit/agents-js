@@ -28,11 +28,11 @@ export interface SimpleOTLPHttpLogExporterConfig {
   /** LiveKit Cloud hostname */
   cloudHostname: string;
   /** Resource attributes (e.g., room_id, job_id) */
-  resourceAttributes: Record<string, string>;
+  resourceAttributes: Record<string, unknown>;
   /** Scope name for the logger */
   scopeName: string;
   /** Scope attributes */
-  scopeAttributes?: Record<string, string>;
+  scopeAttributes?: Record<string, unknown>;
 }
 
 /**
@@ -119,7 +119,7 @@ export class SimpleOTLPHttpLogExporter {
   private buildPayload(records: SimpleLogRecord[]): object {
     const resourceAttrs = Object.entries(this.config.resourceAttributes).map(([key, value]) => ({
       key,
-      value: { stringValue: value },
+      value: this.convertValue(value, key),
     }));
 
     if (!this.config.resourceAttributes['service.name']) {
@@ -129,7 +129,7 @@ export class SimpleOTLPHttpLogExporter {
     const scopeAttrs = this.config.scopeAttributes
       ? Object.entries(this.config.scopeAttributes).map(([key, value]) => ({
           key,
-          value: { stringValue: value },
+          value: this.convertValue(value, key),
         }))
       : [];
 

@@ -80,6 +80,7 @@ export class SpeechHandle {
   private doneFut = new Future<void>();
   private generations: Future<void>[] = [];
   private _chatItems: ChatItem[] = [];
+  private _error: unknown;
 
   /** @internal */
   _tasks: Task<void>[] = [];
@@ -183,6 +184,19 @@ export class SpeechHandle {
     return this.doneFut.done;
   }
 
+  /**
+   * Returns the error that caused this SpeechHandle to complete, if any.
+   *
+   * @throws Error if the SpeechHandle is not done yet.
+   */
+  exception(): unknown {
+    if (!this.doneFut.done) {
+      throw new Error('SpeechHandle is not done yet');
+    }
+
+    return this._error;
+  }
+
   get chatItems(): ChatItem[] {
     return this._chatItems;
   }
@@ -222,7 +236,11 @@ export class SpeechHandle {
    */
   async waitForPlayout(): Promise<void> {
     const store = functionCallStorage.getStore();
-    if (store?.functionCall && store.speechHandle === this) {
+    if (
+      store?.functionCall &&
+      store.speechHandle === this &&
+      store.functionCall.extra.__livekit_agents_tool_non_blocking !== true
+    ) {
       throw new SpeechHandleCircularWaitError(store.functionCall.name);
     }
     await this.doneFut.await;
@@ -353,8 +371,11 @@ export class SpeechHandle {
   }
 
   /** @internal */
-  _markDone(): void {
+  _markDone(error?: unknown): void {
     if (!this.doneFut.done) {
+      if (error !== undefined) {
+        this._error = error;
+      }
       this.doneFut.resolve();
     }
 

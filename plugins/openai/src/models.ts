@@ -4,6 +4,7 @@
 
 export type ChatModels =
   | 'gpt-5.4'
+  | 'gpt-5.4-mini'
   | 'gpt-5.3-chat-latest'
   | 'gpt-5.2'
   | 'gpt-5.2-chat-latest'
@@ -205,16 +206,30 @@ export type MetaChatModels =
   | 'Llama-3.3-70B-Instruct'
   | 'Llama-3.3-8B-Instruct';
 
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high';
+
+export type Reasoning = { effort?: ReasoningEffort | null; [key: string]: unknown };
+
 export function supportsReasoningEffort(model: ChatModels | string): boolean {
   return [
     'gpt-5.4',
-    'gpt-5.3-chat-latest',
+    'gpt-5.4-mini',
     'gpt-5.2',
-    'gpt-5.2-chat-latest',
     'gpt-5.1',
-    'gpt-5.1-chat-latest',
     'gpt-5',
     'gpt-5-mini',
     'gpt-5-nano',
   ].includes(model);
+}
+
+export function defaultReasoningEffort(model: ChatModels | string): ReasoningEffort | undefined {
+  if (!supportsReasoningEffort(model)) {
+    return undefined;
+  }
+
+  if (['gpt-5.1', 'gpt-5.2', 'gpt-5.4', 'gpt-5.4-mini'].includes(model)) {
+    return 'none';
+  }
+
+  return 'minimal';
 }

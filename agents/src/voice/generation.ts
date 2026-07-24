@@ -17,6 +17,7 @@ import {
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import {
+  type JSONObject,
   type ToolChoice,
   type ToolContext,
   ToolError,
@@ -30,8 +31,14 @@ import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
-import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT, isFlushSentinel } from '../types.js';
 import {
+  type FlushSentinel,
+  USERDATA_TIMED_TRANSCRIPT,
+  USERDATA_TTS_STARTED_TIME,
+  isFlushSentinel,
+} from '../types.js';
+import {
+  type Aborted,
   Future,
   IdleTimeoutError,
   Task,
@@ -60,10 +67,74 @@ import {
 import { toSnakeCaseDeep } from './report.js';
 import { RunContext } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { getMockTool } from './testing/run_result.js';
+import { ToolExecutor, buildExecutorMap } from './tool_executor.js';
 import { type TextTransform, applyTextTransforms } from './transcription/text_transforms.js';
 
 export const DEFAULT_TTS_READ_IDLE_TIMEOUT_MS = 10_000;
 export const DEFAULT_FORWARD_AUDIO_IDLE_TIMEOUT_MS = 10_000;
+export const RUNNING_TOOL_PLACEHOLDER = 'The tool call is still in progress.';
+export const RUNNING_TOOL_PLACEHOLDER_KEY = '__lk_running_placeholder__';
+const RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX = 'lk_running_placeholder/';
+
+export function _injectRunningToolCalls(
+  chatCtx: ChatContext,
+  runningCalls: Iterable<FunctionCall>,
+): void {
+  const existingCallIds = new Set(
+    chatCtx.items
+      .filter((item): item is FunctionCall => item.type === 'function_call')
+      .map((item) => item.callId),
+  );
+  const existingOutputIds = new Set(
+    chatCtx.items
+      .filter((item): item is FunctionCallOutput => item.type === 'function_call_output')
+      .map((item) => item.callId),
+  );
+
+  for (const runningCall of runningCalls) {
+    if (existingOutputIds.has(runningCall.callId)) continue;
+    if (!existingCallIds.has(runningCall.callId)) {
+      existingCallIds.add(runningCall.callId);
+      chatCtx.insert(
+        FunctionCall.create({
+          ...runningCall,
+          extra: { ...runningCall.extra, [RUNNING_TOOL_PLACEHOLDER_KEY]: true },
+        }),
+      );
+    }
+    existingOutputIds.add(runningCall.callId);
+    chatCtx.insert(
+      FunctionCallOutput.create({
+        id: `${RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX}${runningCall.callId}`,
+        callId: runningCall.callId,
+        name: runningCall.name,
+        output: RUNNING_TOOL_PLACEHOLDER,
+        isError: false,
+        createdAt: runningCall.createdAt,
+      }),
+    );
+  }
+}
+
+export function _stripRunningToolCalls(chatCtx: ChatContext): void {
+  const injectedCallIds = new Set(
+    chatCtx.items
+      .filter(
+        (item): item is FunctionCall =>
+          item.type === 'function_call' && item.extra[RUNNING_TOOL_PLACEHOLDER_KEY] === true,
+      )
+      .map((item) => item.callId),
+  );
+  chatCtx.items = chatCtx.items.filter(
+    (item) =>
+      !(
+        (item.type === 'function_call' && injectedCallIds.has(item.callId)) ||
+        (item.type === 'function_call_output' &&
+          item.id.startsWith(RUNNING_TOOL_PLACEHOLDER_OUTPUT_ID_PREFIX))
+      ),
+  );
+}
 
 /** @internal */
 export class _LLMGenerationData {
@@ -576,11 +647,6 @@ export function performLLMInference(
         // No need to check if chunk is of type other than ChatChunk or string like in
         // Python since chunk is defined in the type ChatChunk | string in TypeScript
       }
-
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-      if (data.ttft !== undefined) {
-        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
-      }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         // Abort signal was triggered, handle gracefully
@@ -590,6 +656,21 @@ export function performLLMInference(
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
+      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+      span.setAttribute(
+        traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
+        JSON.stringify(
+          data.generatedToolCalls.map(({ id, callId, name, args }) => ({
+            id,
+            call_id: callId,
+            name,
+            arguments: args,
+          })),
+        ),
+      );
+      if (data.ttft !== undefined) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
+      }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
       await textWriter.close();
@@ -634,6 +715,7 @@ export function performTTSInference(
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
+  let startTime: number | undefined;
   (async () => {
     const reader = text.getReader();
     try {
@@ -642,6 +724,7 @@ export function performTTSInference(
         if (done) {
           break;
         }
+        startTime ??= performance.now() / 1000;
         const textValue = typeof value === 'string' ? value : value.text;
         await textOnlyWriter.write(textValue);
       }
@@ -671,7 +754,6 @@ export function performTTSInference(
 
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
-    const startTime = performance.now() / 1000; // Convert to seconds
     let firstByteReceived = false;
 
     try {
@@ -709,9 +791,13 @@ export function performTTSInference(
 
         if (!firstByteReceived) {
           firstByteReceived = true;
-          ttfb = performance.now() / 1000 - startTime;
-          genData.ttfb = ttfb;
-          span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          const ttsStartedTime = frame.userdata[USERDATA_TTS_STARTED_TIME];
+          const anchor = typeof ttsStartedTime === 'number' ? ttsStartedTime : startTime;
+          if (anchor !== undefined) {
+            ttfb = performance.now() / 1000 - anchor;
+            genData.ttfb = ttfb;
+            span.setAttribute(traceTypes.ATTR_RESPONSE_TTFB, ttfb);
+          }
         }
 
         // Write the audio frame to the output stream
@@ -830,6 +916,25 @@ export interface _AudioOut {
    * metric.
    */
   startedForwardingAt?: number;
+  /**
+   * Whether this segment has captured at least one of its own frames. Read by the
+   * PLAYBACK_STARTED listener registered in `performAudioForwarding` to ignore a
+   * stray event emitted by another overlapping segment before this one has played.
+   * @internal
+   */
+  _hasCapturedOwnFrame: boolean;
+  /**
+   * The output's monotonic segment count (`capturedPlayoutSegments`) when forwarding
+   * was set up. The interrupted-commit gate compares the current count against this
+   * baseline: a bump proves a frame of THIS segment made it through
+   * `AudioOutput.captureFrame` — the same condition under which `waitForPlayout()`
+   * waits for this segment's playback event instead of returning a stale one — so
+   * the reported playback position can be trusted as evidence of partial playback.
+   * (`startedForwardingAt` is set *before* `captureFrame` resolves and is therefore
+   * not usable as capture evidence; a frame can bail at a pause/interrupt gate,
+   * e.g. `ParticipantAudioOutput`, without ever being counted.)
+   */
+  capturedSegmentsBefore: number;
 }
 
 /**
@@ -858,21 +963,17 @@ async function forwardAudio(
   const logger = log();
   const reader = ttsStream.getReader();
   let resampler: AudioResampler | null = null;
-
-  // The audio output is shared across overlapping segments, so ignore a
-  // PLAYBACK_STARTED from another segment until we capture our own first frame.
-  // Resolving `firstFrameFut` early skips resampler creation and pushes an
-  // unresampled frame (`RtcError: sample_rate and num_channels don't match`).
-  let hasCapturedOwnFrame = false;
-
-  const onPlaybackStarted = (ev: { createdAt: number }) => {
-    if (hasCapturedOwnFrame && !out.firstFrameFut.done) {
-      out.firstFrameFut.resolve(ev.createdAt);
-    }
+  const cancelReader = () => {
+    void reader.cancel().catch((error) => {
+      logger.debug({ error }, 'failed to cancel TTS stream reader after abort');
+    });
   };
+  signal?.addEventListener('abort', cancelReader, { once: true });
+  if (signal?.aborted) {
+    cancelReader();
+  }
 
   try {
-    audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
     audioOutput.resume();
 
     while (true) {
@@ -882,6 +983,11 @@ async function forwardAudio(
 
       const { done, value: frame } = await waitUntilTimeout(reader.read(), idleTimeout);
       if (done) break;
+      // Unlike asyncio task cancellation, aborting cannot interrupt reader.read().
+      // Re-check after it resolves so a late frame cannot leak into the shared output.
+      if (signal?.aborted) {
+        break;
+      }
 
       out.audio.push(frame);
       if (out.startedForwardingAt === undefined) {
@@ -893,8 +999,9 @@ async function forwardAudio(
       }
 
       // Mark before capturing so the PLAYBACK_STARTED emitted synchronously inside
-      // the first captureFrame is attributed to this segment.
-      hasCapturedOwnFrame = true;
+      // the first captureFrame is attributed to this segment (see the listener in
+      // `performAudioForwarding`).
+      out._hasCapturedOwnFrame = true;
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
@@ -917,12 +1024,25 @@ async function forwardAudio(
       throw e;
     }
   } finally {
-    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
-
-    if (!out.firstFrameFut.done) {
-      out.firstFrameFut.reject(new Error('audio forwarding cancelled before playback started'));
-    }
-
+    // NOTE: `firstFrameFut` is intentionally NOT settled here. Forwarding completes
+    // as soon as all TTS frames are *captured*, which can be long before playback
+    // begins:
+    // - DataStream avatar outputs (`waitPlaybackStart: true`, e.g. LemonSlice)
+    //   accept frames faster than real time and only send the
+    //   `lk.playback_started` RPC once the avatar worker actually starts playing,
+    //   typically ~1s after forwarding has finished (#1960).
+    // - A speech paused in the thinking state (`resumeFalseInterruption`) buffers
+    //   its frames; playback starts only once the output resumes, possibly after
+    //   this task has finished (#1909).
+    // Rejecting the future here dropped those late playback-started events on the
+    // floor: the agent never entered the "speaking" state and an interrupted reply
+    // was classified "skipped" and silently removed from the chat context (phantom
+    // utterance). Mirror the python implementation instead: the PLAYBACK_STARTED
+    // listener registered in `performAudioForwarding` outlives this task and
+    // resolves the future when the late first frame plays; the reply tasks settle
+    // any future still pending once the playout window ends, bounding the
+    // listener's lifetime.
+    signal?.removeEventListener('abort', cancelReader);
     reader?.releaseLock();
     audioOutput.flush();
     if (signal?.aborted) {
@@ -941,7 +1061,32 @@ export function performAudioForwarding(
   const out: _AudioOut = {
     audio: [],
     firstFrameFut: new Future<number>(),
+    _hasCapturedOwnFrame: false,
+    capturedSegmentsBefore: audioOutput.capturedPlayoutSegments,
   };
+
+  // Resolve `firstFrameFut` from the output's PLAYBACK_STARTED event. Registered
+  // here (rather than inside `forwardAudio`) so the listener outlives the
+  // forwarding task: frames may be captured into a paused or remote-buffered
+  // output and only start playing after forwarding has finished (#1909, #1960).
+  const onPlaybackStarted = (ev: { createdAt: number }) => {
+    // The audio output is shared across overlapping segments. Only honor the
+    // event once this segment has captured its own first frame, so a stray event
+    // from another segment can't resolve our `firstFrameFut` prematurely. A
+    // premature resolution skips resampler creation (gated on
+    // `!firstFrameFut.done`) and pushes an unresampled frame to the AudioSource,
+    // raising `RtcError: sample_rate and num_channels don't match`.
+    if (out._hasCapturedOwnFrame && !out.firstFrameFut.done) {
+      out.firstFrameFut.resolve(ev.createdAt);
+    }
+  };
+  audioOutput.on(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  // Remove the listener once the future settles — resolved by playback above, or
+  // rejected by the reply task (via `settleFirstFrameFut`) after playout finishes
+  // or is interrupted without a frame ever playing.
+  const removeListener = () =>
+    audioOutput.off(AudioOutput.EVENT_PLAYBACK_STARTED, onPlaybackStarted);
+  out.firstFrameFut.await.then(removeListener).catch(removeListener);
 
   return [
     Task.from(
@@ -977,7 +1122,6 @@ export function performToolExecutions({
     output: [],
     firstToolStartedFuture: new Future(),
   };
-
   const toolCompleted = (out: ToolExecutionOutput) => {
     onToolExecutionCompleted(out);
     toolOutput.output.push(out);
@@ -986,6 +1130,19 @@ export function performToolExecutions({
   const executeToolsTask = async (controller: AbortController) => {
     const signal = controller.signal;
     const reader = toolCallStream.getReader();
+
+    // Production always has an activity (and thus a shared executor). Fall back to a standalone
+    // executor when it's absent (edge cases / unit tests) instead of dropping every tool call,
+    // which would leave callers awaiting `firstToolStartedFuture` hanging forever.
+    const activity = session._activity;
+    const defaultExecutor = activity?._toolExecutor ?? new ToolExecutor({ owningActivity: null });
+
+    // Route AsyncToolset members to their own executor so session-scoped async
+    // tools survive handoff; everything else falls back to the activity executor.
+    const executorByName = buildExecutorMap({
+      toolsets: toolCtx.toolsets,
+      defaultExecutor,
+    });
 
     const tasks: Task<void>[] = [];
     while (!signal.aborted) {
@@ -1006,14 +1163,22 @@ export function performToolExecutions({
 
       // TODO(brian): assert other toolChoice values
 
-      const tool = toolCtx[toolCall.name];
+      const tool = toolCtx.getFunctionTool(toolCall.name);
       if (!tool) {
+        const availableTools = sortedToolNames(toolCtx).join(', ');
+        const message = `Unknown function: ${toolCall.name} - available tools: ${availableTools}`;
         logger.warn(
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
           `unknown AI function ${toolCall.name}`,
+        );
+        toolCompleted(
+          createToolOutput({
+            toolCall,
+            exception: new ToolError(message),
+          }),
         );
         continue;
       }
@@ -1073,6 +1238,9 @@ export function performToolExecutions({
         continue;
       }
 
+      // Resolve right after argument parsing and before execution (including the
+      // executor's duplicate-check). This ensures a tool that gets duplicate-rejected
+      // by the executor doesn't leave callers awaiting `firstToolStartedFuture` hanging forever.
       if (!toolOutput.firstToolStartedFuture.done) {
         toolOutput.firstToolStartedFuture.resolve();
       }
@@ -1092,14 +1260,16 @@ export function performToolExecutions({
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
 
-        // await for task to complete, if task is aborted, set exception
+        // Only completed executions produce tool output. An interrupted execution may still
+        // finish in the background and must remain retryable rather than becoming a synthetic
+        // error result in conversation history.
         let toolOutput: ToolExecutionOutput | undefined;
         try {
-          const { result, isAborted } = await waitUntilAborted(toolExecTask, signal);
+          const { result, isAborted } = await _waitForToolExecutionResult(toolExecTask, signal);
+          if (isAborted) return;
           toolOutput = createToolOutput({
             toolCall,
-            exception: isAborted ? new Error('tool call was aborted') : undefined,
-            output: isAborted ? undefined : result,
+            output: result,
           });
 
           if (toolOutput.toolCallOutput) {
@@ -1134,8 +1304,7 @@ export function performToolExecutions({
             span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
           }
         } finally {
-          if (!toolOutput) throw new Error('toolOutput is undefined');
-          toolCompleted(toolOutput);
+          if (toolOutput) toolCompleted(toolOutput);
         }
       };
 
@@ -1159,9 +1328,31 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              return await tool.execute(parsedArgs, {
-                ctx: new RunContext(session, speechHandle, toolCall),
-                toolCallId: toolCall.callId,
+              const runCtx = new RunContext(session, speechHandle, toolCall);
+              const mock = getMockTool(session.currentAgent, toolCall.name);
+              const toolToExecute = mock
+                ? {
+                    ...tool,
+                    execute: mock,
+                  }
+                : tool;
+
+              if (mock) {
+                logger.debug(
+                  {
+                    function: toolCall.name,
+                    arguments: parsedArgs,
+                    speech_id: speechHandle.id,
+                  },
+                  'executing mock tool',
+                );
+              }
+
+              const executor = executorByName.get(toolCall.name) ?? defaultExecutor;
+              return await executor.execute({
+                tool: toolToExecute,
+                runCtx,
+                rawArguments: parsedArgs as JSONObject,
                 abortSignal: signal,
               });
             },
@@ -1196,43 +1387,38 @@ export function performToolExecutions({
   return [Task.from(executeToolsTask, controller, 'performToolExecutions'), toolOutput];
 }
 
-type Aborted<T> =
-  | {
-      result: T;
-      isAborted: false;
+/**
+ * Race tool completion against interruption while preferring an already-settled result.
+ *
+ * A plain pre-abort short circuit can discard a result that settled earlier in the same
+ * JavaScript turn but whose reaction has not run yet. Passing the original promise first to
+ * `Promise.race` preserves the settlement order in that case.
+ *
+ * @internal
+ */
+export async function _waitForToolExecutionResult<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<Aborted<T>> {
+  const aborted = Symbol('tool execution aborted');
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<typeof aborted>((resolve) => {
+    onAbort = () => resolve(aborted);
+    if (signal.aborted) {
+      resolve(aborted);
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
     }
-  | {
-      result: undefined;
-      isAborted: true;
-    };
+  });
 
-async function waitUntilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<Aborted<T>> {
-  const abortFut = new Future<Aborted<T>>();
-
-  const resolveAbort = () => {
-    if (!abortFut.done) {
-      abortFut.resolve({ result: undefined, isAborted: true });
-    }
-  };
-
-  signal.addEventListener('abort', resolveAbort);
-
-  promise
-    .then((r) => {
-      if (!abortFut.done) {
-        abortFut.resolve({ result: r, isAborted: false });
-      }
-    })
-    .catch((e) => {
-      if (!abortFut.done) {
-        abortFut.reject(e);
-      }
-    })
-    .finally(() => {
-      signal.removeEventListener('abort', resolveAbort);
-    });
-
-  return await abortFut.await;
+  try {
+    const result = await Promise.race([promise, abortPromise]);
+    return result === aborted
+      ? { result: undefined, isAborted: true }
+      : { result, isAborted: false };
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 export function removeInstructions(chatCtx: ChatContext) {

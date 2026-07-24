@@ -64,8 +64,23 @@ export interface RealtimeCapabilities {
   midSessionToolsUpdate?: boolean;
   /** Whether the tool and tool choice can be specified per response. */
   perResponseToolChoice?: boolean;
-  /** Whether the model can synchronize generated transcript timing natively. */
+  /**
+   * Whether the model synchronizes generated transcript timing natively.
+   * @deprecated Native transcript synchronization is no longer used by built-in models.
+   */
   nativeTranscriptSync?: boolean;
+}
+
+/**
+ * Error raised by a realtime provider when an operation fails or times out
+ * (for example a chat-context update or reply generation).
+ */
+export class RealtimeError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RealtimeError';
+    Error.captureStackTrace(this, RealtimeError);
+  }
 }
 
 export interface InputTranscriptionCompleted {

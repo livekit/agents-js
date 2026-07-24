@@ -894,7 +894,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         const { done, value } = await reader.read();
         if (done) break;
 
-        for (const frame of bstream.write(value.buffer)) {
+        for (const frame of bstream.write(value)) {
           if (lastFrame) {
             this.queue.put({ requestId, segmentId: requestId, frame: lastFrame, final: false });
           }
@@ -1052,6 +1052,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         const formattedText = `${text} `; // must always end with a space
+        this.markStarted();
         connection.sendContent({
           contextId: this.#contextId,
           text: formattedText,
@@ -1097,7 +1098,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         // Process audio queue
         while (this.#audioQueue.length > 0) {
           const audioData = this.#audioQueue.shift()!;
-          for (const frame of bstream.write(audioData.buffer)) {
+          for (const frame of bstream.write(audioData)) {
             sendLastFrame(false);
             lastFrame = frame;
           }

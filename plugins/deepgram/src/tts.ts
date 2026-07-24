@@ -351,6 +351,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             text: text,
           });
 
+          this.markStarted();
           ws.send(message);
           markInputSent();
         }

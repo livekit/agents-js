@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod';
-import type { ChatContext } from '../../llm/chat_context.js';
-import { LLM, ToolError, ToolFlag, tool } from '../../llm/index.js';
-import { asError } from '../../utils.js';
-import { AgentTask } from '../../voice/agent.js';
+import type { ChatContext } from '../llm/chat_context.js';
+import { LLM, ToolError, ToolFlag, tool } from '../llm/index.js';
+import { asError } from '../utils.js';
+import { AgentTask } from '../voice/agent.js';
 
 interface FactoryInfo {
   taskFactory: () => AgentTask;
@@ -84,10 +84,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
 
       const outOfScopeTool = this.buildOutOfScopeTool(taskId);
       if (outOfScopeTool) {
-        await this._currentTask.updateTools({
-          ...this._currentTask.toolCtx,
-          out_of_scope: outOfScopeTool,
-        });
+        await this._currentTask.updateTools([...this._currentTask.toolCtx.tools, outOfScopeTool]);
       }
 
       try {
@@ -190,6 +187,7 @@ export class TaskGroup extends AgentTask<TaskGroupResult> {
     const visitedTasks = this._visitedTasks;
 
     return tool({
+      name: 'out_of_scope',
       description,
       flags: ToolFlag.IGNORE_ON_ENTER,
       parameters: z.object({

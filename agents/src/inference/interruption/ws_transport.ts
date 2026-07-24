@@ -309,6 +309,7 @@ export function createWsTransport(
             type: 'overlapping_speech',
             detectedAt: Date.now(),
             isInterruption: true,
+            agentEnded: false,
             totalDurationInS: entry.totalDurationInS,
             predictionDurationInS: entry.predictionDurationInS,
             overlapStartedAt: overlapSpeechStartedAt,

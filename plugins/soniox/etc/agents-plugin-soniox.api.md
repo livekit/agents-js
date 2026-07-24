@@ -7,6 +7,16 @@
 import { APIConnectOptions } from '@livekit/agents';
 import { AudioBuffer as AudioBuffer_2 } from '@livekit/agents';
 import { stt } from '@livekit/agents';
+import { tts } from '@livekit/agents';
+
+// @public (undocumented)
+export class ChunkedStream extends tts.ChunkedStream {
+    constructor(tts: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
 
 // @public (undocumented)
 export interface ContextGeneralItem {
@@ -72,6 +82,7 @@ export interface STTOptions {
     enableLanguageIdentification: boolean;
     // (undocumented)
     enableSpeakerDiarization: boolean;
+    endpointLatencyAdjustmentLevel?: number;
     // (undocumented)
     languageHints?: string[];
     // (undocumented)
@@ -88,6 +99,19 @@ export interface STTOptions {
 }
 
 // @public (undocumented)
+export class SynthesizeStream extends tts.SynthesizeStream {
+    constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
+    // (undocumented)
+    close(): void;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public (undocumented)
 export type TranslationConfig = {
     type: 'one_way';
     targetLanguage: string;
@@ -96,6 +120,49 @@ export type TranslationConfig = {
     languageA: string;
     languageB: string;
 };
+
+// @public (undocumented)
+export class TTS extends tts.TTS {
+    constructor(opts?: Partial<TTSOptions>);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    prewarm(): void;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SynthesizeStream;
+    // (undocumented)
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
+    // (undocumented)
+    updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed'>>): void;
+}
+
+// @public (undocumented)
+export interface TTSOptions {
+    // (undocumented)
+    apiKey?: string;
+    audioFormat: string;
+    // (undocumented)
+    bitrate?: number | null;
+    // (undocumented)
+    language: string;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    sampleRate: number;
+    speed: number;
+    // (undocumented)
+    voice: string;
+    // (undocumented)
+    websocketUrl: string;
+}
 
 // (No @packageDocumentation comment for this package)
 

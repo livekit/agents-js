@@ -10,6 +10,7 @@ import { BaseEndpointing } from './turn_config/endpointing.js';
 function createHooks(): RecognitionHooks {
   return {
     onInterruption: () => {},
+    onBackchannelConfirmed: () => {},
     onStartOfSpeech: () => {},
     onVADInferenceDone: () => {},
     onEndOfSpeech: () => {},

@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import * as agents from '../index.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import { type InferenceClass, LLM } from './llm.js';
+import { describeLiveKitInference } from './test_utils.js';
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
@@ -62,9 +64,12 @@ async function captureHeaders(opts: {
   return capturedHeaders;
 }
 
-async function collectChatChunks(completionChunks: CompletionChunk[]) {
+async function collectChatChunks(
+  completionChunks: CompletionChunk[],
+  model = 'openai/gpt-4o-mini',
+) {
   const llm = new LLM({
-    model: 'openai/gpt-4o-mini',
+    model,
     apiKey: 'test-key',
     apiSecret: 'test-secret',
     baseURL: 'https://example.livekit.cloud',
@@ -138,33 +143,36 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
 });
 
 describe('inference.LLM streamed tool calls', () => {
-  it('does not forward assistant content on tool call chunks', async () => {
-    const chunks = await collectChatChunks([
-      {
-        id: 'chatcmpl_test',
-        choices: [
-          {
-            index: 0,
-            finish_reason: 'tool_calls',
-            delta: {
-              role: 'assistant',
-              content: 'saveAnswer({"answer":"yes"})',
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_123',
-                  type: 'function',
-                  function: {
-                    name: 'saveAnswer',
-                    arguments: '{"answer":"yes"}',
+  it('does not expose content alongside tool calls', async () => {
+    const chunks = await collectChatChunks(
+      [
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'tool_calls',
+              delta: {
+                role: 'assistant',
+                content: 'Let me check that.\n\n<|channel>thought\n<channel|>',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_123',
+                    type: 'function',
+                    function: {
+                      name: 'saveAnswer',
+                      arguments: '{"answer":"yes"}',
+                    },
                   },
-                },
-              ],
+                ],
+              },
             },
-          },
-        ],
-      },
-    ]);
+          ],
+        },
+      ],
+      'google/gemma-4-31b-it',
+    );
 
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.delta?.content).toBeUndefined();
@@ -172,5 +180,68 @@ describe('inference.LLM streamed tool calls', () => {
     expect(chunks[0]?.delta?.toolCalls?.[0]?.callId).toBe('call_123');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.name).toBe('saveAnswer');
     expect(chunks[0]?.delta?.toolCalls?.[0]?.args).toBe('{"answer":"yes"}');
+  });
+});
+
+describe('inference.LLM reasoning markers', () => {
+  it('does not flush a split marker when finish_reason is omitted', async () => {
+    const chunks = await collectChatChunks(
+      [
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                content: 'before<|chan',
+              },
+            },
+          ],
+        },
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              delta: {
+                content: 'nel>thought\nprivate reasoning<channel|>answer',
+              },
+            },
+          ],
+        },
+      ],
+      'google/gemma-4-31b-it',
+    );
+
+    expect(chunks.map((chunk) => chunk.delta?.content).join('')).toBe('beforeanswer');
+  });
+});
+
+describeLiveKitInference('LiveKit Inference LLM integration', agents, async (harness) => {
+  const liveConnOptions = { maxRetry: 3, retryIntervalMs: 2000, timeoutMs: 30000 };
+
+  const withLiveConnOptions = (llm: LLM): LLM => {
+    const chat = llm.chat.bind(llm);
+    llm.chat = ((opts) => chat({ ...opts, connOptions: liveConnOptions })) as LLM['chat'];
+    return llm;
+  };
+
+  for (const model of [
+    'google/gemma-4-31b-it',
+    'openai/gpt-4.1-mini',
+    'google/gemini-2.5-flash',
+    'openai/gpt-oss-120b',
+  ] as const) {
+    describe(model, async () => {
+      await harness.llm(withLiveConnOptions(new LLM({ model })), false);
+    });
+  }
+
+  describe('openai/gpt-4.1-mini strict tool schema', async () => {
+    await harness.llmStrict(
+      withLiveConnOptions(new LLM({ model: 'openai/gpt-4.1-mini', strictToolSchema: true })),
+    );
   });
 });

@@ -224,6 +224,52 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
   });
 }
 
+/**
+ * Return the provider's keyterm `extra` entry: user keyterms (from `extraKwargs`)
+ * merged with the framework `sessionKeyterms`.
+ *
+ * `undefined` if the model has no keyterm prompting, so
+ * `keytermsExtraForModel(model) !== undefined` is also the capability check.
+ */
+function keytermsExtraForModel(
+  model: string | undefined,
+  opts?: {
+    extraKwargs?: Record<string, unknown>;
+    sessionKeyterms?: string[];
+  },
+): Record<string, unknown> | undefined {
+  if (typeof model !== 'string' || !model) {
+    return undefined;
+  }
+
+  const extraKwargs = opts?.extraKwargs ?? {};
+  const sessionKeyterms = opts?.sessionKeyterms ?? [];
+
+  if (model.startsWith('speechmatics/')) {
+    // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
+    const rawExisting = extraKwargs.additional_vocab;
+    const existing: Record<string, unknown>[] = Array.isArray(rawExisting) ? [...rawExisting] : [];
+    const seen = new Set(existing.map((v) => v.content));
+    const additions = sessionKeyterms.filter((term) => !seen.has(term));
+    return { additional_vocab: [...existing, ...additions.map((term) => ({ content: term }))] };
+  }
+
+  let key: string | undefined;
+  if (model.startsWith('deepgram/')) {
+    key = 'keyterm';
+  } else if (model.startsWith('assemblyai/')) {
+    key = 'keyterms_prompt';
+  }
+
+  if (key === undefined) {
+    return undefined;
+  }
+  // deepgram's keyterm may be a bare string; wrap it so it isn't splat char-by-char
+  const rawUser = extraKwargs[key] ?? [];
+  const existing = typeof rawUser === 'string' ? [rawUser] : Array.isArray(rawUser) ? rawUser : [];
+  return { [key]: [...new Set([...existing, ...sessionKeyterms])] };
+}
+
 type _STTModels =
   | DeepgramModels
   | DeepgramFluxModels
@@ -336,6 +382,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
+  /** framework-managed; merged into modelOptions @internal */
+  _sessionKeyterms: string[] = [];
 
   /**
    * Resolves to the VAD instance for the current model, or `undefined` if the model
@@ -369,6 +417,9 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       interimResults: true,
       alignedTranscript: 'word',
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
+      keyterms:
+        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
+        undefined,
     });
 
     const {
@@ -478,16 +529,61 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     if (nextOpts.model !== undefined) {
       this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
+      this.updateCapabilities({
+        keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+      });
     }
 
     if (nextOpts.modelOptions) {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
+      // re-apply the active session keyterms on top of the update sent to live streams,
+      // so a user extra update doesn't drop them. `this.opts.modelOptions` must stay a
+      // pure user baseline (no session terms baked in), or a later session-keyterm
+      // change could never remove previously applied terms.
+      const keytermExtra = keytermsExtraForModel(this.opts.model, {
+        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms: this._sessionKeyterms,
+      });
+      if (keytermExtra !== undefined) {
+        nextOpts.modelOptions = {
+          ...nextOpts.modelOptions,
+          ...keytermExtra,
+        } as STTOptions<TModel>;
+      }
     }
 
     for (const stream of this.streams) {
       stream.updateOptions(nextOpts);
+    }
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this._sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this._sessionKeyterms[i])
+    ) {
+      return;
+    }
+    const keytermExtra = keytermsExtraForModel(this.opts.model, {
+      extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+      sessionKeyterms: keyterms,
+    });
+    if (keytermExtra === undefined) {
+      super._updateSessionKeyterms(keyterms); // warn-and-skip for unsupported models
+      return;
+    }
+
+    this._sessionKeyterms = [...keyterms];
+    // inference applies extra live via session.update; defer to END_OF_SPEECH since the
+    // gateway may reconnect upstream when the keyterms change
+    for (const stream of this.streams) {
+      if (stream._speaking) {
+        stream._pendingExtra = keytermExtra;
+      } else {
+        stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
+      }
     }
   }
 
@@ -513,7 +609,14 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       settings: {
         sample_rate: String(this.opts.sampleRate),
         encoding: this.opts.encoding,
-        extra: this.opts.modelOptions,
+        // the framework session keyterms into the user's extra_kwargs keyterm key)
+        extra: {
+          ...this.opts.modelOptions,
+          ...(keytermsExtraForModel(this.opts.model, {
+            extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+            sessionKeyterms: this._sessionKeyterms,
+          }) ?? {}),
+        },
       },
     } as Record<string, unknown>;
 
@@ -562,6 +665,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
+  // keyterm extra set while the user is speaking; applied at END_OF_SPEECH (latest wins).
+  // inference applies live, but the gateway may reconnect upstream, so defer to a calm moment.
+  /** @internal */
+  _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
@@ -585,6 +692,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
+  /** @internal */
+  get _speaking(): boolean {
+    return this.speaking;
+  }
+
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
@@ -598,6 +710,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
+
+    if (opts.modelOptions !== undefined) {
+      this._pendingExtra = undefined;
+    }
 
     // When the WebSocket is live, send a mid-stream session.update so providers
     // that support it (e.g. AssemblyAI, Deepgram Flux) apply changes without
@@ -614,6 +730,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
         }
       }
+    }
+  }
+
+  private onEndOfSpeech(): void {
+    if (this._pendingExtra !== undefined) {
+      this.updateOptions({ modelOptions: this._pendingExtra as STTOptions<TModel> });
+      this._pendingExtra = undefined;
     }
   }
 
@@ -935,6 +1058,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         if (this.speaking) {
           this.speaking = false;
           this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+          this.onEndOfSpeech();
         }
       } else {
         this.queue.put({

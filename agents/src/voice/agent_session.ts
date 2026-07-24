@@ -9,6 +9,7 @@ import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
 import { context as otelContext, trace } from '@opentelemetry/api';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { z } from 'zod';
@@ -32,7 +33,15 @@ import {
   ChatMessage,
   type Instructions,
 } from '../llm/chat_context.js';
-import type { LLM, RealtimeModel, RealtimeModelError, ToolChoice } from '../llm/index.js';
+import type {
+  LLM,
+  RealtimeModel,
+  RealtimeModelError,
+  ToolChoice,
+  ToolContextEntry,
+  ToolContextLike,
+} from '../llm/index.js';
+import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
@@ -45,8 +54,9 @@ import {
   DEFAULT_SESSION_CONNECT_OPTIONS,
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
+  recordingEnabled,
 } from '../types.js';
-import { Task, asError } from '../utils.js';
+import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
 import type { Agent } from './agent.js';
 import {
@@ -83,12 +93,22 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import {
+  KeytermDetector,
+  type KeytermsOptions,
+  resolveKeytermsOptions,
+} from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { RunResult } from './testing/run_result.js';
+import { type RunOutputOptions, RunResult } from './testing/run_result.js';
+import {
+  type AsyncToolOptions,
+  type ToolHandlingOptions,
+  resolveAsyncToolOptions,
+} from './tool_executor.js';
 import type { TextTransform } from './transcription/text_transforms.js';
 import type { EndpointingOptions } from './turn_config/endpointing.js';
 import type { InterruptionOptions } from './turn_config/interruption.js';
@@ -107,12 +127,14 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * All keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Redaction defaults to the project setting; `false` is ignored when
+ * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
  * - `record: { audio: true, traces: false }` — granular
+ * - `record: { redaction: true }` — enable redaction for the session
  */
 export interface RecordingOptions {
   /** Record session audio. Defaults to `true`. */
@@ -123,6 +145,8 @@ export interface RecordingOptions {
   logs?: boolean;
   /** Upload the conversation transcript (chat history). Defaults to `true`. */
   transcript?: boolean;
+  /** Enable redaction. `false` does not disable project redaction. */
+  redaction?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -133,6 +157,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   traces: true,
   logs: true,
   transcript: true,
+  redaction: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -140,7 +165,10 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   traces: false,
   logs: false,
   transcript: false,
+  redaction: false,
 };
+
+const idleHoldStorage = new AsyncLocalStorage<boolean>();
 
 /**
  * Resolve a `record` argument into explicit per-category flags. A boolean turns
@@ -237,6 +265,8 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
+  tools?: ToolContextLike<UserData>;
+  toolHandling?: ToolHandlingOptions;
 
   /** @deprecated use turnHandling.turnDetection instead */
   turnDetection?: TurnDetectionMode;
@@ -286,6 +316,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    */
   turnHandling?: Partial<TurnHandlingOptions>;
 
+  /**
+   * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
+   * (LLM extraction). Applies to STTs that accept a term list; on others it warns
+   * and is ignored.
+   */
+  keytermsOptions?: KeytermsOptions;
+
   useTtsAlignedTranscript?: boolean;
 
   /**
@@ -317,6 +354,12 @@ export type AgentSessionUpdateOptions = {
    * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
    */
   turnDetection?: TurnDetectionMode | null;
+
+  /**
+   * Replace the user-defined keyterms applied to the STT. Auto-detected keyterms
+   * are left untouched.
+   */
+  keyterms?: string[];
 };
 
 type ActivityTransitionOptions = {
@@ -351,6 +394,7 @@ export class AgentSession<
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
+  private _toolCtx: ToolContext<UserData>;
   private _userState: UserState = 'listening';
   private _agentState: AgentState = 'initializing';
 
@@ -360,6 +404,8 @@ export class AgentSession<
   private closing = false;
   private closingTask: Promise<void> | null = null;
   private userAwayTimer: NodeJS.Timeout | null = null;
+  private idleHolds = 0;
+  private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
 
@@ -388,6 +434,9 @@ export class AgentSession<
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
   /** @internal */
+  readonly _keytermDetector: KeytermDetector;
+
+  /** @internal */
   _roomIO?: RoomIO;
 
   /**
@@ -412,14 +461,15 @@ export class AgentSession<
   /** @internal Resolved per-category recording options for this session. */
   _recordingOptions: ResolvedRecordingOptions = { ...RECORDING_ALL_OFF };
 
+  /** @internal */
+  _asyncToolOptions: AsyncToolOptions = resolveAsyncToolOptions();
+
+  /** @internal */
+  _sessionToolsetsSetup = false;
+
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return (
-      this._recordingOptions.audio ||
-      this._recordingOptions.traces ||
-      this._recordingOptions.logs ||
-      this._recordingOptions.transcript
-    );
+    return recordingEnabled(this._recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -449,7 +499,17 @@ export class AgentSession<
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
-    const { vad, stt, llm, tts, userData, connOptions, ...resolvedSessionOptions } = opts;
+    const {
+      vad,
+      stt,
+      llm,
+      tts,
+      userData,
+      connOptions,
+      tools,
+      toolHandling,
+      ...resolvedSessionOptions
+    } = opts;
     // Merge user-provided connOptions with defaults
     this._connOptions = {
       sttConnOptions: { ...DEFAULT_API_CONNECT_OPTIONS, ...connOptions?.sttConnOptions },
@@ -504,6 +564,8 @@ export class AgentSession<
         : configuredTurnDetection ?? new InferenceTurnDetector();
     this._interruptionDetection = resolvedSessionOptions.turnHandling.interruption?.mode;
     this._userData = userData;
+    this._toolCtx = toToolContext(tools) ?? ToolContext.empty<UserData>();
+    this._asyncToolOptions = resolveAsyncToolOptions(toolHandling?.asyncOptions);
 
     // configurable IO
     this._input = new AgentInput(this.onAudioInputChanged);
@@ -512,19 +574,34 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+
+    const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
+    this._keytermDetector = new KeytermDetector({
+      staticKeyterms: keytermsOptions.keyterms,
+      options: keytermsOptions.keytermDetection,
+    });
+
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
     this._onUserInputTranscribed = this._onUserInputTranscribed.bind(this);
     this.on(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
+    this.idleReleased.set();
   }
 
   emit<K extends keyof AgentSessionCallbacks>(
     event: K,
     ...args: Parameters<AgentSessionCallbacks[K]>
   ): boolean {
-    const eventData = args[0] as AgentEvent;
-    this._recordedEvents.push(eventData);
+    // Only retain events when recording is actually enabled. Otherwise this
+    // array grows unbounded for the entire (potentially hours-long) session,
+    // pinning every event's graph (SpeechHandle, OTel spans/contexts, streams)
+    // and leaking memory even though the events are never reported. The buffer
+    // is only consumed by makeSessionReport() when recording is enabled.
+    if (this._enableRecording) {
+      const eventData = args[0] as AgentEvent;
+      this._recordedEvents.push(eventData);
+    }
     return super.emit(event, ...args);
   }
 
@@ -546,6 +623,11 @@ export class AgentSession<
 
   get history(): ChatContext {
     return this._chatCtx;
+  }
+
+  /** The effective keyterms (user-defined + auto-detected) currently applied to the STT. */
+  get keyterms(): string[] {
+    return this._keytermDetector.keyterms;
   }
 
   /** Connection options for STT, LLM, and TTS. */
@@ -760,7 +842,7 @@ export class AgentSession<
         ctx._primaryAgentSession = this;
       } else {
         isPrimary = false;
-        if (this._enableRecording) {
+        if (recordingEnabled(this._recordingOptions)) {
           if (recordIsGiven) {
             throw new Error(
               'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
@@ -812,7 +894,15 @@ export class AgentSession<
         }
       }
 
-      await this._updateActivity(agent);
+      await this._updateActivity(agent, { waitOnEnter: false });
+
+      // Watch onEnter so run() captures its output without awaiting long-lived
+      // onEnter flows that need a future user turn to complete.
+      const onEnterTask = this.activity?._onEnterTask;
+      const runState = this._globalRunState;
+      if (onEnterTask && runState && !runState.done()) {
+        runState._watchHandle(onEnterTask);
+      }
     };
 
     const oldTask = this.updateActivityTask;
@@ -959,6 +1049,10 @@ export class AgentSession<
   }
 
   updateOptions(options: AgentSessionUpdateOptions): void {
+    if (options.keyterms !== undefined) {
+      this._keytermDetector.setStaticKeyterms(options.keyterms);
+    }
+
     const endpointing = options.turnHandling?.endpointing;
     const turnDetection =
       options.turnHandling?.turnDetection !== undefined
@@ -1079,17 +1173,23 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input and optional output type
+   * @param options - Run options including user input and optional output type.
+   *   When `outputType` is set and the turn ends without structured output, the
+   *   run re-prompts the model up to `outputOptions.maxRetries` times (default 2)
+   *   before rejecting with `UnexpectedModelBehavior`. Pass `outputOptions: null`
+   *   to disable retries entirely.
    * @returns A RunResult that resolves when the agent finishes responding
    */
   run<T = unknown>({
     userInput,
     inputModality,
     outputType,
+    outputOptions,
   }: {
     userInput: string;
     inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
+    outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
@@ -1098,6 +1198,8 @@ export class AgentSession<
     const runState = new RunResult<T>({
       userInput,
       outputType,
+      outputOptions,
+      session: this,
     });
 
     this._globalRunState = runState;
@@ -1260,6 +1362,62 @@ export class AgentSession<
     }
 
     return this.agent;
+  }
+
+  get toolCtx(): ToolContext<UserData> {
+    return this._toolCtx.copy();
+  }
+
+  get tools(): readonly ToolContextEntry<UserData>[] {
+    return this._toolCtx.tools;
+  }
+
+  async waitForIdle(): Promise<AgentActivity> {
+    while (true) {
+      if (this.closingTask) {
+        throw new Error('AgentSession is closing');
+      }
+      const activity = this.activity;
+      if (!activity) {
+        throw new Error('AgentSession has no active AgentActivity');
+      }
+      try {
+        await activity.waitForIdle();
+        return activity;
+      } catch (error) {
+        if (this.activity === activity) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  async waitForIdleAndHold<T>(fn: (activity: AgentActivity) => Promise<T> | T): Promise<T> {
+    const activity = await this.waitForIdle();
+    this.idleHolds += 1;
+    this.idleReleased.clear();
+    try {
+      return await idleHoldStorage.run(true, () => fn(activity));
+    } finally {
+      this.idleHolds -= 1;
+      if (this.idleHolds === 0) {
+        this.idleReleased.set();
+      }
+    }
+  }
+
+  /**
+   * Wait until any foreground idle-hold (`waitForIdleAndHold`) is released.
+   * Returns `true` if it actually waited for a release — callers use that to
+   * re-verify idleness, since work may have resumed during the hold.
+   * @internal
+   */
+  async _waitForIdleHoldReleased(): Promise<boolean> {
+    if (this.idleHolds > 0 && !idleHoldStorage.getStore()) {
+      await this.idleReleased.wait();
+      return true;
+    }
+    return false;
   }
 
   async close(): Promise<void> {
@@ -1495,9 +1653,13 @@ export class AgentSession<
   }
 
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this._userState === 'away' && ev.isFinal) {
-      this.logger.debug('User returned from away state due to speech input');
-      this._updateUserState('listening');
+    if (ev.isFinal && this._userState !== 'speaking') {
+      if (this._userState === 'away') {
+        this.logger.debug('User returned from away state due to speech input');
+        this._updateUserState('listening');
+      } else if (this._userState === 'listening' && this._agentState === 'listening') {
+        this._setUserAwayTimer();
+      }
     }
   }
 
@@ -1565,6 +1727,9 @@ export class AgentSession<
 
     await this.activity?.close();
     this.activity = undefined;
+
+    const sessionToolsets = this._toolCtx.toolsets;
+    await Promise.allSettled(sessionToolsets.map((toolset) => toolset.aclose()));
 
     if (this.sessionSpan) {
       this.sessionSpan.end();

@@ -101,6 +101,8 @@ export const wsResponseFailedEventSchema = z.object({
 export const wsErrorEventSchema = z.object({
   type: z.literal('error'),
   status: z.number().optional(),
+  code: z.string().optional(),
+  param: z.string().optional(),
   error: z
     .object({
       type: z.string().optional(),

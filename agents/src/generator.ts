@@ -3,24 +3,22 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess } from './job.js';
 
+export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinition');
+
 /** @see {@link defineAgent} */
-export interface Agent<ProcessUserData = Record<string, unknown>> {
+export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
 }
+
+export type Agent<ProcessUserData = Record<string, unknown>> = AgentDefinition<ProcessUserData>;
 
 /** Helper to check if an object is an agent before running it.
  *
  * @internal
  */
-export function isAgent(obj: unknown): obj is Agent {
-  return (
-    typeof obj === 'object' &&
-    obj !== null &&
-    'entry' in obj &&
-    typeof (obj as Agent).entry === 'function' &&
-    (('prewarm' in obj && typeof (obj as Agent).prewarm === 'function') || !('prewarm' in obj))
-  );
+export function isAgent(obj: unknown): obj is AgentDefinition {
+  return typeof obj === 'object' && obj !== null && AGENT_DEFINITION_SYMBOL in obj;
 }
 
 /**
@@ -34,7 +32,10 @@ export function isAgent(obj: unknown): obj is Agent {
  * ```
  */
 export function defineAgent<ProcessUserData = Record<string, unknown>>(
-  agent: Agent<ProcessUserData>,
-): Agent<ProcessUserData> {
+  agent: AgentDefinition<ProcessUserData>,
+): AgentDefinition<ProcessUserData> {
+  Object.defineProperty(agent, AGENT_DEFINITION_SYMBOL, {
+    value: true,
+  });
   return agent;
 }

@@ -830,6 +830,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   #sendText(ws: WebSocket, text: string): Promise<void> {
+    this.markStarted();
     return this.#send(ws, {
       send_text: { text },
       contextId: this.#contextId,

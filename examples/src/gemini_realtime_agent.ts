@@ -44,6 +44,7 @@ type StoryData = {
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
 
 const getWeather = llm.tool({
+  name: 'getWeather',
   description: 'Called when the user asks about the weather.',
   parameters: z.object({
     location: z.string().describe('The location to get the weather for'),
@@ -56,6 +57,7 @@ const getWeather = llm.tool({
 });
 
 const toggleLight = llm.tool({
+  name: 'toggleLight',
   description: 'Called when the user asks to turn on or off the light.',
   parameters: z.object({
     room: roomNameSchema.describe('The room to turn the light in'),
@@ -73,28 +75,29 @@ class IntroAgent extends voice.Agent<StoryData> {
     });
   }
 
-  static create() {
+  static createIntroAgent() {
     return new IntroAgent({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
-      tools: {
-        informationGathered: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'informationGathered',
           description:
             'Called when the user has provided the information needed to make the story personalized and engaging.',
           parameters: z.object({
             name: z.string().describe('The name of the user'),
             location: z.string().describe('The location of the user'),
           }),
-          execute: async ({ name, location }, { ctx }) => {
+          execute: async ({ name, location }, { ctx }: llm.ToolOptions<StoryData>) => {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
+            const storyAgent = StoryAgent.createStoryAgent(name, location);
             return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
           },
         }),
         getWeather,
         toggleLight,
-      },
+      ],
     });
   }
 }
@@ -104,7 +107,7 @@ class StoryAgent extends voice.Agent<StoryData> {
     this.session.generateReply();
   }
 
-  static create(name: string, location: string) {
+  static createStoryAgent(name: string, location: string) {
     return new StoryAgent({
       instructions: dedent`
         You are a storyteller. Use the user's information in order to make the story personalized.
@@ -132,7 +135,7 @@ export default defineAgent({
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: IntroAgent.createIntroAgent(),
       room: ctx.room,
     });
 

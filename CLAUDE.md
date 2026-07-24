@@ -29,8 +29,8 @@ pnpm build:agents           # Build only @livekit/agents and its deps
 pnpm build:plugins          # Build only plugins and their deps
 pnpm clean:build            # Clean dist/ dirs then rebuild
 pnpm test                   # Run all tests (vitest)
-pnpm test -- --testPathPattern=agents/src/llm  # Run tests by path
-pnpm test -- --testNamePattern="chat context"  # Run tests by name
+pnpm test agents/src/llm            # Run tests by path
+pnpm test -t "chat context"         # Run tests by name
 pnpm test:watch             # Watch mode
 pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix
@@ -130,7 +130,7 @@ Plugin capabilities by type:
 - **VAD**: silero (ONNX-based, local)
 - **EOU/Turn Detection**: livekit (HuggingFace + ONNX)
 - **Realtime**: openai (+ responses/, ws/ modules), google, xai, phonic
-- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did
+- **Avatar**: hedra, trugen, lemonslice, bey, anam, liveavatar, did, protoface
 - **Test mocks**: test (private, for unit tests)
 
 ### AsyncLocalStorage Patterns

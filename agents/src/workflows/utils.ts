@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { Instructions } from '../../llm/index.js';
+import type { Instructions } from '../llm/index.js';
 
 /**
  * Customizable instruction sections for built-in workflow tasks.

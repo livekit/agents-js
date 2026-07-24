@@ -12,13 +12,13 @@ initializeLogger({ level: 'silent', pretty: false });
 const hasOpenAIApiKey = Boolean(process.env.OPENAI_API_KEY);
 
 describe('buildResponsesWsUrl', () => {
-  it('points at the OpenAI Responses WS endpoint with model when no baseURL is set', () => {
+  it('points at the OpenAI Responses WS endpoint without model when no baseURL is set', () => {
     const url = new URL(buildResponsesWsUrl(undefined, 'gpt-4.1'));
 
     expect(url.protocol).toBe('wss:');
     expect(url.host).toBe('api.openai.com');
     expect(url.pathname).toBe('/v1/responses');
-    expect(url.searchParams.get('model')).toBe('gpt-4.1');
+    expect(url.searchParams.get('model')).toBe(null);
   });
 
   it('rewrites https baseURL to wss and appends /responses with the model', () => {
@@ -28,6 +28,32 @@ describe('buildResponsesWsUrl', () => {
     expect(url.host).toBe('gateway.example.com');
     expect(url.pathname).toBe('/v1/responses');
     expect(url.searchParams.get('model')).toBe('gpt-4o');
+  });
+
+  it('rewrites full https Responses endpoint to wss without duplicating /responses', () => {
+    const url = new URL(buildResponsesWsUrl('https://gateway.example.com/v1/responses', 'gpt-4o'));
+
+    expect(url.protocol).toBe('wss:');
+    expect(url.host).toBe('gateway.example.com');
+    expect(url.pathname).toBe('/v1/responses');
+    expect(url.searchParams.get('model')).toBe('gpt-4o');
+  });
+
+  it('uses full wss Responses endpoint with the model', () => {
+    const url = new URL(buildResponsesWsUrl('wss://gateway.example.com/v1/responses', 'gpt-4o'));
+
+    expect(url.protocol).toBe('wss:');
+    expect(url.host).toBe('gateway.example.com');
+    expect(url.pathname).toBe('/v1/responses');
+    expect(url.searchParams.get('model')).toBe('gpt-4o');
+  });
+
+  it('omits the model when an explicit baseURL still points at api.openai.com', () => {
+    const url = new URL(buildResponsesWsUrl('https://api.openai.com/v1', 'gpt-4.1'));
+
+    expect(url.host).toBe('api.openai.com');
+    expect(url.pathname).toBe('/v1/responses');
+    expect(url.searchParams.get('model')).toBe(null);
   });
 
   it('strips a trailing slash on baseURL before appending /responses', () => {

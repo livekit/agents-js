@@ -53,7 +53,9 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   forbidSpeechAfterToolCall?: string[];
+  onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
 }
@@ -155,6 +157,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Additional runtime parameters forwarded to Phonic
+       */
+      additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+      /**
        * Names of tools after which Phonic should NOT auto-generate a spoken reply.
        *
        * Use for tools that always hand off / trigger an agent switch (e.g. advancing
@@ -167,6 +173,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        * listed keep the default behavior (a reply is generated after the tool output).
        */
       forbidSpeechAfterToolCall?: string[];
+      /**
+       * Called with the Phonic conversation ID once the conversation is created
+       */
+      onConversationCreated?: (conversationId: string) => void;
       /**
        * Connection options for the API connection
        */
@@ -185,7 +195,6 @@ export class RealtimeModel extends llm.RealtimeModel {
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
       perResponseToolChoice: false,
-      nativeTranscriptSync: false,
     });
 
     const apiKey = options.apiKey || process.env.PHONIC_API_KEY;
@@ -226,7 +235,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      additionalParams: options.additionalParams,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
+      onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
@@ -257,7 +268,7 @@ interface GenerationState {
  * Realtime session for Phonic (https://docs.phonic.co/)
  */
 export class RealtimeSession extends llm.RealtimeSession {
-  private _tools: llm.ToolContext = {};
+  private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
 
   private options: RealtimeModelOptions;
@@ -310,7 +321,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   get tools(): llm.ToolContext {
-    return { ...this._tools };
+    return this._tools.copy();
   }
 
   async updateInstructions(instructions: string): Promise<void> {
@@ -363,19 +374,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
       if (item?.type === 'message') {
-        if ((item.role === 'system' || item.role === 'developer') && item.textContent) {
-          this.#logger.debug(`Sending add system message: ${item.textContent}`);
+        if ((item.role === 'system' || item.role === 'developer') && item.rawTextContent) {
+          this.#logger.debug(`Sending add system message: ${item.rawTextContent}`);
           this.socket?.sendAddSystemMessage({
             type: 'add_system_message',
-            system_message: item.textContent,
+            system_message: item.rawTextContent,
           });
           sentAddSystemMessage = true;
         }
 
         // Only treat a user message as text input when it's appended at the tail of the context.
-        if (item.role === 'user' && itemId === lastItemId && item.textContent) {
-          this.#logger.debug(`Received user text input: ${item.textContent}`);
-          this.pendingUserText = item.textContent;
+        if (item.role === 'user' && itemId === lastItemId && item.rawTextContent) {
+          this.#logger.debug(`Received user text input: ${item.rawTextContent}`);
+          this.pendingUserText = item.rawTextContent;
           bufferedUserText = true;
         }
       }
@@ -404,7 +415,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    this._tools = { ...tools };
+    this._tools = tools.copy();
     this.toolDefinitions = this.buildToolDefinitions(tools);
 
     this.toolsReady.resolve();
@@ -412,16 +423,18 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildToolDefinitions(tools: llm.ToolContext): Phonic.InlineWebSocketTool[] {
     this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
-    return Object.entries(tools)
-      .filter(([, tool]) => llm.isFunctionTool(tool))
-      .map(([name, tool]) => ({
+    // TODO: support provider tools in the Phonic schema.
+    return tools
+      .flatten()
+      .filter(llm.isFunctionTool)
+      .map((t) => ({
         type: 'custom_websocket',
         tool_schema: {
           type: 'function',
           function: {
-            name,
-            description: tool.description,
-            parameters: llm.toJsonSchema(tool.parameters) as Phonic.OpenAiFunctionParameters,
+            name: t.name,
+            description: t.description,
+            parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
             strict: true,
           },
         },
@@ -433,7 +446,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         // When true, Phonic does not auto-generate a spoken reply after this tool's
         // output. Used for tools that always hand off so the outgoing agent doesn't
         // speak a reply that the handoff's session reset would cancel.
-        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(name),
+        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
       }));
   }
 
@@ -451,7 +464,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.instructions = instructions;
     }
     if (tools !== undefined) {
-      this._tools = { ...tools };
+      this._tools = tools.copy();
       this.toolDefinitions = this.buildToolDefinitions(tools);
     }
     if (chatCtx !== undefined) {
@@ -615,6 +628,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private async connect(): Promise<void> {
     this.socket = await this.client.conversations.connect({
+      headers: { 'x-phonic-client': 'livekit-agents-js' },
       reconnectAttempts: this.options.connOptions.maxRetry,
     });
 
@@ -707,6 +721,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       case 'conversation_created':
         this.conversationId = message.conversation_id;
         this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
+        this.options.onConversationCreated?.(this.conversationId);
         break;
       case 'tool_call_interrupted':
         this.handleToolCallInterrupted(message);
@@ -954,6 +969,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+      additional_params: this.options.additionalParams,
       stream_ahead_of_real_time: true,
     };
   }
@@ -1001,7 +1017,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
 function chatItemToText(item: llm.ChatItem): string | undefined {
   if (item.type === 'message') {
-    const text = item.textContent?.trim();
+    const text = item.rawTextContent?.trim();
     if (!text) return undefined;
     return `<${item.role}>${text}</${item.role}>`;
   }

@@ -8,10 +8,34 @@
 export const USERDATA_TIMED_TRANSCRIPT = 'lk.timed_transcripts';
 
 /**
+ * Key used to store when synthesized text was first sent to the TTS provider.
+ */
+export const USERDATA_TTS_STARTED_TIME = 'lk.tts_started_time';
+
+/**
  * Marker yielded from an LLM node to flush the current audio/text output segment.
  */
 export const FlushSentinel = Symbol.for('lk.FlushSentinel');
 export type FlushSentinel = typeof FlushSentinel;
+
+/** Indicates that the participant is a simulator for testing purposes. */
+export const ATTRIBUTE_SIMULATOR = 'lk.simulator';
+
+/** Job attribute carrying the simulation dispatch proto JSON. */
+export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
+
+/** Telemetry metadata key marking the session as a simulation. */
+export const ATTRIBUTE_SIMULATION_ENABLED = 'lk.simulation.enabled';
+
+/** Telemetry metadata key requesting PII redaction for the session. */
+export const ATTRIBUTE_REDACTION_ENABLED = 'lk.redaction.enabled';
+
+const RECORDING_OPTION_KEYS = ['audio', 'traces', 'logs', 'transcript'] as const;
+
+/** @internal */
+export function recordingEnabled(options: Record<string, unknown>): boolean {
+  return RECORDING_OPTION_KEYS.some((key) => options[key] === true);
+}
 
 /** @internal */
 export function isFlushSentinel(value: unknown): value is FlushSentinel {
