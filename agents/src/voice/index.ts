@@ -25,6 +25,7 @@ export * from './avatar/index.js';
 export * from './background_audio.js';
 export { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './console_io.js';
 export {
+  FinalizeSimulationError,
   type TextInputCallback,
   type TextInputEvent,
   RemoteSession,
