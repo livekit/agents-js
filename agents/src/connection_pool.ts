@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import { waitForAbort } from './utils.js';
+import { toError, waitForAbort } from './utils.js';
 
 /**
  * Helper class to manage persistent connections like websockets.
@@ -26,7 +26,13 @@ export interface ConnectionPoolOptions<T> {
    * @param timeout - Connection timeout in milliseconds
    * @returns A new connection object
    */
-  connectCb: (timeout: number) => Promise<T>;
+  connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
+
+  /**
+   * Optional callback to map connection failures to provider-specific errors.
+   * The original error is passed when available.
+   */
+  connectionError?: (error?: Error) => Error;
 
   /**
    * Optional async callback to close connections.
@@ -50,7 +56,8 @@ export interface ConnectionPoolOptions<T> {
 export class ConnectionPool<T> {
   private readonly maxSessionDuration?: number;
   private readonly markRefreshedOnGet: boolean;
-  private readonly connectCb: (timeout: number) => Promise<T>;
+  private readonly connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
+  private readonly connectionError?: (error?: Error) => Error;
   private readonly closeCb?: (conn: T) => Promise<void>;
   private readonly connectTimeout: number;
 
@@ -60,16 +67,20 @@ export class ConnectionPool<T> {
   private readonly available: Set<T> = new Set();
   // Connections queued for closing
   private readonly toClose: Set<T> = new Set();
+  private readonly pendingCloseTasks = new Set<Promise<void>>();
   // Mutex for connection operations
   private readonly connectLock = new Mutex();
   // Prewarm task reference
   private prewarmController?: AbortController;
+  private prewarmTask?: Promise<void>;
+  private closed = false;
   private _lastConnectionReused = false;
 
   constructor(options: ConnectionPoolOptions<T>) {
     this.maxSessionDuration = options.maxSessionDuration;
     this.markRefreshedOnGet = options.markRefreshedOnGet ?? false;
     this.connectCb = options.connectCb;
+    this.connectionError = options.connectionError;
     this.closeCb = options.closeCb;
     this.connectTimeout = options.connectTimeout ?? 10_000;
   }
@@ -81,10 +92,28 @@ export class ConnectionPool<T> {
    * @returns The new connection object
    * @throws If connectCb is not provided or connection fails
    */
-  private async _connect(timeout: number): Promise<T> {
-    const connection = await this.connectCb(timeout);
-    this.connections.set(connection, Date.now());
-    return connection;
+  private async _connect(timeout: number, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted || this.closed) {
+      throw this._abortError(signal);
+    }
+
+    try {
+      const connection = await this.connectCb(timeout, signal);
+      if (signal?.aborted || this.closed) {
+        await this._maybeCloseConnection(connection);
+        throw this._abortError(signal);
+      }
+      this.connections.set(connection, Date.now());
+      return connection;
+    } catch (error) {
+      if (signal?.aborted || this.closed) {
+        throw this._abortError(signal);
+      }
+      if (this.connectionError) {
+        throw this.connectionError(error instanceof Error ? error : undefined);
+      }
+      throw toError(error);
+    }
   }
 
   /**
@@ -117,7 +146,10 @@ export class ConnectionPool<T> {
     }
   }
 
-  private _abortError(): Error {
+  private _abortError(signal?: AbortSignal): Error {
+    if (signal?.reason instanceof Error) {
+      return signal.reason;
+    }
     const error = new Error('The operation was aborted.');
     error.name = 'AbortError';
     return error;
@@ -130,8 +162,25 @@ export class ConnectionPool<T> {
    * @returns An active connection object
    */
   async get(timeout?: number): Promise<T> {
+    return (await this.getWithMetadata(timeout)).connection;
+  }
+
+  /**
+   * Get a connection together with reuse metadata from the same locked acquisition.
+   */
+  async getWithMetadata(
+    timeout?: number,
+    signal?: AbortSignal,
+  ): Promise<{ connection: T; reused: boolean }> {
+    if (signal?.aborted || this.closed) {
+      throw this._abortError(signal);
+    }
+
     const unlock = await this.connectLock.lock();
     try {
+      if (signal?.aborted || this.closed) {
+        throw this._abortError(signal);
+      }
       await this._drainToClose();
       const now = Date.now();
 
@@ -148,7 +197,7 @@ export class ConnectionPool<T> {
             this.connections.set(conn, now);
           }
           this._lastConnectionReused = true;
-          return conn;
+          return { connection: conn, reused: true };
         }
 
         // Connection expired; close it now so callers observing get() see it closed promptly.
@@ -160,9 +209,9 @@ export class ConnectionPool<T> {
         await this._maybeCloseConnection(conn);
       }
 
-      const conn = await this._connect(timeout ?? this.connectTimeout);
+      const conn = await this._connect(timeout ?? this.connectTimeout, signal);
       this._lastConnectionReused = false;
-      return conn;
+      return { connection: conn, reused: false };
     } finally {
       unlock();
     }
@@ -196,7 +245,7 @@ export class ConnectionPool<T> {
       this.connections.delete(conn);
       // Important for Node websockets: if we just "mark to close later" but remove listeners,
       // the ws library can buffer incoming frames in memory. Close ASAP in background.
-      void (async () => {
+      const task = (async () => {
         const unlock = await this.connectLock.lock();
         try {
           if (!this.toClose.has(conn)) return;
@@ -205,7 +254,11 @@ export class ConnectionPool<T> {
         } finally {
           unlock();
         }
-      })();
+      })().catch(() => {
+        // Removal is synchronous from the caller's perspective; close() still waits for cleanup.
+      });
+      this.pendingCloseTasks.add(task);
+      void task.finally(() => this.pendingCloseTasks.delete(task));
     }
   }
 
@@ -229,17 +282,24 @@ export class ConnectionPool<T> {
    * The task automatically cleans itself up when the connection pool is closed.
    */
   prewarm(): void {
-    if (this.prewarmController || this.connections.size > 0) {
+    if (this.closed || this.prewarmTask || this.connections.size > 0) {
       return;
     }
 
     const controller = new AbortController();
     this.prewarmController = controller;
 
-    // Start prewarm in background
-    this._prewarmImpl(controller.signal).catch(() => {
-      // Ignore errors during prewarm
-    });
+    const task = this._prewarmImpl(controller.signal)
+      .catch(() => {
+        // Prewarming is best effort. A normal get() will surface provider failures.
+      })
+      .finally(() => {
+        if (this.prewarmTask === task) {
+          this.prewarmTask = undefined;
+          this.prewarmController = undefined;
+        }
+      });
+    this.prewarmTask = task;
   }
 
   private async _prewarmImpl(signal: AbortSignal): Promise<void> {
@@ -250,7 +310,7 @@ export class ConnectionPool<T> {
       }
 
       if (this.connections.size === 0) {
-        const conn = await this._connect(this.connectTimeout);
+        const conn = await this._connect(this.connectTimeout, signal);
         this.available.add(conn);
       }
     } finally {
@@ -278,7 +338,7 @@ export class ConnectionPool<T> {
       throw this._abortError();
     }
 
-    const conn = await this.get(options?.timeout);
+    const conn = (await this.getWithMetadata(options?.timeout, options?.signal)).connection;
 
     const signal = options?.signal;
 
@@ -307,13 +367,23 @@ export class ConnectionPool<T> {
    * Close all connections, draining any pending connection closures.
    */
   async close(): Promise<void> {
+    this.closed = true;
+
     // Cancel prewarm task if running
     if (this.prewarmController) {
       this.prewarmController.abort();
-      this.prewarmController = undefined;
+    }
+    if (this.prewarmTask) {
+      await this.prewarmTask;
     }
 
-    this.invalidate();
-    await this._drainToClose();
+    const unlock = await this.connectLock.lock();
+    try {
+      this.invalidate();
+      await this._drainToClose();
+    } finally {
+      unlock();
+    }
+    await Promise.all(this.pendingCloseTasks);
   }
 }

@@ -82,6 +82,7 @@ export class ResponsesWebSocket {
   #ws: WebSocket;
   // FIFO queue: the front entry receives validated WsServerEvents for the in-flight response.
   #outputQueue: stream.StreamChannel<WsServerEvent>[] = [];
+  #abortCleanups = new Map<stream.StreamChannel<WsServerEvent>, () => void>();
   #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   #awaitingPong = false;
 
@@ -116,6 +117,7 @@ export class ResponsesWebSocket {
       ) {
         void current.close();
         this.#outputQueue.shift();
+        this.#cleanupAbort(current);
       }
     });
 
@@ -124,6 +126,7 @@ export class ResponsesWebSocket {
       // If the WebSocket closes while requests are still in flight, synthesise
       // a typed error event so all readers can handle it cleanly.
       for (const current of this.#outputQueue) {
+        this.#cleanupAbort(current);
         if (!current.closed) {
           const closeError: WsServerEvent = {
             type: 'error',
@@ -147,39 +150,61 @@ export class ResponsesWebSocket {
    * Send a response.create event.  Returns a typed `StreamChannel<WsServerEvent>`
    * that yields validated server events until the response terminates.
    */
-  async sendRequest(payload: WsResponseCreateEvent): Promise<stream.StreamChannel<WsServerEvent>> {
+  sendRequest(
+    payload: WsResponseCreateEvent,
+    signal?: AbortSignal,
+  ): stream.StreamChannel<WsServerEvent> {
     if (this.#ws.readyState !== WebSocket.OPEN) {
       throw new ResponsesWebSocketSendError({
         message: `OpenAI Responses WebSocket is not open (state ${getWebSocketStateLabel(this.#ws.readyState)})`,
         options: { retryable: true },
       });
     }
+    if (signal?.aborted) {
+      throw abortError(signal);
+    }
 
     const channel = stream.createStreamChannel<WsServerEvent>();
     this.#outputQueue.push(channel);
-    try {
-      await this.#send(JSON.stringify(payload));
-    } catch {
+
+    let settled = false;
+    const removeChannel = () => {
       this.#outputQueue = this.#outputQueue.filter((ch) => ch !== channel);
-      void channel.close();
-      throw new ResponsesWebSocketSendError({
-        message: 'failed to send request over WebSocket',
-        options: { retryable: true },
-      });
+      this.#cleanupAbort(channel);
+    };
+    const onAbort = () => {
+      if (!this.#outputQueue.includes(channel)) return;
+      removeChannel();
+      void channel.abort(abortError(signal));
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.#abortCleanups.set(channel, () => signal.removeEventListener('abort', onAbort));
     }
+
+    this.#ws.send(JSON.stringify(payload), (error) => {
+      if (settled) return;
+      if (!error) {
+        settled = true;
+        return;
+      }
+
+      settled = true;
+      removeChannel();
+      void channel.abort(
+        new ResponsesWebSocketSendError({
+          message: 'failed to send request over WebSocket',
+          options: { retryable: true },
+        }),
+      );
+    });
+
     return channel;
   }
 
-  #send(data: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.#ws.send(data, (error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
+  #cleanupAbort(channel: stream.StreamChannel<WsServerEvent>): void {
+    this.#abortCleanups.get(channel)?.();
+    this.#abortCleanups.delete(channel);
   }
 
   #startHeartbeat(): void {
@@ -210,6 +235,7 @@ export class ResponsesWebSocket {
     this.#stopHeartbeat();
     // Drain pending channels before closing the socket.
     for (const ch of this.#outputQueue) {
+      this.#cleanupAbort(ch);
       void ch.close();
     }
     this.#outputQueue = [];
@@ -284,15 +310,21 @@ export class WSLLM extends llm.LLM {
 
     this.#pool = new ConnectionPool<ResponsesWebSocket>({
       maxSessionDuration: WS_MAX_SESSION_DURATION,
-      connectCb: async (timeoutMs: number) => {
+      connectCb: async (timeoutMs: number, signal?: AbortSignal) => {
         const wsUrl = buildResponsesWsUrl(this.#opts.baseURL, String(this.#opts.model));
-        const ws = await connectWs(wsUrl, this.#opts.apiKey!, timeoutMs);
+        const ws = await connectWs(wsUrl, this.#opts.apiKey!, timeoutMs, signal);
         return new ResponsesWebSocket(ws);
       },
+      connectionError: (error?: Error) =>
+        error ??
+        new APIConnectionError({
+          message: 'failed to connect to OpenAI Responses WebSocket',
+        }),
       closeCb: async (conn: ResponsesWebSocket) => {
         conn.close();
       },
     });
+    this.#pool.prewarm();
   }
 
   label(): string {
@@ -493,8 +525,10 @@ export class WSLLMStream extends llm.LLMStream {
 
     try {
       for (let attempt = 0; attempt < WS_SEND_MAX_ATTEMPTS; attempt += 1) {
-        const conn = await this.#pool.get(this.connOptions.timeoutMs);
-        const reused = this.#pool.lastConnectionReused;
+        const { connection: conn, reused } = await this.#pool.getWithMetadata(
+          this.connOptions.timeoutMs,
+          this.abortController.signal,
+        );
 
         try {
           const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
@@ -510,6 +544,9 @@ export class WSLLMStream extends llm.LLMStream {
           return;
         } catch (error) {
           this.#pool.remove(conn);
+          if (this.abortController.signal.aborted) {
+            return;
+          }
           if (error instanceof ResponsesWebSocketSendError) {
             if (reused) continue;
             throw new APIConnectionError({
@@ -526,6 +563,9 @@ export class WSLLMStream extends llm.LLMStream {
         options: { retryable },
       });
     } catch (error) {
+      if (this.abortController.signal.aborted) {
+        return;
+      }
       if (
         error instanceof APIStatusError ||
         error instanceof APITimeoutError ||
@@ -570,7 +610,7 @@ export class WSLLMStream extends llm.LLMStream {
       ...requestOptions,
     };
 
-    const channel = await conn.sendRequest(payload);
+    const channel = conn.sendRequest(payload, this.abortController.signal);
     const reader = channel.stream().getReader();
 
     // Events are already Zod-validated by ResponsesWebSocket before being
@@ -726,7 +766,12 @@ export class WSLLMStream extends llm.LLMStream {
 // Internal helpers
 // ============================================================================
 
-async function connectWs(url: string, apiKey: string, timeoutMs: number): Promise<WebSocket> {
+async function connectWs(
+  url: string,
+  apiKey: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<WebSocket> {
   return new Promise<WebSocket>((resolve, reject) => {
     const ws = new WebSocket(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -734,26 +779,41 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
 
     let settled = false;
 
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
       settled = true;
-      ws.close();
-      reject(
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      rejectOnce(abortError(signal));
+      ws.terminate();
+    };
+    const timer = setTimeout(() => {
+      rejectOnce(
         new APIConnectionError({ message: 'Timeout connecting to OpenAI Responses WebSocket' }),
       );
+      ws.terminate();
     }, timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
 
     ws.once('open', () => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       resolve(ws);
     });
 
     ws.once('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(
+      rejectOnce(
         new APIConnectionError({
           message: `Error connecting to OpenAI Responses WebSocket: ${err.message}`,
         }),
@@ -761,12 +821,26 @@ async function connectWs(url: string, apiKey: string, timeoutMs: number): Promis
     });
 
     ws.once('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(
+      rejectOnce(
         new APIConnectionError({
           message: `OpenAI Responses WebSocket closed unexpectedly during connect (code ${code})`,
+        }),
+      );
+    });
+
+    ws.once('unexpected-response', (_request, response) => {
+      response.resume();
+      rejectOnce(
+        new APIStatusError({
+          message: `OpenAI Responses WebSocket upgrade failed with status ${response.statusCode}`,
+          options: {
+            statusCode: response.statusCode ?? -1,
+            requestId:
+              typeof response.headers['x-request-id'] === 'string'
+                ? response.headers['x-request-id']
+                : null,
+            retryable: false,
+          },
         }),
       );
     });
@@ -786,4 +860,13 @@ function getWebSocketStateLabel(readyState: number): string {
     default:
       return `UNKNOWN:${readyState}`;
   }
+}
+
+function abortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) {
+    return signal.reason;
+  }
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
 }

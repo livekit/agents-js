@@ -79,6 +79,44 @@ describe('ConnectionPool', () => {
       expect(connectCb).toHaveBeenCalledTimes(2);
       expect(closeCb).toHaveBeenCalledTimes(1);
     });
+
+    it('returns reuse metadata atomically with the acquired connection', async () => {
+      const pool = new ConnectionPool<string>({ connectCb: makeConnectCb() });
+
+      const first = await pool.getWithMetadata();
+      pool.put(first.connection);
+      const second = await pool.getWithMetadata();
+
+      expect(first).toEqual({ connection: 'conn_1', reused: false });
+      expect(second).toEqual({ connection: 'conn_1', reused: true });
+    });
+
+    it('passes the original connection failure to connectionError', async () => {
+      const original = new Error('dial failed');
+      const mapped = new Error('provider connection failed');
+      const connectionError = vi.fn((_error?: Error) => mapped);
+      const pool = new ConnectionPool<string>({
+        connectCb: async () => {
+          throw original;
+        },
+        connectionError,
+      });
+
+      await expect(pool.get()).rejects.toBe(mapped);
+      expect(connectionError).toHaveBeenCalledWith(original);
+    });
+
+    it('allows connectionError to map a failure without an Error value', async () => {
+      const mapped = new Error('provider connection failed');
+      const connectionError = vi.fn((_error?: Error) => mapped);
+      const pool = new ConnectionPool<string>({
+        connectCb: async () => Promise.reject(undefined),
+        connectionError,
+      });
+
+      await expect(pool.get()).rejects.toBe(mapped);
+      expect(connectionError).toHaveBeenCalledWith(undefined);
+    });
   });
 
   describe('maxSessionDuration', () => {
@@ -279,6 +317,41 @@ describe('ConnectionPool', () => {
       expect(conn2).toBe(conn1); // Should reuse existing
       expect(connectCb).toHaveBeenCalledTimes(1);
     });
+
+    it('allows a later best-effort prewarm after a failed attempt', async () => {
+      const connectCb = vi
+        .fn<(timeout: number, signal?: AbortSignal) => Promise<string>>()
+        .mockRejectedValueOnce(new Error('temporary failure'))
+        .mockResolvedValueOnce('connected');
+      const pool = new ConnectionPool<string>({ connectCb });
+
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(2));
+
+      expect(await pool.get()).toBe('connected');
+      await pool.close();
+    });
+
+    it('does not start concurrent prewarm connections', async () => {
+      let resolveConnect!: (connection: string) => void;
+      const connectCb = vi.fn(
+        (_timeout: number, _signal?: AbortSignal) =>
+          new Promise<string>((resolve) => {
+            resolveConnect = resolve;
+          }),
+      );
+      const pool = new ConnectionPool<string>({ connectCb });
+
+      pool.prewarm();
+      pool.prewarm();
+      pool.prewarm();
+      await vi.waitFor(() => expect(connectCb).toHaveBeenCalledTimes(1));
+      resolveConnect('connected');
+      await pool.close();
+    });
   });
 
   describe('close', () => {
@@ -325,6 +398,82 @@ describe('ConnectionPool', () => {
       await pool.close(); // Drain to close
 
       expect(closeCb).toHaveBeenCalledTimes(2);
+    });
+
+    it('aborts and awaits an in-flight prewarm connection', async () => {
+      let connectSignal: AbortSignal | undefined;
+      let connectSettled = false;
+      let started!: () => void;
+      const connectStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const connectCb = vi.fn(
+        (_timeout: number, signal?: AbortSignal) =>
+          new Promise<string>((_resolve, reject) => {
+            connectSignal = signal;
+            started();
+            signal?.addEventListener(
+              'abort',
+              () => {
+                connectSettled = true;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          }),
+      );
+      const pool = new ConnectionPool<string>({ connectCb });
+
+      pool.prewarm();
+      await connectStarted;
+      await pool.close();
+
+      expect(connectSignal?.aborted).toBe(true);
+      expect(connectSettled).toBe(true);
+    });
+
+    it('does not reconnect after close', async () => {
+      const connectCb = makeConnectCb();
+      const pool = new ConnectionPool<string>({ connectCb });
+
+      await pool.close();
+      pool.prewarm();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(connectCb).not.toHaveBeenCalled();
+    });
+
+    it('waits for an in-flight removed connection cleanup', async () => {
+      let releaseClose!: () => void;
+      let closeStarted!: () => void;
+      const closeStartedPromise = new Promise<void>((resolve) => {
+        closeStarted = resolve;
+      });
+      const closeCb = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            closeStarted();
+            releaseClose = resolve;
+          }),
+      );
+      const pool = new ConnectionPool<string>({
+        connectCb: makeConnectCb(),
+        closeCb,
+      });
+      const connection = await pool.get();
+      pool.remove(connection);
+      await closeStartedPromise;
+
+      let poolClosed = false;
+      const closePromise = pool.close().then(() => {
+        poolClosed = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(poolClosed).toBe(false);
+      releaseClose();
+      await closePromise;
+      expect(closeCb).toHaveBeenCalledTimes(1);
     });
   });
 
