@@ -379,6 +379,82 @@ describe('recording disabled upload gate', () => {
     }
   });
 
+  it('does not let an old in-flight disabled response latch a new gate generation', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let requestCount = 0;
+    let markFirstRequestStarted!: () => void;
+    let releaseFirstResponse!: () => void;
+    const firstRequestStarted = new Promise<void>((resolve) => {
+      markFirstRequestStarted = resolve;
+    });
+    const firstResponseReleased = new Promise<void>((resolve) => {
+      releaseFirstResponse = resolve;
+    });
+    const server = http.createServer(async (_request, response) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        response.statusCode = 401;
+        response.write(DISABLED_MSG);
+        markFirstRequestStarted();
+        await firstResponseReleased;
+        response.end();
+        return;
+      }
+      response.statusCode = 200;
+      response.end('ok');
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('missing server address');
+
+    const url = `http://127.0.0.1:${address.port}/observability/traces/otlp/v0`;
+    registerOtlpHttpUploadGateTarget(url);
+    const exporter = createOtlpHttpExportDelegate<string, object>(
+      {
+        url,
+        headers: async () => ({}),
+        compression: 'none',
+        concurrencyLimit: 1,
+        timeoutMillis: 1_000,
+        agentFactory: httpAgentFactoryFromOptions({}),
+      },
+      {
+        serializeRequest: () => new Uint8Array([1]),
+        deserializeResponse: () => ({}),
+      },
+    );
+
+    try {
+      const oldExport = new Promise<ExportResult>((resolve) => {
+        exporter.export('old-generation', resolve);
+      });
+      await firstRequestStarted;
+
+      uploadGate.reset();
+      registerOtlpHttpUploadGateTarget(url);
+      releaseFirstResponse();
+
+      const oldResult = await oldExport;
+      expect(oldResult.code).toBe(ExportResultCode.SUCCESS);
+      expect(uploadGate.disabled).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const currentResult = await new Promise<ExportResult>((resolve) => {
+        exporter.export('current-generation', resolve);
+      });
+      expect(currentResult.code).toBe(ExportResultCode.SUCCESS);
+      expect(requestCount).toBe(2);
+    } finally {
+      releaseFirstResponse();
+      await exporter.shutdown();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it('short-circuits custom cloud processor exports after recording is disabled', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const harness = await createCustomTraceHarness(() => ({

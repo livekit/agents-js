@@ -948,6 +948,7 @@ export async function uploadSessionReport(options: {
   // Upload to LiveKit Cloud using form-data's submit method
   // This properly streams the multipart form with all headers including Content-Length
   return new ThrowsPromise<void, Error>((resolve, reject) => {
+    const uploadGeneration = uploadGate.generation;
     formData.submit(
       {
         protocol: 'https:',
@@ -980,7 +981,7 @@ export async function uploadSessionReport(options: {
           res.on('end', () => {
             const body = Buffer.concat(chunks);
             if (uploadGate.isDisabledResponse(res.statusCode ?? 0, body)) {
-              uploadGate.disable();
+              uploadGate.disable(uploadGeneration);
               resolve();
               return;
             }
