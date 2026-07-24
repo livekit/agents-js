@@ -32,6 +32,12 @@ const OPENAI_RESPONSES_WS_URL = 'wss://api.openai.com/v1/responses';
 
 // OpenAI enforces a 60-minute maximum duration on Responses WebSocket connections.
 const WS_MAX_SESSION_DURATION = 3_600_000;
+// Keep idle pooled sockets warm and detect dead peers.
+export const WS_HEARTBEAT = 30_000;
+// Max connections to try when a reused socket is stale, before the outer retry takes over.
+const WS_SEND_MAX_ATTEMPTS = 6;
+
+class ResponsesWebSocketSendError extends APIConnectionError {}
 
 /**
  * Build the Responses-API WebSocket URL.
@@ -76,9 +82,12 @@ export class ResponsesWebSocket {
   #ws: WebSocket;
   // FIFO queue: the front entry receives validated WsServerEvents for the in-flight response.
   #outputQueue: stream.StreamChannel<WsServerEvent>[] = [];
+  #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  #awaitingPong = false;
 
   constructor(ws: WebSocket) {
     this.#ws = ws;
+    this.#startHeartbeat();
 
     ws.on('message', (data: Buffer) => {
       const current = this.#outputQueue[0];
@@ -111,6 +120,7 @@ export class ResponsesWebSocket {
     });
 
     ws.on('close', () => {
+      this.#stopHeartbeat();
       // If the WebSocket closes while requests are still in flight, synthesise
       // a typed error event so all readers can handle it cleanly.
       for (const current of this.#outputQueue) {
@@ -127,15 +137,19 @@ export class ResponsesWebSocket {
       }
       this.#outputQueue = [];
     });
+
+    ws.on('pong', () => {
+      this.#awaitingPong = false;
+    });
   }
 
   /**
    * Send a response.create event.  Returns a typed `StreamChannel<WsServerEvent>`
    * that yields validated server events until the response terminates.
    */
-  sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent> {
+  async sendRequest(payload: WsResponseCreateEvent): Promise<stream.StreamChannel<WsServerEvent>> {
     if (this.#ws.readyState !== WebSocket.OPEN) {
-      throw new APIConnectionError({
+      throw new ResponsesWebSocketSendError({
         message: `OpenAI Responses WebSocket is not open (state ${getWebSocketStateLabel(this.#ws.readyState)})`,
         options: { retryable: true },
       });
@@ -143,11 +157,57 @@ export class ResponsesWebSocket {
 
     const channel = stream.createStreamChannel<WsServerEvent>();
     this.#outputQueue.push(channel);
-    this.#ws.send(JSON.stringify(payload));
+    try {
+      await this.#send(JSON.stringify(payload));
+    } catch {
+      this.#outputQueue = this.#outputQueue.filter((ch) => ch !== channel);
+      void channel.close();
+      throw new ResponsesWebSocketSendError({
+        message: 'failed to send request over WebSocket',
+        options: { retryable: true },
+      });
+    }
     return channel;
   }
 
+  #send(data: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.#ws.send(data, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  #startHeartbeat(): void {
+    this.#heartbeatTimer = setInterval(() => {
+      if (this.#ws.readyState !== WebSocket.OPEN) return;
+      if (this.#awaitingPong) {
+        this.#ws.terminate();
+        return;
+      }
+      this.#awaitingPong = true;
+      try {
+        this.#ws.ping();
+      } catch {
+        this.#ws.terminate();
+      }
+    }, WS_HEARTBEAT);
+    this.#heartbeatTimer.unref?.();
+  }
+
+  #stopHeartbeat(): void {
+    if (this.#heartbeatTimer) {
+      clearInterval(this.#heartbeatTimer);
+      this.#heartbeatTimer = undefined;
+    }
+  }
+
   close(): void {
+    this.#stopHeartbeat();
     // Drain pending channels before closing the socket.
     for (const ch of this.#outputQueue) {
       void ch.close();
@@ -432,15 +492,38 @@ export class WSLLMStream extends llm.LLMStream {
     let retryable = true;
 
     try {
-      await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
-        const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
+      for (let attempt = 0; attempt < WS_SEND_MAX_ATTEMPTS; attempt += 1) {
+        const conn = await this.#pool.get(this.connOptions.timeoutMs);
+        const reused = this.#pool.lastConnectionReused;
 
-        if (needsRetry) {
-          // previous_response_id was evicted from the server-side cache.
-          // Retry once on the same connection with the full context and no ID.
-          retryable = true;
-          await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+        try {
+          const needsRetry = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
+
+          if (needsRetry) {
+            // previous_response_id was evicted from the server-side cache.
+            // Retry once on the same connection with the full context and no ID.
+            retryable = true;
+            await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+          }
+
+          this.#pool.put(conn);
+          return;
+        } catch (error) {
+          this.#pool.remove(conn);
+          if (error instanceof ResponsesWebSocketSendError) {
+            if (reused) continue;
+            throw new APIConnectionError({
+              message: 'failed to send request over WebSocket',
+              options: { retryable },
+            });
+          }
+          throw error;
         }
+      }
+
+      throw new APIConnectionError({
+        message: 'failed to send request over WebSocket',
+        options: { retryable },
       });
     } catch (error) {
       if (
@@ -487,16 +570,7 @@ export class WSLLMStream extends llm.LLMStream {
       ...requestOptions,
     };
 
-    let channel: stream.StreamChannel<WsServerEvent>;
-    try {
-      channel = conn.sendRequest(payload);
-    } catch (error) {
-      if (error instanceof APIConnectionError) {
-        conn.close();
-        this.#pool.invalidate();
-      }
-      throw error;
-    }
+    const channel = await conn.sendRequest(payload);
     const reader = channel.stream().getReader();
 
     // Events are already Zod-validated by ResponsesWebSocket before being

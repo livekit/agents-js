@@ -64,6 +64,7 @@ export class ConnectionPool<T> {
   private readonly connectLock = new Mutex();
   // Prewarm task reference
   private prewarmController?: AbortController;
+  private _lastConnectionReused = false;
 
   constructor(options: ConnectionPoolOptions<T>) {
     this.maxSessionDuration = options.maxSessionDuration;
@@ -84,6 +85,13 @@ export class ConnectionPool<T> {
     const connection = await this.connectCb(timeout);
     this.connections.set(connection, Date.now());
     return connection;
+  }
+
+  /**
+   * Whether the most recent get() returned an existing pooled connection.
+   */
+  get lastConnectionReused(): boolean {
+    return this._lastConnectionReused;
   }
 
   /**
@@ -139,6 +147,7 @@ export class ConnectionPool<T> {
           if (this.markRefreshedOnGet) {
             this.connections.set(conn, now);
           }
+          this._lastConnectionReused = true;
           return conn;
         }
 
@@ -151,7 +160,9 @@ export class ConnectionPool<T> {
         await this._maybeCloseConnection(conn);
       }
 
-      return await this._connect(timeout ?? this.connectTimeout);
+      const conn = await this._connect(timeout ?? this.connectTimeout);
+      this._lastConnectionReused = false;
+      return conn;
     } finally {
       unlock();
     }
