@@ -3,9 +3,34 @@
 // SPDX-License-Identifier: Apache-2.0
 import type Anthropic from '@anthropic-ai/sdk';
 import { llm } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { LLM } from './llm.js';
+
+describe('Anthropic LLM prewarm', () => {
+  it('lists one model with the prewarm cancellation signal', async () => {
+    let prewarmSignal: AbortSignal | undefined;
+    const modelsList = vi.fn(
+      async (_params: { limit: number }, options: { signal?: AbortSignal }) => {
+        prewarmSignal = options.signal;
+      },
+    );
+    const client = {
+      baseURL: 'https://api.anthropic.test',
+      models: { list: modelsList },
+    } as unknown as Anthropic;
+    const llm = new LLM({ model: 'claude-sonnet-4-6', client });
+
+    llm.prewarm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(modelsList).toHaveBeenCalledWith({ limit: 1 }, { signal: expect.any(AbortSignal) });
+    expect(prewarmSignal?.aborted).toBe(false);
+
+    await llm.aclose();
+    expect(prewarmSignal?.aborted).toBe(true);
+  });
+});
 
 function messageStartEvent(): Anthropic.MessageStreamEvent {
   return {

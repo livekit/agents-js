@@ -66,6 +66,7 @@ export type LLMCallbacks = {
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
   #prewarmTask?: Task<void>;
+  #closed = false;
 
   constructor() {
     super();
@@ -126,10 +127,11 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
    *
    * Establishes DNS resolution and the TLS connection to the provider before the first inference
    * request, reducing time-to-first-token on the initial reply. Non-blocking (fire-and-forget) and
-   * idempotent. Providers enable it by overriding {@link _prewarmImpl}.
+   * idempotent; calls made after {@link aclose} are ignored. Providers enable it by overriding
+   * {@link _prewarmImpl}.
    */
   prewarm(): void {
-    if (this._prewarmImpl === LLM.prototype._prewarmImpl) {
+    if (this.#closed || this._prewarmImpl === LLM.prototype._prewarmImpl) {
       return;
     }
 
@@ -146,11 +148,17 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
     });
   }
 
-  protected async _prewarmImpl(_signal: AbortSignal): Promise<void> {
-    // Providers can override with a cheap request that initializes DNS/TLS/keep-alive state.
-  }
+  /**
+   * Performs a provider-specific, token-free request that initializes DNS, TLS, authentication,
+   * and keep-alive state.
+   *
+   * @remarks Exceptions are swallowed by {@link prewarm}. Implementations must honor `signal` so
+   * {@link aclose} can cancel and await in-flight work.
+   */
+  protected async _prewarmImpl(_signal: AbortSignal): Promise<void> {}
 
   async aclose(): Promise<void> {
+    this.#closed = true;
     if (this.#prewarmTask) {
       await this.#prewarmTask.cancelAndWait();
     }

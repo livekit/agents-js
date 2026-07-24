@@ -478,6 +478,10 @@ export class AgentActivity implements RecognitionHooks {
   async start(options?: { reuseResources?: ReusableResources }): Promise<void> {
     const unlock = await this.lock.lock();
     try {
+      if (this.llm instanceof LLM) {
+        this.llm.prewarm();
+      }
+
       await this._startSession({
         spanName: 'start_agent_activity',
         runOnEnter: true,
