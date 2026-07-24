@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { JobContext, JobProcess } from './job.js';
+import type { SimulationContext } from './simulation.js';
 
 export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinition');
 
@@ -9,6 +10,10 @@ export const AGENT_DEFINITION_SYMBOL = Symbol.for('livekit.agents.AgentDefinitio
 export interface AgentDefinition<ProcessUserData = Record<string, unknown>> {
   entry: (ctx: JobContext<ProcessUserData>) => Promise<void>;
   prewarm?: (proc: JobProcess<ProcessUserData>) => unknown;
+  /** Called when a simulation run driving this agent ends. Read the
+   * simulator's verdict via `ctx.simulatorVerdict` and veto a pass from your
+   * own checks with `ctx.fail(reason)`. Never called for normal sessions. */
+  onSimulationEnd?: (ctx: SimulationContext) => unknown;
 }
 
 export type Agent<ProcessUserData = Record<string, unknown>> = AgentDefinition<ProcessUserData>;

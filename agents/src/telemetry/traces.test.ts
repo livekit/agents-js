@@ -2,8 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MetricsRecordingHeader } from '@livekit/protocol';
-import { context as otelContext, trace } from '@opentelemetry/api';
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { ProxyTracerProvider, context as otelContext, trace } from '@opentelemetry/api';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
+import {
+  InMemorySpanExporter,
+  type ReadableSpan,
+  SimpleSpanProcessor,
+  type SpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
 import { PassThrough } from 'node:stream';
@@ -11,20 +17,65 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
-import {
-  type SpanProcessorLike,
-  setTracerProvider,
-  setupCloudTracer,
-  tracer,
-  uploadSessionReport,
-} from './traces.js';
+import { setTracerProvider, setupCloudTracer, tracer, uploadSessionReport } from './traces.js';
 
-/** Helper: extract parentSpanId across OTel SDK v1/v2 */
+describe('setupCloudTracer default provider resource', () => {
+  let provider: NodeTracerProvider | undefined;
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+  });
+
+  afterEach(async () => {
+    await provider?.shutdown();
+    vi.restoreAllMocks();
+    otelContext.disable();
+    trace.disable();
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+  });
+
+  it('preserves default SDK attributes alongside LiveKit resource metadata', async () => {
+    const exportedSpans: Parameters<OTLPTraceExporter['export']>[0] = [];
+    vi.spyOn(OTLPTraceExporter.prototype, 'export').mockImplementation((spans, callback) => {
+      exportedSpans.push(...spans);
+      callback({ code: 0 });
+    });
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      enableLogs: false,
+    });
+
+    provider = tracer.getProvider() as NodeTracerProvider;
+    const span = tracer.startSpan({ name: 'resource-test' });
+    span.end();
+    await provider.forceFlush();
+
+    expect(exportedSpans).toHaveLength(1);
+    expect(exportedSpans[0]!.resource.attributes).toMatchObject({
+      'telemetry.sdk.language': 'nodejs',
+      'telemetry.sdk.name': expect.any(String),
+      'telemetry.sdk.version': expect.any(String),
+      'service.name': 'livekit-agents',
+      room_id: 'room1',
+      job_id: 'job1',
+    });
+  });
+});
+
+/** Helper: extract a parent span ID from an OTel SDK 2.x readable span. */
 function parentSpanId(span: unknown): string | undefined {
-  return (
-    (span as { parentSpanId?: string }).parentSpanId ??
-    (span as { parentSpanContext?: { spanId: string } }).parentSpanContext?.spanId
-  );
+  return (span as { parentSpanContext?: { spanId: string } }).parentSpanContext?.spanId;
 }
 
 describe('DynamicTracer', () => {
@@ -187,37 +238,47 @@ describe('setupCloudTracer with a user-configured provider', () => {
   });
 
   it('does not replace the user provider (attaches the cloud exporter to it instead)', async () => {
-    const addSpanProcessor = vi.spyOn(userProvider, 'addSpanProcessor');
-    setTracerProvider(userProvider);
+    const registeredProcessors: SpanProcessor[] = [];
+    setTracerProvider(userProvider, {
+      registerSpanProcessor: (processor) => registeredProcessors.push(processor),
+      metadata: { 'lk.redaction.enabled': true },
+    });
 
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
       cloudHostname: 'example.livekit.cloud',
+      agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
-      metadata: { 'lk.redaction.enabled': true },
     });
 
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
-    expect(addSpanProcessor).toHaveBeenCalledTimes(2);
+    // setTracerProvider registers the user metadata processor; setupCloudTracer registers the
+    // session metadata processor plus the built-in (SDK 2.x) cloud exporter.
+    expect(registeredProcessors).toHaveLength(3);
     const setAttributes = vi.fn();
-    addSpanProcessor.mock.calls[0]![0].onStart({ setAttributes } as never, otelContext.active());
+    registeredProcessors[1]!.onStart({ setAttributes } as never, otelContext.active());
+    // agent_name rides the session metadata so spans (and logs) carry it even on
+    // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
       room_id: 'room1',
       job_id: 'job1',
-      'lk.redaction.enabled': true,
+      'lk.agent_name': 'my-agent',
     });
-    expect(addSpanProcessor.mock.calls[1]![0]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
   });
 
   it('prefers a user-supplied cloud processor factory over the built-in exporter', async () => {
-    const addSpanProcessor = vi.spyOn(userProvider, 'addSpanProcessor');
+    const registeredProcessors: SpanProcessor[] = [];
     const factoryProcessor = new SimpleSpanProcessor(new InMemorySpanExporter());
     const createCloudSpanProcessor = vi.fn(() => factoryProcessor);
-    setTracerProvider(userProvider, { createCloudSpanProcessor });
+    setTracerProvider(userProvider, {
+      registerSpanProcessor: (processor) => registeredProcessors.push(processor),
+      createCloudSpanProcessor,
+    });
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -228,30 +289,15 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
-    expect(addSpanProcessor).toHaveBeenCalledTimes(2);
-    expect(addSpanProcessor.mock.calls[1]![0]).toBe(factoryProcessor);
+    expect(registeredProcessors).toHaveLength(2);
+    expect(registeredProcessors[1]).toBe(factoryProcessor);
   });
 
-  it('warns when a cloud processor factory is supplied without a usable registrar', () => {
-    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
+  it('requires registerSpanProcessor and never calls addSpanProcessor', async () => {
+    const addSpanProcessor = vi.fn();
+    Object.defineProperty(userProvider, 'addSpanProcessor', { value: addSpanProcessor });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    setTracerProvider(userProvider, {
-      createCloudSpanProcessor: () => new SimpleSpanProcessor(new InMemorySpanExporter()),
-    });
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Ignoring createCloudSpanProcessor'));
-  });
-
-  it('warns and skips cloud tracing when a registrar is supplied without a processor factory', async () => {
-    // Simulates an OTel 2.x-style provider: no addSpanProcessor, so this package's own SDK 1.x
-    // exporter must not be attached and the user has to supply createCloudSpanProcessor.
-    const registeredProcessors: SpanProcessorLike[] = [];
-    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
-    setTracerProvider(userProvider, {
-      registerSpanProcessor: (processor) => registeredProcessors.push(processor),
-    });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    setTracerProvider(userProvider, { metadata: { custom: true } });
 
     await setupCloudTracer({
       roomId: 'room1',
@@ -262,12 +308,21 @@ describe('setupCloudTracer with a user-configured provider', () => {
     });
 
     expect(tracer.getProvider()).toBe(userProvider);
-    expect(registeredProcessors).toHaveLength(0);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('createCloudSpanProcessor'));
+    expect(addSpanProcessor).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('registerSpanProcessor'));
+  });
+
+  it('warns when a cloud processor factory is supplied without a usable registrar', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    setTracerProvider(userProvider, {
+      createCloudSpanProcessor: () => new SimpleSpanProcessor(new InMemorySpanExporter()),
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Ignoring createCloudSpanProcessor'));
   });
 
   it('preserves a custom provider when no processor registrar is available', async () => {
-    Object.defineProperty(userProvider, 'addSpanProcessor', { value: undefined });
     setTracerProvider(userProvider);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
@@ -425,5 +480,84 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('setupCloudTracer resource identity (fresh provider)', () => {
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+  let prevOtelAttrs: string | undefined;
+
+  // OTel 2.x providers no longer expose their resource; read it off a probe
+  // span (started but never ended, so nothing is enqueued for export).
+  const providerResourceAttrs = () => {
+    const provider = tracer.getProvider();
+    expect(provider).toBeInstanceOf(NodeTracerProvider);
+    const span = provider.getTracer('resource-probe').startSpan('probe');
+    return (span as unknown as ReadableSpan).resource.attributes;
+  };
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    prevOtelAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+    // no user-configured provider: reset the module tracer to the API proxy so
+    // setupCloudTracer takes the fresh-provider path
+    setTracerProvider(new ProxyTracerProvider());
+  });
+
+  afterEach(async () => {
+    const provider = tracer.getProvider();
+    // No span is created/ended in these tests, so shutting down the cloud
+    // BatchSpanProcessor has nothing to flush over the network.
+    if (provider instanceof NodeTracerProvider) {
+      await provider.shutdown();
+    }
+    otelContext.disable();
+    trace.disable();
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+    if (prevOtelAttrs === undefined) delete process.env.OTEL_RESOURCE_ATTRIBUTES;
+    else process.env.OTEL_RESOURCE_ATTRIBUTES = prevOtelAttrs;
+  });
+
+  it('stamps lk.agent_name and merges OTEL_RESOURCE_ATTRIBUTES, explicit attrs winning', async () => {
+    process.env.OTEL_RESOURCE_ATTRIBUTES =
+      'lk.cloud_agent_id=CA_test,lk.agent_name=env-name,lk.deployment_id=v42';
+
+    await setupCloudTracer({
+      roomId: 'room1',
+      jobId: 'job1',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: 'sdk-name',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBe('CA_test');
+    expect(attrs['lk.deployment_id']).toBe('v42');
+    expect(attrs['lk.agent_name']).toBe('sdk-name'); // explicit beats env on collision
+    expect(attrs['room_id']).toBe('room1');
+    expect(attrs['job_id']).toBe('job1');
+  });
+
+  it('omits lk.agent_name for default dispatch (empty name)', async () => {
+    await setupCloudTracer({
+      roomId: 'room2',
+      jobId: 'job2',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.agent_name']).toBeUndefined();
+    expect(attrs['room_id']).toBe('room2');
   });
 });
