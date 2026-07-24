@@ -10,9 +10,11 @@ const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
 class UploadGate {
   private isDisabled = false;
+  private currentGeneration = 0;
 
   reset(): void {
     this.isDisabled = false;
+    this.currentGeneration += 1;
     resetOtlpHttpInterceptor();
   }
 
@@ -20,7 +22,12 @@ class UploadGate {
     return this.isDisabled;
   }
 
-  disable(): void {
+  get generation(): number {
+    return this.currentGeneration;
+  }
+
+  disable(generation: number = this.currentGeneration): void {
+    if (generation !== this.currentGeneration) return;
     if (this.isDisabled) return;
     this.isDisabled = true;
     console.warn(
@@ -42,11 +49,12 @@ export async function fetchWithUploadGate(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  const generation = uploadGate.generation;
   if (uploadGate.disabled) return makeOkResponse();
 
   const response = await fetch(input, init);
   if (await isDisabledFetchResponse(response)) {
-    uploadGate.disable();
+    uploadGate.disable(generation);
     return makeOkResponse();
   }
   return response;
@@ -136,13 +144,14 @@ function wrapRequest(original: RequestFn) {
     if (uploadGate.disabled) {
       return makeOkClientRequest(callback);
     }
+    const generation = uploadGate.generation;
 
     args[callbackIndex] = (res: httpTypes.IncomingMessage) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
       res.on('end', () => {
         if (uploadGate.isDisabledResponse(res.statusCode ?? 0, Buffer.concat(chunks))) {
-          uploadGate.disable();
+          uploadGate.disable(generation);
           res.statusCode = 200;
           res.statusMessage = 'OK';
         }
