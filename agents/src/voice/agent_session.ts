@@ -45,6 +45,7 @@ import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -369,6 +370,14 @@ type ActivityTransitionOptions = {
   waitOnEnter?: boolean;
 };
 
+/** True when the surrounding job runs under a text simulation (the simulated
+ * user interacts over text streams only). */
+function resolveTextOnly(): boolean {
+  const jobCtx = getJobContext(false);
+  const simCtx = jobCtx?.simulationContext();
+  return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
+}
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -429,6 +438,11 @@ export class AgentSession<
    * @internal
    */
   _usingDefaultVad: boolean = false;
+
+  /** @internal True when the current job is a text simulation. */
+  get _textOnly(): boolean {
+    return resolveTextOnly();
+  }
 
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
@@ -694,6 +708,15 @@ export class AgentSession<
         this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
+      if (this._textOnly) {
+        // Under a text simulation the simulated user interacts over text
+        // streams only: no audio I/O. STT/TTS/VAD are dropped in the
+        // constructor.
+        this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+        inputOptions = { ...inputOptions, audioEnabled: false };
+        outputOptions = { ...outputOptions, audioEnabled: false };
+      }
+
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -825,6 +848,9 @@ export class AgentSession<
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this._recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session
