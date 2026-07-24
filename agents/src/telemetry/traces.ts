@@ -401,21 +401,27 @@ export async function setupCloudTracer(options: {
       room_id: roomId,
       job_id: jobId,
     };
+    if (agentName) {
+      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
+      // only; the default dispatch has no agent name). Included in both the
+      // resource (traces) and the session metadata (spans + logs).
+      baseMetadata[ATTR_AGENT_NAME] = agentName;
+    }
 
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
 
-    const explicitAttributes: Attributes = {
-      [ATTR_SERVICE_NAME]: 'livekit-agents',
-      ...baseMetadata,
-    };
-    if (agentName) {
-      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
-      // only; the default dispatch has no agent name)
-      explicitAttributes[ATTR_AGENT_NAME] = agentName;
-    }
+    // The SDK does not read OTEL_RESOURCE_ATTRIBUTES on its own (that's NodeSDK's
+    // job); envDetector brings those env attributes in — on LiveKit Cloud the
+    // launcher injects agent identity (lk.cloud_agent_id, lk.deployment_id)
+    // through that env var. merge() gives later resources precedence.
     const resource = defaultResource()
       .merge(detectResources({ detectors: [envDetector] }))
-      .merge(resourceFromAttributes(explicitAttributes));
+      .merge(
+        resourceFromAttributes({
+          [ATTR_SERVICE_NAME]: 'livekit-agents',
+          ...baseMetadata,
+        }),
+      );
 
     if (enableTraces) {
       const cloudExporterOptions: CloudSpanProcessorOptions = {

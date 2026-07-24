@@ -248,6 +248,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       roomId: 'room1',
       jobId: 'job1',
       cloudHostname: 'example.livekit.cloud',
+      agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
     });
@@ -260,9 +261,12 @@ describe('setupCloudTracer with a user-configured provider', () => {
     expect(registeredProcessors).toHaveLength(3);
     const setAttributes = vi.fn();
     registeredProcessors[1]!.onStart({ setAttributes } as never, otelContext.active());
+    // agent_name rides the session metadata so spans (and logs) carry it even on
+    // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
       room_id: 'room1',
       job_id: 'job1',
+      'lk.agent_name': 'my-agent',
     });
     expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
   });
