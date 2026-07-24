@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as jobModule from '../../job.js';
@@ -8,6 +9,7 @@ import { RealtimeModel } from '../../llm/index.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from '../events.js';
+import { AudioOutput } from '../io.js';
 import { RoomIO } from './room_io.js';
 
 type RoomIOArgs = ConstructorParameters<typeof RoomIO>[0];
@@ -68,7 +70,7 @@ function createFakeRoom() {
 
 type FakeSession = {
   input: { audio: null };
-  output: { audio: null; transcription: null };
+  output: { audio: AudioOutput | null; transcription: null };
   currentAgent?: { llm?: RealtimeModel };
   llm?: RealtimeModel;
   on: ReturnType<typeof vi.fn>;
@@ -97,6 +99,74 @@ function createFakeSession(llm?: RealtimeModel): FakeSession {
     _closeSoon: vi.fn(),
   };
 }
+
+class ExternalAudioOutput extends AudioOutput {
+  readonly capturedFrames: AudioFrame[] = [];
+  readonly close = vi.fn(async () => {});
+
+  constructor() {
+    super(24000);
+  }
+
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+    this.capturedFrames.push(frame);
+  }
+
+  clearBuffer(): void {}
+}
+
+describe('RoomIO external audio output', () => {
+  it('preserves synchronized external audio without taking ownership', async () => {
+    const room = createFakeRoom();
+    const session = createFakeSession();
+    const externalOutput = new ExternalAudioOutput();
+    session.output.audio = externalOutput;
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false },
+    });
+
+    roomIO.start();
+
+    expect(Reflect.get(roomIO, 'participantAudioOutput')).toBeUndefined();
+    expect(session.output.audio).not.toBe(externalOutput);
+    const frame = new AudioFrame(new Int16Array(240), 24000, 1, 240);
+    await session.output.audio!.captureFrame(frame);
+    expect(externalOutput.capturedFrames).toEqual([frame]);
+
+    await roomIO.close();
+    expect(externalOutput.close).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { transcriptionEnabled: false, syncTranscription: true },
+    { transcriptionEnabled: true, syncTranscription: false },
+  ])(
+    'preserves external audio unchanged when transcription=$transcriptionEnabled and sync=$syncTranscription',
+    async ({ transcriptionEnabled, syncTranscription }) => {
+      const room = createFakeRoom();
+      const session = createFakeSession();
+      const externalOutput = new ExternalAudioOutput();
+      session.output.audio = externalOutput;
+      const roomIO = new RoomIO({
+        agentSession: session as unknown as RoomIOArgs['agentSession'],
+        room: room as unknown as RoomIOArgs['room'],
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { transcriptionEnabled, syncTranscription },
+      });
+
+      roomIO.start();
+
+      expect(session.output.audio).toBe(externalOutput);
+      expect(Reflect.get(roomIO, 'participantAudioOutput')).toBeUndefined();
+
+      await roomIO.close();
+      expect(externalOutput.close).not.toHaveBeenCalled();
+    },
+  );
+});
 
 class FakeRealtimeModel extends RealtimeModel {
   constructor(nativeTranscriptSync?: boolean) {
