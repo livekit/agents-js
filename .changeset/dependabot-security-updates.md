@@ -1,5 +1,7 @@
 ---
-'@livekit/agents': patch
+'@livekit/agents': minor
 ---
 
-Upgrade OpenTelemetry to SDK 2.x / 0.2xx (migrating off the removed `Resource` class and `addSpanProcessor` API)
+Require OpenTelemetry JS SDK 2.x and experimental packages 0.2xx. Migrate resources to
+`resourceFromAttributes`, configure processors with `spanProcessors`, and pass
+`registerSpanProcessor` when using a custom tracer provider.

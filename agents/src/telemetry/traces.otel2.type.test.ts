@@ -2,20 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { context as otelContext, trace } from '@opentelemetry/api';
-// The framework's own SDK package: the built-in cloud exporter is constructed from it, so the
-// fallback assertion checks against this BatchSpanProcessor, not the aliased one.
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
-// Real OpenTelemetry SDK 2.x packages, installed under aliases so they resolve independently of
-// this package's own SDK dependency (which is also 2.x). Included in `pnpm typecheck`, this file
-// is the compile-time regression test that the telemetry API composes with a user-supplied SDK
-// 2.x provider without type errors, and the runtime regression test that spans flushed through
-// such a provider actually reach both the user's exporter and the cloud span processor.
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type SpanProcessor,
-} from 'otel-v2-sdk-trace-base';
-import { NodeTracerProvider } from 'otel-v2-sdk-trace-node';
+} from '@opentelemetry/sdk-trace-base';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CloudSpanProcessorOptions,
@@ -25,6 +17,8 @@ import {
   tracer,
 } from './traces.js';
 
+// Included in `pnpm typecheck`, this suite verifies that the public telemetry API composes
+// directly with the OpenTelemetry SDK 2.x dependencies shipped by the package.
 describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   let userExporter: InMemorySpanExporter;
   let cloudExporter: InMemorySpanExporter;
@@ -63,6 +57,7 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
   it('exports spans to both the user exporter and the cloud span processor', async () => {
     let cloudOptions: CloudSpanProcessorOptions | undefined;
     setTracerProvider(provider, {
+      metadata: { 'livekit.test.custom': true },
       registerSpanProcessor: (processor) => fanout.add(processor),
       createCloudSpanProcessor: (options) => {
         cloudOptions = options;
@@ -90,7 +85,11 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     expect(cloudSpans.map((s) => s.name)).toEqual(['otel2-span']);
     // room_id/job_id are the attributes LiveKit Cloud correlates traces on; their presence
     // proves the metadata span processor works against SDK 2.x spans at runtime.
-    expect(cloudSpans[0]!.attributes).toMatchObject({ room_id: 'room1', job_id: 'job1' });
+    expect(cloudSpans[0]!.attributes).toMatchObject({
+      room_id: 'room1',
+      job_id: 'job1',
+      'livekit.test.custom': true,
+    });
 
     expect(userExporter.getFinishedSpans().map((s) => s.name)).toEqual(['otel2-span']);
   });
@@ -128,6 +127,25 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     const [userSpan] = userExporter.getFinishedSpans();
     expect(cloudSpan!.attributes['livekit.test.on_ending']).toBe(true);
     expect(userSpan!.attributes['livekit.test.on_ending']).toBe(true);
+  });
+
+  it('forwards forceFlush and shutdown to dynamically registered processors', async () => {
+    const forceFlush = vi.fn(async () => undefined);
+    const shutdown = vi.fn(async () => undefined);
+    const processor: SpanProcessor = {
+      forceFlush,
+      onStart: () => undefined,
+      onEnd: () => undefined,
+      shutdown,
+    };
+    const lifecycleFanout = new FanoutSpanProcessor();
+    lifecycleFanout.add(processor);
+
+    await lifecycleFanout.forceFlush();
+    await lifecycleFanout.shutdown();
+
+    expect(forceFlush).toHaveBeenCalledOnce();
+    expect(shutdown).toHaveBeenCalledOnce();
   });
 
   it('falls back to the built-in cloud exporter when no processor factory is supplied', async () => {
