@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-fishaudio",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Fish Audio plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
