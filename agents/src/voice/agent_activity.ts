@@ -786,6 +786,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get vad(): VAD | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.vad || this.agentSession.vad;
   }
 
@@ -802,6 +805,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get stt(): STT | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.stt || this.agentSession.stt;
   }
 
@@ -821,6 +827,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tts(): TTS | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.tts || this.agentSession.tts;
   }
 

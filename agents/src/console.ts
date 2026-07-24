@@ -144,6 +144,7 @@ export async function runConsole({
     }
 
     const jobCtx = new JobContext(proc, info, room, () => {}, onShutdown, inferenceExecutor);
+    jobCtx._simulationEndFnc = agent.onSimulationEnd;
     ctx = jobCtx;
     await runWithJobContextAsync(jobCtx, async () => agent.entry(jobCtx));
     await shutdown.await;

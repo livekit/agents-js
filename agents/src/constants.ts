@@ -11,8 +11,6 @@ export const TOPIC_CHAT = 'lk.chat';
 export const ATTRIBUTE_AGENT_STATE = 'lk.agent.state';
 export const ATTRIBUTE_AGENT_NAME = 'lk.agent.name';
 
-// TODO(eval): export const ATTRIBUTE_SIMULATOR = 'lk.simulator';
-
 export const TOPIC_CLIENT_EVENTS = 'lk.agent.events';
 export const RPC_GET_SESSION_STATE = 'lk.agent.get_session_state';
 export const RPC_GET_CHAT_HISTORY = 'lk.agent.get_chat_history';

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentSession as pb } from '@livekit/protocol';
+import { SimulationRun, AgentSession as pb } from '@livekit/protocol';
 import type { ByteStreamReader, Room, TextStreamInfo } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
@@ -10,6 +10,7 @@ import EventEmitter from 'events';
 import * as net from 'node:net';
 import { TOPIC_SESSION_MESSAGES } from '../constants.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import { getJobContext } from '../job.js';
 import type {
   ChatItem,
   FunctionCall as FCItem,
@@ -25,7 +26,8 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
-import { Future, Task, shortuuid } from '../utils.js';
+import type { SimulationContext } from '../simulation.js';
+import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -972,7 +974,54 @@ export class SessionHost {
         });
       case 'updateIo':
         return this.handleUpdateIo(req.requestId, req.request.value);
+      case 'finalizeSimulation':
+        return this.handleFinalizeSimulation(req.requestId, req.request.value);
     }
+  }
+
+  private async handleFinalizeSimulation(
+    requestId: string,
+    req: pb.SessionRequest_FinalizeSimulation,
+  ): Promise<void> {
+    // The simulator's verdict is passed in so onSimulationEnd can read it
+    // (ctx.simulatorVerdict); the agent records its OWN verdict via ctx.fail().
+    let userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+    let simCtx: SimulationContext | undefined;
+    let simError: string | undefined;
+    try {
+      const jobCtx = getJobContext(false);
+      simCtx = jobCtx?.simulationContext();
+      if (jobCtx && simCtx) {
+        simCtx._beginFinalize({
+          simulatorVerdict: {
+            success: req.provisionalSuccess,
+            reason: req.provisionalReason,
+          },
+          run: new SimulationRun({ id: simCtx._dispatch.simulationRunId }),
+        });
+        const fnc = jobCtx._simulationEndFnc;
+        if (fnc) {
+          await fnc(simCtx);
+        }
+      }
+    } catch (error) {
+      simError = asError(error).message;
+      log().error({ error }, 'error while executing the onSimulationEnd callback');
+    }
+    if (simCtx?.userVerdict) {
+      userVerdict = new pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict({
+        success: simCtx.userVerdict.success,
+        reason: simCtx.userVerdict.reason,
+      });
+    }
+    return this.sendResponse(
+      requestId,
+      {
+        case: 'finalizeSimulation',
+        value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
+      },
+      simError,
+    );
   }
 
   private async handleUpdateIo(
@@ -1124,6 +1173,27 @@ export class SessionHost {
 // RemoteSession (protobuf-based client-side interface)
 // ===========================================================================
 
+/** Error returned by {@link RemoteSession.finalizeSimulation} when the agent's
+ * `onSimulationEnd` callback fails.
+ *
+ * The callback error remains the thrown error, while `userVerdict` preserves a
+ * verdict recorded before that failure.
+ *
+ * @experimental
+ */
+export class FinalizeSimulationError extends Error {
+  readonly userVerdict: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict | undefined;
+
+  constructor(
+    message: string,
+    userVerdict?: pb.SessionResponse_FinalizeSimulationResponse_SimulationVerdict,
+  ) {
+    super(message);
+    this.name = 'FinalizeSimulationError';
+    this.userVerdict = userVerdict;
+  }
+}
+
 /** @experimental */
 export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<RemoteSessionCallbacks>) {
   private readonly transport: SessionTransport;
@@ -1238,7 +1308,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }
   }
 
-  private async sendRequest(
+  private async sendRequestRaw(
     buildReq: (requestId: string) => pb.SessionRequest,
     timeout = 60000,
   ): Promise<pb.SessionResponse> {
@@ -1262,14 +1332,21 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     }, timeout);
 
     try {
-      const response = await future.await;
-      if (response.error) {
-        throw new Error(response.error);
-      }
-      return response;
+      return await future.await;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async sendRequest(
+    buildReq: (requestId: string) => pb.SessionRequest,
+    timeout = 60000,
+  ): Promise<pb.SessionResponse> {
+    const response = await this.sendRequestRaw(buildReq, timeout);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    return response;
   }
 
   async fetchSessionState(): Promise<pb.SessionResponse_GetSessionStateResponse> {
@@ -1309,6 +1386,23 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
     );
     if (resp.response.case !== 'getAgentInfo') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async fetchFrameworkInfo(): Promise<pb.SessionResponse_GetFrameworkInfoResponse> {
+    const resp = await this.sendRequest(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'getFrameworkInfo',
+            value: new pb.SessionRequest_GetFrameworkInfo(),
+          },
+        }),
+    );
+    if (resp.response.case !== 'getFrameworkInfo') {
       throw new Error('unexpected response type');
     }
     return resp.response.value;
@@ -1355,6 +1449,40 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         }),
     );
     if (resp.response.case !== 'getSessionUsage') {
+      throw new Error('unexpected response type');
+    }
+    return resp.response.value;
+  }
+
+  async finalizeSimulation({
+    provisionalSuccess,
+    provisionalReason = '',
+    timeout = 60000,
+  }: {
+    provisionalSuccess: boolean;
+    provisionalReason?: string;
+    timeout?: number;
+  }): Promise<pb.SessionResponse_FinalizeSimulationResponse> {
+    const resp = await this.sendRequestRaw(
+      (id) =>
+        new pb.SessionRequest({
+          requestId: id,
+          request: {
+            case: 'finalizeSimulation',
+            value: new pb.SessionRequest_FinalizeSimulation({
+              provisionalSuccess,
+              provisionalReason,
+            }),
+          },
+        }),
+      timeout,
+    );
+    const userVerdict =
+      resp.response.case === 'finalizeSimulation' ? resp.response.value.userVerdict : undefined;
+    if (resp.error) {
+      throw new FinalizeSimulationError(resp.error, userVerdict);
+    }
+    if (resp.response.case !== 'finalizeSimulation') {
       throw new Error('unexpected response type');
     }
     return resp.response.value;

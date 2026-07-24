@@ -17,3 +17,15 @@ describe('generator', () => {
     expect(isAgent({ entry: async () => {} })).toBe(false);
   });
 });
+
+describe('defineAgent onSimulationEnd', () => {
+  it('carries the callback through the definition', () => {
+    const onSimulationEnd = () => {};
+    const agent = defineAgent({
+      entry: async () => {},
+      onSimulationEnd,
+    });
+    expect(isAgent(agent)).toBe(true);
+    expect(agent.onSimulationEnd).toBe(onSimulationEnd);
+  });
+});
