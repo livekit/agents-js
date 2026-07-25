@@ -5,7 +5,45 @@ import { initializeLogger, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+import type { GrokVoices } from './tts.js';
 import { TTS } from './tts.js';
+
+const CANONICAL_GROK_VOICES = [
+  'carina',
+  'zagan',
+  'helix',
+  'orion',
+  'luna',
+  'iris',
+  'altair',
+  'zenith',
+  'perseus',
+  'helios',
+  'lux',
+  'kepler',
+  'rigel',
+  'cosmo',
+  'celeste',
+  'ursa',
+  'sirius',
+  'lumen',
+  'castor',
+  'naksh',
+  'atlas',
+  'ara',
+  'eve',
+  'leo',
+  'rex',
+  'sal',
+] as const satisfies readonly GrokVoices[];
+
+const LEGACY_GROK_VOICES = [
+  'Ara',
+  'Eve',
+  'Leo',
+  'Rex',
+  'Sal',
+] as const satisfies readonly GrokVoices[];
 
 beforeAll(() => {
   initializeLogger({ pretty: false, level: 'silent' });
@@ -35,6 +73,11 @@ async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
 }
 
 describe('xAI TTS', () => {
+  it('supports canonical and legacy Grok voice names', () => {
+    expect(CANONICAL_GROK_VOICES).toHaveLength(26);
+    expect(LEGACY_GROK_VOICES).toEqual(['Ara', 'Eve', 'Leo', 'Rex', 'Sal']);
+  });
+
   it('reports its streaming capabilities and provider metadata', async () => {
     const xai = new TTS({ apiKey: 'test-key' });
     try {

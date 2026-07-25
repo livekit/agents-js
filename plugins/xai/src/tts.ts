@@ -49,7 +49,17 @@ export type GrokVoices =
   | 'eve'
   | 'leo'
   | 'rex'
-  | 'sal';
+  | 'sal'
+  /** @deprecated Use `'ara'` instead. */
+  | 'Ara'
+  /** @deprecated Use `'eve'` instead. */
+  | 'Eve'
+  /** @deprecated Use `'leo'` instead. */
+  | 'Leo'
+  /** @deprecated Use `'rex'` instead. */
+  | 'Rex'
+  /** @deprecated Use `'sal'` instead. */
+  | 'Sal';
 
 export type TTSLanguages =
   | 'auto'
