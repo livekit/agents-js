@@ -219,6 +219,7 @@ export class BlazeLLMStream extends llm.LLMStream {
     // Once any content has been delivered, retries would re-emit it and
     // garble the consumer-facing stream (same pattern as Google plugin).
     let contentEmitted = false;
+    let completionTokens = 0;
 
     try {
       const response = await fetch(url.toString(), {
@@ -248,7 +249,6 @@ export class BlazeLLMStream extends llm.LLMStream {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let lineBuffer = '';
-      let completionTokens = 0;
       let streamDone = false;
 
       resetStreamIdleTimeout();
@@ -346,7 +346,28 @@ export class BlazeLLMStream extends llm.LLMStream {
       });
     } catch (err) {
       if (err instanceof APIError) throw err;
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Genuine caller cancel — non-retryable
+        if (this.abortController.signal.aborted) {
+          throw new APIConnectionError({
+            message: `Blaze LLM request aborted: ${err.message}`,
+            options: { retryable: false },
+          });
+        }
+        // Internal connect timeout — retryable when no content yet
+        if (connectController.signal.aborted) {
+          throw new APITimeoutError({
+            message: 'Blaze LLM connection timed out',
+            options: { retryable: !contentEmitted },
+          });
+        }
+        // Internal stream idle timeout (if not already converted above)
+        if (streamIdleController.signal.aborted) {
+          throw new APITimeoutError({
+            message: `Blaze LLM stream idle timeout after no data (tokens so far: ${completionTokens})`,
+            options: { retryable: !contentEmitted },
+          });
+        }
         throw new APIConnectionError({
           message: `Blaze LLM request aborted: ${err.message}`,
           options: { retryable: false },
