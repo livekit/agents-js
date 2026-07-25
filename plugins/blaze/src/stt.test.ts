@@ -142,7 +142,7 @@ describe('STT', () => {
       expect(ev.alternatives[0]!.text).toBe('trí tuệ nhân tạo is great');
     });
 
-    it('returns event with no alternatives for empty audio', async () => {
+    it('returns empty-text alternative for empty audio', async () => {
       const sttInstance = new STT({
         authToken: 'tok',
         apiUrl: 'http://stt:8080',
@@ -150,10 +150,17 @@ describe('STT', () => {
       // Empty frame: 0 samples
       const emptyFrame = makePcmFrame(0);
       const event = await sttInstance._recognize([emptyFrame]);
-      const ev = event as { type: number; alternatives?: unknown[] };
+      const ev = event as {
+        type: number;
+        alternatives?: Array<{ text: string; confidence: number; language: string }>;
+      };
 
       expect(ev.type).toBe(2); // FINAL_TRANSCRIPT
-      expect(ev.alternatives).toBeUndefined();
+      // StreamAdapter-safe shape: empty text is skipped; undefined alternatives would throw.
+      expect(ev.alternatives).toBeDefined();
+      expect(ev.alternatives).toHaveLength(1);
+      expect(ev.alternatives![0]!.text).toBe('');
+      expect(ev.alternatives![0]!.confidence).toBe(0.0);
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
