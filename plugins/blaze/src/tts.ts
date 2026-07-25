@@ -813,6 +813,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const cleaned = normalizeBatchText(normalized);
         if (!cleaned.trim()) return;
         batchCount++;
+        this.markStarted();
         ws.send(JSON.stringify({ query: cleaned }));
         queriesSent = true;
       };
