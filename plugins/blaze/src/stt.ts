@@ -528,6 +528,9 @@ export class SpeechStream extends stt.SpeechStream {
     const socketEnded = new AbortController();
     let socketError: Error | null = null;
     let speaking = false;
+    // When true, we initiated the close (input ended / intentional shutdown).
+    // Unexpected server disconnects must reject so SpeechStream.mainTask can retry.
+    let closing = false;
 
     const sendLoop = (async () => {
       try {
@@ -553,6 +556,18 @@ export class SpeechStream extends stt.SpeechStream {
 
     try {
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const settleResolve = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        const settleReject = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          reject(err);
+        };
+
         const onMessage = (data: WebSocket.RawData) => {
           const text =
             typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
@@ -573,7 +588,7 @@ export class SpeechStream extends stt.SpeechStream {
               message: `STT realtime error: ${msg.text ?? JSON.stringify(msg)}`,
             });
             socketEnded.abort();
-            reject(socketError);
+            settleReject(socketError);
             return;
           }
 
@@ -624,12 +639,21 @@ export class SpeechStream extends stt.SpeechStream {
 
         const onClose = () => {
           socketEnded.abort();
-          resolve();
+          if (!closing) {
+            // Server dropped the connection mid-session — surface as retryable error.
+            const err = new APIConnectionError({
+              message: 'Blaze STT WebSocket closed unexpectedly',
+            });
+            socketError = err;
+            settleReject(err);
+            return;
+          }
+          settleResolve();
         };
         const onError = (err: Error) => {
           socketError = err;
           socketEnded.abort();
-          reject(err);
+          settleReject(err);
         };
 
         ws.on('message', onMessage);
@@ -638,16 +662,27 @@ export class SpeechStream extends stt.SpeechStream {
 
         void sendLoop
           .then(() => {
+            // Input ended or sendLoop exited — intentional close path.
+            closing = true;
             try {
-              if (ws.readyState === WebSocket.OPEN) ws.close();
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.close();
+              } else if (
+                ws.readyState === WebSocket.CLOSED ||
+                ws.readyState === WebSocket.CLOSING
+              ) {
+                // Close event may already have fired (or never will); settle if expected.
+                settleResolve();
+              }
             } catch {
-              // ignore
+              settleResolve();
             }
           })
-          .catch(reject);
+          .catch(settleReject);
       });
       if (socketError) throw socketError;
     } finally {
+      closing = true;
       socketEnded.abort();
       try {
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
