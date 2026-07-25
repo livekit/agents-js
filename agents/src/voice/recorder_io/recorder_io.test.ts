@@ -5,7 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, isWritableStreamClosedError } from '../../utils.js';
@@ -284,6 +284,40 @@ describe('RecorderIO close', () => {
     expect(Date.now() - start).toBeGreaterThanOrEqual(140);
     // Nothing reached the encoder, so no file was produced.
     expect(fs.existsSync(outputPath)).toBe(false);
+  }, 15000);
+
+  it('settles a dropped, never-flushed segment on close without stalling or warning', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recorder-io-test-'));
+    const outputPath = path.join(dir, 'audio.ogg');
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    recorder.recordInput(new FakeAudioInput());
+    const outWrapped = recorder.recordOutput(new DroppingAudioOutput());
+    await recorder.start(outputPath);
+
+    // An interrupt tore the turn down before the segment was flushed, and the sink dropped the
+    // frame, so no real playbackFinished will ever arrive for it.
+    await outWrapped.captureFrame(makeFrame(200, 24000));
+    expect(outWrapped.hasPendingData).toBe(true);
+
+    const warnSpy = vi.spyOn(
+      (recorder as unknown as { logger: { warn: (...args: unknown[]) => void } }).logger,
+      'warn',
+    );
+
+    const start = Date.now();
+    await recorder.close();
+    const elapsed = Date.now() - start;
+
+    expect(outWrapped.hasPendingData).toBe(false);
+    expect(elapsed).toBeLessThan(1000);
+    expect(
+      warnSpy.mock.calls.some((args) =>
+        args.some(
+          (arg) =>
+            typeof arg === 'string' && arg.includes('closed before the last playback finished'),
+        ),
+      ),
+    ).toBe(false);
   }, 15000);
 
   it('flushes trailing input audio on close', async () => {

@@ -113,6 +113,12 @@ export class RecorderIO {
     try {
       if (!this.started) return;
 
+      // No further frames can reach the output once we are closing, so seal the open segment.
+      // A segment the downstream output never accepted can then settle immediately instead of
+      // stalling teardown for the full flush timeout and warning about audio it was never
+      // going to keep.
+      this.outRecord?._sealOpenSegment();
+
       // On a force-interrupted shutdown, the session marks the speech done
       // before playout settles, so the playout finished event may still be in flight.
       // Give it a bounded window to land before fencing writers out.
@@ -658,12 +664,13 @@ class RecorderAudioOutput extends AudioOutput {
 
       if (!segment.acceptedDownstream) {
         // A segment the downstream output never counted will never receive a real finish, so
-        // we synthesize one. Waiting for the flush first is a stricter precondition than the
-        // old code had: it guarantees no further frames can join this segment, so we cannot
-        // settle it while it is still growing. All in-tree callers satisfy it — `generation.ts`
-        // flushes in a `finally`, the interrupted path in `agent_activity.ts` awaits
-        // `cancelAndWait` on the forward tasks before waiting for playout, and
-        // `RecorderIO.close()` bounds its own wait with `closePlayoutFlushTimeoutMs`.
+        // we synthesize one. Requiring the flush first is a stricter precondition than the old
+        // code had: it guarantees no further frames can join this segment, so we cannot settle
+        // one that is still growing. Every path that waits on a segment reaches this state —
+        // `generation.ts` flushes in a `finally`, the interrupted path in `agent_activity.ts`
+        // awaits `cancelAndWait` on the forward tasks before waiting for playout, and
+        // `RecorderIO.close()` seals the open segment before it waits, since closing means no
+        // further frames are possible.
         if (!segment.flushed) {
           return;
         }
@@ -939,6 +946,23 @@ class RecorderAudioOutput extends AudioOutput {
     this.drainFinishes();
     const event = await waitForRecorder;
     return targetSegment?.playbackEvent ?? event;
+  }
+
+  /**
+   * Mark the currently open segment as flushed because no more frames can arrive for it.
+   *
+   * Called by {@link RecorderIO.close}. Unlike {@link flush} this does not notify the base class
+   * or the wrapped output — closing is not a segment boundary they need to hear about, it just
+   * means our own segment can never grow again, which is the guarantee `drainFinishes` needs
+   * before it may settle a segment the downstream output never accepted. A segment with a
+   * capture still in flight is unaffected: `drainFinishes` continues to hold it.
+   */
+  _sealOpenSegment(): void {
+    if (this.currentSegment) {
+      this.currentSegment.flushed = true;
+      this.currentSegment = undefined;
+    }
+    this.drainFinishes();
   }
 
   flush(): void {
