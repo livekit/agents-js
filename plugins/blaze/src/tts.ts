@@ -901,12 +901,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         if (result === TIMEOUT_SENTINEL) {
-          // Timeout — flush accumulated text if we have enough for first batch
+          // Timeout — force-flush so short trailing text still goes out after first batch
           if (textBuf.trim() && batchCount === 0 && wordCount(textBuf) >= 4) {
             sendQuery(textBuf);
             textBuf = '';
           } else {
-            drainBatches(false);
+            drainBatches(true); // honor batchMaxWaitMs for all batches
           }
           continue;
         }
