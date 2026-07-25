@@ -183,7 +183,15 @@ export class STT extends stt.STT {
     if (pcmData.byteLength === 0) {
       return {
         type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-        alternatives: undefined,
+        alternatives: [
+          {
+            text: '',
+            language: this.#opts.language as stt.SpeechData['language'],
+            startTime: 0,
+            endTime: 0,
+            confidence: 0.0,
+          },
+        ],
       };
     }
 
