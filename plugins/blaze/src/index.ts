@@ -47,11 +47,7 @@ export type {
   BlazeLLMData,
 } from './models.js';
 
-export {
-  DEFAULT_TTS_MODEL,
-  DEFAULT_STT_BATCH_MODEL,
-  DEFAULT_STT_STREAM_MODEL,
-} from './models.js';
+export { DEFAULT_TTS_MODEL, DEFAULT_STT_BATCH_MODEL, DEFAULT_STT_STREAM_MODEL } from './models.js';
 
 class BlazePlugin extends Plugin {
   constructor() {

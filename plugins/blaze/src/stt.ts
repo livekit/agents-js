@@ -452,11 +452,7 @@ export class SpeechStream extends stt.SpeechStream {
 
         const onMessage = (data: WebSocket.RawData) => {
           const text =
-            typeof data === 'string'
-              ? data
-              : Buffer.isBuffer(data)
-                ? data.toString('utf8')
-                : '';
+            typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
           if (!text) return;
           let msg: { type?: string; text?: string };
           try {
@@ -514,11 +510,7 @@ export class SpeechStream extends stt.SpeechStream {
             continue;
           }
           if (ws.readyState !== WebSocket.OPEN) break;
-          const pcm = Buffer.from(
-            frame.data.buffer,
-            frame.data.byteOffset,
-            frame.data.byteLength,
-          );
+          const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
           if (pcm.byteLength > 0) {
             try {
               ws.send(pcm);
@@ -536,11 +528,7 @@ export class SpeechStream extends stt.SpeechStream {
       await new Promise<void>((resolve, reject) => {
         const onMessage = (data: WebSocket.RawData) => {
           const text =
-            typeof data === 'string'
-              ? data
-              : Buffer.isBuffer(data)
-                ? data.toString('utf8')
-                : '';
+            typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : '';
           if (!text) return;
           let msg: { type?: string; text?: string; confidence?: number };
           try {
