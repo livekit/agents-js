@@ -14,7 +14,13 @@
  * Batch output: `{ transcription: string, confidence: number }`
  */
 import type { APIConnectOptions, AudioBuffer } from '@livekit/agents';
-import { APIConnectionError, APIStatusError, mergeFrames, stt } from '@livekit/agents';
+import {
+  APIConnectionError,
+  APIStatusError,
+  APITimeoutError,
+  mergeFrames,
+  stt,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import WebSocket from 'ws';
 import {
@@ -249,6 +255,19 @@ export class STT extends stt.STT {
         result = (await response.json()) as BlazeSTTResponse;
         break; // Success
       } catch (err) {
+        // External cancel (caller abort) vs internal per-attempt timeout.
+        if (err instanceof Error && err.name === 'AbortError') {
+          if (abortSignal?.aborted) {
+            throw err; // genuine caller cancel — do not retry
+          }
+          // Internal timeout — convert so retries can engage.
+          const timeoutErr = new APITimeoutError({ message: 'Blaze STT request timed out' });
+          if (attempt < MAX_RETRY_COUNT) {
+            await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+            continue;
+          }
+          throw timeoutErr;
+        }
         if (attempt < MAX_RETRY_COUNT && isRetryableRecognizeError(err)) {
           await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
           continue;
