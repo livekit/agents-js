@@ -278,8 +278,24 @@ export class InterruptionStreamBase {
               let latestEntry = cache.pop(
                 (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
               );
+              const numRequests = getAndResetNumRequests();
               if (!latestEntry) {
-                this.logger.debug('no request made for overlap speech');
+                // The verdict below is a fallback, not a model decision. Warn rather than debug:
+                // without this, an unanswered overlap is indistinguishable from a genuine
+                // low-probability backchannel in production logs.
+                this.logger.warn(
+                  {
+                    overlapDuration:
+                      this.overlapSpeechStartedAt !== undefined
+                        ? chunk.endedAt - this.overlapSpeechStartedAt
+                        : undefined,
+                    numRequests,
+                    accumulatedSamples,
+                    agentSpeechStarted,
+                    agentEnded: chunk.agentEnded,
+                  },
+                  'no interruption inference result for overlap speech, defaulting to backchannel',
+                );
                 latestEntry = InterruptionCacheEntry.default();
               }
               const e = latestEntry ?? InterruptionCacheEntry.default();
@@ -295,7 +311,7 @@ export class InterruptionStreamBase {
                 detectionDelayInS: e.detectionDelayInS,
                 predictionDurationInS: e.predictionDurationInS,
                 probability: e.probability,
-                numRequests: getAndResetNumRequests(),
+                numRequests,
               };
               controller.enqueue(event);
               overlapSpeechStarted = false;
@@ -328,6 +344,19 @@ export class InterruptionStreamBase {
 
     const eventEmitter = new TransformStream<OverlappingSpeechEvent, OverlappingSpeechEvent>({
       transform: (chunk, controller) => {
+        // Once per overlap. `numRequests: 0` here means the model was never asked, which is what
+        // distinguishes "scored below the threshold" from "never classified".
+        this.logger.debug(
+          {
+            isInterruption: chunk.isInterruption,
+            probability: chunk.probability,
+            numRequests: chunk.numRequests,
+            agentEnded: chunk.agentEnded,
+            totalDuration: chunk.totalDurationInS * 1000,
+            detectionDelay: chunk.detectionDelayInS * 1000,
+          },
+          'interruption verdict',
+        );
         this.model.emit('overlapping_speech', chunk);
 
         const metrics: InterruptionMetrics = {

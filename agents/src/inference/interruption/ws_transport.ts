@@ -504,9 +504,12 @@ export function createWsTransport(
         // rejects — a failed reconnect has already errored the stream via outputController.
         if (reconnecting) await reconnecting;
 
-        // Only forwards buffered audio while overlap speech is actively on.
+        // Deliberately no overlap-state gate here: whether a slice belongs to an overlap is decided
+        // once, upstream, when the slice is cut. Re-reading the flag after the await above would
+        // drop audio the pipeline already committed to, since `overlap-speech-ended`,
+        // `agent-speech-ended` and `bargein_detected` can all clear it in that window. Late
+        // responses are harmless — handleMessage() ignores anything outside an open overlap.
         const state = getState();
-        if (!state.overlapSpeechStartedAt || !state.overlapSpeechStarted) return;
 
         if (options.timeout > 0) {
           const now = performance.now();
