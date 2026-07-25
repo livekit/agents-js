@@ -569,19 +569,29 @@ class RecorderAudioInput extends AudioInput {
   }
 }
 
+interface RecorderOutputSegment {
+  frames: AudioFrame[];
+  acceptedDownstream: boolean;
+  captureFailed: boolean;
+  capturesInFlight: number;
+  finishRequested: boolean;
+  flushed: boolean;
+  playbackEvent?: PlaybackFinishedEvent;
+  speechStartTime?: number;
+  currentPauseStart?: number;
+  pauseWallTimes: Array<[number, number]>;
+}
+
 class RecorderAudioOutput extends AudioOutput {
   private recorderIO: RecorderIO;
   private writeFn: (buf: AudioFrame[]) => void;
-  private accFrames: AudioFrame[] = [];
+  private segments: RecorderOutputSegment[] = [];
+  private currentSegment?: RecorderOutputSegment;
+  private deferredFinishes: PlaybackFinishedEvent[] = [];
   private _startedWallTime?: number;
   private _logger = log();
 
   _lastSpeechEndTime?: number;
-  private _lastSpeechStartTime?: number;
-
-  // Pause tracking
-  private currentPauseStart?: number;
-  private pauseWallTimes: Array<[number, number]> = []; // [start, end] pairs
 
   constructor(
     recorderIO: RecorderIO,
@@ -598,12 +608,13 @@ class RecorderAudioOutput extends AudioOutput {
   }
 
   get hasPendingData(): boolean {
-    return this.accFrames.length > 0;
+    return this.segments.some((segment) => segment.frames.length > 0);
   }
 
   pause(): void {
-    if (this.currentPauseStart === undefined && this.recorderIO.recording) {
-      this.currentPauseStart = Date.now();
+    const segment = this.segments[0];
+    if (segment && segment.currentPauseStart === undefined && this.recorderIO.recording) {
+      segment.currentPauseStart = Date.now();
     }
 
     if (this.nextInChain) {
@@ -615,9 +626,10 @@ class RecorderAudioOutput extends AudioOutput {
    * Resume playback and record the pause interval
    */
   resume(): void {
-    if (this.currentPauseStart !== undefined && this.recorderIO.recording) {
-      this.pauseWallTimes.push([this.currentPauseStart, Date.now()]);
-      this.currentPauseStart = undefined;
+    const segment = this.segments[0];
+    if (segment?.currentPauseStart !== undefined && this.recorderIO.recording) {
+      segment.pauseWallTimes.push([segment.currentPauseStart, Date.now()]);
+      segment.currentPauseStart = undefined;
     }
 
     if (this.nextInChain) {
@@ -625,19 +637,88 @@ class RecorderAudioOutput extends AudioOutput {
     }
   }
 
-  private resetPauseState(): void {
-    this.currentPauseStart = undefined;
-    this.pauseWallTimes = [];
+  onPlaybackFinished(options: PlaybackFinishedEvent): void {
+    this.deferredFinishes.push(options);
+    this.drainFinishes();
   }
 
-  onPlaybackFinished(options: PlaybackFinishedEvent): void {
-    const finishTime = this.currentPauseStart ?? Date.now();
+  /**
+   * Settle segments in capture order against the finishes the downstream output has sent.
+   *
+   * Segments are settled oldest-first so a finish is always attributed to the segment it
+   * belongs to. A finish that arrives with nothing to attribute it to yet stays queued in
+   * `deferredFinishes` rather than being forwarded (and dropped) immediately.
+   */
+  private drainFinishes(): void {
+    while (this.segments.length > 0) {
+      const segment = this.segments[0]!;
+      if (segment.capturesInFlight > 0) {
+        return;
+      }
+
+      if (!segment.acceptedDownstream) {
+        // A segment the downstream output never counted will never receive a real finish, so
+        // we synthesize one. Waiting for the flush first is a stricter precondition than the
+        // old code had: it guarantees no further frames can join this segment, so we cannot
+        // settle it while it is still growing. All in-tree callers satisfy it — `generation.ts`
+        // flushes in a `finally`, the interrupted path in `agent_activity.ts` awaits
+        // `cancelAndWait` on the forward tasks before waiting for playout, and
+        // `RecorderIO.close()` bounds its own wait with `closePlayoutFlushTimeoutMs`.
+        if (!segment.flushed) {
+          return;
+        }
+        this.finishSegment(segment, { playbackPosition: 0, interrupted: true });
+        continue;
+      }
+
+      if (!segment.flushed) {
+        return;
+      }
+
+      const event = this.deferredFinishes.shift();
+      if (event) {
+        this.finishSegment(segment, event);
+        continue;
+      }
+
+      if (segment.captureFailed && !segment.finishRequested && this.nextInChain) {
+        // Reaching down to the wrapped output looks like a layering inversion, and normally it
+        // would be. This branch only runs when the downstream output already counted the
+        // segment (`acceptedDownstream`) and our capture then threw, so the sink is holding a
+        // segment it will never be told about and its own `waitForPlayout` would hang. Nobody
+        // else can unstick it: the frame never reached the sink's completion path. Guarded by
+        // `finishRequested` so we ask exactly once.
+        segment.finishRequested = true;
+        this.nextInChain.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+      }
+      return;
+    }
+
+    // No segments left to attribute these to. Forwarding them to `super.onPlaybackFinished`
+    // would only trip its "more finishes than segments" warning, so drop them and say so at
+    // debug level instead of polluting the logs with a warning we caused.
+    const leftovers = this.deferredFinishes.splice(0);
+    if (leftovers.length > 0) {
+      this._logger.debug(
+        { count: leftovers.length },
+        'discarding playback finishes with no matching recorder segment',
+      );
+    }
+  }
+
+  private finishSegment(segment: RecorderOutputSegment, options: PlaybackFinishedEvent): void {
+    this.segments.shift();
+    if (this.currentSegment === segment) {
+      this.currentSegment = undefined;
+    }
+
+    const finishTime = segment.currentPauseStart ?? Date.now();
     const trailingSilenceDuration = Math.max(0, Date.now() - finishTime);
 
     // Convert playbackPosition from seconds to ms for internal calculations
     let playbackPosition = options.playbackPosition * 1000;
 
-    if (this._lastSpeechStartTime === undefined) {
+    if (segment.speechStartTime === undefined) {
       this._logger.warn(
         {
           finishTime,
@@ -652,25 +733,24 @@ class RecorderAudioOutput extends AudioOutput {
     // Clamp playbackPosition to actual elapsed time (all in ms)
     playbackPosition = Math.max(
       0,
-      Math.min(finishTime - (this._lastSpeechStartTime ?? 0), playbackPosition),
+      Math.min(finishTime - (segment.speechStartTime ?? 0), playbackPosition),
     );
 
     // Convert back to seconds for the event
-    super.onPlaybackFinished({ ...options, playbackPosition: playbackPosition / 1000 });
+    segment.playbackEvent = { ...options, playbackPosition: playbackPosition / 1000 };
+    super.onPlaybackFinished(segment.playbackEvent);
 
     if (!this.recorderIO.recording) {
       return;
     }
 
-    if (this.currentPauseStart !== undefined) {
-      this.pauseWallTimes.push([this.currentPauseStart, finishTime]);
-      this.currentPauseStart = undefined;
+    if (segment.currentPauseStart !== undefined) {
+      segment.pauseWallTimes.push([segment.currentPauseStart, finishTime]);
+      segment.currentPauseStart = undefined;
     }
 
-    if (this.accFrames.length === 0) {
-      this.resetPauseState();
+    if (segment.frames.length === 0) {
       this._lastSpeechEndTime = Date.now();
-      this._lastSpeechStartTime = undefined;
       return;
     }
 
@@ -678,15 +758,15 @@ class RecorderAudioOutput extends AudioOutput {
     const pauseEvents: Array<[number, number]> = [];
     let playbackStartTime = finishTime - playbackPosition;
 
-    if (this.pauseWallTimes.length > 0) {
-      const totalPauseDuration = this.pauseWallTimes.reduce(
+    if (segment.pauseWallTimes.length > 0) {
+      const totalPauseDuration = segment.pauseWallTimes.reduce(
         (sum, [start, end]) => sum + (end - start),
         0,
       );
       playbackStartTime = finishTime - playbackPosition - totalPauseDuration;
 
       let accumulatedPause = 0;
-      for (const [pauseStart, pauseEnd] of this.pauseWallTimes) {
+      for (const [pauseStart, pauseEnd] of segment.pauseWallTimes) {
         let position = pauseStart - playbackStartTime - accumulatedPause;
         const duration = pauseEnd - pauseStart;
         position = Math.max(0, Math.min(position, playbackPosition));
@@ -697,13 +777,13 @@ class RecorderAudioOutput extends AudioOutput {
 
     const buf: AudioFrame[] = [];
     let accDur = 0;
-    const sampleRate = this.accFrames[0]!.sampleRate;
-    const numChannels = this.accFrames[0]!.channels;
+    const sampleRate = segment.frames[0]!.sampleRate;
+    const numChannels = segment.frames[0]!.channels;
 
     let pauseIdx = 0;
     let shouldBreak = false;
 
-    for (const frame of this.accFrames) {
+    for (const frame of segment.frames) {
       let currentFrame = frame;
       const frameDuration = (frame.samplesPerChannel / frame.sampleRate) * 1000;
 
@@ -764,46 +844,114 @@ class RecorderAudioOutput extends AudioOutput {
       this.writeFn(filteredBuf);
     }
 
-    this.accFrames = [];
-    this.resetPauseState();
     this._lastSpeechEndTime = Date.now();
-    this._lastSpeechStartTime = undefined;
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
-    if (this.nextInChain) {
-      await this.nextInChain.captureFrame(frame);
+    // Register our own segment BEFORE handing the frame downstream. A downstream output may
+    // park this frame (ParticipantAudioOutput holds frames at its pause gate) and emit an
+    // interrupted finish while it is parked. If we had not counted the segment yet, that
+    // finish would arrive while we own zero segments and `AudioOutput.onPlaybackFinished`
+    // would discard it as surplus — leaving the segment we register afterwards with no
+    // finish left to settle it, and `waitForPlayout` stuck forever.
+    const capturedBefore = this.capturedPlayoutSegments;
+    const capture = super.captureFrame(frame);
+    const startedNewSegment = this.capturedPlayoutSegments > capturedBefore;
+    let segment = this.currentSegment;
+    if (startedNewSegment) {
+      segment = {
+        frames: [],
+        acceptedDownstream: this.nextInChain === undefined,
+        captureFailed: false,
+        capturesInFlight: 0,
+        finishRequested: false,
+        flushed: false,
+        pauseWallTimes: [],
+      };
+      this.segments.push(segment);
+      this.currentSegment = segment;
+    }
+    if (!segment) {
+      throw new Error('recorder capture has no active segment');
     }
 
-    await super.captureFrame(frame);
+    const downstreamCapturedBefore = this.nextInChain?.capturedPlayoutSegments ?? 0;
+    segment.capturesInFlight++;
+    let captureCompleted = false;
+    try {
+      await capture;
+      if (this.nextInChain) {
+        await this.nextInChain.captureFrame(frame);
+        if (this.nextInChain.capturedPlayoutSegments > downstreamCapturedBefore) {
+          segment.acceptedDownstream = true;
+        }
+      }
 
-    if (this.recorderIO.recording) {
-      this.accFrames.push(frame);
-    }
+      if (this.recorderIO.recording) {
+        segment.frames.push(frame);
+      }
 
-    if (this._startedWallTime === undefined) {
-      this._startedWallTime = Date.now();
-    }
+      if (this._startedWallTime === undefined) {
+        this._startedWallTime = Date.now();
+      }
 
-    if (this._lastSpeechStartTime === undefined) {
-      this._lastSpeechStartTime = Date.now();
+      if (segment.speechStartTime === undefined) {
+        segment.speechStartTime = Date.now();
+      }
+
+      captureCompleted = true;
+    } finally {
+      if (this.nextInChain && this.nextInChain.capturedPlayoutSegments > downstreamCapturedBefore) {
+        segment.acceptedDownstream = true;
+      }
+      if (!captureCompleted) {
+        segment.captureFailed = true;
+        segment.flushed = true;
+        if (this.currentSegment === segment) {
+          this.currentSegment = undefined;
+        }
+      }
+      segment.capturesInFlight--;
+      this.drainFinishes();
     }
   }
 
+  /**
+   * Wait for the segment that is open at call time to finish playing.
+   *
+   * Unlike the base {@link AudioOutput}, this resolves with *that segment's* own
+   * `playbackEvent` rather than whatever `lastPlaybackEvent` happens to hold when the wait
+   * unblocks. With multiple segments in flight the base behavior can hand a caller another
+   * segment's event — e.g. report `interrupted: true` for a segment that played to completion.
+   * This is a deliberate divergence from the base class (and from Python, whose
+   * `voice/io.py` also returns the last event). Note the `playedOwnFrame` bookkeeping in
+   * `agent_activity.ts` exists precisely to work around stale events from waits like this one,
+   * so it is now partly redundant here; it is left in place because it still guards the other
+   * outputs. Giving the base class the same per-segment attribution — which would also fix
+   * `ParticipantAudioOutput` — is follow-up work.
+   */
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
+    const targetSegment = this.segments[this.segments.length - 1];
     const waitForRecorder = super.waitForPlayout();
     if (this.nextInChain) {
       await this.nextInChain.waitForPlayout();
     }
-    return waitForRecorder;
+    this.drainFinishes();
+    const event = await waitForRecorder;
+    return targetSegment?.playbackEvent ?? event;
   }
 
   flush(): void {
     super.flush();
+    if (this.currentSegment) {
+      this.currentSegment.flushed = true;
+      this.currentSegment = undefined;
+    }
 
     if (this.nextInChain) {
       this.nextInChain.flush();
     }
+    this.drainFinishes();
   }
 
   clearBuffer(): void {
