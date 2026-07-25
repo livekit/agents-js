@@ -186,6 +186,93 @@ class RejectingAudioOutput extends AudioOutput {
   clearBuffer(): void {}
 }
 
+/**
+ * Holds the first frame at a gate (like `ParticipantAudioOutput` does while paused) after
+ * counting it, and lets the test report a playback finish while the frame is still parked.
+ */
+class ParkFirstFrameOutput extends AudioOutput {
+  readonly frameParked = new Future<void>();
+  private readonly gate = new Future<void>();
+  private captures = 0;
+
+  constructor() {
+    super(48000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    this.captures++;
+    // Count before parking so the finish reported during the park isn't surplus downstream.
+    await super.captureFrame(frame);
+    if (this.captures === 1) {
+      this.frameParked.resolve();
+      await this.gate.await;
+    }
+  }
+
+  reportFinished(playbackPosition: number): void {
+    this.onPlaybackFinished({ playbackPosition, interrupted: true });
+  }
+
+  releaseGate(): void {
+    this.gate.resolve();
+  }
+
+  clearBuffer(): void {}
+}
+
+// `interrupted: false` can only come from a real downstream finish: a segment the recorder has to
+// settle on its own is always synthesized as interrupted. The transcript marker makes the
+// attribution unambiguous.
+const RETRIED_SEGMENT_FINISH: PlaybackFinishedEvent = {
+  playbackPosition: 0,
+  interrupted: false,
+  synchronizedTranscript: 'retried-segment',
+};
+
+class RejectFirstCaptureOutput extends AudioOutput {
+  private captures = 0;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    this.captures++;
+    if (this.captures === 1) {
+      throw new Error('capture rejected');
+    }
+    await super.captureFrame(frame);
+  }
+
+  finishSegment(): void {
+    this.onPlaybackFinished(RETRIED_SEGMENT_FINISH);
+  }
+
+  clearBuffer(): void {}
+}
+
+class CountThenRejectFirstCaptureOutput extends AudioOutput {
+  private captures = 0;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+    this.captures++;
+    if (this.captures === 1) {
+      throw new Error('capture rejected after counting');
+    }
+  }
+
+  finishSegment(): void {
+    this.onPlaybackFinished(RETRIED_SEGMENT_FINISH);
+  }
+
+  clearBuffer(): void {}
+}
+
 class CountThenRejectOutput extends AudioOutput {
   constructor() {
     super(24000);
@@ -515,6 +602,83 @@ describe('RecorderAudioOutput', () => {
 
     expect(writes).toHaveLength(2);
     recorderState.started = false;
+    await recorder.close();
+  });
+
+  it('keeps the audio a finish reports as played while the first frame was parked', async () => {
+    const writes: AudioFrame[][] = [];
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const recorderState = recorder as unknown as {
+      started: boolean;
+      writeCb: (buf: AudioFrame[]) => void;
+    };
+    recorderState.started = true;
+    recorderState.writeCb = (buf) => writes.push(buf);
+    const downstream = new ParkFirstFrameOutput();
+    const output = recorder.recordOutput(downstream);
+
+    const capture = output.captureFrame(makeFrame(100));
+    await downstream.frameParked.await;
+    // Wall-clock advances well past the position the sink is about to report.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    downstream.reportFinished(0.05);
+    downstream.releaseGate();
+    await capture;
+    output.flush();
+
+    const capturedSamples = writes
+      .flat()
+      .reduce((total, frame) => total + frame.samplesPerChannel, 0);
+    expect(capturedSamples).toBe(0.05 * 48000);
+    recorderState.started = false;
+    await recorder.close();
+  });
+
+  it('accepts a retried capture after a rejection without an explicit flush', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new RejectFirstCaptureOutput();
+    const output = recorder.recordOutput(downstream);
+
+    await expect(output.captureFrame(makeFrame(20, 24000))).rejects.toThrow('capture rejected');
+
+    // A caller that catches the rejection and retries must not be permanently poisoned.
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForRetriedSegment = output.waitForPlayout();
+    downstream.finishSegment();
+    const event = await Promise.race([
+      waitForRetriedSegment,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 100)),
+    ]);
+
+    expect(event).toEqual(RETRIED_SEGMENT_FINISH);
+    await recorder.close();
+  });
+
+  it('accepts a retried capture after a rejection the sink had already counted', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new CountThenRejectFirstCaptureOutput();
+    const output = recorder.recordOutput(downstream);
+    const finishes: PlaybackFinishedEvent[] = [];
+    output.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (event: PlaybackFinishedEvent) => {
+      finishes.push(event);
+    });
+
+    await expect(output.captureFrame(makeFrame(20, 24000))).rejects.toThrow(
+      'capture rejected after counting',
+    );
+
+    await output.captureFrame(makeFrame(20, 24000));
+    output.flush();
+    const waitForRetriedSegment = output.waitForPlayout();
+    downstream.finishSegment();
+    const event = await Promise.race([
+      waitForRetriedSegment,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 100)),
+    ]);
+
+    expect(event).toEqual(RETRIED_SEGMENT_FINISH);
+    expect(finishes).toEqual([{ playbackPosition: 0, interrupted: true }, RETRIED_SEGMENT_FINISH]);
     await recorder.close();
   });
 

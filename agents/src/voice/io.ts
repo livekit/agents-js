@@ -216,6 +216,19 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Forget the segment currently being captured, without treating it as a flush boundary.
+   *
+   * For an output whose open segment was abandoned rather than flushed — e.g. a capture threw and
+   * the segment has already been reported finished. Without this the output keeps believing a
+   * segment is open, so the next `captureFrame` silently joins a segment that no longer exists
+   * instead of counting a new one.
+   * @internal
+   */
+  abandonOpenSegment(): void {
+    this._capturing = false;
+  }
+
+  /**
    * Clear the buffer, stopping playback immediately
    */
   abstract clearBuffer(): void;

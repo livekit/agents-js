@@ -583,7 +583,8 @@ interface RecorderOutputSegment {
   finishRequested: boolean;
   flushed: boolean;
   playbackEvent?: PlaybackFinishedEvent;
-  speechStartTime?: number;
+  /** Wall-clock time the segment was opened, i.e. when its first frame entered `captureFrame`. */
+  speechStartTime: number;
   currentPauseStart?: number;
   pauseWallTimes: Array<[number, number]>;
 }
@@ -697,6 +698,14 @@ class RecorderAudioOutput extends AudioOutput {
         // `finishRequested` so we ask exactly once.
         segment.finishRequested = true;
         this.nextInChain.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        if (!this.currentSegment) {
+          // The sink also still has this segment latched open. A retried frame would silently
+          // join the segment we just declared finished — the sink would never count it, so we
+          // could not tell the frame had been accepted either, and the retried segment would be
+          // written off as interrupted at position zero. Only safe while we hold no open segment
+          // of our own; otherwise the latch belongs to a newer segment that is still growing.
+          this.nextInChain.abandonOpenSegment();
+        }
       }
       return;
     }
@@ -725,22 +734,10 @@ class RecorderAudioOutput extends AudioOutput {
     // Convert playbackPosition from seconds to ms for internal calculations
     let playbackPosition = options.playbackPosition * 1000;
 
-    if (segment.speechStartTime === undefined) {
-      this._logger.warn(
-        {
-          finishTime,
-          playbackPosition,
-          interrupted: options.interrupted,
-        },
-        'playback finished before speech started',
-      );
-      playbackPosition = 0;
-    }
-
     // Clamp playbackPosition to actual elapsed time (all in ms)
     playbackPosition = Math.max(
       0,
-      Math.min(finishTime - (segment.speechStartTime ?? 0), playbackPosition),
+      Math.min(finishTime - segment.speechStartTime, playbackPosition),
     );
 
     // Convert back to seconds for the event
@@ -873,6 +870,14 @@ class RecorderAudioOutput extends AudioOutput {
         capturesInFlight: 0,
         finishRequested: false,
         flushed: false,
+        // Stamped here, before the frame leaves, rather than once the downstream output accepts
+        // it. A downstream output may park the frame (the `ParticipantAudioOutput` pause gate)
+        // and a finish can land while it is parked. `finishSegment` clamps the reported playback
+        // position against `finishTime - speechStartTime`, so a timestamp taken after the park
+        // would make the elapsed window ~zero (negative if we are still paused, since
+        // `finishTime` is then the pause start) and truncate away every frame the sink just
+        // reported as played.
+        speechStartTime: Date.now(),
         pauseWallTimes: [],
       };
       this.segments.push(segment);
@@ -902,10 +907,6 @@ class RecorderAudioOutput extends AudioOutput {
         this._startedWallTime = Date.now();
       }
 
-      if (segment.speechStartTime === undefined) {
-        segment.speechStartTime = Date.now();
-      }
-
       captureCompleted = true;
     } finally {
       if (this.nextInChain && this.nextInChain.capturedPlayoutSegments > downstreamCapturedBefore) {
@@ -916,6 +917,11 @@ class RecorderAudioOutput extends AudioOutput {
         segment.flushed = true;
         if (this.currentSegment === segment) {
           this.currentSegment = undefined;
+          // We just closed this segment and `drainFinishes` reports it finished, so the base class
+          // must stop counting it as open. Otherwise its capture latch is still set, the next
+          // `captureFrame` neither counts a new segment nor finds one of ours to attribute the
+          // frame to, and a caller that retries after a transient rejection is rejected forever.
+          this.abandonOpenSegment();
         }
       }
       segment.capturesInFlight--;
