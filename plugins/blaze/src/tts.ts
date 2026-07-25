@@ -489,10 +489,29 @@ async function synthesizeAudio(
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (signal.aborted) break;
+        let result: ReadableStreamReadResult<Uint8Array>;
+        try {
+          result = await reader.read();
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            // External cancel (caller abort) vs internal timeout from setTimeout above.
+            if (abortSignal.aborted) {
+              throw err;
+            }
+            throw new APITimeoutError({ message: 'Blaze TTS request timed out' });
+          }
+          throw err;
+        }
+        if (result.done) break;
+        if (signal.aborted) {
+          if (abortSignal.aborted) {
+            // Genuine caller cancel — stop without treating as timeout.
+            break;
+          }
+          throw new APITimeoutError({ message: 'Blaze TTS request timed out' });
+        }
 
+        const value = result.value;
         const chunk = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
         for (const frame of bstream.write(chunk)) {
           if (pendingFrame !== undefined) {
@@ -502,18 +521,23 @@ async function synthesizeAudio(
         }
       }
 
+      // Only flush final frames on a clean completion path (not timeout/cancel).
+      if (abortSignal.aborted) {
+        return;
+      }
+
       for (const frame of bstream.flush()) {
         if (pendingFrame !== undefined) {
           queue.put({ requestId, segmentId, frame: pendingFrame, final: false });
         }
         pendingFrame = frame;
       }
+
+      if (pendingFrame !== undefined) {
+        queue.put({ requestId, segmentId, frame: pendingFrame, final: true });
+      }
     } finally {
       reader.releaseLock();
-    }
-
-    if (pendingFrame !== undefined) {
-      queue.put({ requestId, segmentId, frame: pendingFrame, final: true });
     }
   } finally {
     clearTimeout(timeoutId);
