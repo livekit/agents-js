@@ -17,6 +17,7 @@ import {
   type AgentSpeechStarted,
   type ApiConnectOptions,
   type Flush,
+  type InterruptionAudioSlice,
   type InterruptionOptions,
   type InterruptionSentinel,
   type OverlapSpeechEnded,
@@ -167,6 +168,9 @@ export class InterruptionStreamBase {
     let accumulatedSamples = 0;
     let overlapSpeechStarted = false;
     let overlapCount = 0;
+    // Monotonic across the life of the stream — unlike `overlapCount`, which restarts each agent
+    // turn — so a slice cut for an earlier overlap can never be mistaken for the current one.
+    let overlapGeneration = 0;
     const cache = new BoundedCache<number, InterruptionCacheEntry>(10);
     const inferenceS16Data = new Int16Array(
       Math.ceil(this.options.maxAudioDurationInS * this.options.sampleRate),
@@ -191,7 +195,11 @@ export class InterruptionStreamBase {
       }
     };
 
-    const onRequestSent = () => {
+    // A slice is sent unconditionally once cut, so the send can land after its overlap closed and
+    // the next one opened. Charging it to whatever overlap is open at send time would hand a later
+    // overlap a request it never made, which is exactly what `numRequests: 0` is meant to detect.
+    const onRequestSent = (sliceOverlapGeneration: number) => {
+      if (sliceOverlapGeneration !== overlapGeneration) return;
       this.numRequests++;
     };
 
@@ -204,7 +212,7 @@ export class InterruptionStreamBase {
     // First transform: process input frames/sentinels and output audio slices or events
     const audioTransformer = new TransformStream<
       InterruptionSentinel | AudioFrame,
-      Int16Array | OverlappingSpeechEvent
+      InterruptionAudioSlice | OverlappingSpeechEvent
     >(
       {
         transform: (chunk, controller) => {
@@ -233,7 +241,11 @@ export class InterruptionStreamBase {
             ) {
               const audioSlice = inferenceS16Data.slice(0, startIdx);
               accumulatedSamples = 0;
-              controller.enqueue(audioSlice);
+              controller.enqueue({
+                type: 'audio-slice',
+                audio: audioSlice,
+                overlapGeneration,
+              });
             }
           } else if (chunk.type === 'agent-speech-started') {
             this.logger.debug('agent speech started');
@@ -262,6 +274,7 @@ export class InterruptionStreamBase {
             overlapSpeechStarted = true;
             accumulatedSamples = 0;
             overlapCount += 1;
+            overlapGeneration += 1;
             if (overlapCount <= 1) {
               const keepSize =
                 Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +

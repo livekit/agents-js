@@ -24,6 +24,19 @@ export interface OverlappingSpeechEvent {
 }
 
 /**
+ * An audio slice on its way to the transport, tagged with the overlap it was cut for.
+ *
+ * The send itself is unconditional, so it can land after that overlap has closed — and after the
+ * next one has opened. The tag keeps per-overlap request accounting attached to the right overlap
+ * regardless of when the socket accepts the slice.
+ */
+export interface InterruptionAudioSlice {
+  type: 'audio-slice';
+  audio: Int16Array;
+  overlapGeneration: number;
+}
+
+/**
  * Configuration options for interruption detection.
  */
 export interface InterruptionOptions {

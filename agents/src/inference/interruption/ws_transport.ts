@@ -10,7 +10,7 @@ import { log } from '../../log.js';
 import { Event } from '../../utils.js';
 import { buildMetadataHeaders, createAccessToken } from '../utils.js';
 import { InterruptionCacheEntry } from './interruption_cache_entry.js';
-import type { OverlappingSpeechEvent } from './types.js';
+import type { InterruptionAudioSlice, OverlappingSpeechEvent } from './types.js';
 import type { BoundedCache } from './utils.js';
 
 // WebSocket message types
@@ -147,7 +147,10 @@ async function connectWebSocket(
 }
 
 export interface WsTransportResult {
-  transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
+  transport: TransformStream<
+    InterruptionAudioSlice | OverlappingSpeechEvent,
+    OverlappingSpeechEvent
+  >;
   reconnect: () => Promise<void>;
   close: () => void;
 }
@@ -164,7 +167,7 @@ export function createWsTransport(
   getState: () => WsTransportState,
   setState: (partial: Partial<WsTransportState>) => void,
   updateUserSpeakingSpan?: (entry: InterruptionCacheEntry) => void,
-  onRequestSent?: () => void,
+  onRequestSent?: (overlapGeneration: number) => void,
   getAndResetNumRequests?: () => number,
 ): WsTransportResult {
   const logger = log();
@@ -383,13 +386,14 @@ export function createWsTransport(
     }
   }
 
-  function sendAudioData(audioSlice: Int16Array): void {
+  function sendAudioData(slice: InterruptionAudioSlice): void {
     // Backstop for a genuine unexpected drop: throws a retryable error so the stream fails over. An
     // intentional reconnect is awaited in transform() before we get here, so it won't fire then.
     if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
       throw new APIConnectionError({ message: 'WebSocket not connected' });
     }
 
+    const audioSlice = slice.audio;
     const state = getState();
     const createdAt = Math.floor(performance.now());
 
@@ -417,7 +421,7 @@ export function createWsTransport(
     combined.set(audioBytes, 8);
 
     activeWs.send(combined);
-    onRequestSent?.();
+    onRequestSent?.(slice.overlapGeneration);
   }
 
   // Close the current socket without ending the transport (used by both close() and reconnect).
@@ -482,7 +486,7 @@ export function createWsTransport(
   }
 
   const transport = new TransformStream<
-    Int16Array | OverlappingSpeechEvent,
+    InterruptionAudioSlice | OverlappingSpeechEvent,
     OverlappingSpeechEvent
   >(
     {
@@ -495,7 +499,7 @@ export function createWsTransport(
       },
 
       async transform(chunk, controller) {
-        if (!(chunk instanceof Int16Array)) {
+        if (chunk.type !== 'audio-slice') {
           controller.enqueue(chunk);
           return;
         }
@@ -508,7 +512,9 @@ export function createWsTransport(
         // once, upstream, when the slice is cut. Re-reading the flag after the await above would
         // drop audio the pipeline already committed to, since `overlap-speech-ended`,
         // `agent-speech-ended` and `bargein_detected` can all clear it in that window. Late
-        // responses are harmless — handleMessage() ignores anything outside an open overlap.
+        // responses are harmless — handleMessage() ignores anything outside an open overlap, and
+        // the slice carries the overlap it was cut for so a late send is never charged to a
+        // later one.
         const state = getState();
 
         if (options.timeout > 0) {

@@ -292,6 +292,7 @@ describe('interruption transport send gate', () => {
 
   async function openStream(): Promise<{
     stream: InterruptionStreamBase;
+    detector: AdaptiveInterruptionDetector;
     ws: MockWebSocket;
     drained: Promise<void>;
   }> {
@@ -319,7 +320,7 @@ describe('interruption transport send gate', () => {
     ws.simulateMessage({ type: 'session.created', default_threshold: 0.5 });
     await sleep(10);
 
-    return { stream, ws, drained };
+    return { stream, detector, ws, drained };
   }
 
   /**
@@ -386,11 +387,54 @@ describe('interruption transport send gate', () => {
     ws.simulateOpen();
     await waitFor(() => ws.sent.length > 0); // session.create
 
-    await transport.writable.getWriter().write(new Int16Array(1600));
+    await transport.writable.getWriter().write({
+      type: 'audio-slice',
+      audio: new Int16Array(1600),
+      overlapGeneration: 1,
+    });
     await sleep(20);
 
     expect(audioSendCount(ws)).toBe(1);
 
     close();
+  });
+
+  /**
+   * Sending a slice unconditionally means the send can land after the overlap it was cut for has
+   * closed — possibly after the *next* overlap has already opened. `numRequests` is per-overlap
+   * accounting ("was the model ever asked about this overlap?"), so the count has to follow the
+   * overlap the slice was cut for rather than whichever one happens to be open when the socket
+   * finally accepts it. Otherwise a later overlap inherits a request it never made.
+   */
+  it('does not charge a parked slice to the overlap that follows it', async () => {
+    const { stream, detector } = await openStream();
+    const events: OverlapEvent[] = [];
+    detector.on('overlapping_speech', (ev) => events.push(ev));
+
+    await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechStarted(200, Date.now()));
+
+    const ws2 = await stallOnReconnect(stream);
+
+    // Cut during the first overlap, then parked on the pending reconnect.
+    await stream.pushFrame(detectionIntervalFrame());
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechEnded(Date.now()));
+    await sleep(20);
+
+    // A second overlap opens while the slice is still parked. It cuts no audio of its own.
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechStarted(200, Date.now()));
+    await sleep(20);
+
+    ws2.simulateOpen(); // the parked slice resumes, now that a later overlap is open
+    await waitFor(() => ws2.sent.length > 0); // session.create on the new socket
+    await sleep(50);
+    expect(audioSendCount(ws2)).toBe(1);
+
+    await stream.pushFrame(InterruptionStreamSentinel.overlapSpeechEnded(Date.now()));
+    await waitFor(() => events.length === 2);
+
+    expect(events[1]!.numRequests).toBe(0);
+
+    await stream.close();
   });
 });
