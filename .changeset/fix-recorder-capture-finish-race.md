@@ -17,9 +17,13 @@ output, so a caller that retries after a transient rejection is no longer reject
 A finish reported by the wrapped output settles its segment whether or not the recorder has been
 flushed. The `AudioOutput` contract lets a sink report a finish as soon as its playout ends, and
 `TranscriptionSynchronizer` does exactly that when it reconciles a dropped segment from
-`waitForPlayout`, so requiring a flush first would strand the caller. Only a _synthesized_ finish —
-for a segment the wrapped output never counted — still waits for the flush, which is what
-guarantees the segment can no longer grow.
+`waitForPlayout`, so requiring a flush first would strand the caller.
+
+`waitForPlayout` no longer depends on a flush either. A segment the wrapped output never counted
+is settled once that output reports its own playout complete, since at that point no finish can
+ever arrive for it. Waiting for a flush instead only worked because `performAudioForwarding` — the
+one thing that captures frames — happens to flush in a `finally`; a caller that waited without
+flushing hung forever.
 
 Behavior change: `waitForPlayout` now blocks while a frame is still in flight inside the wrapped
 output. Previously it could return immediately with a fabricated

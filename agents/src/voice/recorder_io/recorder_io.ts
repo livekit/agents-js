@@ -582,6 +582,14 @@ interface RecorderOutputSegment {
   capturesInFlight: number;
   finishRequested: boolean;
   flushed: boolean;
+  /**
+   * Set once a caller has waited for this segment's playout *and* the wrapped output has
+   * reported its own playout complete. At that point the wrapped output is holding nothing
+   * for us, so a segment it never accepted can no longer be finished by anyone — which is the
+   * same guarantee a flush gives {@link RecorderAudioOutput.drainFinishes}, arrived at from
+   * the other side.
+   */
+  playoutAwaited: boolean;
   playbackEvent?: PlaybackFinishedEvent;
   /** Wall-clock time the segment was opened, i.e. when its first frame entered `captureFrame`. */
   speechStartTime: number;
@@ -665,14 +673,19 @@ class RecorderAudioOutput extends AudioOutput {
 
       if (!segment.acceptedDownstream) {
         // A segment the downstream output never counted will never receive a real finish, so
-        // we synthesize one. Requiring the flush first is a stricter precondition than the old
-        // code had: it guarantees no further frames can join this segment, so we cannot settle
-        // one that is still growing. Every path that waits on a segment reaches this state —
-        // `generation.ts` flushes in a `finally`, the interrupted path in `agent_activity.ts`
-        // awaits `cancelAndWait` on the forward tasks before waiting for playout, and
-        // `RecorderIO.close()` seals the open segment before it waits, since closing means no
-        // further frames are possible.
-        if (!segment.flushed) {
+        // we synthesize one. Before doing that we need to know the segment can no longer grow,
+        // or we would settle one that is still being captured into. A flush proves that, and
+        // so does `playoutAwaited`: a caller is waiting on this segment and the wrapped output
+        // has already reported its own playout done, so nothing is left that could finish it.
+        //
+        // Requiring the flush *alone* is not enough. It happens to hold for every in-tree
+        // caller today — `forwardAudio` flushes in a `finally` and is the only code that
+        // captures frames, `agent_activity.ts` awaits `cancelAndWait` on the forward tasks
+        // before it waits for playout, and `RecorderIO.close()` seals the open segment — but
+        // that is an accident of ordering inside somebody else's `finally`, not a contract.
+        // A caller that waits without flushing is asking a well-formed question, and hanging
+        // is the wrong answer to it.
+        if (!segment.flushed && !segment.playoutAwaited) {
           return;
         }
         this.finishSegment(segment, { playbackPosition: 0, interrupted: true });
@@ -884,6 +897,7 @@ class RecorderAudioOutput extends AudioOutput {
         capturesInFlight: 0,
         finishRequested: false,
         flushed: false,
+        playoutAwaited: false,
         // Stamped here, before the frame leaves, rather than once the downstream output accepts
         // it. A downstream output may park the frame (the `ParticipantAudioOutput` pause gate)
         // and a finish can land while it is parked. `finishSegment` clamps the reported playback
@@ -970,6 +984,13 @@ class RecorderAudioOutput extends AudioOutput {
     const waitForRecorder = super.waitForPlayout();
     if (this.nextInChain) {
       await this.nextInChain.waitForPlayout();
+    }
+    if (targetSegment) {
+      // Marked only after the wrapped output's own wait returns, so this really does mean
+      // "nothing downstream is still holding this segment" and not merely "someone asked".
+      // Only the segment open at call time is marked: one opened later is not part of what
+      // this caller is waiting for, and settling it early would split the recording.
+      targetSegment.playoutAwaited = true;
     }
     this.drainFinishes();
     const event = await waitForRecorder;
