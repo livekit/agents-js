@@ -436,6 +436,12 @@ export const createAgentFalseInterruptionEvent = ({
   createdAt,
 });
 
+/**
+ * Payload of {@link AgentSessionEventTypes.OverlappingSpeech}. Re-exported here so handlers can be
+ * typed by name; it carries `probability`, `probabilities` and `numRequests` alongside the verdict.
+ */
+export type { OverlappingSpeechEvent };
+
 export type AgentEvent =
   | UserInputTranscribedEvent
   | UserStateChangedEvent
