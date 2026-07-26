@@ -14,6 +14,7 @@ import { InterruptionCacheEntry } from './interruption_cache_entry.js';
 import type { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import {
   type AgentSpeechEnded,
+  type AgentSpeechResumed,
   type AgentSpeechStarted,
   type ApiConnectOptions,
   type Flush,
@@ -30,6 +31,7 @@ import { createWsTransport } from './ws_transport.js';
 // Re-export sentinel types for backwards compatibility
 export type {
   AgentSpeechEnded,
+  AgentSpeechResumed,
   AgentSpeechStarted,
   ApiConnectOptions,
   Flush,
@@ -38,6 +40,12 @@ export type {
   OverlapSpeechStarted,
 };
 
+/** Snapshot of an overlap that is still being classified. */
+export interface ActiveOverlap {
+  startedAt: number;
+  userSpeakingSpan?: Span;
+}
+
 export class InterruptionStreamSentinel {
   static agentSpeechStarted(): AgentSpeechStarted {
     return { type: 'agent-speech-started' };
@@ -45,6 +53,14 @@ export class InterruptionStreamSentinel {
 
   static agentSpeechEnded(): AgentSpeechEnded {
     return { type: 'agent-speech-ended' };
+  }
+
+  static agentSpeechResumed(overlap?: ActiveOverlap): AgentSpeechResumed {
+    return {
+      type: 'agent-speech-resumed',
+      overlapStartedAt: overlap?.startedAt,
+      userSpeakingSpan: overlap?.userSpeakingSpan,
+    };
   }
 
   static overlapSpeechStarted(
@@ -101,6 +117,9 @@ export class InterruptionStreamBase {
 
   private wsClose?: () => void;
 
+  // The overlap flag lives in the setupTransform() closure; this exposes it for `activeOverlap`.
+  private readOverlapSpeechStarted?: () => boolean;
+
   // Mutable transport options that can be updated via updateOptions()
   private transportOptions: {
     baseUrl: string;
@@ -138,6 +157,21 @@ export class InterruptionStreamBase {
     };
 
     this.eventStream = this.setupTransform();
+  }
+
+  /**
+   * The overlap this stream is currently classifying, if any.
+   *
+   * Unlike Python — where the equivalent flags are attributes on the stream instance and a
+   * reconnect leaves them alone — every retry here builds a new stream and drops the state held in
+   * `setupTransform()`. Callers that recreate the stream use this to hand the in-progress overlap
+   * to its replacement via {@link InterruptionStreamSentinel.agentSpeechResumed}.
+   */
+  get activeOverlap(): ActiveOverlap | undefined {
+    if (!this.readOverlapSpeechStarted?.() || this.overlapSpeechStartedAt === undefined) {
+      return undefined;
+    }
+    return { startedAt: this.overlapSpeechStartedAt, userSpeakingSpan: this.userSpeakingSpan };
   }
 
   /**
@@ -188,6 +222,7 @@ export class InterruptionStreamBase {
         overlapSpeechStarted = partial.overlapSpeechStarted;
       }
     };
+    this.readOverlapSpeechStarted = () => overlapSpeechStarted;
     const handleSpanUpdate = (entry: InterruptionCacheEntry) => {
       if (this.userSpeakingSpan) {
         updateUserSpeakingSpan(this.userSpeakingSpan, entry);
@@ -248,15 +283,41 @@ export class InterruptionStreamBase {
               });
             }
           } else if (chunk.type === 'agent-speech-started') {
-            this.logger.debug('agent speech started');
+            // One agent turn can span several speech segments — a queued SpeechHandle, or the
+            // reply that follows a tool call — and `AgentActivity.onPipelineReplyDone` only
+            // reports `agent-speech-ended` once the speech queue has drained. The later segments
+            // therefore arrive here with no end in between. Resetting on those would strand an
+            // overlap the user is still in the middle of: `overlapSpeechStarted` is the gate that
+            // lets their audio reach the gateway at all, and only a VAD start-of-speech can raise
+            // it again — which never comes for speech that is already under way.
+            if (agentSpeechStarted && overlapSpeechStarted) {
+              this.logger.debug('agent speech continued into a new segment, keeping open overlap');
+            } else {
+              this.logger.debug('agent speech started');
+              agentSpeechStarted = true;
+              overlapSpeechStarted = false;
+              this.overlapSpeechStartedAt = undefined;
+              accumulatedSamples = 0;
+              overlapCount = 0;
+              startIdx = 0;
+              this.numRequests = 0;
+              cache.clear();
+            }
+          } else if (chunk.type === 'agent-speech-resumed') {
+            // This stream replaces one the transport failover tore down. Adopt what the previous
+            // stream knew instead of treating it as a new turn; everything else is already at its
+            // freshly-constructed value.
+            this.logger.debug(
+              { overlapStartedAt: chunk.overlapStartedAt },
+              'resuming agent speech on a replacement interruption stream',
+            );
             agentSpeechStarted = true;
-            overlapSpeechStarted = false;
-            this.overlapSpeechStartedAt = undefined;
-            accumulatedSamples = 0;
-            overlapCount = 0;
-            startIdx = 0;
-            this.numRequests = 0;
-            cache.clear();
+            if (chunk.overlapStartedAt !== undefined) {
+              overlapSpeechStarted = true;
+              overlapCount = 1;
+              this.overlapSpeechStartedAt = chunk.overlapStartedAt;
+              this.userSpeakingSpan = chunk.userSpeakingSpan;
+            }
           } else if (chunk.type === 'agent-speech-ended') {
             this.logger.debug('agent speech ended');
             agentSpeechStarted = false;

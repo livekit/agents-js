@@ -23,7 +23,10 @@ import {
 import { apiConnectDefaults, intervalForRetry } from '../inference/interruption/defaults.js';
 import { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { AdaptiveInterruptionDetector } from '../inference/interruption/interruption_detector.js';
-import { InterruptionStreamSentinel } from '../inference/interruption/interruption_stream.js';
+import {
+  type ActiveOverlap,
+  InterruptionStreamSentinel,
+} from '../inference/interruption/interruption_stream.js';
 import {
   type InterruptionSentinel,
   type OverlappingSpeechEvent,
@@ -1960,6 +1963,8 @@ export class AudioRecognition {
 
     let numRetries = 0;
     const maxRetries = apiConnectDefaults.maxRetries;
+    // Overlap the torn-down stream was still classifying, handed to its replacement below.
+    let resumeOverlap: ActiveOverlap | undefined;
 
     while (!signal.aborted) {
       const stream = interruptionDetection.createStream();
@@ -1980,11 +1985,14 @@ export class AudioRecognition {
       let forwardTask: Promise<void> | undefined;
 
       try {
-        // Unlike Python where _agent_speech_started lives on `self` and survives retries,
-        // JS creates a fresh InterruptionStreamBase per retry with agentSpeechStarted = false.
-        // Re-inject the sentinel so the new stream knows the agent is mid-speech.
+        // Unlike Python where _agent_speech_started and _overlap_started live on `self` and are
+        // untouched by a reconnect, JS creates a fresh InterruptionStreamBase per retry and loses
+        // everything the previous one held. Hand it the whole picture, not just "the agent is
+        // speaking": an overlap that was open at failover can never be re-armed otherwise, since
+        // only a VAD start-of-speech raises the flag and VAD does not re-announce speech that is
+        // already under way. The rest of that turn's user audio would be dropped on the floor.
         if (numRetries > 0 && this.isAgentSpeaking) {
-          await stream.pushFrame(InterruptionStreamSentinel.agentSpeechStarted());
+          await stream.pushFrame(InterruptionStreamSentinel.agentSpeechResumed(resumeOverlap));
         }
 
         forwardTask = (async () => {
@@ -2005,6 +2013,10 @@ export class AudioRecognition {
             inputReader.releaseLock();
           }
         })();
+        // The stream this task pushes into is torn down as soon as the read loop below fails, so
+        // it rejects long before the `finally` attaches a handler — which only runs after the
+        // retry backoff. Mark it handled now so the rejection is not reported as unhandled.
+        forwardTask.catch(() => {});
 
         const abortPromise = waitForAbort(signal);
 
@@ -2069,6 +2081,8 @@ export class AudioRecognition {
           break;
         }
       } finally {
+        // Read before cleanup() closes the stream, so a retry can restore the open overlap.
+        resumeOverlap = stream.activeOverlap;
         await cleanup();
         await forwardTask?.catch((e) => {
           this.logger.debug({ err: e }, 'interruption task exited with error');

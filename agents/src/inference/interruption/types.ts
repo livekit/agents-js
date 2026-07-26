@@ -72,6 +72,18 @@ export interface AgentSpeechEnded {
   type: 'agent-speech-ended';
 }
 
+/**
+ * Restores a replacement stream after the transport failed over, which builds a brand new
+ * `InterruptionStreamBase` with none of the previous one's state. Kept distinct from
+ * {@link AgentSpeechStarted} so that sentinel keeps meaning "a new agent turn began, reset".
+ */
+export interface AgentSpeechResumed {
+  type: 'agent-speech-resumed';
+  /** Absolute timestamp (ms) the overlap started at, when one was still open at failover. */
+  overlapStartedAt?: number;
+  userSpeakingSpan?: Span;
+}
+
 export interface OverlapSpeechStarted {
   type: 'overlap-speech-started';
   /** Duration of the speech segment in milliseconds (matches VADEvent.speechDuration units). */
@@ -99,6 +111,7 @@ export interface Flush {
 export type InterruptionSentinel =
   | AgentSpeechStarted
   | AgentSpeechEnded
+  | AgentSpeechResumed
   | OverlapSpeechStarted
   | OverlapSpeechEnded
   | Flush;
