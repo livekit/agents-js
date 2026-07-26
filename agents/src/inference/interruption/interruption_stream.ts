@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import { type ReadableStream, TransformStream } from 'stream/web';
+import { asAudioFrame, describeUnknownChunk } from '../../audio_frame_guard.js';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -39,6 +40,9 @@ export type {
   OverlapSpeechEnded,
   OverlapSpeechStarted,
 };
+
+/** Minimum gap between repeat reports of chunks the transform could not classify. */
+const DISCARDED_CHUNK_LOG_INTERVAL = 10_000;
 
 /** Snapshot of an overlap that is still being classified. */
 export interface ActiveOverlap {
@@ -244,6 +248,26 @@ export class InterruptionStreamBase {
       return n;
     };
 
+    // A chunk that is neither audio nor a sentinel used to fall off the end of the dispatch below
+    // and vanish — no accept, no drop, no counter. Audio arrives at ~100 chunks/s, so a log per
+    // chunk would be unusable: report the first one at once, then at most one per interval,
+    // carrying the running total so the scale of the loss is visible.
+    let discardedChunks = 0;
+    let discardedChunkLoggedAt = 0;
+    const reportDiscardedChunk = (chunk: unknown) => {
+      discardedChunks++;
+      const now = Date.now();
+      if (discardedChunks > 1 && now - discardedChunkLoggedAt < DISCARDED_CHUNK_LOG_INTERVAL) {
+        return;
+      }
+      discardedChunkLoggedAt = now;
+      this.logger.error(
+        { ...describeUnknownChunk(chunk), discardedChunks },
+        'interruption stream discarded a chunk that is neither an audio frame nor a known ' +
+          'sentinel; interruption detection is running blind for as long as this continues',
+      );
+    };
+
     // First transform: process input frames/sentinels and output audio slices or events
     const audioTransformer = new TransformStream<
       InterruptionSentinel | AudioFrame,
@@ -251,17 +275,18 @@ export class InterruptionStreamBase {
     >(
       {
         transform: (chunk, controller) => {
-          if (chunk instanceof AudioFrame) {
+          const frame = asAudioFrame(chunk);
+          if (frame) {
             if (!agentSpeechStarted) {
               return;
             }
-            if (this.options.sampleRate !== chunk.sampleRate) {
+            if (this.options.sampleRate !== frame.sampleRate) {
               controller.error('the sample rate of the input frames must be consistent');
               this.logger.error('the sample rate of the input frames must be consistent');
               return;
             }
             const result = writeToInferenceS16Data(
-              chunk,
+              frame,
               startIdx,
               inferenceS16Data,
               this.options.maxAudioDurationInS,
@@ -282,19 +307,61 @@ export class InterruptionStreamBase {
                 overlapGeneration,
               });
             }
-          } else if (chunk.type === 'agent-speech-started') {
-            // One agent turn can span several speech segments — a queued SpeechHandle, or the
-            // reply that follows a tool call — and `AgentActivity.onPipelineReplyDone` only
-            // reports `agent-speech-ended` once the speech queue has drained. The later segments
-            // therefore arrive here with no end in between. Resetting on those would strand an
-            // overlap the user is still in the middle of: `overlapSpeechStarted` is the gate that
-            // lets their audio reach the gateway at all, and only a VAD start-of-speech can raise
-            // it again — which never comes for speech that is already under way.
-            if (agentSpeechStarted && overlapSpeechStarted) {
-              this.logger.debug('agent speech continued into a new segment, keeping open overlap');
-            } else {
-              this.logger.debug('agent speech started');
+            return;
+          }
+
+          // Not audio, so it should be a sentinel — but `chunk` is only typed as one, and an
+          // unrecognised object reaching here is exactly the failure this switch exists to
+          // surface, so the `default` below has to be a real runtime guard and not just the
+          // compile-time exhaustiveness check.
+          const sentinel = chunk as InterruptionSentinel;
+          switch (sentinel.type) {
+            case 'agent-speech-started': {
+              // One agent turn can span several speech segments — a queued SpeechHandle, or the
+              // reply that follows a tool call — and `AgentActivity.onPipelineReplyDone` only
+              // reports `agent-speech-ended` once the speech queue has drained. The later
+              // segments therefore arrive here with no end in between. Resetting on those would
+              // strand an overlap the user is still in the middle of: `overlapSpeechStarted` is
+              // the gate that lets their audio reach the gateway at all, and only a VAD
+              // start-of-speech can raise it again — which never comes for speech that is
+              // already under way.
+              if (agentSpeechStarted && overlapSpeechStarted) {
+                this.logger.debug(
+                  'agent speech continued into a new segment, keeping open overlap',
+                );
+              } else {
+                this.logger.debug('agent speech started');
+                agentSpeechStarted = true;
+                overlapSpeechStarted = false;
+                this.overlapSpeechStartedAt = undefined;
+                accumulatedSamples = 0;
+                overlapCount = 0;
+                startIdx = 0;
+                this.numRequests = 0;
+                cache.clear();
+              }
+              break;
+            }
+            case 'agent-speech-resumed': {
+              // This stream replaces one the transport failover tore down. Adopt what the
+              // previous stream knew instead of treating it as a new turn; everything else is
+              // already at its freshly-constructed value.
+              this.logger.debug(
+                { overlapStartedAt: sentinel.overlapStartedAt },
+                'resuming agent speech on a replacement interruption stream',
+              );
               agentSpeechStarted = true;
+              if (sentinel.overlapStartedAt !== undefined) {
+                overlapSpeechStarted = true;
+                overlapCount = 1;
+                this.overlapSpeechStartedAt = sentinel.overlapStartedAt;
+                this.userSpeakingSpan = sentinel.userSpeakingSpan;
+              }
+              break;
+            }
+            case 'agent-speech-ended': {
+              this.logger.debug('agent speech ended');
+              agentSpeechStarted = false;
               overlapSpeechStarted = false;
               this.overlapSpeechStartedAt = undefined;
               accumulatedSamples = 0;
@@ -302,98 +369,88 @@ export class InterruptionStreamBase {
               startIdx = 0;
               this.numRequests = 0;
               cache.clear();
+              break;
             }
-          } else if (chunk.type === 'agent-speech-resumed') {
-            // This stream replaces one the transport failover tore down. Adopt what the previous
-            // stream knew instead of treating it as a new turn; everything else is already at its
-            // freshly-constructed value.
-            this.logger.debug(
-              { overlapStartedAt: chunk.overlapStartedAt },
-              'resuming agent speech on a replacement interruption stream',
-            );
-            agentSpeechStarted = true;
-            if (chunk.overlapStartedAt !== undefined) {
+            case 'overlap-speech-started': {
+              // An overlap only means something while the agent holds the floor.
+              if (!agentSpeechStarted) break;
+              this.overlapSpeechStartedAt = sentinel.startedAt;
+              this.userSpeakingSpan = sentinel.userSpeakingSpan;
+              this.logger.debug('overlap speech started, starting interruption inference');
               overlapSpeechStarted = true;
-              overlapCount = 1;
-              this.overlapSpeechStartedAt = chunk.overlapStartedAt;
-              this.userSpeakingSpan = chunk.userSpeakingSpan;
-            }
-          } else if (chunk.type === 'agent-speech-ended') {
-            this.logger.debug('agent speech ended');
-            agentSpeechStarted = false;
-            overlapSpeechStarted = false;
-            this.overlapSpeechStartedAt = undefined;
-            accumulatedSamples = 0;
-            overlapCount = 0;
-            startIdx = 0;
-            this.numRequests = 0;
-            cache.clear();
-          } else if (chunk.type === 'overlap-speech-started' && agentSpeechStarted) {
-            this.overlapSpeechStartedAt = chunk.startedAt;
-            this.userSpeakingSpan = chunk.userSpeakingSpan;
-            this.logger.debug('overlap speech started, starting interruption inference');
-            overlapSpeechStarted = true;
-            accumulatedSamples = 0;
-            overlapCount += 1;
-            overlapGeneration += 1;
-            if (overlapCount <= 1) {
-              const keepSize =
-                Math.round((chunk.speechDuration / 1000) * this.options.sampleRate) +
-                Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
-              const shiftCount = Math.max(0, startIdx - keepSize);
-              inferenceS16Data.copyWithin(0, shiftCount, startIdx);
-              startIdx -= shiftCount;
-            }
-            cache.clear();
-          } else if (chunk.type === 'overlap-speech-ended') {
-            this.logger.debug('overlap speech ended');
-            if (overlapSpeechStarted) {
-              this.userSpeakingSpan = undefined;
-              let latestEntry = cache.pop(
-                (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
-              );
-              const numRequests = getAndResetNumRequests();
-              if (!latestEntry) {
-                // The verdict below is a fallback, not a model decision. Warn rather than debug:
-                // without this, an unanswered overlap is indistinguishable from a genuine
-                // low-probability backchannel in production logs.
-                this.logger.warn(
-                  {
-                    overlapDuration:
-                      this.overlapSpeechStartedAt !== undefined
-                        ? chunk.endedAt - this.overlapSpeechStartedAt
-                        : undefined,
-                    numRequests,
-                    accumulatedSamples,
-                    agentSpeechStarted,
-                    agentEnded: chunk.agentEnded,
-                  },
-                  'no interruption inference result for overlap speech, defaulting to backchannel',
-                );
-                latestEntry = InterruptionCacheEntry.default();
-              }
-              const e = latestEntry ?? InterruptionCacheEntry.default();
-              const event: OverlappingSpeechEvent = {
-                type: 'overlapping_speech',
-                detectedAt: chunk.endedAt,
-                isInterruption: false,
-                agentEnded: chunk.agentEnded,
-                overlapStartedAt: this.overlapSpeechStartedAt,
-                speechInput: e.speechInput,
-                probabilities: e.probabilities,
-                totalDurationInS: e.totalDurationInS,
-                detectionDelayInS: e.detectionDelayInS,
-                predictionDurationInS: e.predictionDurationInS,
-                probability: e.probability,
-                numRequests,
-              };
-              controller.enqueue(event);
-              overlapSpeechStarted = false;
               accumulatedSamples = 0;
+              overlapCount += 1;
+              overlapGeneration += 1;
+              if (overlapCount <= 1) {
+                const keepSize =
+                  Math.round((sentinel.speechDuration / 1000) * this.options.sampleRate) +
+                  Math.round(this.options.audioPrefixDurationInS * this.options.sampleRate);
+                const shiftCount = Math.max(0, startIdx - keepSize);
+                inferenceS16Data.copyWithin(0, shiftCount, startIdx);
+                startIdx -= shiftCount;
+              }
+              cache.clear();
+              break;
             }
-            this.overlapSpeechStartedAt = undefined;
-          } else if (chunk.type === 'flush') {
-            // no-op
+            case 'overlap-speech-ended': {
+              this.logger.debug('overlap speech ended');
+              if (overlapSpeechStarted) {
+                this.userSpeakingSpan = undefined;
+                let latestEntry = cache.pop(
+                  (entry) => entry.totalDurationInS !== undefined && entry.totalDurationInS > 0,
+                );
+                const numRequests = getAndResetNumRequests();
+                if (!latestEntry) {
+                  // The verdict below is a fallback, not a model decision. Warn rather than
+                  // debug: without this, an unanswered overlap is indistinguishable from a
+                  // genuine low-probability backchannel in production logs.
+                  this.logger.warn(
+                    {
+                      overlapDuration:
+                        this.overlapSpeechStartedAt !== undefined
+                          ? sentinel.endedAt - this.overlapSpeechStartedAt
+                          : undefined,
+                      numRequests,
+                      accumulatedSamples,
+                      agentSpeechStarted,
+                      agentEnded: sentinel.agentEnded,
+                    },
+                    'no interruption inference result for overlap speech, defaulting to backchannel',
+                  );
+                  latestEntry = InterruptionCacheEntry.default();
+                }
+                const e = latestEntry ?? InterruptionCacheEntry.default();
+                const event: OverlappingSpeechEvent = {
+                  type: 'overlapping_speech',
+                  detectedAt: sentinel.endedAt,
+                  isInterruption: false,
+                  agentEnded: sentinel.agentEnded,
+                  overlapStartedAt: this.overlapSpeechStartedAt,
+                  speechInput: e.speechInput,
+                  probabilities: e.probabilities,
+                  totalDurationInS: e.totalDurationInS,
+                  detectionDelayInS: e.detectionDelayInS,
+                  predictionDurationInS: e.predictionDurationInS,
+                  probability: e.probability,
+                  numRequests,
+                };
+                controller.enqueue(event);
+                overlapSpeechStarted = false;
+                accumulatedSamples = 0;
+              }
+              this.overlapSpeechStartedAt = undefined;
+              break;
+            }
+            case 'flush':
+              break;
+            default: {
+              // `never` at compile time, so a new sentinel cannot be added without handling it
+              // here. At runtime this is reached by anything the stream cannot classify, which
+              // used to be dropped in silence.
+              const unhandled: never = sentinel;
+              reportDiscardedChunk(unhandled);
+              break;
+            }
           }
         },
       },
@@ -484,18 +541,22 @@ export class InterruptionStreamBase {
 
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
-    if (!(frame instanceof AudioFrame)) {
-      return this.inputStream.write(frame);
-    } else if (this.options.sampleRate !== frame.sampleRate) {
-      const resampler = this.getResamplerFor(frame.sampleRate);
-      if (resampler.inputRate !== frame.sampleRate) {
+    // Audio is recognised by shape, not by constructor identity: a frame built by a second copy
+    // of @livekit/rtc-node used to fail the check and be written through as if it were a
+    // sentinel, skipping the resampler on the way to a transform that then discarded it.
+    const audioFrame = asAudioFrame(frame);
+    if (!audioFrame) {
+      return this.inputStream.write(frame as InterruptionSentinel);
+    } else if (this.options.sampleRate !== audioFrame.sampleRate) {
+      const resampler = this.getResamplerFor(audioFrame.sampleRate);
+      if (resampler.inputRate !== audioFrame.sampleRate) {
         throw new Error('the sample rate of the input frames must be consistent');
       }
-      for (const resampledFrame of resampler.push(frame)) {
+      for (const resampledFrame of resampler.push(audioFrame)) {
         await this.inputStream.write(resampledFrame);
       }
     } else {
-      await this.inputStream.write(frame);
+      await this.inputStream.write(audioFrame);
     }
   }
 

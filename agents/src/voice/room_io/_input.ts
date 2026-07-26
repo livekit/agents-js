@@ -6,7 +6,7 @@ import {
   AudioStream,
   type FrameProcessor,
   type NoiseCancellationOptions,
-  RemoteParticipant,
+  type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
   type Room,
@@ -57,8 +57,12 @@ export class ParticipantAudioInputStream extends AudioInput {
 
   setParticipant(participant: RemoteParticipant | string | null) {
     this.logger.debug({ participant }, 'setting participant audio input');
+    // Discriminate on the primitive, not on `instanceof RemoteParticipant`: a participant handed
+    // in by application code comes from whichever copy of @livekit/rtc-node the application
+    // resolved, and a failed `instanceof` here would quietly store an object as the identity and
+    // subscribe to nothing. Matches BaseParticipantTranscriptionOutput.setParticipant.
     const participantIdentity =
-      participant instanceof RemoteParticipant ? participant.identity : participant;
+      typeof participant === 'string' ? participant : participant?.identity ?? null;
 
     if (this.participantIdentity === participantIdentity) {
       return;
@@ -73,9 +77,9 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
 
     const participantValue =
-      participant instanceof RemoteParticipant
-        ? participant
-        : this.room.remoteParticipants.get(participantIdentity);
+      typeof participant === 'string' || participant === null
+        ? this.room.remoteParticipants.get(participantIdentity)
+        : participant;
 
     // Convert Map iterator to array for Pino serialization
     const trackPublicationsArray = Array.from(participantValue?.trackPublications.values() ?? []);

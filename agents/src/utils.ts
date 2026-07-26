@@ -9,7 +9,7 @@ import type {
   Room,
   TrackKind,
 } from '@livekit/rtc-node';
-import { AudioFrame, AudioResampler, RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, type RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
@@ -1149,8 +1149,11 @@ export async function waitForParticipantAttribute({
 
   const fut = new Future<void>();
 
-  const isMatch = (p: Participant) =>
-    p instanceof RemoteParticipant && p.identity === identity && p.attributes[attribute] === value;
+  // Matching on identity alone is enough — `identity` was just resolved out of
+  // `room.remoteParticipants`, and identities are unique within a room, so no local participant
+  // can collide with it. The `instanceof RemoteParticipant` this replaces would go false whenever
+  // the room came from a second copy of @livekit/rtc-node, leaving this future to hang forever.
+  const isMatch = (p: Participant) => p.identity === identity && p.attributes[attribute] === value;
 
   const onParticipantAttributesChanged = (
     _changedAttributes: Record<string, string>,
