@@ -679,14 +679,21 @@ class RecorderAudioOutput extends AudioOutput {
         continue;
       }
 
-      if (!segment.flushed) {
-        return;
-      }
-
+      // A real finish from the downstream output is authoritative: the sink counted this
+      // segment and is now telling us it is over, so we settle it whether or not we have been
+      // flushed. The `AudioOutput` contract lets a sink report a finish as soon as its playout
+      // ends, with no flush involved, and `SyncedAudioOutput.waitForPlayout` does exactly that
+      // when it reconciles a segment the output below it dropped — which puts this on the
+      // default chain, not just custom sinks. The flush gate is only needed above, where we
+      // *synthesize* a finish and therefore have to know the segment can no longer grow.
       const event = this.deferredFinishes.shift();
       if (event) {
         this.finishSegment(segment, event);
         continue;
+      }
+
+      if (!segment.flushed) {
+        return;
       }
 
       if (segment.captureFailed && !segment.finishRequested && this.nextInChain) {
@@ -726,6 +733,13 @@ class RecorderAudioOutput extends AudioOutput {
     this.segments.shift();
     if (this.currentSegment === segment) {
       this.currentSegment = undefined;
+      if (!segment.flushed) {
+        // Settled on the sink's own finish rather than at a flush boundary, so the base class
+        // still has this segment latched open. Release the latch, otherwise the next
+        // `captureFrame` neither counts a new base segment nor finds one of ours to attribute
+        // the frame to and throws `recorder capture has no active segment`.
+        this.abandonOpenSegment();
+      }
     }
 
     const finishTime = segment.currentPauseStart ?? Date.now();
@@ -942,6 +956,14 @@ class RecorderAudioOutput extends AudioOutput {
    * so it is now partly redundant here; it is left in place because it still guards the other
    * outputs. Giving the base class the same per-segment attribution — which would also fix
    * `ParticipantAudioOutput` — is follow-up work.
+   *
+   * This also blocks while a frame is still in flight inside the wrapped output, where the
+   * pre-refactor code returned immediately with a fabricated
+   * `{ playbackPosition: 0, interrupted: false }` — the base class default, reachable only
+   * because the segment had not been registered yet. Registering before forwarding is what
+   * makes a finish arriving during that window attributable at all, so the wait necessarily
+   * sees the segment; reporting a turn as completed while its audio has not reached the sink
+   * would be the wrong answer anyway.
    */
   async waitForPlayout(): Promise<PlaybackFinishedEvent> {
     const targetSegment = this.segments[this.segments.length - 1];

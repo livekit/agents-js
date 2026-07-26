@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, type Room, TrackPublishOptions } from '@livekit/rtc-node';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +10,9 @@ import { initializeLogger } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { Future, isWritableStreamClosedError } from '../../utils.js';
 import type { AgentSession } from '../agent_session.js';
-import { AudioInput, AudioOutput, type PlaybackFinishedEvent } from '../io.js';
+import { AudioInput, AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
+import { ParticipantAudioOutput } from '../room_io/_output.js';
+import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
 import { RecorderIO } from './recorder_io.js';
 
 class FakeAudioInput extends AudioInput {
@@ -308,6 +310,77 @@ class AcceptThenCountRejectOutput extends AudioOutput {
   clearBuffer(): void {}
 }
 
+/**
+ * A sink that counts every frame and reports its finish when the test says so — including
+ * outside a flush boundary, which the {@link AudioOutput} contract permits.
+ */
+class AcceptThenFinishOutput extends AudioOutput {
+  constructor() {
+    super(24000);
+  }
+
+  reportFinished(event: PlaybackFinishedEvent): void {
+    this.onPlaybackFinished(event);
+  }
+
+  clearBuffer(): void {}
+}
+
+/** Parks the first frame *before* counting it, the way `ParticipantAudioOutput`'s pause gate does. */
+class ParkBeforeCountOutput extends AudioOutput {
+  readonly frameParked = new Future<void>();
+  private readonly gate = new Future<void>();
+  private captures = 0;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(frame: AudioFrame): Promise<void> {
+    this.captures++;
+    if (this.captures === 1) {
+      this.frameParked.resolve();
+      await this.gate.await;
+    }
+    await super.captureFrame(frame);
+  }
+
+  releaseGate(): void {
+    this.gate.resolve();
+  }
+
+  reportFinished(event: PlaybackFinishedEvent): void {
+    this.onPlaybackFinished(event);
+  }
+
+  clearBuffer(): void {}
+}
+
+class FakeTextOutput extends TextOutput {
+  async captureText(): Promise<void> {}
+
+  flush(): void {}
+}
+
+/**
+ * Report a stall as a value rather than letting the test time out, so a hang is distinguishable
+ * from an assertion failure in the output.
+ */
+async function settleOrStall<T>(
+  promise: Promise<T>,
+  timeoutMs = 200,
+): Promise<T | 'did not settle'> {
+  let timer: NodeJS.Timeout | undefined;
+  const watchdog = new Promise<'did not settle'>((resolve) => {
+    timer = setTimeout(() => resolve('did not settle'), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, watchdog]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function makeFrame(durationMs: number, sampleRate = 48000, channels = 1): AudioFrame {
   const samplesPerChannel = Math.floor((durationMs / 1000) * sampleRate);
   return new AudioFrame(
@@ -458,6 +531,66 @@ describe('RecorderAudioOutput', () => {
     ]);
 
     expect(result).toBe('resolved');
+    await recorder.close();
+  });
+
+  it('settles a segment the wrapped output finished before we flushed', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new AcceptThenFinishOutput();
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    // The `AudioOutput` contract lets a sink report a finish whenever its playout ends; it does
+    // not have to wait for a flush. Requiring one here stranded the caller forever.
+    downstream.reportFinished({ playbackPosition: 0, interrupted: true });
+
+    expect(await settleOrStall(output.waitForPlayout())).toEqual({
+      playbackPosition: 0,
+      interrupted: true,
+    });
+    await recorder.close();
+  });
+
+  it('opens a fresh segment for a capture that follows a settle with no flush', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new AcceptThenFinishOutput();
+    const output = recorder.recordOutput(downstream);
+
+    await output.captureFrame(makeFrame(20, 24000));
+    downstream.reportFinished({ playbackPosition: 0, interrupted: true });
+    await settleOrStall(output.waitForPlayout());
+
+    // Settling outside a flush boundary leaves the base class's capture latch set. Unless it is
+    // released, this capture neither counts a new base segment nor finds one of ours, and
+    // rejects with `recorder capture has no active segment`.
+    await expect(output.captureFrame(makeFrame(20, 24000))).resolves.toBeUndefined();
+
+    output.flush();
+    expect(await settleOrStall(output.waitForPlayout())).not.toBe('did not settle');
+    await recorder.close();
+  });
+
+  it('waits for a frame the wrapped output has parked instead of reporting a fabricated finish', async () => {
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const downstream = new ParkBeforeCountOutput();
+    const output = recorder.recordOutput(downstream);
+
+    const capture = output.captureFrame(makeFrame(20, 24000));
+    await downstream.frameParked.await;
+
+    // Deliberate divergence from the pre-refactor behavior, which returned immediately with a
+    // fabricated `{ playbackPosition: 0, interrupted: false }` because the segment had not been
+    // registered yet. The audio has demonstrably not finished playing, so claiming it completed
+    // is wrong; registering the segment before forwarding is also what makes the finish that
+    // arrives during the park attributable at all.
+    const wait = output.waitForPlayout();
+    expect(await settleOrStall(wait)).toBe('did not settle');
+
+    downstream.releaseGate();
+    await capture;
+    downstream.reportFinished({ playbackPosition: 0.02, interrupted: false });
+
+    expect(await settleOrStall(wait)).toEqual({ playbackPosition: 0.02, interrupted: false });
     await recorder.close();
   });
 
@@ -753,6 +886,70 @@ describe('RecorderAudioOutput', () => {
 
     expect(event).toEqual({ playbackPosition: 0, interrupted: true });
     downstream.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    await recorder.close();
+  });
+});
+
+describe('RecorderAudioOutput in front of a real ParticipantAudioOutput', () => {
+  function makeParticipantAudioOutput(): ParticipantAudioOutput {
+    const out = new ParticipantAudioOutput({} as Room, {
+      sampleRate: 24000,
+      numChannels: 1,
+      trackPublishOptions: new TrackPublishOptions(),
+    });
+    // `publishTrack` normally resolves this; there is no room to publish to here.
+    (out as unknown as { startedFuture: Future<void> }).startedFuture.resolve();
+    return out;
+  }
+
+  it('runs a follow-on turn after a turn interrupted while the output was paused', async () => {
+    // The customer's report: an interrupt lands while a frame sits at the pause gate, and the
+    // session never speaks again because the interrupted turn's `waitForPlayout` never settles.
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const output = recorder.recordOutput(makeParticipantAudioOutput());
+
+    await output.captureFrame(makeFrame(100, 24000));
+    output.flush();
+
+    output.pause();
+    const interruptedTurn = output.captureFrame(makeFrame(100, 24000));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // `clearBuffer` both completes the in-flight playout task with an interrupted finish and
+    // releases the parked frame without the sink ever counting it.
+    output.clearBuffer();
+    await interruptedTurn;
+    output.flush();
+
+    expect(await settleOrStall(output.waitForPlayout(), 2000)).not.toBe('did not settle');
+
+    output.resume();
+    await output.captureFrame(makeFrame(100, 24000));
+    output.flush();
+
+    expect(await settleOrStall(output.waitForPlayout(), 3000)).toEqual({
+      playbackPosition: 0.1,
+      interrupted: false,
+    });
+    await recorder.close();
+  });
+});
+
+describe('RecorderAudioOutput behind a TranscriptionSynchronizer', () => {
+  it('settles when the synchronizer emits a drift finish from waitForPlayout', async () => {
+    // `syncTranscription` is on by default, so this is the default output chain:
+    // recorder -> synchronizer -> sink. When the sink drops a frame the synchronizer counted,
+    // `SyncedAudioOutput.waitForPlayout` reconciles the drift by emitting a synthetic finish —
+    // with no flush anywhere. That makes the "finished before we flushed" case reachable
+    // without a custom sink.
+    const sink = new DroppingAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(sink, new FakeTextOutput());
+    const recorder = new RecorderIO({ agentSession: {} as AgentSession });
+    const output = recorder.recordOutput(synchronizer.audioOutput);
+
+    await output.captureFrame(makeFrame(20, 24000));
+
+    expect(await settleOrStall(output.waitForPlayout(), 500)).not.toBe('did not settle');
     await recorder.close();
   });
 });

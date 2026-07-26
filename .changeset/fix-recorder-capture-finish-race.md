@@ -13,3 +13,16 @@ playback position to zero and drop the audio the sink reported as played. And a 
 downstream capture throws now releases the capture latch on both the recorder and the wrapped
 output, so a caller that retries after a transient rejection is no longer rejected forever with
 `recorder capture has no active segment`.
+
+A finish reported by the wrapped output settles its segment whether or not the recorder has been
+flushed. The `AudioOutput` contract lets a sink report a finish as soon as its playout ends, and
+`TranscriptionSynchronizer` does exactly that when it reconciles a dropped segment from
+`waitForPlayout`, so requiring a flush first would strand the caller. Only a _synthesized_ finish —
+for a segment the wrapped output never counted — still waits for the flush, which is what
+guarantees the segment can no longer grow.
+
+Behavior change: `waitForPlayout` now blocks while a frame is still in flight inside the wrapped
+output. Previously it could return immediately with a fabricated
+`{ playbackPosition: 0, interrupted: false }`, reporting a turn as completed while its audio had
+not been handed to the sink yet. Callers that relied on the early return will now wait for the
+real playback result.
