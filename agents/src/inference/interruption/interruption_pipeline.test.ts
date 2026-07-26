@@ -87,6 +87,11 @@ interface Harness {
   close: () => Promise<void>;
 }
 
+/** Audio frames the transport pushed across every socket it has opened so far. */
+function totalAudioSendCount(): number {
+  return MockWebSocket.instances.reduce((total, ws) => total + audioSendCount(ws), 0);
+}
+
 interface OverlapEvent {
   isInterruption: boolean;
   numRequests: number;
@@ -113,6 +118,9 @@ async function createHarness({
 
   const events: OverlapEvent[] = [];
   detector.on('overlapping_speech', (ev) => events.push(ev));
+  // A simulated transport failure is emitted as a recoverable detector error; without a listener
+  // the EventEmitter would rethrow it as an unhandled 'error'.
+  detector.on('error', () => {});
 
   // Continuous room audio, pumped in the background for the whole test, exactly as a subscribed
   // track behaves — the interruption stream must pick it up on its own.
@@ -149,32 +157,44 @@ async function createHarness({
   await sleep(20);
 
   // Stand-in for the gateway: answer every audio frame promptly, as the real service does. Without
-  // this the transport's own 0.7s inference timeout tears the stream down.
-  let answered = 0;
+  // this the transport's own 0.7s inference timeout tears the stream down. Sockets opened later
+  // (an options reconnect, or the replacement stream built by a failover retry) are adopted too,
+  // so the gateway keeps behaving normally across a reconnect.
+  const answered = new Map<MockWebSocket, number>([[ws, 0]]);
   let bargeinPending = false;
   const responder = (async () => {
     while (pumping) {
-      const binary = ws.sent.filter((s): s is Uint8Array => s instanceof Uint8Array);
-      while (answered < binary.length) {
-        const createdAt = createdAtOf(binary[answered]!);
-        answered++;
-        if (bargeinPending) {
-          bargeinPending = false;
-          ws.simulateMessage({
-            type: 'bargein_detected',
-            created_at: createdAt,
-            probabilities: [0.91, 0.93, 0.95],
-            prediction_duration: 0.02,
-          });
-        } else {
-          ws.simulateMessage({
-            type: 'inference_done',
-            created_at: createdAt,
-            probabilities: [0.01, 0.02],
-            prediction_duration: 0.02,
-            is_bargein: false,
-          });
+      for (const socket of MockWebSocket.instances) {
+        if (!answered.has(socket)) {
+          answered.set(socket, 0);
+          socket.simulateOpen();
+          await sleep(1);
+          socket.simulateMessage({ type: 'session.created', default_threshold: 0.5 });
         }
+        const binary = socket.sent.filter((s): s is Uint8Array => s instanceof Uint8Array);
+        let seen = answered.get(socket)!;
+        while (seen < binary.length) {
+          const createdAt = createdAtOf(binary[seen]!);
+          seen++;
+          if (bargeinPending) {
+            bargeinPending = false;
+            socket.simulateMessage({
+              type: 'bargein_detected',
+              created_at: createdAt,
+              probabilities: [0.91, 0.93, 0.95],
+              prediction_duration: 0.02,
+            });
+          } else {
+            socket.simulateMessage({
+              type: 'inference_done',
+              created_at: createdAt,
+              probabilities: [0.01, 0.02],
+              prediction_duration: 0.02,
+              is_bargein: false,
+            });
+          }
+        }
+        answered.set(socket, seen);
       }
       await sleep(5);
     }
@@ -186,7 +206,7 @@ async function createHarness({
     hooks,
     ws,
     events,
-    requestCount: () => answered,
+    requestCount: () => [...answered.values()].reduce((a, b) => a + b, 0),
     bargeinOnNextRequest: () => {
       bargeinPending = true;
     },
@@ -263,4 +283,149 @@ describe('adaptive interruption pipeline', () => {
 
     await h.close();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Overlap state must survive events that are not a new agent turn (regression)
+// ---------------------------------------------------------------------------
+
+/**
+ * `overlapSpeechStarted` is the gate that lets user audio reach the gateway at all, and the only
+ * thing that ever raises it is an `overlap-speech-started` sentinel, which in turn only comes from
+ * a VAD start-of-speech. VAD does not re-announce speech that is already under way, so once the
+ * flag is cleared mid-overlap nothing can re-arm it: every remaining frame of the interruption is
+ * dropped, no inference request is made, and the agent talks straight through the user.
+ *
+ * Two things clear the flag without the user's turn having ended.
+ */
+describe('adaptive interruption overlap state retention', () => {
+  beforeEach(() => {
+    MockWebSocket.instances.length = 0;
+  });
+
+  /**
+   * A transient socket failure fails the stream over. JS rebuilds `InterruptionStreamBase` from
+   * scratch on retry — all of its state lives in a `setupTransform()` closure — whereas Python
+   * keeps `_agent_speech_started` / `_overlap_started` on `self` and only reconnects the socket.
+   * Replaying `agent-speech-started` alone restores half the state: the agent is known to be
+   * speaking again, but the in-flight overlap is gone.
+   */
+  it('keeps sending user audio after the transport fails over mid-overlap', async () => {
+    const h = await createHarness();
+
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(200);
+    await h.recognition.onStartOfOverlapSpeech(200, Date.now());
+    await sleep(400);
+
+    expect(totalAudioSendCount()).toBeGreaterThan(0);
+    const socketsBefore = MockWebSocket.instances.length;
+
+    // Transient socket failure while the user is mid-interrupt.
+    h.ws.emit('error', new Error('connection reset'));
+
+    // The failover sleeps intervalForRetry(0) (2s + jitter) before rebuilding the stream.
+    await waitFor(() => MockWebSocket.instances.length > socketsBefore, 8000);
+    await sleep(200);
+
+    // The user is still talking; from here on every frame must reach the new socket.
+    const sendsAfterFailover = totalAudioSendCount();
+    await sleep(800);
+
+    expect(totalAudioSendCount() - sendsAfterFailover).toBeGreaterThan(0);
+
+    await h.recognition.onEndOfOverlapSpeech(Date.now());
+    await waitFor(() => h.events.length > 0);
+    expect(h.events[h.events.length - 1]!.numRequests).toBeGreaterThan(0);
+
+    await h.close();
+  }, 30_000);
+
+  /**
+   * One user-perceived agent turn can contain several speech segments — a tool call sandwiched
+   * between two replies, or a queued `say()`. `AgentActivity.onPipelineReplyDone` only reports
+   * `onEndOfAgentSpeech` once the speech queue has drained, so the second segment raises
+   * `agent-speech-started` again with no `agent-speech-ended` in between. Treating that as a new
+   * turn resets the overlap the user is in the middle of.
+   */
+  it('keeps sending user audio when a second speech segment starts mid-overlap', async () => {
+    const h = await createHarness();
+
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(200);
+    await h.recognition.onStartOfOverlapSpeech(200, Date.now());
+    await sleep(400);
+
+    const before = totalAudioSendCount();
+    expect(before).toBeGreaterThan(0);
+
+    // Second segment of the same turn: no `onEndOfAgentSpeech` precedes it.
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(600);
+
+    expect(totalAudioSendCount() - before).toBeGreaterThan(0);
+
+    await h.recognition.onEndOfOverlapSpeech(Date.now());
+    await waitFor(() => h.events.length > 0);
+    expect(h.events[h.events.length - 1]!.numRequests).toBeGreaterThan(0);
+
+    await h.close();
+  }, 30_000);
+
+  /**
+   * The bargein verdict must still surface after a mid-overlap segment change — restoring the gate
+   * is only useful if the recovered audio can still produce `isInterruption: true`.
+   */
+  it('still reports a bargein after a second speech segment starts mid-overlap', async () => {
+    const h = await createHarness();
+
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(200);
+    await h.recognition.onStartOfOverlapSpeech(200, Date.now());
+    await sleep(400);
+
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(200);
+    h.bargeinOnNextRequest();
+    await waitFor(() => h.events.length > 0, 5000);
+
+    expect(h.events[0]!.isInterruption).toBe(true);
+    expect(h.events[0]!.numRequests).toBeGreaterThan(0);
+    await waitFor(() => vi.mocked(h.hooks.onInterruption).mock.calls.length > 0);
+
+    await h.close();
+  }, 30_000);
+
+  /** A genuine new turn must still wipe the overlap, the cache and the counters. */
+  it('resets overlap state on a new agent turn', async () => {
+    const h = await createHarness();
+
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+    await sleep(200);
+    await h.recognition.onStartOfOverlapSpeech(200, Date.now());
+    await sleep(400);
+    expect(totalAudioSendCount()).toBeGreaterThan(0);
+
+    // The agent turn ends, then a new one begins. The user is no longer overlapping anything,
+    // so their audio must not be forwarded until a fresh overlap is announced.
+    await h.recognition.onEndOfAgentSpeech(Date.now());
+    await sleep(20);
+    await h.recognition.onStartOfAgentSpeech(Date.now());
+
+    const afterNewTurn = totalAudioSendCount();
+    await sleep(600);
+    expect(totalAudioSendCount()).toBe(afterNewTurn);
+
+    // ...and the new turn's first overlap starts from a clean counter.
+    await h.recognition.onStartOfOverlapSpeech(200, Date.now());
+    await sleep(400);
+    await h.recognition.onEndOfOverlapSpeech(Date.now());
+    await waitFor(() => h.events.length > 0);
+
+    const last = h.events[h.events.length - 1]!;
+    expect(last.numRequests).toBeGreaterThan(0);
+    expect(totalAudioSendCount()).toBeGreaterThan(afterNewTurn);
+
+    await h.close();
+  }, 30_000);
 });
