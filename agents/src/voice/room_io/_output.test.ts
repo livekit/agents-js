@@ -164,13 +164,20 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     firstFrameEmitted: boolean;
     pushedDuration: number;
     _capturing: boolean;
+    interruptCount: number;
+    segmentInterruptCount: number;
+    segmentOpen: boolean;
+    gatedFrames: Set<Future<void>>;
     playbackSegmentsCount: number;
     playbackFinishedCount: number;
     playbackFinishedFuture: Future<void>;
     onPlaybackStarted: (createdAt: number) => void;
+    logger: { error: () => void };
     audioSource: {
       clearQueue: () => void;
       captureFrame: (frame: CaptureFrameArg) => Promise<void>;
+      waitForPlayout: () => Promise<void>;
+      queuedDuration: number;
     };
   };
 
@@ -184,21 +191,39 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     output.firstFrameEmitted = false;
     output.pushedDuration = 0;
     output._capturing = false;
+    output.interruptCount = 0;
+    output.segmentInterruptCount = 0;
+    output.segmentOpen = false;
+    output.gatedFrames = new Set();
     output.playbackSegmentsCount = 0;
     output.playbackFinishedCount = 0;
     output.playbackFinishedFuture = new Future<void>();
     output.onPlaybackStarted = vi.fn();
-    output.audioSource = { clearQueue: vi.fn(), captureFrame: vi.fn(async () => {}) };
+    output.logger = { error: vi.fn() };
+    output.audioSource = {
+      clearQueue: vi.fn(),
+      captureFrame: vi.fn(async () => {}),
+      // Playout never drains on its own, so a flush task stays pending like a real
+      // segment still on the wire.
+      waitForPlayout: () => new Promise<void>(() => {}),
+      queuedDuration: 0,
+    };
     return output;
   };
 
   const frame = () => ({ samplesPerChannel: 480, sampleRate: 24000 }) as unknown as CaptureFrameArg;
 
+  const settledWithin = async (promise: Promise<unknown>, ms: number) =>
+    Promise.race([
+      promise.then(() => 'settled' as const),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), ms)),
+    ]);
+
   it('does not strand the segment counter when a frame is interrupted while paused', async () => {
     const output = makeOutput({ paused: true });
 
     const capture = output.captureFrame(frame());
-    output.interruptedFuture.resolve();
+    output.clearBuffer();
     await capture;
 
     expect(output.playbackSegmentsCount).toBe(0);
@@ -209,6 +234,46 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
       new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1000)),
     ]);
     expect(result).toBe('resolved');
+  });
+
+  it('does not drop a new segment at the pause gate after the previous one was interrupted', async () => {
+    const output = makeOutput({ paused: false });
+
+    // Segment 1 plays, is flushed and then interrupted — the state a barge-in leaves behind.
+    await output.captureFrame(frame());
+    output.flush();
+    output.clearBuffer();
+    await nextTick();
+
+    // Segment 2 is a fresh reply that gets paused mid-flight by a new overlap. Its frames
+    // belong to a speech the earlier interruption knows nothing about, so they must wait
+    // for the resume rather than be discarded.
+    output.pause();
+    const capture = output.captureFrame(frame());
+    expect(await settledWithin(capture, 50)).toBe('pending');
+
+    output.resume();
+    await capture;
+
+    expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(2);
+    expect(output.playbackSegmentsCount).toBe(2);
+  });
+
+  it('releases a parked frame when a concurrent flush has replaced the interruption signal', async () => {
+    const output = makeOutput({ paused: false });
+
+    await output.captureFrame(frame());
+    output.pause();
+    const capture = output.captureFrame(frame());
+    await nextTick();
+
+    // An overlapping segment's flush swaps interruptedFuture out from under the parked
+    // frame; the interruption that follows must still reach it.
+    output.flush();
+    output.clearBuffer();
+
+    expect(await settledWithin(capture, 500)).toBe('settled');
+    expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
   });
 
   it('registers a segment on the normal non-paused path', async () => {
