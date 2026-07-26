@@ -4591,12 +4591,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    let interruptedPausedSpeech = false;
     if (
       interrupt &&
       !this.pausedSpeech.handle.interrupted &&
       this.pausedSpeech.handle.allowInterruptions
     ) {
       this.pausedSpeech.handle.interrupt();
+      interruptedPausedSpeech = true;
       // ensure the generation is done — but only if a generation
       // was actually started. Must be raced against interrupt: an interrupted
       // paused speech may never mark its generation done, and an un-raced
@@ -4611,6 +4613,13 @@ export class AgentActivity implements RecognitionHooks {
 
     const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
     if (interruptionOptions.resumeFalseInterruption && this.agentSession.output.audio) {
+      // Frames of the speech just interrupted are parked at the sink's pause gate. Opening the
+      // gate is only meant to admit the *next* speech, but the parked frames are released first
+      // and the interrupted speech continues exactly where it stopped. Signalling the
+      // interruption first makes them bail instead.
+      if (interruptedPausedSpeech) {
+        this.agentSession.output.audio.clearBuffer();
+      }
       this.agentSession.output.audio.resume();
     }
   }
