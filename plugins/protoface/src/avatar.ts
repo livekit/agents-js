@@ -132,7 +132,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.sessionIdValue = session.id;
     this.#logger.debug(
-      { sessionId: this.sessionIdValue, 'lk.pii.avatar_id': this.avatarId },
+      { sessionId: this.sessionIdValue, avatarId: this.avatarId },
       'protoface session started',
     );
 

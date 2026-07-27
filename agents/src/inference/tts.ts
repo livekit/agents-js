@@ -839,7 +839,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               return;
             case 'error':
               this.#logger.error(
-                { 'lk.pii.server_event': serverEvent },
+                { serverEvent },
                 'Received error message from LiveKit TTS WebSocket',
               );
               await resourceCleanup();

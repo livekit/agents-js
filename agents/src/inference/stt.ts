@@ -922,7 +922,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.processTranscript(event, SpeechEventType.PREFLIGHT_TRANSCRIPT);
                 break;
               case 'error':
-                this.#logger.error({ 'lk.pii.event': event }, 'Received error from LiveKit STT');
+                this.#logger.error({ error: event }, 'Received error from LiveKit STT');
                 resourceCleanup();
                 throw new APIError(`LiveKit STT returned error: ${JSON.stringify(event)}`);
             }

@@ -513,10 +513,7 @@ export class LLMStream extends llm.LLMStream {
         }
 
         if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
-          this.logger.warn(
-            { 'lk.pii.response': chunk },
-            'Google LLM response contained no content',
-          );
+          this.logger.warn(`No content in the response: ${JSON.stringify(chunk)}`);
           if (retryable) {
             throw new APIStatusError({
               message: 'Google LLM: no content in the response',

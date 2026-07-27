@@ -202,7 +202,7 @@ export class AvatarSession extends voice.AvatarSession {
       } catch (e) {
         if (e instanceof APIStatusError) {
           this.#logger.warn(
-            { statusCode: e.statusCode, 'lk.pii.body': e.body },
+            { statusCode: e.statusCode, body: e.body },
             'failed to call trugen api',
           );
           if (!e.retryable) {

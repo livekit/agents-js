@@ -211,7 +211,7 @@ export class AvatarSession extends voice.AvatarSession {
           this.realtimeSessionId = payload.id;
         } else {
           this.#logger.warn(
-            { 'lk.pii.payload': payload },
+            { payload: JSON.stringify(payload) },
             'Runway API response missing session id; API cancellation fallback will be unavailable',
           );
         }
@@ -303,11 +303,7 @@ export class AvatarSession extends voice.AvatarSession {
         this.#logger.debug({ sessionId }, 'cancelled Runway realtime session');
       } else {
         this.#logger.warn(
-          {
-            sessionId,
-            status: response.status,
-            'lk.pii.body': await response.text(),
-          },
+          { sessionId, status: response.status, body: await response.text() },
           'could not cancel Runway realtime session',
         );
       }

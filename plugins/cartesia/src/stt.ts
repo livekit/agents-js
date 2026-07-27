@@ -293,7 +293,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     try {
       const url = this.#getCartesiaUrl();
-      this.#logger.debug({ url }, 'connecting to Cartesia STT');
+      this.#logger.debug(`Connecting to Cartesia STT: ${url}`);
 
       const ws = new WebSocket(url, {
         headers: {

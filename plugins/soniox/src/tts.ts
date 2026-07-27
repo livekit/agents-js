@@ -654,12 +654,8 @@ class Connection {
     if (typeof streamId !== 'string') {
       if (response.error_code !== undefined) {
         this.#logger.error(
-          {
-            errorCode: response.error_code,
-            errorMessage: response.error_message,
-            'lk.pii.response': response,
-          },
-          'Soniox TTS connection-level error',
+          { response },
+          `Soniox TTS connection-level error: ${response.error_code} - ${response.error_message}`,
         );
       }
       return;

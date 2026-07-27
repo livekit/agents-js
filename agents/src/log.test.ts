@@ -67,7 +67,7 @@ describe('OTEL logging', () => {
     });
   });
 
-  it('keeps operational errors, reasons, and framework URLs in non-PII fields', async () => {
+  it('keeps operational errors, reasons, framework URLs, and resource IDs in non-PII fields', async () => {
     initializeLogger({ pretty: false, level: 'info' });
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
@@ -81,6 +81,7 @@ describe('OTEL logging', () => {
     log().error({ error: new Error('connection failed') }, 'provider failed');
     log().warn({ reason: 'remote close' }, 'provider disconnected');
     log().info({ baseUrl: 'wss://example.livekit.cloud' }, 'connecting to framework');
+    log().info({ avatarId: 'avatar-123' }, 'avatar session started');
 
     await vi.waitFor(() => {
       const records = emitSpy.mock.calls.map(([logObj]) => logObj);
@@ -107,6 +108,13 @@ describe('OTEL logging', () => {
         baseUrl: 'wss://example.livekit.cloud',
       });
       expect(connectionRecord).not.toHaveProperty('lk.pii.base_url');
+
+      const avatarRecord = records.find((logObj) => logObj.msg === 'avatar session started');
+      expect(avatarRecord).toMatchObject({
+        msg: 'avatar session started',
+        avatarId: 'avatar-123',
+      });
+      expect(avatarRecord).not.toHaveProperty('lk.pii.avatar_id');
     });
   });
 });

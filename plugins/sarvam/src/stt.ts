@@ -377,11 +377,7 @@ function extractConfidence(
   }
   if (value != null) {
     logger.debug(
-      {
-        valueType: typeof value,
-        'lk.pii.value': value,
-      },
-      'unexpected language_probability type; falling back to confidence=1.0',
+      `Unexpected language_probability type: ${typeof value} (value=${JSON.stringify(value)}); falling back to confidence=1.0`,
     );
   }
   return 1;
@@ -593,7 +589,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     while (!this.input.closed && !this.closed) {
       const wsUrl = buildWsUrl(this.#opts);
-      this.#logger.info({ url: wsUrl }, 'Sarvam STT connecting');
+      this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
       const ws = new WebSocket(wsUrl, {
         headers: { 'api-subscription-key': this.#opts.apiKey },
       });

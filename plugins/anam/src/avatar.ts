@@ -97,9 +97,9 @@ export class AvatarSession extends voice.AvatarSession {
 
     logger.debug(
       {
-        'lk.pii.persona_name': this.opts.personaConfig?.name,
-        'lk.pii.avatar_id': this.opts.personaConfig?.avatarId,
-        'lk.pii.persona_id': this.opts.personaConfig?.personaId,
+        personaName: this.opts.personaConfig?.name,
+        avatarId: this.opts.personaConfig?.avatarId,
+        personaId: this.opts.personaConfig?.personaId,
         apiUrl: apiUrl ?? '(default https://api.anam.ai)',
         livekitUrl,
         avatarParticipantIdentity: this.opts.avatarParticipantIdentity ?? 'anam-avatar-agent',

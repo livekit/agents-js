@@ -1075,7 +1075,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
 
     if (lkOaiDebug) {
-      this.#logger.debug({ url }, 'connecting to OpenAI Realtime API');
+      this.#logger.debug(`Connecting to OpenAI Realtime API at ${url}`);
     }
 
     return new Promise((resolve, reject) => {

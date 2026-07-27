@@ -67,7 +67,7 @@ export class AnamAPI {
             url,
             method: 'POST',
             headers: redactedHeaders,
-            'lk.pii.body': redactedBody,
+            body: redactedBody,
             attempt: attempt + 1,
           },
           'calling Anam API',
@@ -86,9 +86,9 @@ export class AnamAPI {
               url,
               method: 'POST',
               headers: redactedHeaders,
-              'lk.pii.body': redactedBody,
+              body: redactedBody,
               status: res.status,
-              'lk.pii.response': text,
+              response: text,
             },
             'Anam API request failed',
           );
@@ -104,7 +104,7 @@ export class AnamAPI {
           {
             url,
             method: 'POST',
-            'lk.pii.body':
+            body:
               body && typeof body === 'object'
                 ? { ...(body as Record<string, unknown>), livekitToken: '****' }
                 : body,
