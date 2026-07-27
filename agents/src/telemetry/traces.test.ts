@@ -432,6 +432,38 @@ describe('uploadSessionReport metadata', () => {
     expect(records[0]?.attributes).not.toHaveProperty('session.simulation');
   });
 
+  it('marks session keyterms as PII in exported session-report logs', async () => {
+    const exportSpy = vi
+      .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
+      .mockResolvedValue(undefined);
+    const keytermsOptions = {
+      keyterms: ['Acme Corp'],
+      keytermDetection: { enabled: false },
+    };
+    const report = makeReport({
+      audio: false,
+      traces: true,
+      logs: false,
+      transcript: false,
+      redaction: false,
+    });
+    report.options = { keytermsOptions };
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report,
+    });
+
+    const records = exportSpy.mock.calls[0]?.[0] ?? [];
+    const serializedOptions = records[0]?.attributes['session.options'] as Record<string, unknown>;
+    const serializedKeytermsOptions = serializedOptions.keytermsOptions as Record<string, unknown>;
+    expect(serializedKeytermsOptions['lk.pii.keyterms']).toEqual(['Acme Corp']);
+    expect(serializedKeytermsOptions).not.toHaveProperty('keyterms');
+    expect(serializedKeytermsOptions.keytermDetection).toEqual({ enabled: false });
+    expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
+  });
+
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockSuccessfulFormSubmit();
