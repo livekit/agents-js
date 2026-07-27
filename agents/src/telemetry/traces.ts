@@ -41,7 +41,7 @@ import {
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
-import { ATTR_AGENT_NAME } from './trace_types.js';
+import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -406,6 +406,18 @@ export async function setupCloudTracer(options: {
       // only; the default dispatch has no agent name). Included in both the
       // resource (traces) and the session metadata (spans + logs).
       baseMetadata[ATTR_AGENT_NAME] = agentName;
+    }
+
+    // cloud agent id and deployment provided by LiveKit Cloud via env vars.
+    // Included in both the resource and the session metadata like agentName;
+    // omitted when unset.
+    const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
+    if (cloudAgentId) {
+      baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+    }
+    const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
+    if (deploymentId) {
+      baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
     }
 
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
