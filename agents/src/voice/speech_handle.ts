@@ -19,26 +19,38 @@ const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
  * so `utils.aio.cancel_and_wait` needs no ceiling at all. Nothing here can cancel a pending
  * promise, so tasks are aborted cooperatively and waited on with this bound instead.
  *
- * Moved here from `AgentActivity` only so {@link INTERRUPTION_TIMEOUT} can be expressed against it.
- * The value is unchanged, deliberately: this budget also governs tool-execution cancellation and
- * the shutdown drain, so shrinking it to buy the ordering below would abandon teardown work that
- * legitimately takes seconds, on paths that have nothing to do with an interrupted reply.
+ * All it bounds is how long an *aborted task body* takes to reach its own return — not how long
+ * the work it started takes. The pipeline's tasks are stream pumps that re-check `signal.aborted`
+ * each iteration, and `performToolExecutions` never awaits a user tool promise on this path: it
+ * races the abort signal (`_waitForToolExecutionResult`), while `ToolExecutor` abandons a cancelled
+ * tool outright and only *logs* if `execute()` is still running after `DRAIN_TOOL_TIMEOUT_MS`.
+ * Non-cancellable tools are awaited to completion by `ToolExecutor.drain()` with no ceiling at all,
+ * and the shutdown drain is a separate unbounded await that runs *after* this budget — so tool
+ * cleanup is governed by the executor's own design, never by this value.
+ *
+ * Measured `performToolExecutions` settle latency after `abort()`: 0.04–0.33 ms across a tool that
+ * observes its abort signal, a 4s tool that ignores it, a non-cancellable 4s tool, three concurrent
+ * tools, and a tool body that never settles at all. The one shape that exceeds 2s is a task parked
+ * on a tool-call stream that is never closed — it never settles, so no finite ceiling rescues it.
+ *
+ * 2s is therefore ample, and small enough that the two budgets an interrupted reply spends in
+ * sequence (its task group, then its tool-execution task) still fit inside
+ * {@link INTERRUPTION_TIMEOUT}; at 5s they would not.
  */
-export const REPLY_TASK_CANCEL_TIMEOUT = 5000;
+export const REPLY_TASK_CANCEL_TIMEOUT = 2000;
 
 /**
  * How long an interrupted speech may keep running before its tasks are cancelled outright.
  *
- * Ports `INTERRUPTION_TIMEOUT` from `livekit-agents/livekit/agents/voice/speech_handle.py`, but
- * cannot reuse python's 5s: python has no cooperative-cancel budget to collide with, because
- * cancellation there lands at the next await point. Here a teardown may legitimately spend the
- * whole of {@link REPLY_TASK_CANCEL_TIMEOUT}, and its clock starts *after* the interrupt that arms
- * this watchdog — so at equal values the watchdog always preempts a slow-but-healthy teardown and
- * marks the handle done just as it resumes to commit its turn, trading a muted session for a lost
- * assistant message. The margin is what this watchdog costs: it is dead air the user hears before
- * the session recovers, against a session that on current `main` never recovers at all.
+ * Ports `INTERRUPTION_TIMEOUT` from `livekit-agents/livekit/agents/voice/speech_handle.py`,
+ * including its value. It must stay strictly greater than {@link REPLY_TASK_CANCEL_TIMEOUT}: a
+ * teardown may legitimately spend that whole budget, and its clock starts *after* the interrupt
+ * that arms this watchdog, so at equal values the watchdog always preempts a slow-but-healthy
+ * teardown and marks the handle done just as it resumes to commit its turn — trading a muted
+ * session for a lost assistant message. The margin is what this watchdog costs: dead air the user
+ * hears before the session recovers, against a session that without it never recovers at all.
  */
-const INTERRUPTION_TIMEOUT = REPLY_TASK_CANCEL_TIMEOUT + 3000;
+const INTERRUPTION_TIMEOUT = 5000;
 
 /**
  * Type guard to check if a value is a SpeechHandle.

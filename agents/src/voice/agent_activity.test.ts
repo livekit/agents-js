@@ -25,6 +25,7 @@ import {
 import { LLM, type LLMStream } from '../llm/llm.js';
 import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import { log } from '../log.js';
 import { Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage } from './agent_activity.js';
@@ -1236,6 +1237,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     Object.assign(activity, {
       _backgroundSpeeches: new Set<SpeechHandle>(),
       _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
+      logger: log(),
     });
     const waitForToolExecution = (
       activity as unknown as { _waitForToolExecution: WaitForToolExecution }
@@ -1286,5 +1288,30 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     await expect(waiting).resolves.toBe(false);
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('still commits outputs when cancelling the tool task overruns its budget', async () => {
+    // `Task.cancelAndWait` throws once the cooperative-cancel budget expires. A tool that
+    // ignores its abort signal must not take the commit down with it — the LLM has already
+    // seen these outputs, so dropping them leaves the function calls dangling.
+    const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: {
+        result: new Promise<void>(() => {}),
+        cancelAndWait: vi.fn(async () => {
+          throw new Error('Task cancellation timed out');
+        }),
+      },
+      toolOutput,
+      speechHandle,
+      createdAt: 789,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 789);
   });
 });
