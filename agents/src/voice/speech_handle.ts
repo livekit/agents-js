@@ -13,12 +13,25 @@ import { functionCallStorage } from './agent.js';
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
 
 /**
+ * How long a reply task may take to unwind after its abort signal fires.
+ *
+ * Python cancels a task outright and the `CancelledError` lands at its next await point, so
+ * `utils.aio.cancel_and_wait` needs no ceiling. Nothing here can cancel a pending promise, so the
+ * reply tasks are aborted cooperatively and waited on with this bound instead.
+ */
+export const REPLY_TASK_CANCEL_TIMEOUT = 5000;
+
+/**
  * How long an interrupted speech may keep running before its tasks are cancelled outright.
  *
  * Mirrors `INTERRUPTION_TIMEOUT` in the python implementation
- * (`livekit-agents/livekit/agents/voice/speech_handle.py`).
+ * (`livekit-agents/livekit/agents/voice/speech_handle.py`), but must stay strictly greater than
+ * {@link REPLY_TASK_CANCEL_TIMEOUT}. Python's 5s can only elapse when a reply is genuinely stuck;
+ * here a reply that unwinds slowly may legitimately spend the whole cancel budget first. Were the
+ * two equal, this watchdog would mark the handle done at the very moment such a reply resumes to
+ * commit its turn, turning a slow teardown into a lost assistant message.
  */
-const INTERRUPTION_TIMEOUT = 5000;
+const INTERRUPTION_TIMEOUT = REPLY_TASK_CANCEL_TIMEOUT + 3000;
 
 /**
  * Type guard to check if a value is a SpeechHandle.

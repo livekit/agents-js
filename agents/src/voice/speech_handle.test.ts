@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FunctionCall } from '../llm/chat_context.js';
 import { Task, waitForAbort } from '../utils.js';
 import { functionCallStorage } from './agent.js';
-import { SpeechHandle } from './speech_handle.js';
+import { REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 
 async function raceTimeout(promise: Promise<unknown>, ms: number): Promise<'resolved' | 'timeout'> {
   let timer: ReturnType<typeof setTimeout>;
@@ -204,7 +204,13 @@ describe('SpeechHandle interruption watchdog (#2065)', () => {
       handle.interrupt();
       expect(handle.done()).toBe(false);
 
-      await vi.advanceTimersByTimeAsync(5000);
+      // A reply that unwinds slowly is allowed the whole cooperative-cancel budget before the
+      // watchdog is entitled to act. Firing inside that window would cut off a teardown that is
+      // still on its way to committing the turn.
+      await vi.advanceTimersByTimeAsync(REPLY_TASK_CANCEL_TIMEOUT);
+      expect(handle.done()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10_000);
 
       expect(task.done).toBe(true);
       expect(handle.done()).toBe(true);

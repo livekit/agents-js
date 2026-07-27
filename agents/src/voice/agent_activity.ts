@@ -136,7 +136,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
-import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
   cancelTaskTool,
@@ -256,8 +256,6 @@ async function raceWithAbort<T>(
 export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
-
-  private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
 
   private started = false;
   private audioRecognition?: AudioRecognition;
@@ -2653,7 +2651,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (speechHandle.interrupted) {
         replyAbortController.abort();
-        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
         if (audioOutput) {
           audioOutput.clearBuffer();
           await audioOutput.waitForPlayout();
@@ -2903,7 +2901,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (speechHandle.interrupted) {
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
 
@@ -3016,7 +3014,7 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (speechHandle.interrupted) {
-          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
           if (audioOutput) {
             audioOutput.clearBuffer();
             // During shutdown (room disconnected / activity closing) the
@@ -3071,7 +3069,7 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
-        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
         // The segment's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
@@ -3176,7 +3174,7 @@ export class AgentActivity implements RecognitionHooks {
       );
 
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
 
       const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
 
@@ -3217,7 +3215,7 @@ export class AgentActivity implements RecognitionHooks {
       if (speechHandle._hasGenerations) {
         speechHandle._markGenerationDone();
       }
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await executeToolsTask.cancelAndWait(REPLY_TASK_CANCEL_TIMEOUT);
       this._commitInterruptedToolOutputs(toolOutput, speechHandle, replyStartedAt);
       return;
     }
@@ -3601,7 +3599,7 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (speechHandle.interrupted) {
-          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
           if (audioOutput) {
             audioOutput.clearBuffer();
             const playbackEv = await audioOutput.waitForPlayout();
@@ -3639,7 +3637,7 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
-        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
         // The message's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
@@ -3786,7 +3784,7 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all realtime generation tasks due to interruption',
       );
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
       addRealtimeMessageOutputs(messageOutputs);
 
       const anySkipped = messageOutputs.some((output) => output.played === 'skipped');
@@ -3808,7 +3806,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
       speechHandle._markGenerationDone();
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await executeToolsTask.cancelAndWait(REPLY_TASK_CANCEL_TIMEOUT);
 
       // TODO(brian): close tees
       return;
@@ -3990,7 +3988,7 @@ export class AgentActivity implements RecognitionHooks {
     createdAt: number;
   }): Promise<boolean> {
     if (speechHandle.interrupted) {
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await executeToolsTask.cancelAndWait(REPLY_TASK_CANCEL_TIMEOUT);
       this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
       return false;
     }
@@ -4373,7 +4371,7 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech._cancel();
       }
 
-      await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(Array.from(this.speechTasks), REPLY_TASK_CANCEL_TIMEOUT);
       await this._toolExecutor.drain();
 
       if (this._currentSpeech && !this._currentSpeech.done()) {
