@@ -224,9 +224,9 @@ export class TavusAPI {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ 'lk.pii.error': e }, 'failed to call tavus api');
+          this.#logger.warn({ error: e }, 'failed to call tavus api');
         } else {
-          this.#logger.error({ 'lk.pii.error': e }, 'failed to call tavus api');
+          this.#logger.error({ error: e }, 'failed to call tavus api');
         }
 
         if (i < this.connOptions.maxRetry) {

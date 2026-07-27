@@ -654,7 +654,7 @@ export function performLLMInference(
         return;
       }
       // surface inference silent errors even when this task's rejection is never awaited
-      logger.error({ 'lk.pii.error': error }, 'error in llm node');
+      logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
       span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
@@ -966,7 +966,7 @@ async function forwardAudio(
   let resampler: AudioResampler | null = null;
   const cancelReader = () => {
     void reader.cancel().catch((error) => {
-      logger.debug({ 'lk.pii.error': error }, 'failed to cancel TTS stream reader after abort');
+      logger.debug({ error }, 'failed to cancel TTS stream reader after abort');
     });
   };
   signal?.addEventListener('abort', cancelReader, { once: true });
@@ -1224,7 +1224,7 @@ export function performToolExecutions({
             function: toolCall.name,
             'lk.pii.arguments': toolCall.args,
             speech_id: speechHandle.id,
-            'lk.pii.error': error.message,
+            error: error.message,
           },
           'tried to call AI function with invalid arguments',
         );
@@ -1289,7 +1289,7 @@ export function performToolExecutions({
             {
               function: toolCall.name,
               speech_id: speechHandle.id,
-              'lk.pii.error': toError(rawError).message,
+              error: toError(rawError).message,
             },
             'exception occurred while executing tool',
           );

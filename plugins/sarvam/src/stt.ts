@@ -633,7 +633,7 @@ export class SpeechStream extends stt.SpeechStream {
               delay,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'Failed to connect to Sarvam STT, retrying',
           );
@@ -643,7 +643,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'Sarvam STT disconnected',
           );
@@ -857,7 +857,7 @@ export class SpeechStream extends stt.SpeechStream {
               this.#logger.error(
                 {
                   errorCode,
-                  'lk.pii.error': errorInfo,
+                  error: errorInfo,
                 },
                 'Sarvam STT WebSocket returned an error',
               );
@@ -871,7 +871,7 @@ export class SpeechStream extends stt.SpeechStream {
           } catch (err) {
             this.#logger.error(
               {
-                'lk.pii.error': err,
+                error: err,
                 'lk.pii.message': msg.toString(),
               },
               'Error processing Sarvam STT message',

@@ -1153,7 +1153,7 @@ export class AgentSession<
           throw error;
         }
         this.logger.debug(
-          { 'lk.pii.error': error },
+          { error },
           'generateReply scheduling raced with handoff drain; retrying on next activity',
         );
         return nextActivity.generateReply({ userMessage, ...options, inputDetails });
@@ -1714,7 +1714,7 @@ export class AgentSession<
         try {
           await this.activity.interrupt({ force: true }).await;
         } catch (error) {
-          this.logger.warn({ 'lk.pii.error': error }, 'Error interrupting activity');
+          this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
@@ -1780,6 +1780,6 @@ export class AgentSession<
     await this._roomIO?.close();
     this._roomIO = undefined;
 
-    this.logger.info({ reason, 'lk.pii.error': error }, 'AgentSession closed');
+    this.logger.info({ reason, error }, 'AgentSession closed');
   }
 }

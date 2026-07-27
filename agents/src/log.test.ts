@@ -52,7 +52,6 @@ describe('OTEL logging', () => {
     enableOtelLogging();
 
     log().info({ 'lk.pii.user_input': 'secret transcript' }, 'received user input');
-    log().error({ 'lk.pii.error': new Error('secret provider error') }, 'provider failed');
 
     await vi.waitFor(() => {
       const record = emitSpy.mock.calls
@@ -65,7 +64,23 @@ describe('OTEL logging', () => {
         'lk.pii.user_input': 'secret transcript',
       });
       expect(record?.msg).not.toContain('secret transcript');
+    });
+  });
 
+  it('exports operational errors under the standard error field', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+
+    initPinoCloudExporter({
+      cloudHostname: 'example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+    enableOtelLogging();
+
+    log().error({ error: new Error('connection failed') }, 'provider failed');
+
+    await vi.waitFor(() => {
       const errorRecord = emitSpy.mock.calls
         .map(([logObj]) => logObj)
         .find((logObj) => {
@@ -73,12 +88,12 @@ describe('OTEL logging', () => {
         });
       expect(errorRecord).toMatchObject({
         msg: 'provider failed',
-        'lk.pii.error': {
+        error: {
           type: 'Error',
-          message: 'secret provider error',
+          message: 'connection failed',
         },
       });
-      expect(errorRecord?.msg).not.toContain('secret provider error');
+      expect(errorRecord).not.toHaveProperty('lk.pii.error');
     });
   });
 });

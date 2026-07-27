@@ -108,7 +108,7 @@ class KrispLicenseSdkManager {
         this.module.globalDestroy();
         log().debug('Krisp Audio SDK (license) destroyed');
       } catch (e) {
-        log().error({ 'lk.pii.error': e }, 'error during Krisp SDK cleanup');
+        log().error({ error: e }, 'error during Krisp SDK cleanup');
       } finally {
         this.module = null;
       }
@@ -219,7 +219,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       try {
         this.session.destroy();
       } catch (e) {
-        log().error({ 'lk.pii.error': e }, 'error destroying Krisp session');
+        log().error({ error: e }, 'error destroying Krisp session');
       }
       this.session = null;
     }
@@ -313,7 +313,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
           const outputBuf = this.session!.process(inputBuf, this.level);
           chunkOut = bufferToInt16(outputBuf);
         } catch (e) {
-          log().error({ 'lk.pii.error': e }, 'error processing frame');
+          log().error({ error: e }, 'error processing frame');
           chunkOut = chunkIn;
         }
         if (chunkOut.length !== chunk) {
@@ -348,7 +348,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       try {
         this.session.destroy();
       } catch (e) {
-        log().error({ 'lk.pii.error': e }, 'error destroying Krisp session');
+        log().error({ error: e }, 'error destroying Krisp session');
       }
       this.session = null;
     }

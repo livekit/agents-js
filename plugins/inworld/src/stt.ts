@@ -280,7 +280,7 @@ export class SpeechStream extends stt.SpeechStream {
               delay,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'Failed to connect to Inworld STT, retrying',
           );
@@ -290,7 +290,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'Inworld STT disconnected',
           );

@@ -156,10 +156,7 @@ export class RecorderIO {
           await this.outChan.write([]);
         } catch (err) {
           if (!isWritableStreamClosedError(err)) {
-            this.logger.error(
-              { 'lk.pii.error': err },
-              'Error writing final RecorderIO input buffer',
-            );
+            this.logger.error({ error: err }, 'Error writing final RecorderIO input buffer');
           }
         }
       }
@@ -197,12 +194,12 @@ export class RecorderIO {
     const inputBuf = this.inRecord!.takeBuf(this.outRecord?._lastSpeechEndTime);
     this.inChan.write(inputBuf).catch((err) => {
       if (!isWritableStreamClosedError(err)) {
-        this.logger.error({ 'lk.pii.error': err }, 'Error writing RecorderIO input buffer');
+        this.logger.error({ error: err }, 'Error writing RecorderIO input buffer');
       }
     });
     this.outChan.write(buf).catch((err) => {
       if (!isWritableStreamClosedError(err)) {
-        this.logger.error({ 'lk.pii.error': err }, 'Error writing RecorderIO output buffer');
+        this.logger.error({ error: err }, 'Error writing RecorderIO output buffer');
       }
     });
   }
@@ -258,7 +255,7 @@ export class RecorderIO {
           break;
         }
 
-        this.logger.error({ 'lk.pii.error': err }, 'Error writing RecorderIO output buffer');
+        this.logger.error({ error: err }, 'Error writing RecorderIO output buffer');
       }
     }
   }
@@ -289,7 +286,7 @@ export class RecorderIO {
           if (isFfmpegTeardownError(err)) {
             resolve();
           } else {
-            this.logger.error({ 'lk.pii.error': err }, 'FFmpeg encoding error');
+            this.logger.error({ error: err }, 'FFmpeg encoding error');
             reject(err);
           }
         })
@@ -432,7 +429,7 @@ export class RecorderIO {
         await this.ffmpegPromise;
       }
     } catch (err) {
-      this.logger.error({ 'lk.pii.error': err }, 'Error in encode task');
+      this.logger.error({ error: err }, 'Error in encode task');
     } finally {
       try {
         inReader.releaseLock();

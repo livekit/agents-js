@@ -142,7 +142,7 @@ export class SpeechStream extends stt.SpeechStream {
               delay,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'failed to connect to Baseten, retrying',
           );
@@ -152,7 +152,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'Baseten disconnected',
           );
@@ -320,7 +320,7 @@ export class SpeechStream extends stt.SpeechStream {
           } catch (err) {
             this.#logger.error(
               {
-                'lk.pii.error': err,
+                error: err,
                 'lk.pii.message': String(data),
               },
               'Baseten STT failed to process message',

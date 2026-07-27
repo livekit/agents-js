@@ -300,7 +300,7 @@ export abstract class SynthesizeStream
                 tts: this.#tts.label,
                 attempt: i + 1,
                 retryIntervalMs: retryInterval,
-                'lk.pii.error': error,
+                error,
               },
               'failed to synthesize speech, retrying',
             );
@@ -710,7 +710,7 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
               tts: this.#tts.label,
               attempt: i + 1,
               retryIntervalMs: retryInterval,
-              'lk.pii.error': error,
+              error,
             },
             'failed to generate TTS completion, retrying',
           );

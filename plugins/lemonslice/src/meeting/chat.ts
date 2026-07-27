@@ -108,7 +108,7 @@ export class MeetingChatRelay {
         this.session.interrupt();
         this.session.generateReply({ userInput });
       } catch (error) {
-        this.#logger.warn({ 'lk.pii.error': error }, 'meeting chat relay: generateReply failed');
+        this.#logger.warn({ error }, 'meeting chat relay: generateReply failed');
       }
     }
   }

@@ -150,9 +150,7 @@ export function createEndCallTool<UserData = UnknownUserData>({
 
               jobCtx.shutdown(String(event.reason));
             })
-            .catch((error) =>
-              log().error({ 'lk.pii.error': error }, 'error during end call shutdown'),
-            );
+            .catch((error) => log().error({ error }, 'error during end call shutdown'));
 
           ctx.speechHandle.addDoneCallback(() => {
             if (!(llm instanceof RealtimeModel) || !llm.capabilities.autoToolReplyGeneration) {
@@ -161,7 +159,7 @@ export function createEndCallTool<UserData = UnknownUserData>({
             }
 
             void delayedSessionShutdown(session, signal).catch((error) =>
-              log().error({ 'lk.pii.error': error }, 'error during delayed session shutdown'),
+              log().error({ error }, 'error during delayed session shutdown'),
             );
           });
 

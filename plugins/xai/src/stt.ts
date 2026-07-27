@@ -222,7 +222,7 @@ export class SpeechStream extends stt.SpeechStream {
               delay,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'failed to connect to xAI STT, retrying',
           );
@@ -232,7 +232,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'xAI STT disconnected',
           );
@@ -318,7 +318,7 @@ export class SpeechStream extends stt.SpeechStream {
           } catch (err) {
             this.#logger.error(
               {
-                'lk.pii.error': err,
+                error: err,
                 'lk.pii.message': msg.toString(),
               },
               'xAI STT failed to process message',
@@ -436,7 +436,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     } else if (msgType === 'error') {
       this.#logger.error(
-        { 'lk.pii.error': (data['message'] as string) ?? 'unknown error' },
+        { error: (data['message'] as string) ?? 'unknown error' },
         'xAI STT returned an error',
       );
     } else {

@@ -344,7 +344,7 @@ export class SpeechStream extends stt.SpeechStream {
               delay,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'failed to connect to Deepgram, retrying',
           );
@@ -354,7 +354,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'Deepgram disconnected',
           );

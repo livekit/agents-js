@@ -159,14 +159,14 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ 'lk.pii.error': err }, 'Neuphonic TTS response error');
+          this.#logger.error({ error: err }, 'Neuphonic TTS response error');
         });
       },
     );
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ 'lk.pii.error': err }, 'Neuphonic TTS request error');
+      this.#logger.error({ error: err }, 'Neuphonic TTS request error');
     });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
@@ -263,16 +263,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error(
-                  { 'lk.pii.error': error },
-                  'Error parsing Neuphonic WebSocket message',
-                );
+                this.#logger.error({ error }, 'Error parsing Neuphonic WebSocket message');
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error({ 'lk.pii.error': error }, 'Neuphonic WebSocket error');
+              this.#logger.error({ error }, 'Neuphonic WebSocket error');
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -304,14 +301,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
             if (err.message.includes('Queue is closed')) {
               this.#logger.warn(
-                { 'lk.pii.error': err },
+                { error: err },
                 'Queue closed during transcript processing (expected during disconnect)',
               );
             } else {
-              this.#logger.error(
-                { 'lk.pii.error': err },
-                'Error in recvTask from Neuphonic WebSocket',
-              );
+              this.#logger.error({ error: err }, 'Error in recvTask from Neuphonic WebSocket');
             }
           }
           break;

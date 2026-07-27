@@ -237,7 +237,7 @@ export const runApp = (opts: ServerOptions) => {
         connectAddr: commandOptions.connectAddr,
         record: commandOptions.record === true,
       }).catch((error) => {
-        log().fatal({ 'lk.pii.error': error }, 'console mode failed');
+        log().fatal({ error }, 'console mode failed');
         process.exit(1);
       });
     });
@@ -267,10 +267,7 @@ export const runApp = (opts: ServerOptions) => {
             logger.info({ plugin: plugin.title }, 'Finished downloading plugin files');
           } catch (error) {
             failures.push({ plugin, error });
-            logger.error(
-              { 'lk.pii.error': error, plugin: plugin.title },
-              'failed to download plugin files',
-            );
+            logger.error({ error, plugin: plugin.title }, 'failed to download plugin files');
           }
         }
 
@@ -284,7 +281,7 @@ export const runApp = (opts: ServerOptions) => {
           process.exit(0);
         })
         .catch((error) => {
-          logger.fatal({ 'lk.pii.error': error }, 'error during file downloads');
+          logger.fatal({ error }, 'error during file downloads');
           process.exit(1);
         });
     });

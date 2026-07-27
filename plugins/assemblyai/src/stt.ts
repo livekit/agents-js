@@ -362,7 +362,7 @@ export class SpeechStream extends stt.SpeechStream {
               retryDelaySeconds,
               retries,
               maxRetry,
-              'lk.pii.error': e,
+              error: e,
             },
             'failed to connect to AssemblyAI, retrying',
           );
@@ -372,7 +372,7 @@ export class SpeechStream extends stt.SpeechStream {
             {
               inputClosed: this.input.closed,
               isClosed: this.closed,
-              'lk.pii.error': e,
+              error: e,
             },
             'AssemblyAI disconnected',
           );
@@ -537,7 +537,7 @@ export class SpeechStream extends stt.SpeechStream {
           } catch (err) {
             this.#logger.error(
               {
-                'lk.pii.error': err,
+                error: err,
                 'lk.pii.message': msg.toString(),
               },
               'AssemblyAI failed to process message',

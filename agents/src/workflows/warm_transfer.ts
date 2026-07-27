@@ -232,7 +232,7 @@ export function createWarmTransferTask({
       holdAudioHandle = null;
     }
     void backgroundAudio.close().catch((error) => {
-      logger.warn({ 'lk.pii.error': error }, 'failed to close background audio');
+      logger.warn({ error }, 'failed to close background audio');
     });
 
     setIoEnabled(true);
@@ -270,7 +270,7 @@ export function createWarmTransferTask({
       // Cap the wait so teardown can't hang on a stuck playout.
       await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
     } catch (error) {
-      logger.warn({ 'lk.pii.error': error }, 'failed to notify human agent of caller hangup');
+      logger.warn({ error }, 'failed to notify human agent of caller hangup');
     } finally {
       session.shutdown();
     }
@@ -338,7 +338,7 @@ export function createWarmTransferTask({
     }
     const callerRoomName = callerRoom.name;
     void jobCtx.deleteRoom(callerRoomName).catch((error) => {
-      logger.warn({ 'lk.pii.error': error }, 'failed to delete caller room');
+      logger.warn({ error }, 'failed to delete caller room');
     });
   };
 
@@ -347,10 +347,10 @@ export function createWarmTransferTask({
     room?: Room | null,
   ): Promise<void> => {
     await room?.disconnect().catch((error) => {
-      logger.warn({ 'lk.pii.error': error }, 'failed to disconnect human agent room');
+      logger.warn({ error }, 'failed to disconnect human agent room');
     });
     await session?.close().catch((error) => {
-      logger.warn({ 'lk.pii.error': error }, 'failed to close transfer agent session');
+      logger.warn({ error }, 'failed to close transfer agent session');
     });
   };
 
@@ -595,7 +595,7 @@ export function createWarmTransferTask({
         }
         transferAgentSession = result.session;
       } catch (error) {
-        logger.error({ 'lk.pii.error': error }, 'could not dial human agent');
+        logger.error({ error }, 'could not dial human agent');
         setResult(new ToolError('could not dial human agent'));
       } finally {
         abortController.abort();

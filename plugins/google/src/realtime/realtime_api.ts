@@ -526,7 +526,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       try {
         await this.activeSession.close();
       } catch (error) {
-        this.#logger.warn({ 'lk.pii.error': error }, 'Error closing Gemini session');
+        this.#logger.warn({ error }, 'Error closing Gemini session');
       } finally {
         this.activeSession = undefined;
       }
@@ -1016,7 +1016,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                   {
                     code: event.code,
                     truncated: isTruncated,
-                    'lk.pii.error': `${errorMsg}${truncationNote}`,
+                    error: `${errorMsg}${truncationNote}`,
                   },
                   'Gemini Live session error',
                 );
@@ -1089,7 +1089,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         await cancelAndWait([sendTask, restartWaitTask], 2000);
       } catch (error) {
-        this.#logger.error({ 'lk.pii.error': error }, 'Gemini Realtime API error');
+        this.#logger.error({ error }, 'Gemini Realtime API error');
 
         if (this.#closed) break;
 
@@ -1206,7 +1206,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error({ 'lk.pii.error': e }, 'Gemini Live send task failed');
+        this.#logger.error({ error: e }, 'Gemini Live send task failed');
         this.markRestartNeeded();
       }
     } finally {
@@ -1328,7 +1328,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error({ 'lk.pii.error': e }, 'failed to process Gemini Live server event');
+        this.#logger.error({ error: e }, 'failed to process Gemini Live server event');
         this.markRestartNeeded();
       }
     }
@@ -1657,10 +1657,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
             gen.audioChannel.write(audioFrame);
           } catch (error) {
-            this.#logger.error(
-              { 'lk.pii.error': error },
-              'Error processing Gemini Live audio data',
-            );
+            this.#logger.error({ error }, 'Error processing Gemini Live audio data');
           }
         }
       }

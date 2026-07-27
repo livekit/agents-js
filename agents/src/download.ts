@@ -149,7 +149,7 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
       await import(pathToFileURL(entryAbs).href);
     } catch (error) {
       importFailures += 1;
-      logger.error({ 'lk.pii.error': error, package: pkg.name }, 'failed to import plugin package');
+      logger.error({ error, package: pkg.name }, 'failed to import plugin package');
     }
   }
 
@@ -161,18 +161,12 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
       logger.info({ plugin: plugin.title }, 'Finished downloading plugin files');
     } catch (error) {
       failures.push({ plugin, error });
-      logger.error(
-        { 'lk.pii.error': error, plugin: plugin.title },
-        'failed to download plugin files',
-      );
+      logger.error({ error, plugin: plugin.title }, 'failed to download plugin files');
     }
   }
 
   if (failures.length > 0) {
-    logger.fatal(
-      { 'lk.pii.error': formatDownloadFailureMessage(failures) },
-      'plugin file downloads failed',
-    );
+    logger.fatal({ error: formatDownloadFailureMessage(failures) }, 'plugin file downloads failed');
   }
   return failures.length > 0 || importFailures > 0 ? 1 : 0;
 };

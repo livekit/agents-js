@@ -262,7 +262,7 @@ class WSConnectionPool {
             }),
           );
         } else {
-          this.#logger.error({ 'lk.pii.error': err, requestId }, 'Inworld WebSocket error');
+          this.#logger.error({ error: err, requestId }, 'Inworld WebSocket error');
         }
       });
 
@@ -281,10 +281,10 @@ class WSConnectionPool {
               this.#listeners.get(contextId)!(json);
             }
           } else if (json.error) {
-            this.#logger.warn({ 'lk.pii.error': json.error }, 'Inworld received error message');
+            this.#logger.warn({ error: json.error }, 'Inworld received error message');
           }
         } catch (e) {
-          this.#logger.warn({ 'lk.pii.error': e }, 'Failed to parse Inworld WebSocket message');
+          this.#logger.warn({ error: e }, 'Failed to parse Inworld WebSocket message');
         }
       });
     });
@@ -514,7 +514,7 @@ class ChunkedStream extends tts.ChunkedStream {
           } catch (e) {
             log().warn(
               {
-                'lk.pii.error': e,
+                error: e,
                 'lk.pii.line': line,
               },
               'Failed to parse Inworld chunk',
@@ -781,7 +781,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
       sendLastFrame(true);
     } catch (e) {
-      log().error({ 'lk.pii.error': e }, 'Error in SynthesizeStream run');
+      log().error({ error: e }, 'Error in SynthesizeStream run');
       throw e;
     } finally {
       ws.off('close', onClose);

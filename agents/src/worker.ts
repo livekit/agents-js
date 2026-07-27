@@ -486,7 +486,7 @@ export class AgentServer {
           this.#logger.warn(
             {
               'lk.pii.url': this.#opts.wsURL,
-              'lk.pii.error': e,
+              error: e,
               retry_count: retries,
               max_retry: this.#opts.maxRetry,
               retryDelaySeconds: delay,
@@ -576,7 +576,7 @@ export class AgentServer {
         )) as unknown as ParticipantInfo;
       } catch (e) {
         this.#logger.fatal(
-          { participantIdentity, roomName, 'lk.pii.error': e },
+          { participantIdentity, roomName, error: e },
           'participant not found in room',
         );
         throw e;
@@ -634,7 +634,7 @@ export class AgentServer {
     });
 
     ws.addEventListener('error', (event) => {
-      this.#logger.error({ 'lk.pii.error': event.message }, 'worker WebSocket error');
+      this.#logger.error({ error: event.message }, 'worker WebSocket error');
     });
 
     ws.addEventListener('message', (event) => {
@@ -804,7 +804,7 @@ export class AgentServer {
           );
         })
         .catch((e) => {
-          this.#logger.warn({ 'lk.pii.error': e }, 'failed to measure CPU load');
+          this.#logger.warn({ error: e }, 'failed to measure CPU load');
         });
     }, UPDATE_LOAD_INTERVAL);
 
@@ -883,9 +883,7 @@ export class AgentServer {
             apiSecret: this.#opts.apiSecret,
           });
         } catch (e) {
-          this.#logger
-            .child({ requestId: req.id })
-            .error({ 'lk.pii.error': e }, 'error launching job');
+          this.#logger.child({ requestId: req.id }).error({ error: e }, 'error launching job');
         }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');

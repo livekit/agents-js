@@ -459,7 +459,7 @@ export class AudioRecognition {
               if (!this.warnedTurnDetectorPushFailure) {
                 this.warnedTurnDetectorPushFailure = true;
                 this.logger.warn(
-                  { 'lk.pii.error': err },
+                  { error: err },
                   'audio EOT stream pushAudio failed; dropping frames for this turn',
                 );
               }
@@ -644,14 +644,14 @@ export class AudioRecognition {
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
-      this.logger.error({ 'lk.pii.error': err }, 'error running VAD task');
+      this.logger.error({ error: err }, 'error running VAD task');
     });
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
     );
     this.interruptionTask.result.catch((err) => {
-      this.logger.error({ 'lk.pii.error': err }, 'error running interruption task');
+      this.logger.error({ error: err }, 'error running interruption task');
     });
 
     // Open (or adopt) the audio EOT detector stream now that the activity is
@@ -983,7 +983,7 @@ export class AudioRecognition {
         await this.interruptionStreamChannel.write(frame);
         return true;
       } catch (e: unknown) {
-        this.logger.warn({ 'lk.pii.error': e }, 'could not forward interruption sentinel');
+        this.logger.warn({ error: e }, 'could not forward interruption sentinel');
       }
     }
     return false;
@@ -1781,12 +1781,12 @@ export class AudioRecognition {
 
     this.sttForwardTask = Task.from(({ signal }) => this.forwardInputAudioToStt(pipeline, signal));
     this.sttForwardTask.result.catch((err) => {
-      this.logger.error({ 'lk.pii.error': err }, 'error forwarding audio to STT pipeline');
+      this.logger.error({ error: err }, 'error forwarding audio to STT pipeline');
     });
 
     this.sttConsumerTask = Task.from(({ signal }) => this.consumeSttEvents(pipeline, signal));
     this.sttConsumerTask.result.catch((err) => {
-      this.logger.error({ 'lk.pii.error': err }, 'error running STT task');
+      this.logger.error({ error: err }, 'error running STT task');
     });
   }
 
@@ -2079,7 +2079,7 @@ export class AudioRecognition {
       } finally {
         await cleanup();
         await forwardTask?.catch((e) => {
-          this.logger.debug({ 'lk.pii.error': e }, 'interruption task exited with error');
+          this.logger.debug({ error: e }, 'interruption task exited with error');
         });
       }
     }
@@ -2173,7 +2173,7 @@ export class AudioRecognition {
     };
 
     void restartStt().catch((err) => {
-      this.logger.error({ 'lk.pii.error': err }, 'error resetting STT task');
+      this.logger.error({ error: err }, 'error resetting STT task');
     });
   }
 
@@ -2189,7 +2189,7 @@ export class AudioRecognition {
       if (this.closed) return;
       this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
       this.vadTask.result.catch((err) => {
-        this.logger.error({ 'lk.pii.error': err }, 'error running VAD task');
+        this.logger.error({ error: err }, 'error running VAD task');
       });
     });
   }

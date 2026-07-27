@@ -516,7 +516,7 @@ export class Task<T> {
           try {
             callback();
           } catch (error) {
-            this.#logger.error({ 'lk.pii.error': error }, 'Task done callback failed');
+            this.#logger.error({ error }, 'Task done callback failed');
           }
         }
         this.doneCallbacks.clear();

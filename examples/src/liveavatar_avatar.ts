@@ -77,7 +77,7 @@ export default defineAgent({
     });
 
     session.on(voice.AgentSessionEventTypes.Error, (ev) => {
-      logger.error({ 'lk.pii.error': ev.error, source: ev.source }, 'Session emitted error');
+      logger.error({ error: ev.error, source: ev.source }, 'Session emitted error');
     });
 
     ctx.addShutdownCallback(async () => {

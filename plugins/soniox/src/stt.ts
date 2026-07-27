@@ -252,7 +252,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.#logger.error(
               {
                 errorCode: content.error_code ?? '',
-                'lk.pii.error': errorMessage,
+                error: errorMessage,
               },
               'Soniox STT WebSocket returned an error',
             );

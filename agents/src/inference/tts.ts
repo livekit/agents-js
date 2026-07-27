@@ -689,17 +689,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           // writer.write returns a promise; avoid unhandled rejections if stream is closed
           void eventChannel.write(validatedEvent).catch((error) => {
             this.#logger.debug(
-              { 'lk.pii.error': error },
+              { error },
               'Failed writing TTS event to stream channel (likely closed)',
             );
           });
         } catch (e) {
-          this.#logger.error({ 'lk.pii.error': e }, 'Error parsing WebSocket message');
+          this.#logger.error({ error: e }, 'Error parsing WebSocket message');
         }
       };
 
       const onError = (e: Error) => {
-        this.#logger.error({ 'lk.pii.error': e }, 'WebSocket error');
+        this.#logger.error({ error: e }, 'WebSocket error');
         void resourceCleanup();
         try {
           // If the ws is misbehaving, hard-stop it immediately to avoid buffering.

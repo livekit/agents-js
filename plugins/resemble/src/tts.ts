@@ -161,7 +161,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             this.queue.close();
             doneFut.resolve();
           } catch (error) {
-            this.#logger.error({ 'lk.pii.error': error }, 'Error processing Resemble API response');
+            this.#logger.error({ error }, 'Error processing Resemble API response');
             this.queue.close();
             doneFut.resolve();
           }
@@ -174,14 +174,14 @@ export class ChunkedStream extends tts.ChunkedStream {
 
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ 'lk.pii.error': err }, 'Resemble TTS response error');
+          this.#logger.error({ error: err }, 'Resemble TTS response error');
         });
       },
     );
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ 'lk.pii.error': err }, 'Resemble TTS request error');
+      this.#logger.error({ error: err }, 'Resemble TTS request error');
     });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
@@ -269,7 +269,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                     }
                   } catch (audioError) {
                     this.#logger.error(
-                      { 'lk.pii.error': audioError },
+                      { error: audioError },
                       'Error processing Resemble audio content',
                     );
                   }
@@ -308,16 +308,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error(
-                  { 'lk.pii.error': error },
-                  'Error parsing Resemble WebSocket message',
-                );
+                this.#logger.error({ error }, 'Error parsing Resemble WebSocket message');
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error({ 'lk.pii.error': error }, 'Resemble WebSocket error');
+              this.#logger.error({ error }, 'Resemble WebSocket error');
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -348,10 +345,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch (err) {
           // Skip log error for normal websocket close
           if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
-            this.#logger.error(
-              { 'lk.pii.error': err },
-              'Error in recvTask from Resemble WebSocket',
-            );
+            this.#logger.error({ error: err }, 'Error in recvTask from Resemble WebSocket');
           }
           break;
         }

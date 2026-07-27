@@ -384,7 +384,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
                 stt: this.#stt.label,
                 attempt: i + 1,
                 retryIntervalMs: retryInterval,
-                'lk.pii.error': error,
+                error,
               },
               'failed to recognize speech, retrying',
             );
@@ -437,7 +437,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         } catch (e) {
           if (e instanceof Error && e.message.includes('Queue is closed')) {
             this.logger.warn(
-              { 'lk.pii.error': e },
+              { error: e },
               'Queue closed during transcript processing (expected during disconnect)',
             );
           }

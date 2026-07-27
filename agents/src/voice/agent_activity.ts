@@ -196,7 +196,7 @@ export async function cleanupReusableResources(
     for (const output of outputs) {
       if (output.status === 'rejected') {
         if (logger) {
-          logger.error({ 'lk.pii.error': output.reason }, 'error cleaning up reusable resources');
+          logger.error({ error: output.reason }, 'error cleaning up reusable resources');
         } else {
           console.error('error cleaning up reusable resources');
         }
@@ -560,7 +560,7 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
-        this.logger.error({ 'lk.pii.error': error }, 'failed to update realtime session');
+        this.logger.error({ error }, 'failed to update realtime session');
       }
 
       if (!capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
@@ -578,7 +578,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (error) {
-        this.logger.error({ 'lk.pii.error': error }, 'failed to update the instructions');
+        this.logger.error({ error }, 'failed to update the instructions');
       }
     }
 
@@ -1784,7 +1784,7 @@ export class AgentActivity implements RecognitionHooks {
     try {
       await this.agent.onUserTurnExceeded(ev);
     } catch (error) {
-      this.logger.error({ 'lk.pii.error': error }, 'error in onUserTurnExceeded callback');
+      this.logger.error({ error }, 'error in onUserTurnExceeded callback');
     } finally {
       this.userTurnExceededLocked = false;
       this.userTurnExceededTask = undefined;
@@ -2016,10 +2016,7 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.race([promise, waitForAbort(signal)]);
     } catch (error) {
       if (!signal.aborted) {
-        this.logger.error(
-          { 'lk.pii.error': error, operation: errorMessage },
-          'operation failed while waiting',
-        );
+        this.logger.error({ error, operation: errorMessage }, 'operation failed while waiting');
       }
     }
   }
@@ -2422,7 +2419,7 @@ export class AgentActivity implements RecognitionHooks {
       if (e instanceof StopResponse) {
         return;
       }
-      this.logger.error({ 'lk.pii.error': e }, 'error occurred during onUserTurnCompleted');
+      this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
     }
 
     const callbackDuration = Date.now() - startTime;
@@ -2780,7 +2777,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (e) {
-        this.logger.error({ 'lk.pii.error': e }, 'error occurred during updateInstructions');
+        this.logger.error({ error: e }, 'error occurred during updateInstructions');
       }
     }
 
@@ -3664,10 +3661,7 @@ export class AgentActivity implements RecognitionHooks {
           if (output.played === 'partial') break;
         }
       } catch (error) {
-        this.logger.error(
-          { 'lk.pii.error': error },
-          'error reading messages from the realtime API',
-        );
+        this.logger.error({ error }, 'error reading messages from the realtime API');
       }
     };
 
@@ -3805,7 +3799,7 @@ export class AgentActivity implements RecognitionHooks {
           await realtimeSession.updateChatCtx(this.agent._chatCtx);
         } catch (error) {
           this.logger.warn(
-            { 'lk.pii.error': error },
+            { error },
             'failed to sync chat context to remove never-played messages',
           );
         }
@@ -3939,7 +3933,7 @@ export class AgentActivity implements RecognitionHooks {
         await realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
         this.logger.warn(
-          { 'lk.pii.error': error },
+          { error },
           'failed to update chat context before generating the function calls results',
         );
         if (fut && !fut.done) {
@@ -4198,14 +4192,14 @@ export class AgentActivity implements RecognitionHooks {
         try {
           this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
         } catch (error) {
-          this.logger.error({ 'lk.pii.error': error }, 'failed to reset tool_choice');
+          this.logger.error({ error }, 'failed to reset tool_choice');
         }
       }
       if (originalTools !== undefined) {
         try {
           await this.realtimeSession.updateTools(originalTools);
         } catch (error) {
-          this.logger.error({ 'lk.pii.error': error }, 'failed to reset tools');
+          this.logger.error({ error }, 'failed to reset tools');
         }
       }
     }
@@ -4499,10 +4493,7 @@ export class AgentActivity implements RecognitionHooks {
 
       return detector;
     } catch (error: unknown) {
-      this.logger.warn(
-        { 'lk.pii.error': error },
-        'could not instantiate AdaptiveInterruptionDetector',
-      );
+      this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
     }
     return undefined;
   }
@@ -4666,13 +4657,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.audioRecognition) {
       this.audioRecognition.disableInterruptionDetection().catch((err) => {
-        this.logger.warn({ 'lk.pii.error': err }, 'error while disabling interruption detection');
+        this.logger.warn({ error: err }, 'error while disabling interruption detection');
       });
     }
 
     this.logger.info(
       {
-        'lk.pii.error': error?.message,
+        error: error?.message,
         label: error?.label,
       },
       'adaptive interruption disabled due to unrecoverable error, falling back to VAD-based interruption',
@@ -4808,10 +4799,7 @@ export class AgentActivity implements RecognitionHooks {
             void activity
               .onToolsetToolsChanged()
               .catch((error) =>
-                activity.logger.error(
-                  { 'lk.pii.error': error },
-                  'error re-advertising toolset tools',
-                ),
+                activity.logger.error({ error }, 'error re-advertising toolset tools'),
               );
           },
         }),
@@ -4819,7 +4807,7 @@ export class AgentActivity implements RecognitionHooks {
     );
     for (const output of outputs) {
       if (output.status === 'rejected') {
-        this.logger.error({ 'lk.pii.error': output.reason }, 'error setting up toolset');
+        this.logger.error({ error: output.reason }, 'error setting up toolset');
       }
     }
   }
@@ -4828,7 +4816,7 @@ export class AgentActivity implements RecognitionHooks {
     const outputs = await Promise.allSettled(toolsets.map((ts) => ts.aclose()));
     for (const output of outputs) {
       if (output.status === 'rejected') {
-        this.logger.error({ 'lk.pii.error': output.reason }, 'error closing toolset');
+        this.logger.error({ error: output.reason }, 'error closing toolset');
       }
     }
   }

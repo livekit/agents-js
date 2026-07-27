@@ -310,7 +310,7 @@ export class STT extends stt.STT {
                 stt: this.label,
                 attempt: i + 1,
                 retryIntervalMs: retryInterval,
-                'lk.pii.error': error,
+                error,
               },
               'failed to recognize speech, retrying',
             );
@@ -630,10 +630,7 @@ export class SpeechStream extends stt.SpeechStream {
               try {
                 this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
               } catch (error) {
-                this.#logger.error(
-                  { 'lk.pii.error': error },
-                  'failed to process ElevenLabs STT message',
-                );
+                this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
               }
             };
             const onClose = (code: number, reason: Buffer) => {
@@ -860,7 +857,7 @@ export class SpeechStream extends stt.SpeechStream {
       this.#logger.error(
         {
           messageType,
-          'lk.pii.error': `${errorMsg}${detailsSuffix}`,
+          error: `${errorMsg}${detailsSuffix}`,
         },
         'ElevenLabs STT returned an error',
       );

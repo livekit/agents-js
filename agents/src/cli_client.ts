@@ -61,12 +61,12 @@ export class CLIClient {
 
       // Best-effort: log and move on if the CLI isn't listening.
       socket.on('error', (err) => {
-        logger.debug({ 'lk.pii.error': err }, 'dev channel unavailable');
+        logger.debug({ error: err }, 'dev channel unavailable');
       });
 
       this.#socket = socket;
     } catch (err) {
-      logger.debug({ 'lk.pii.error': err }, 'dev channel unavailable');
+      logger.debug({ error: err }, 'dev channel unavailable');
     }
   }
 

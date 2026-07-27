@@ -225,7 +225,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
                 llm: this.#llm.label(),
                 attempt: i + 1,
                 retryIntervalMs: retryInterval,
-                'lk.pii.error': error,
+                error,
               },
               'failed to generate LLM completion, retrying',
             );

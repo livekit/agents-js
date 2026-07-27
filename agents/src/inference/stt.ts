@@ -727,10 +727,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         try {
           this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
         } catch (e) {
-          this.#logger.debug(
-            { 'lk.pii.error': e },
-            'failed to send session.update, ws may be closing',
-          );
+          this.#logger.debug({ error: e }, 'failed to send session.update, ws may be closing');
         }
       }
     }
@@ -777,7 +774,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           });
 
           ws.on('error', (e) => {
-            this.#logger.error({ 'lk.pii.error': e }, 'WebSocket error');
+            this.#logger.error({ error: e }, 'WebSocket error');
             resourceCleanup();
             reject(e);
           });
@@ -891,7 +888,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             if (!parseResult.success) {
               this.#logger.warn(
                 {
-                  'lk.pii.error': parseResult.error,
+                  error: parseResult.error,
                   'lk.pii.raw_data': result.value,
                 },
                 'Failed to parse STT server event',
@@ -1077,11 +1074,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       if (e instanceof Error && e.message.includes('Queue is closed')) {
         // Expected behavior on disconnect, log as warning
         this.#logger.warn(
-          { 'lk.pii.error': e },
+          { error: e },
           'Queue closed during transcript processing (expected during disconnect)',
         );
       } else {
-        this.#logger.error({ 'lk.pii.error': e }, 'Error putting transcript to queue');
+        this.#logger.error({ error: e }, 'Error putting transcript to queue');
       }
     }
   }

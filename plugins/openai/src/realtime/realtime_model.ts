@@ -677,7 +677,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       this.#logger.error(
-        { 'lk.pii.error': (e as Error).message },
+        { error: (e as Error).message },
         'failed to update OpenAI Realtime chat context',
       );
       throw e;
@@ -1231,7 +1231,7 @@ export class RealtimeSession extends llm.RealtimeSession {
               attempt: numRetries,
               maxRetries,
               retryIntervalMs: retryInterval,
-              'lk.pii.error': error,
+              error,
             },
             'OpenAI Realtime API connection failed, retrying',
           );
@@ -1390,7 +1390,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
         this.#logger.error(
           {
-            'lk.pii.error': error,
+            error,
             'lk.pii.event': event,
           },
           'Failed to handle OpenAI Realtime API event',
@@ -1602,10 +1602,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       this.remoteChatCtx.insert(event.previous_item_id, incomingItem);
     } catch (error) {
-      this.#logger.error(
-        { 'lk.pii.error': error, itemId: event.item.id },
-        'failed to insert conversation item',
-      );
+      this.#logger.error({ error, itemId: event.item.id }, 'failed to insert conversation item');
     }
 
     const fut = pendingCreateFuture;
@@ -1627,10 +1624,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     try {
       this.remoteChatCtx.delete(event.item_id);
     } catch (error) {
-      this.#logger.error(
-        { 'lk.pii.error': error, itemId: event.item_id },
-        'failed to delete conversation item',
-      );
+      this.#logger.error({ error, itemId: event.item_id }, 'failed to delete conversation item');
     }
 
     const fut = this.itemDeleteFutures[event.item_id];
@@ -1696,7 +1690,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     event: api_proto.ConversationItemInputAudioTranscriptionFailedEvent,
   ): void {
     this.#logger.error(
-      { 'lk.pii.error': event.error },
+      { error: event.error },
       'OpenAI Realtime API failed to transcribe input audio',
     );
     this.finalizePartialOnTranscriptionFailure(event.item_id, event.content_index ?? 0);
@@ -2054,7 +2048,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
-    this.#logger.error({ 'lk.pii.error': event.error }, 'OpenAI Realtime API returned an error');
+    this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
 
     const eventId = event.error.event_id;
     if (eventId) {

@@ -429,7 +429,7 @@ export class ToolExecutor {
       this._replyTaskDone = false;
       this._replyTask = this.deliverReply(ctx.session).catch((error) => {
         log().warn(
-          { 'lk.pii.error': error },
+          { error },
           'deliverReply failed; async tool result may not trigger a follow-up reply',
         );
       });
@@ -511,7 +511,7 @@ export class ToolExecutor {
         {
           function: runCtx.functionCall.name,
           callId: runCtx.functionCall.callId,
-          'lk.pii.error': exception,
+          error: exception,
         },
         'exception occurred while executing tool after a progress update',
       );

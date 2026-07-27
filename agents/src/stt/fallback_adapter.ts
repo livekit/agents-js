@@ -237,12 +237,9 @@ export class FallbackAdapter extends STT {
         this.emitAvailabilityChanged(stt, true);
       } catch (e) {
         if (e instanceof APIError) {
-          this._logger.warn({ stt: stt.label, 'lk.pii.error': e }, 'STT recovery failed');
+          this._logger.warn({ stt: stt.label, error: e }, 'STT recovery failed');
         } else {
-          this._logger.debug(
-            { stt: stt.label, 'lk.pii.error': e },
-            'STT recovery unexpected error',
-          );
+          this._logger.debug({ stt: stt.label, error: e }, 'STT recovery unexpected error');
         }
       }
     });
@@ -280,13 +277,10 @@ export class FallbackAdapter extends STT {
           return result;
         } catch (e) {
           if (e instanceof APIError) {
-            this._logger.warn(
-              { stt: stt.label, 'lk.pii.error': e },
-              'STT failed, switching to next STT',
-            );
+            this._logger.warn({ stt: stt.label, error: e }, 'STT failed, switching to next STT');
           } else {
             this._logger.warn(
-              { stt: stt.label, 'lk.pii.error': e },
+              { stt: stt.label, error: e },
               'STT unexpected error, switching to next STT',
             );
           }
@@ -399,12 +393,9 @@ class FallbackSpeechStream extends SpeechStream {
         this.fallbackAdapter.emitAvailabilityChanged(sttInstance, true);
       } catch (e) {
         if (e instanceof APIError) {
-          this._logger.warn({ stt: sttInstance.label, 'lk.pii.error': e }, 'STT recovery failed');
+          this._logger.warn({ stt: sttInstance.label, error: e }, 'STT recovery failed');
         } else {
-          this._logger.debug(
-            { stt: sttInstance.label, 'lk.pii.error': e },
-            'STT recovery unexpected error',
-          );
+          this._logger.debug({ stt: sttInstance.label, error: e }, 'STT recovery unexpected error');
         }
       } finally {
         sttInstance.off('error', errorSink);
@@ -452,7 +443,7 @@ class FallbackSpeechStream extends SpeechStream {
             if (typeof item === 'symbol') current.flush();
             else current.pushFrame(item);
           } catch (e) {
-            this._logger.debug({ 'lk.pii.error': e }, 'error forwarding input to main stream');
+            this._logger.debug({ error: e }, 'error forwarding input to main stream');
           }
         }
       }
@@ -529,12 +520,12 @@ class FallbackSpeechStream extends SpeechStream {
       } catch (e) {
         if (e instanceof APIError) {
           this._logger.warn(
-            { stt: sttInstance.label, 'lk.pii.error': e },
+            { stt: sttInstance.label, error: e },
             'STT failed, switching to next STT',
           );
         } else {
           this._logger.warn(
-            { stt: sttInstance.label, 'lk.pii.error': e },
+            { stt: sttInstance.label, error: e },
             'STT unexpected error, switching to next STT',
           );
         }

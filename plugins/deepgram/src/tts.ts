@@ -195,7 +195,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
           res.on('error', (err) => {
             if (err.message === 'aborted') return;
-            this.#logger.error({ 'lk.pii.error': err }, 'Deepgram TTS response error');
+            this.#logger.error({ error: err }, 'Deepgram TTS response error');
             settle(() => reject(err));
           });
 
@@ -220,7 +220,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       req.on('error', (err) => {
         if (err.name === 'AbortError') return;
-        this.#logger.error({ 'lk.pii.error': err }, 'Deepgram TTS request error');
+        this.#logger.error({ error: err }, 'Deepgram TTS request error');
         settle(() => reject(err));
       });
 
@@ -282,7 +282,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
     } catch (e) {
-      this.#logger.warn({ 'lk.pii.error': e }, 'error during WebSocket close sequence');
+      this.#logger.warn({ error: e }, 'error during WebSocket close sequence');
     } finally {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();

@@ -352,7 +352,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ 'lk.pii.error': err }, 'Cartesia TTS response error');
+          this.#logger.error({ error: err }, 'Cartesia TTS response error');
           if (!doneFut.done) doneFut.reject(err);
         });
       },
@@ -360,7 +360,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ 'lk.pii.error': err }, 'Cartesia TTS request error');
+      this.#logger.error({ error: err }, 'Cartesia TTS request error');
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
@@ -497,10 +497,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // Set up WebSocket listeners ONCE (not in a loop)
       const onMessage = (data: RawData) => {
         void eventChannel.write(data).catch((error: unknown) => {
-          this.#logger.debug(
-            { 'lk.pii.error': error },
-            'Failed writing Cartesia event to channel (likely closed)',
-          );
+          this.#logger.debug({ error }, 'Failed writing Cartesia event to channel (likely closed)');
         });
       };
 
@@ -526,7 +523,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       const onError = (err: Error) => {
-        this.#logger.error({ 'lk.pii.error': err }, 'Cartesia WebSocket error');
+        this.#logger.error({ error: err }, 'Cartesia WebSocket error');
         if (!completed && !timedOut && !streamError) {
           streamError = err instanceof APIError ? err : toRetryableConnectionError(err);
         }
@@ -554,7 +551,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(rawMsg.toString());
             serverMsg = cartesiaMessageSchema.parse(json);
           } catch (parseErr) {
-            this.#logger.warn({ 'lk.pii.error': parseErr }, 'Failed to parse Cartesia message');
+            this.#logger.warn({ error: parseErr }, 'Failed to parse Cartesia message');
             continue;
           }
 
@@ -566,12 +563,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           // below. 5xx bubbles up so the base SynthesizeStream can retry.
           if (isErrorMessage(serverMsg)) {
             if (serverMsg.status_code >= 400 && serverMsg.status_code < 500) {
-              this.#logger.debug(
-                { 'lk.pii.error': serverMsg.error },
-                'Cartesia sent a non-fatal error',
-              );
+              this.#logger.debug({ error: serverMsg.error }, 'Cartesia sent a non-fatal error');
             } else {
-              this.#logger.error({ 'lk.pii.error': serverMsg.error }, 'Cartesia returned error');
+              this.#logger.error({ error: serverMsg.error }, 'Cartesia returned error');
               throw new APIStatusError({
                 message: `Cartesia returned error: ${serverMsg.error}`,
                 options: { statusCode: serverMsg.status_code, retryable: true },
@@ -670,14 +664,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             err.message.includes('Channel is closed')
           ) {
             this.#logger.warn(
-              { 'lk.pii.error': err },
+              { error: err },
               'Channel closed during transcript processing (expected during disconnect)',
             );
           } else {
-            this.#logger.error(
-              { 'lk.pii.error': err },
-              'Error in recvTask from Cartesia WebSocket',
-            );
+            this.#logger.error({ error: err }, 'Error in recvTask from Cartesia WebSocket');
           }
         }
       } finally {

@@ -209,7 +209,7 @@ export class AvatarSession extends voice.AvatarSession {
             throw e;
           }
         } else {
-          this.#logger.warn({ 'lk.pii.error': e }, 'failed to call trugen api');
+          this.#logger.warn({ error: e }, 'failed to call trugen api');
         }
         if (i < this.connOptions.maxRetry) {
           await new Promise((resolve) =>

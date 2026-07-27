@@ -459,14 +459,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       try {
         await this.stt.close();
       } catch (e) {
-        this._log.warn({ 'lk.pii.error': e }, 'AMD failed to close owned STT');
+        this._log.warn({ error: e }, 'AMD failed to close owned STT');
       }
     }
     if (this.llmOwned) {
       try {
         await this.llm.aclose();
       } catch (e) {
-        this._log.warn({ 'lk.pii.error': e }, 'AMD failed to close owned LLM');
+        this._log.warn({ error: e }, 'AMD failed to close owned LLM');
       }
     }
   }
@@ -544,7 +544,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.sttPumpTask = Task.from(({ signal }) => this.runSTTPump(signal));
     this.sttPumpTask.result.catch((err) => {
       if (this.settled) return;
-      this._log.warn({ 'lk.pii.error': err }, 'AMD dedicated STT pump exited with error');
+      this._log.warn({ error: err }, 'AMD dedicated STT pump exited with error');
     });
   }
 
@@ -610,7 +610,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       } catch (err) {
         if (this.settled) return;
-        this._log.debug({ 'lk.pii.error': err }, 'AMD dedicated STT receive pump error');
+        this._log.debug({ error: err }, 'AMD dedicated STT receive pump error');
       }
     })();
 
@@ -697,10 +697,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           // Otherwise the SIP participant disconnected before going active: no audio
           // remains, so fall through and let the no-speech timer settle AMD instead
           // of stranding it until the detection timeout.
-          this._log.debug(
-            { 'lk.pii.error': err },
-            'AMD SIP answer wait failed; starting to listen',
-          );
+          this._log.debug({ error: err }, 'AMD SIP answer wait failed; starting to listen');
         }
 
         if (!this.settled) {
@@ -715,7 +712,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         if (this.trackGateAbort?.signal.aborted) {
           return;
         }
-        this._log.debug({ 'lk.pii.error': err }, 'AMD listening gate failed; starting immediately');
+        this._log.debug({ error: err }, 'AMD listening gate failed; starting immediately');
         if (!this.settled) {
           this.startListening();
         }
@@ -842,7 +839,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         }
       )._onAmdPrediction?.(result);
     } catch (err) {
-      this._log.debug({ 'lk.pii.error': err }, 'AMD: session host failed to handle amd_prediction');
+      this._log.debug({ error: err }, 'AMD: session host failed to handle amd_prediction');
     }
     this.emit('amd_prediction', result);
   }
@@ -1324,7 +1321,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           abortSignal: new AbortController().signal,
         });
       } catch (error) {
-        this._log.warn({ 'lk.pii.error': error, toolName: tc.name }, 'AMD tool execution failed');
+        this._log.warn({ error, toolName: tc.name }, 'AMD tool execution failed');
       }
     }
 

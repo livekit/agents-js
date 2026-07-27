@@ -208,10 +208,7 @@ export class FallbackAdapter extends TTS {
         if (controller.signal.aborted) {
           return;
         }
-        this._logger.debug(
-          { tts: tts.label, 'lk.pii.error': error },
-          'TTS recovery failed, will retry',
-        );
+        this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
         // Retry recovery after delay (matches Python's retry behavior)
         const timeoutId = setTimeout(() => {
           this._recoveryTimeouts.delete(index);
@@ -388,10 +385,7 @@ class FallbackChunkedStream extends ChunkedStream {
         return;
       } catch (error) {
         if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn(
-            { tts: tts.label, 'lk.pii.error': error },
-            'TTS failed, switching to next instance',
-          );
+          this._logger.warn({ tts: tts.label, error }, 'TTS failed, switching to next instance');
           this.adapter.markUnAvailable(i);
         } else {
           throw error;
@@ -439,7 +433,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           this.tokenBuffer.push(input);
         }
       } catch (error) {
-        this._logger.debug({ 'lk.pii.error': error }, 'Error reading input LLM stream');
+        this._logger.debug({ error }, 'Error reading input LLM stream');
         throw error;
       } finally {
         this.tokenBuffer.push(SynthesizeStream.END_OF_STREAM);
@@ -606,7 +600,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
         if (error instanceof APIError || error instanceof APIConnectionError) {
           this._logger.warn(
-            { tts: originalTts.label, 'lk.pii.error': error },
+            { tts: originalTts.label, error },
             'TTS failed, switching to next instance',
           );
           this.adapter.markUnAvailable(i);
