@@ -1281,14 +1281,17 @@ export class AgentSession<
           }
         }
 
-        if (this.closing && newActivity === 'start') {
+        if (this.closing) {
           this.logger.warn(
-            { agentId: this.nextActivity?.agent.id },
-            'Session is closing, skipping start of next activity',
+            { agentId: this.nextActivity?.agent.id, transition: newActivity },
+            'Session is closing, skipping activity transition',
           );
           if (reusableResources) {
             await cleanupReusableResources(reusableResources, this.logger);
             reusableResources = undefined;
+          }
+          if (newActivity === 'resume') {
+            await this.nextActivity?.close();
           }
           this.nextActivity = undefined;
           this.activity = undefined;
