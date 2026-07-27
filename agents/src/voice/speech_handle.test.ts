@@ -9,6 +9,7 @@
 // only, and make SpeechHandle itself awaitable.
 import { describe, expect, it, vi } from 'vitest';
 import { FunctionCall } from '../llm/chat_context.js';
+import { Task, waitForAbort } from '../utils.js';
 import { functionCallStorage } from './agent.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -182,6 +183,54 @@ describe('SpeechHandle._markDone - generation completion', () => {
 
     const outcome = await raceTimeout(generationWait, 1000);
     expect(outcome).toBe('resolved');
+  });
+});
+
+describe('SpeechHandle interruption watchdog (#2065)', () => {
+  it('cancels the owned tasks and marks the handle done when an interrupt is ignored', async () => {
+    vi.useFakeTimers();
+    try {
+      const handle = SpeechHandle.create();
+      // A reply task that never observes its interruption — the shape of the #2065 hang,
+      // where the only escape from the post-interrupt playout wait is this abort signal.
+      const task = Task.from(
+        (controller) =>
+          new Promise<void>((resolve) => waitForAbort(controller.signal).then(resolve)),
+      );
+      handle._tasks.push(task);
+      handle._authorizeGeneration();
+      const generationWait = handle._waitForGeneration();
+
+      handle.interrupt();
+      expect(handle.done()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(task.done).toBe(true);
+      expect(handle.done()).toBe(true);
+      // The scheduling loop's wait is released, so the next queued speech can be authorized.
+      await expect(generationWait).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not cancel a speech that finishes within the grace period', async () => {
+    vi.useFakeTimers();
+    try {
+      const handle = SpeechHandle.create();
+      const task = Task.from(() => Promise.resolve());
+      const cancel = vi.spyOn(task, 'cancel');
+      handle._tasks.push(task);
+
+      handle.interrupt();
+      handle._markDone();
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

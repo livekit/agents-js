@@ -4,12 +4,21 @@
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
 import type { ChatItem } from '../llm/index.js';
+import { log } from '../log.js';
 import type { Task } from '../utils.js';
 import { Event, Future, dedent, shortuuid } from '../utils.js';
 import { functionCallStorage } from './agent.js';
 
 /** Symbol used to identify SpeechHandle instances */
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
+
+/**
+ * How long an interrupted speech may keep running before its tasks are cancelled outright.
+ *
+ * Mirrors `INTERRUPTION_TIMEOUT` in the python implementation
+ * (`livekit-agents/livekit/agents/voice/speech_handle.py`).
+ */
+const INTERRUPTION_TIMEOUT = 5000;
 
 /**
  * Type guard to check if a value is a SpeechHandle.
@@ -96,6 +105,8 @@ export class SpeechHandle {
 
   private itemAddedCallbacks: Set<(item: ChatItem) => void> = new Set();
   private doneCallbacks: Set<(sh: SpeechHandle) => void> = new Set();
+  private interruptTimeout?: ReturnType<typeof setTimeout>;
+  private logger = log();
 
   /** @internal Symbol marker for type identification */
   readonly [SPEECH_HANDLE_SYMBOL] = true;
@@ -312,9 +323,48 @@ export class SpeechHandle {
 
     if (!this.interruptFut.done) {
       this.interruptFut.resolve();
+      this.startInterruptTimeout();
     }
 
     return this;
+  }
+
+  /**
+   * Arm the watchdog that force-cancels an interrupted speech that refuses to finish.
+   *
+   * Interrupting only resolves `interruptFut`; it is up to the owning reply task to notice and
+   * unwind. A task parked on something the interruption itself cannot settle — most of the
+   * pipeline reply's post-interrupt waits race the reply's abort signal, and nothing on the
+   * ordinary interrupt path ever fires it — would otherwise never reach
+   * `_markGenerationDone()`. The speech scheduling loop waits on that generation, so a single
+   * stuck reply silently mutes the session for the rest of its life (#2065). Cancelling the
+   * owned tasks aborts exactly the signal those waits are watching; `_markDone` then releases
+   * the scheduler even if a task ignores its signal.
+   *
+   * Ported from python's `SpeechHandle._cancel`.
+   */
+  private startInterruptTimeout(): void {
+    this.interruptTimeout = setTimeout(() => {
+      this.interruptTimeout = undefined;
+      this.logger.error(
+        { speech_id: this._id, timeout: INTERRUPTION_TIMEOUT },
+        'speech not done in time after interruption, cancelling the speech arbitrarily.',
+      );
+      for (const task of this._tasks) {
+        task.cancel();
+      }
+      this._markDone();
+    }, INTERRUPTION_TIMEOUT);
+    // A pending watchdog must not be what keeps a process alive: handles that are interrupted
+    // and then abandoned (never scheduled, so never marked done) would hold the loop open.
+    this.interruptTimeout.unref?.();
+  }
+
+  private clearInterruptTimeout(): void {
+    if (this.interruptTimeout !== undefined) {
+      clearTimeout(this.interruptTimeout);
+      this.interruptTimeout = undefined;
+    }
   }
 
   /** @internal */
@@ -384,6 +434,8 @@ export class SpeechHandle {
     if (this.generations.length > 0) {
       this._markGenerationDone();
     }
+
+    this.clearInterruptTimeout();
   }
 
   /** @internal */
