@@ -409,65 +409,9 @@ describe('AgentActivity - mainTask', () => {
     expect(fakeActivity.pausedSpeech).toBeUndefined();
   });
 
-  it('does not leave a confirmed interruption resumable by the false-interruption timer', async () => {
-    const handle = SpeechHandle.create({ allowInterruptions: true });
-    handle._authorizeGeneration();
-
-    const audioOutput = {
-      canPause: true,
-      pause: vi.fn(),
-      resume: vi.fn(),
-      clearBuffer: vi.fn(),
-    };
-    const fakeActivity = {
-      cancelSpeechPauseTask: undefined as Promise<void> | undefined,
-      falseInterruptionTimer: undefined as NodeJS.Timeout | undefined,
-      pausedSpeech: { handle, agentState: 'speaking', timeout: 20 } as
-        | { handle: SpeechHandle; agentState: string; timeout: number }
-        | undefined,
-      _currentSpeech: handle,
-      audioRecognition: { onEndOfAgentSpeech: vi.fn() },
-      isInterruptionDetectionEnabled: false,
-      logger: { debug: vi.fn(), info: vi.fn() },
-      agentSession: {
-        sessionOptions: {
-          turnHandling: {
-            interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 20 },
-          },
-        },
-        output: { audio: audioOutput },
-      },
-      restoreInterruptionByAudioActivity: vi.fn(),
-      interruptByAudioActivity: vi.fn(),
-    };
-
-    const proto = AgentActivity.prototype as unknown as Record<
-      string,
-      (...args: never[]) => unknown
-    >;
-    const bind = (name: string) => proto[name]!.bind(fakeActivity as never);
-    (fakeActivity as Record<string, unknown>).cancelSpeechPause = bind('cancelSpeechPause');
-    const onInterruption = bind('onInterruption');
-    const startFalseInterruptionTimer = bind('startFalseInterruptionTimer');
-
-    onInterruption({ isInterruption: true, detectedAt: Date.now() } as never);
-    await raceTimeout(fakeActivity.cancelSpeechPauseTask ?? Promise.resolve(), 2000);
-
-    // A verdict of "this really was a barge-in" must end the pause outright, otherwise the
-    // false-interruption timer resumes speech the model already ruled a genuine interruption.
-    expect(handle.interrupted).toBe(true);
-    expect(fakeActivity.pausedSpeech).toBeUndefined();
-    expect(fakeActivity.falseInterruptionTimer).toBeUndefined();
-
-    // Nothing is left for a late timer to put back on the wire.
-    startFalseInterruptionTimer(1 as never);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(audioOutput.resume).toHaveBeenCalledTimes(1);
-  });
-
   /**
    * Unit-level guard for the ordering measured end to end in
-   * `confirmed_interruption_audio_leak.test.ts`. It pins the cheap invariant that test cannot:
+   * `confirmed_interruption_pause_and_commit.test.ts`. It pins the cheap invariant that test cannot:
    * the sink is only cleared when this call is what interrupted the paused speech.
    */
   it('clears the sink before un-gating it, and only when it interrupted the paused speech', async () => {

@@ -1559,11 +1559,6 @@ export class AgentActivity implements RecognitionHooks {
     if (this.audioRecognition) {
       this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
     }
-    // `interruptByAudioActivity` only parks the speech when pausing is available, leaving it for
-    // the false-interruption timer to resume. That timer exists for overlaps nobody has ruled on
-    // yet — here the model already ruled this a genuine barge-in, so commit the interruption
-    // instead of letting a 2s timeout put the interrupted speech back on the wire.
-    this.cancelSpeechPauseTask = this.cancelSpeechPause();
   }
 
   onInterimTranscript(ev: SpeechEvent, speaking: boolean | undefined): void {

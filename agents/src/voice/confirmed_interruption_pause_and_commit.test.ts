@@ -41,6 +41,13 @@ function vadEvent(type: VADEventType, speechDuration = 0, silenceDuration = 0) {
   } as never;
 }
 
+function sttFinal(text: string) {
+  return {
+    type: 'final_transcript',
+    alternatives: [{ text, language: 'en', startTime: 0, endTime: 0, confidence: 1 }],
+  } as never;
+}
+
 /** The verdict shape `AudioRecognition` forwards on `bargein_detected`. */
 function bargeInVerdict(overlapStartedAt: number): OverlappingSpeechEvent {
   return {
@@ -152,47 +159,90 @@ async function makeHarness() {
   };
 }
 
-describe('confirmed interruption audio leak', () => {
+type Harness = Awaited<ReturnType<typeof makeHarness>>;
+
+/**
+ * Drives a reply up to the moment the adaptive interruption model rules the overlap a genuine
+ * barge-in, then lets the user fall silent so the false-interruption timer is armed.
+ *
+ * Returns the frame count at the AudioSource taken just before the verdict, so callers can
+ * measure what reaches the wire after it.
+ */
+async function bargeInMidReply(h: Harness) {
+  const handle = h.session.generateReply({ userInput: 'one' });
+  await h.waitForProduced(3);
+
+  // The user starts talking over the agent: VAD parks the reply at the pause gate.
+  const overlapStartedAt = Date.now();
+  h.activity().onStartOfSpeech(vadEvent(VADEventType.START_OF_SPEECH));
+  h.activity().onVADInferenceDone(vadEvent(VADEventType.INFERENCE_DONE, 600));
+  expect(h.paused()).toBe(true);
+
+  // Let the TTS keep producing so frames are genuinely parked at the gate when the verdict
+  // lands — those parked frames are the ones that can escape.
+  await sleep(60);
+
+  const deliveredBeforeVerdict = h.delivered();
+  h.activity().onInterruption(bargeInVerdict(overlapStartedAt));
+  // The user stops talking, which is what arms the false-interruption timer.
+  h.activity().onEndOfSpeech(vadEvent(VADEventType.END_OF_SPEECH, 600, 200));
+
+  return { handle, deliveredBeforeVerdict };
+}
+
+describe('confirmed barge-in: pause, then commit on the transcript', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   /**
-   * The adaptive interruption model rules an overlap a genuine barge-in while a frame of the
-   * reply is parked at the audio output's pause gate.
-   *
-   * `onInterruption` commits the interruption through `cancelSpeechPause()`, which un-gates the
-   * output so the *next* speech can be admitted. Until the interrupted reply task reaches
-   * `clearBuffer()`, that open gate also releases the frames belonging to the speech just ruled
-   * interrupted — audio the user should never hear after barging in.
+   * Parity with Python's `AgentActivity.on_interruption` (`agent_activity.py`), which does
+   * restore → interrupt-by-audio-activity → `_on_end_of_agent_speech` and stops. The model's
+   * verdict alone only *pauses* the reply; committing the user's turn needs an STT final
+   * transcript. When none arrives within `falseInterruptionTimeout`, the false-interruption
+   * timer puts the speech back rather than leaving the user in dead air, and the session
+   * reports that with `agent_false_interruption(resumed: true)`.
+   */
+  it('resumes the paused reply when no transcript follows the verdict', async () => {
+    const h = await makeHarness();
+    try {
+      const { handle, deliveredBeforeVerdict } = await bargeInMidReply(h);
+
+      await sleep(FALSE_INTERRUPTION_TIMEOUT + 600);
+      await handle.waitForPlayout();
+
+      // The verdict did not commit the turn, so the reply resumes where it stopped.
+      expect(handle.interrupted).toBe(false);
+      expect(h.falseInterruptions).toEqual([true]);
+      expect(h.delivered() - deliveredBeforeVerdict).toBeGreaterThan(0);
+      expect(h.delivered()).toBe(FRAMES_PER_REPLY);
+    } finally {
+      await h.close();
+    }
+  }, 30000);
+
+  /**
+   * The other half of the same flow, and the one the sink ordering in `cancelSpeechPause()`
+   * exists for. The final transcript arrives, so `onFinalTranscript` commits the interruption
+   * through `cancelSpeechPause()`, which un-gates the output so the *next* speech can be
+   * admitted. Frames of the reply just interrupted are still parked at that gate; unless the
+   * interruption is signalled to the sink first, they are released before the interrupted
+   * reply task reaches its own `clearBuffer()` and audio the user has already barged in over
+   * reaches the wire.
    *
    * Measured at the AudioSource boundary, not by asserting a call order.
    */
-  it('delivers no further audio after the model confirms a barge-in', async () => {
+  it('delivers no further audio once the final transcript commits the barge-in', async () => {
     const h = await makeHarness();
     try {
-      const handle = h.session.generateReply({ userInput: 'one' });
-      await h.waitForProduced(3);
+      const { handle, deliveredBeforeVerdict } = await bargeInMidReply(h);
 
-      // The user starts talking over the agent: VAD parks the reply at the pause gate.
-      const overlapStartedAt = Date.now();
-      h.activity().onStartOfSpeech(vadEvent(VADEventType.START_OF_SPEECH));
-      h.activity().onVADInferenceDone(vadEvent(VADEventType.INFERENCE_DONE, 600));
-      expect(h.paused()).toBe(true);
-
-      // Let the TTS keep producing so a frame is genuinely parked at the gate when the
-      // verdict lands — that parked frame is the one that used to escape.
-      await sleep(60);
-
-      const deliveredBeforeVerdict = h.delivered();
-      h.activity().onInterruption(bargeInVerdict(overlapStartedAt));
+      // STT finalizes what the user said, well inside the false-interruption timeout.
+      h.activity().onFinalTranscript(sttFinal('stop please'), false);
 
       await handle.waitForPlayout();
-      // Well past the false-interruption timeout: nothing may resume the speech either.
+      // Well past the timeout: nothing may resume the speech either.
       await sleep(FALSE_INTERRUPTION_TIMEOUT + 300);
 
-      const deliveredAfterVerdict = h.delivered() - deliveredBeforeVerdict;
-
-      expect(deliveredAfterVerdict).toBe(0);
-      // The verdict is committed, not parked for the timer to undo.
+      expect(h.delivered() - deliveredBeforeVerdict).toBe(0);
       expect(handle.interrupted).toBe(true);
       expect(h.falseInterruptions).toEqual([]);
       // The reply was cut short: this is a barge-in, not a completed turn.
