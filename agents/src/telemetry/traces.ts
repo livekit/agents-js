@@ -408,16 +408,9 @@ export async function setupCloudTracer(options: {
       baseMetadata[ATTR_AGENT_NAME] = agentName;
     }
 
-    // Hosted-agent identity injected by the LiveKit Cloud launcher as env vars:
-    // the cloud agent id (LIVEKIT_AGENT_ID) and, for non-production deployments,
-    // the deployment id (LIVEKIT_AGENT_DEPLOYMENT). Like agentName, these are
-    // included in both the resource (traces) and the session metadata (spans +
-    // logs) so LiveKit Cloud agent insights can attribute telemetry per agent.
-    // They are merged into the resource after the envDetector, so they take
-    // precedence over any matching key in a customer's OTEL_RESOURCE_ATTRIBUTES
-    // while leaving the customer's other attributes intact. Empty/unset
-    // (self-hosted, or the production deployment where LIVEKIT_AGENT_DEPLOYMENT
-    // is "") are omitted.
+    // cloud agent id and deployment provided by LiveKit Cloud via env vars.
+    // Included in both the resource and the session metadata like agentName;
+    // omitted when unset.
     const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
     if (cloudAgentId) {
       baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
