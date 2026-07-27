@@ -41,7 +41,7 @@ import {
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
-import { ATTR_AGENT_NAME } from './trace_types.js';
+import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -410,12 +410,31 @@ export async function setupCloudTracer(options: {
 
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
 
+    // Hosted-agent identity injected by the LiveKit Cloud launcher as env vars:
+    // the cloud agent id (LIVEKIT_AGENT_ID) and, for non-production deployments,
+    // the deployment id (LIVEKIT_AGENT_DEPLOYMENT). Added to the resource (not the
+    // per-span metadata) so LiveKit Cloud agent insights can attribute telemetry
+    // per agent. Merged after the envDetector, so they take precedence over any
+    // matching key in a customer's OTEL_RESOURCE_ATTRIBUTES while leaving the
+    // customer's other attributes intact. Empty/unset (self-hosted, or the
+    // production deployment where LIVEKIT_AGENT_DEPLOYMENT is "") are omitted.
+    const identityAttributes: Attributes = {};
+    const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
+    if (cloudAgentId) {
+      identityAttributes[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+    }
+    const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
+    if (deploymentId) {
+      identityAttributes[ATTR_DEPLOYMENT_ID] = deploymentId;
+    }
+
     const resource = defaultResource()
       .merge(detectResources({ detectors: [envDetector] }))
       .merge(
         resourceFromAttributes({
           [ATTR_SERVICE_NAME]: 'livekit-agents',
           ...baseMetadata,
+          ...identityAttributes,
         }),
       );
 

@@ -487,6 +487,8 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
   let prevKey: string | undefined;
   let prevSecret: string | undefined;
   let prevOtelAttrs: string | undefined;
+  let prevAgentId: string | undefined;
+  let prevDeployment: string | undefined;
 
   // OTel 2.x providers no longer expose their resource; read it off a probe
   // span (started but never ended, so nothing is enqueued for export).
@@ -501,8 +503,13 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     prevKey = process.env.LIVEKIT_API_KEY;
     prevSecret = process.env.LIVEKIT_API_SECRET;
     prevOtelAttrs = process.env.OTEL_RESOURCE_ATTRIBUTES;
+    prevAgentId = process.env.LIVEKIT_AGENT_ID;
+    prevDeployment = process.env.LIVEKIT_AGENT_DEPLOYMENT;
     process.env.LIVEKIT_API_KEY = 'devkey';
     process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+    // Start from no launcher identity vars so each test controls them explicitly.
+    delete process.env.LIVEKIT_AGENT_ID;
+    delete process.env.LIVEKIT_AGENT_DEPLOYMENT;
     // no user-configured provider: reset the module tracer to the API proxy so
     // setupCloudTracer takes the fresh-provider path
     setTracerProvider(new ProxyTracerProvider());
@@ -523,6 +530,10 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     else process.env.LIVEKIT_API_SECRET = prevSecret;
     if (prevOtelAttrs === undefined) delete process.env.OTEL_RESOURCE_ATTRIBUTES;
     else process.env.OTEL_RESOURCE_ATTRIBUTES = prevOtelAttrs;
+    if (prevAgentId === undefined) delete process.env.LIVEKIT_AGENT_ID;
+    else process.env.LIVEKIT_AGENT_ID = prevAgentId;
+    if (prevDeployment === undefined) delete process.env.LIVEKIT_AGENT_DEPLOYMENT;
+    else process.env.LIVEKIT_AGENT_DEPLOYMENT = prevDeployment;
   });
 
   it('stamps lk.agent_name and merges OTEL_RESOURCE_ATTRIBUTES, explicit attrs winning', async () => {
@@ -559,5 +570,74 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     const attrs = providerResourceAttrs();
     expect(attrs['lk.agent_name']).toBeUndefined();
     expect(attrs['room_id']).toBe('room2');
+  });
+
+  it('stamps lk.cloud_agent_id / lk.deployment_id from the launcher env vars', async () => {
+    process.env.LIVEKIT_AGENT_ID = 'CA_launcher';
+    process.env.LIVEKIT_AGENT_DEPLOYMENT = 'canary';
+
+    await setupCloudTracer({
+      roomId: 'room3',
+      jobId: 'job3',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBe('CA_launcher');
+    expect(attrs['lk.deployment_id']).toBe('canary');
+  });
+
+  it('launcher LIVEKIT_AGENT_ID wins over a customer OTEL_RESOURCE_ATTRIBUTES value', async () => {
+    process.env.LIVEKIT_AGENT_ID = 'CA_launcher';
+    process.env.OTEL_RESOURCE_ATTRIBUTES = 'lk.cloud_agent_id=CA_spoofed,custom.attr=keep';
+
+    await setupCloudTracer({
+      roomId: 'room4',
+      jobId: 'job4',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBe('CA_launcher'); // platform beats customer env
+    expect(attrs['custom.attr']).toBe('keep'); // other customer attrs preserved
+  });
+
+  it('omits identity attrs when the launcher env vars are unset (self-hosted)', async () => {
+    await setupCloudTracer({
+      roomId: 'room5',
+      jobId: 'job5',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBeUndefined();
+    expect(attrs['lk.deployment_id']).toBeUndefined();
+  });
+
+  it('omits lk.deployment_id for the production deployment (empty value)', async () => {
+    process.env.LIVEKIT_AGENT_ID = 'CA_launcher';
+    process.env.LIVEKIT_AGENT_DEPLOYMENT = '';
+
+    await setupCloudTracer({
+      roomId: 'room6',
+      jobId: 'job6',
+      cloudHostname: 'example.livekit.cloud',
+      agentName: '',
+      enableTraces: true,
+      enableLogs: false,
+    });
+
+    const attrs = providerResourceAttrs();
+    expect(attrs['lk.cloud_agent_id']).toBe('CA_launcher');
+    expect(attrs['lk.deployment_id']).toBeUndefined();
   });
 });
