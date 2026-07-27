@@ -15,23 +15,24 @@ const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
 /**
  * How long a reply task may take to unwind after its abort signal fires.
  *
- * Python cancels a task outright and the `CancelledError` lands at its next await point, so
- * `utils.aio.cancel_and_wait` needs no ceiling. Nothing here can cancel a pending promise, so the
- * reply tasks are aborted cooperatively and waited on with this bound instead.
+ * Has no python counterpart: there a cancelled task takes `CancelledError` at its next await point,
+ * so `utils.aio.cancel_and_wait` needs no ceiling at all. Nothing here can cancel a pending
+ * promise, so reply tasks are aborted cooperatively and waited on with this bound instead. It has
+ * to stay comfortably below {@link INTERRUPTION_TIMEOUT}: a reply that spends its whole budget and
+ * a watchdog that fires at the same instant would mark the handle done just as that reply resumes
+ * to commit its turn, trading a muted session for a lost assistant message.
  */
-export const REPLY_TASK_CANCEL_TIMEOUT = 5000;
+export const REPLY_TASK_CANCEL_TIMEOUT = 2000;
 
 /**
  * How long an interrupted speech may keep running before its tasks are cancelled outright.
  *
  * Mirrors `INTERRUPTION_TIMEOUT` in the python implementation
- * (`livekit-agents/livekit/agents/voice/speech_handle.py`), but must stay strictly greater than
- * {@link REPLY_TASK_CANCEL_TIMEOUT}. Python's 5s can only elapse when a reply is genuinely stuck;
- * here a reply that unwinds slowly may legitimately spend the whole cancel budget first. Were the
- * two equal, this watchdog would mark the handle done at the very moment such a reply resumes to
- * commit its turn, turning a slow teardown into a lost assistant message.
+ * (`livekit-agents/livekit/agents/voice/speech_handle.py`). This is dead air the user hears before
+ * the session recovers, so it tracks python's value rather than being padded; the ordering against
+ * {@link REPLY_TASK_CANCEL_TIMEOUT} is bought by keeping that budget small instead.
  */
-const INTERRUPTION_TIMEOUT = REPLY_TASK_CANCEL_TIMEOUT + 3000;
+const INTERRUPTION_TIMEOUT = 5000;
 
 /**
  * Type guard to check if a value is a SpeechHandle.
