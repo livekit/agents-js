@@ -408,25 +408,26 @@ export async function setupCloudTracer(options: {
       baseMetadata[ATTR_AGENT_NAME] = agentName;
     }
 
-    const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
-
     // Hosted-agent identity injected by the LiveKit Cloud launcher as env vars:
     // the cloud agent id (LIVEKIT_AGENT_ID) and, for non-production deployments,
-    // the deployment id (LIVEKIT_AGENT_DEPLOYMENT). Added to the resource (not the
-    // per-span metadata) so LiveKit Cloud agent insights can attribute telemetry
-    // per agent. Merged after the envDetector, so they take precedence over any
-    // matching key in a customer's OTEL_RESOURCE_ATTRIBUTES while leaving the
-    // customer's other attributes intact. Empty/unset (self-hosted, or the
-    // production deployment where LIVEKIT_AGENT_DEPLOYMENT is "") are omitted.
-    const identityAttributes: Attributes = {};
+    // the deployment id (LIVEKIT_AGENT_DEPLOYMENT). Like agentName, these are
+    // included in both the resource (traces) and the session metadata (spans +
+    // logs) so LiveKit Cloud agent insights can attribute telemetry per agent.
+    // They are merged into the resource after the envDetector, so they take
+    // precedence over any matching key in a customer's OTEL_RESOURCE_ATTRIBUTES
+    // while leaving the customer's other attributes intact. Empty/unset
+    // (self-hosted, or the production deployment where LIVEKIT_AGENT_DEPLOYMENT
+    // is "") are omitted.
     const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
     if (cloudAgentId) {
-      identityAttributes[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+      baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
     }
     const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
     if (deploymentId) {
-      identityAttributes[ATTR_DEPLOYMENT_ID] = deploymentId;
+      baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
     }
+
+    const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
 
     const resource = defaultResource()
       .merge(detectResources({ detectors: [envDetector] }))
@@ -434,7 +435,6 @@ export async function setupCloudTracer(options: {
         resourceFromAttributes({
           [ATTR_SERVICE_NAME]: 'livekit-agents',
           ...baseMetadata,
-          ...identityAttributes,
         }),
       );
 
