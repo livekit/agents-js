@@ -4586,12 +4586,14 @@ export class AgentActivity implements RecognitionHooks {
       return;
     }
 
+    let interruptedPausedSpeech = false;
     if (
       interrupt &&
       !this.pausedSpeech.handle.interrupted &&
       this.pausedSpeech.handle.allowInterruptions
     ) {
       this.pausedSpeech.handle.interrupt();
+      interruptedPausedSpeech = true;
       // ensure the generation is done — but only if a generation
       // was actually started. Must be raced against interrupt: an interrupted
       // paused speech may never mark its generation done, and an un-raced
@@ -4606,6 +4608,15 @@ export class AgentActivity implements RecognitionHooks {
 
     const interruptionOptions = this.agentSession.sessionOptions.turnHandling.interruption;
     if (interruptionOptions.resumeFalseInterruption && this.agentSession.output.audio) {
+      // Frames of the speech just interrupted are parked at the sink's pause gate. Opening the
+      // gate is only meant to admit the *next* speech, but the parked frames are released first
+      // and audio the user has already barged in over reaches the wire. Python blocks here until
+      // the generation finishes, which gets it the same ordering; the await above is raced
+      // against the interrupt (#1124) and so returns immediately, before the interrupted reply
+      // task has run its own clearBuffer(). Signal the interruption first instead.
+      if (interruptedPausedSpeech) {
+        this.agentSession.output.audio.clearBuffer();
+      }
       this.agentSession.output.audio.resume();
     }
   }
