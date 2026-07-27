@@ -158,7 +158,7 @@ export async function runConsole({
       try {
         await fn();
       } catch (error) {
-        logger.error({ error, step }, 'error during teardown');
+        logger.error({ error }, `error in ${step}`);
       }
     };
 

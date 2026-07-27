@@ -495,7 +495,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'Error during Sarvam WebSocket close sequence');
+      this.#logger.warn(`Error during WebSocket close sequence: ${e}`);
     } finally {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();

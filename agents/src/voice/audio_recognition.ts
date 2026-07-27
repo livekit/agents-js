@@ -459,7 +459,7 @@ export class AudioRecognition {
               if (!this.warnedTurnDetectorPushFailure) {
                 this.warnedTurnDetectorPushFailure = true;
                 this.logger.warn(
-                  { error: err },
+                  { err: err instanceof Error ? err.message : String(err) },
                   'audio EOT stream pushAudio failed; dropping frames for this turn',
                 );
               }
@@ -644,14 +644,14 @@ export class AudioRecognition {
 
     this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
     this.vadTask.result.catch((err) => {
-      this.logger.error({ error: err }, 'error running VAD task');
+      this.logger.error(`Error running VAD task: ${err}`);
     });
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
     );
     this.interruptionTask.result.catch((err) => {
-      this.logger.error({ error: err }, 'error running interruption task');
+      this.logger.error(`Error running interruption task: ${err}`);
     });
 
     // Open (or adopt) the audio EOT detector stream now that the activity is
@@ -983,7 +983,9 @@ export class AudioRecognition {
         await this.interruptionStreamChannel.write(frame);
         return true;
       } catch (e: unknown) {
-        this.logger.warn({ error: e }, 'could not forward interruption sentinel');
+        this.logger.warn(
+          `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
     return false;
@@ -1417,10 +1419,7 @@ export class AudioRecognition {
         if (turnDetector) {
           if (!(await turnDetector.supportsLanguage(this.lastLanguage))) {
             // Unsupported language: produce no span and emit no prediction event.
-            this.logger.debug(
-              { language: this.lastLanguage },
-              'turn detector does not support language',
-            );
+            this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
             await tracer.startActiveSpan(
               async (span) => {
@@ -1781,12 +1780,12 @@ export class AudioRecognition {
 
     this.sttForwardTask = Task.from(({ signal }) => this.forwardInputAudioToStt(pipeline, signal));
     this.sttForwardTask.result.catch((err) => {
-      this.logger.error({ error: err }, 'error forwarding audio to STT pipeline');
+      this.logger.error(`Error forwarding audio to STT pipeline: ${err}`);
     });
 
     this.sttConsumerTask = Task.from(({ signal }) => this.consumeSttEvents(pipeline, signal));
     this.sttConsumerTask.result.catch((err) => {
-      this.logger.error({ error: err }, 'error running STT task');
+      this.logger.error(`Error running STT task: ${err}`);
     });
   }
 
@@ -2058,12 +2057,8 @@ export class AudioRecognition {
               ),
             );
             this.logger.warn(
-              {
-                model: interruptionDetection.label,
-                attempt: numRetries,
-                retryIntervalMs: retryInterval,
-              },
-              'failed to detect interruption, retrying',
+              { model: interruptionDetection.label, attempt: numRetries },
+              `failed to detect interruption, retrying in ${retryInterval}ms`,
             );
             numRetries++;
             await delay(retryInterval, { signal });
@@ -2079,7 +2074,7 @@ export class AudioRecognition {
       } finally {
         await cleanup();
         await forwardTask?.catch((e) => {
-          this.logger.debug({ error: e }, 'interruption task exited with error');
+          this.logger.debug({ err: e }, 'interruption task exited with error');
         });
       }
     }
@@ -2173,7 +2168,7 @@ export class AudioRecognition {
     };
 
     void restartStt().catch((err) => {
-      this.logger.error({ error: err }, 'error resetting STT task');
+      this.logger.error(`Error resetting STT task: ${err}`);
     });
   }
 
@@ -2189,7 +2184,7 @@ export class AudioRecognition {
       if (this.closed) return;
       this.vadTask = Task.from(({ signal }) => this.createVadTask(this.vad, signal));
       this.vadTask.result.catch((err) => {
-        this.logger.error({ error: err }, 'error running VAD task');
+        this.logger.error(`Error running VAD task: ${err}`);
       });
     });
   }

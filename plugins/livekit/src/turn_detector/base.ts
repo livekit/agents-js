@@ -231,7 +231,7 @@ export abstract class EOUModel {
     }
 
     if (langData === undefined) {
-      this.#logger.warn({ language }, 'language not supported by EOU model');
+      this.#logger.warn(`Language ${language} not supported by EOU model`);
       return undefined;
     }
 

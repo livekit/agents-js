@@ -552,7 +552,7 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: e }, 'failed to call lemonslice api');
+          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
         } else {
           this.#logger.error({ error: e }, 'failed to call lemonslice api');
         }
@@ -642,7 +642,7 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: e }, 'failed to call lemonslice api');
+          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
         } else {
           this.#logger.error({ error: e }, 'failed to call lemonslice api');
         }

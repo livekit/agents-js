@@ -57,7 +57,10 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
     try {
       probability = await this.#mod.predict(pcm);
     } catch (err) {
-      this.#logger.error({ error: err }, 'local audio EOT prediction failed');
+      this.#logger.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'local audio EOT prediction failed',
+      );
     }
     return { probability, inferenceDurationMs: performance.now() - t0 };
   }

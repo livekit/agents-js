@@ -249,13 +249,7 @@ export class SpeechStream extends stt.SpeechStream {
           if (content.error_code || content.error_message) {
             const statusCode = parseStatusCode(content.error_code);
             const errorMessage = content.error_message ?? 'Unknown Soniox STT error';
-            this.#logger.error(
-              {
-                errorCode: content.error_code ?? '',
-                error: errorMessage,
-              },
-              'Soniox STT WebSocket returned an error',
-            );
+            this.#logger.error(`WebSocket error: ${content.error_code ?? ''} - ${errorMessage}`);
             reject(
               new APIStatusError({
                 message: `Soniox STT error: ${content.error_code ?? ''} - ${errorMessage}`,

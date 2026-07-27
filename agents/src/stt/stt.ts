@@ -380,13 +380,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
             this.logger.warn(
-              {
-                stt: this.#stt.label,
-                attempt: i + 1,
-                retryIntervalMs: retryInterval,
-                error,
-              },
-              'failed to recognize speech, retrying',
+              { stt: this.#stt.label, attempt: i + 1, error },
+              `failed to recognize speech, retrying in ${retryInterval}ms`,
             );
           }
 
@@ -437,7 +432,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         } catch (e) {
           if (e instanceof Error && e.message.includes('Queue is closed')) {
             this.logger.warn(
-              { error: e },
+              { err: e },
               'Queue closed during transcript processing (expected during disconnect)',
             );
           }

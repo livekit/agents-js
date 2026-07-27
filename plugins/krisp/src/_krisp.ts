@@ -91,7 +91,7 @@ class KrispLicenseSdkManager {
       log().debug('Krisp Audio SDK (license) initialized');
     }
     this.referenceCount += 1;
-    log().debug({ referenceCount: this.referenceCount }, 'Krisp SDK reference acquired');
+    log().debug(`Krisp SDK (license) reference count: ${this.referenceCount}`);
     // Non-null once refCount > 0: release() only nulls the module at refCount 0.
     return this.module!;
   }
@@ -102,13 +102,13 @@ class KrispLicenseSdkManager {
       return;
     }
     this.referenceCount -= 1;
-    log().debug({ referenceCount: this.referenceCount }, 'Krisp SDK reference released');
+    log().debug(`Krisp SDK (license) reference count: ${this.referenceCount}`);
     if (this.referenceCount === 0 && this.module !== null) {
       try {
         this.module.globalDestroy();
         log().debug('Krisp Audio SDK (license) destroyed');
       } catch (e) {
-        log().error({ error: e }, 'error during Krisp SDK cleanup');
+        log().error(`Error during Krisp SDK cleanup: ${e}`);
       } finally {
         this.module = null;
       }
@@ -212,14 +212,14 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       );
     }
 
-    log().info({ sampleRate }, 'Creating Krisp session');
+    log().info(`Creating Krisp session for sample rate: ${sampleRate}Hz`);
 
     // Free the previous session (if any) before replacing it on a rate change.
     if (this.session !== null) {
       try {
         this.session.destroy();
       } catch (e) {
-        log().error({ error: e }, 'error destroying Krisp session');
+        log().error(`Error destroying Krisp session: ${e}`);
       }
       this.session = null;
     }
@@ -277,8 +277,8 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
     if (frame.channels !== 1) {
       if (!this.warnedChannels) {
         log().warn(
-          { channels: frame.channels },
-          'Krisp filter requires mono audio; frames are passed through unprocessed',
+          `Krisp filter not applied: expected mono audio but got ${frame.channels} ` +
+            'channels; frames are passed through unprocessed.',
         );
         this.warnedChannels = true;
       }
@@ -313,13 +313,12 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
           const outputBuf = this.session!.process(inputBuf, this.level);
           chunkOut = bufferToInt16(outputBuf);
         } catch (e) {
-          log().error({ error: e }, 'error processing frame');
+          log().error(`Error processing frame: ${e}`);
           chunkOut = chunkIn;
         }
         if (chunkOut.length !== chunk) {
           log().warn(
-            { returnedSamples: chunkOut.length, expectedSamples: chunk },
-            'Krisp returned an unexpected sample count; using original audio',
+            `Krisp returned ${chunkOut.length} samples, expected ${chunk}; using original audio`,
           );
           chunkOut = chunkIn;
         }
@@ -348,7 +347,7 @@ export class KrispLicenseFrameProcessor extends FrameProcessor<AudioFrame> {
       try {
         this.session.destroy();
       } catch (e) {
-        log().error({ error: e }, 'error destroying Krisp session');
+        log().error(`Error destroying Krisp session: ${e}`);
       }
       this.session = null;
     }

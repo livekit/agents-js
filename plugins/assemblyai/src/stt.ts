@@ -161,8 +161,7 @@ export class STT extends stt.STT {
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
     if (opts.agentContextCarryover && !supportsCarryover) {
       log().warn(
-        { model: rawModel },
-        'agentContextCarryover is enabled but the model does not support it; ignoring',
+        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
       );
     }
     super({
@@ -358,23 +357,12 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            {
-              retryDelaySeconds,
-              retries,
-              maxRetry,
-              error: e,
-            },
-            'failed to connect to AssemblyAI, retrying',
+            `failed to connect to AssemblyAI, retrying in ${retryDelaySeconds} seconds: ${e} (${retries}/${maxRetry})`,
           );
           await delay(retryDelaySeconds * 1000);
         } else {
           this.#logger.warn(
-            {
-              inputClosed: this.input.closed,
-              isClosed: this.closed,
-              error: e,
-            },
-            'AssemblyAI disconnected',
+            `AssemblyAI disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }
@@ -462,13 +450,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(
-              {
-                code,
-                'lk.pii.reason': reason.toString(),
-              },
-              'AssemblyAI WebSocket closed unexpectedly',
-            );
+            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
             reject(new Error('WebSocket closed'));
           }
         });
@@ -598,8 +580,7 @@ export class SpeechStream extends stt.SpeechStream {
       this.#sessionId = data.id ?? null;
       this.#expiresAt = data.expires_at ?? null;
       this.#logger.info(
-        { sessionId: this.#sessionId, expiresAt: this.#expiresAt },
-        'AssemblyAI session started',
+        `AssemblyAI session started id=${this.#sessionId} expires_at=${this.#expiresAt}`,
       );
       return;
     }
@@ -611,11 +592,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     if (messageType === 'Termination') {
       this.#logger.debug(
-        {
-          audioDurationSeconds: data.audio_duration_seconds,
-          sessionDurationSeconds: data.session_duration_seconds,
-        },
-        'AssemblyAI session terminated',
+        `AssemblyAI session terminated audio_duration=${data.audio_duration_seconds}s session_duration=${data.session_duration_seconds}s`,
       );
       return;
     }

@@ -357,7 +357,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
           break;
         }
       } catch (error) {
-        this.#logger.error({ error }, 'Deepgram stream error');
+        this.#logger.error('Deepgram stream error', { error });
         throw error; // Let Base Class handle retry logic
       } finally {
         if (this.#ws?.readyState === WebSocket.OPEN) {
@@ -451,18 +451,12 @@ class SpeechStreamv2 extends stt.SpeechStream {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
         } catch (error) {
-          this.#logger.error({ error }, 'Failed to parse Deepgram message');
+          this.#logger.error('Failed to parse Deepgram message', { error });
         }
       });
 
       this.#ws.on('close', (code, reason) => {
-        this.#logger.debug(
-          {
-            code,
-            'lk.pii.reason': reason.toString(),
-          },
-          'Deepgram WebSocket closed',
-        );
+        this.#logger.debug(`Deepgram WebSocket closed: ${code} ${reason}`);
         resolve();
       });
 

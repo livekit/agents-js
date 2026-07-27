@@ -218,23 +218,12 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            {
-              delay,
-              retries,
-              maxRetry,
-              error: e,
-            },
-            'failed to connect to xAI STT, retrying',
+            `failed to connect to xAI STT, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            {
-              inputClosed: this.input.closed,
-              isClosed: this.closed,
-              error: e,
-            },
-            'xAI STT disconnected',
+            `xAI STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }
@@ -252,13 +241,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>(async (_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(
-              {
-                code,
-                'lk.pii.reason': reason.toString(),
-              },
-              'xAI STT WebSocket closed unexpectedly',
-            );
+            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
             reject(new Error('WebSocket closed'));
           }
         });
@@ -435,12 +418,9 @@ export class SpeechStream extends stt.SpeechStream {
         this.#putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
       }
     } else if (msgType === 'error') {
-      this.#logger.error(
-        { error: (data['message'] as string) ?? 'unknown error' },
-        'xAI STT returned an error',
-      );
+      this.#logger.error(`xAI STT error: ${(data['message'] as string) ?? 'unknown error'}`);
     } else {
-      this.#logger.warn({ messageType: msgType }, 'received unexpected message from xAI');
+      this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
   }
 }

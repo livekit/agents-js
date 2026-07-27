@@ -550,7 +550,7 @@ export class Task<T> {
   private async runTask() {
     const run = async () => {
       if (this.name) {
-        this.#logger.debug({ taskName: this.name }, 'Task.runTask: task started');
+        this.#logger.debug(`Task.runTask: task ${this.name} started`);
       }
       return await this.fn(this.controller);
     };
@@ -566,7 +566,7 @@ export class Task<T> {
       })
       .finally(() => {
         if (this.name) {
-          this.#logger.debug({ taskName: this.name }, 'Task.runTask: task done');
+          this.#logger.debug(`Task.runTask: task ${this.name} done`);
         }
       });
   }

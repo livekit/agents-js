@@ -177,7 +177,7 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
     this.#waitAvatarJoinAbort = abortController;
     this.#waitAvatarJoinPromise = this.#waitAvatarJoin(abortController.signal).catch((error) => {
       if (!abortController.signal.aborted) {
-        this.#logger.warn({ error }, 'failed while waiting for avatar participant');
+        this.#logger.warn({ error: String(error) }, 'failed while waiting for avatar participant');
       }
     });
   }

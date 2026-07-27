@@ -139,7 +139,7 @@ function resolveDetectionLLM(configured?: LLM | string): LLM | undefined {
     return InferenceLLM.fromModelString(model);
   } catch {
     // never let detection setup break the session
-    log().warn({ model }, 'keyterm detection: could not create detection LLM; skipping');
+    log().warn(`keyterm detection: could not create detection LLM ${model}; skipping`);
     return undefined;
   }
 }
@@ -532,7 +532,7 @@ export async function detectKeyterms(
   }
   if (raced === timedOut) {
     stream.close();
-    log().warn({ timeoutMs: timeout }, 'keyterm detection: pass timed out; skipping');
+    log().warn(`keyterm detection: pass timed out after ${timeout}ms; skipping`);
     return [[], [], []];
   }
   const result = parseToolCall(raced.toolCalls);

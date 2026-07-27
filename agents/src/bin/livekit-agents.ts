@@ -23,6 +23,6 @@ program
   });
 
 program.parseAsync(process.argv).catch((error) => {
-  console.error('Fatal error', error instanceof Error ? error.name : 'UnknownError');
+  console.error(`Fatal error: ${error}`);
   process.exit(1);
 });

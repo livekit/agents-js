@@ -34,7 +34,7 @@ export default defineAgent({
 
     await publication.waitForSubscription();
 
-    logger.info({ trackSid: publication?.sid }, 'Audio track published');
+    logger.info(`Audio track published: ${publication?.sid}`);
 
     const currentDir = dirname(fileURLToPath(import.meta.url));
     const resourcesPath = join(currentDir, '../../agents/resources');
@@ -58,10 +58,7 @@ export default defineAgent({
       frameCount++;
 
       if (frameCount % 100 === 0) {
-        logger.info(
-          { frameCount, durationSeconds: Number((frameCount * 0.1).toFixed(1)) },
-          'Played audio frames',
-        );
+        logger.info(`Played ${frameCount} frames (${(frameCount * 0.1).toFixed(1)}s)`);
       }
     }
   },

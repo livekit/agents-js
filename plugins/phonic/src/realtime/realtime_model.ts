@@ -362,14 +362,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
-        this.#logger.info(
-          {
-            function: item.name,
-            callId: item.callId,
-            'lk.pii.output': item.output,
-          },
-          'sending tool call output',
-        );
+        this.#logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
         this.socket?.sendToolCallOutput({
           type: 'tool_call_output',
           tool_call_id: item.callId,
@@ -730,7 +723,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         break;
       case 'conversation_created':
         this.conversationId = message.conversation_id;
-        this.#logger.info({ conversationId: this.conversationId }, 'Phonic conversation began');
+        this.#logger.info(`Phonic Conversation began with ID: ${this.conversationId}`);
         this.options.onConversationCreated?.(this.conversationId);
         break;
       case 'tool_call_interrupted':
@@ -838,11 +831,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private handleToolCallInterrupted(message: Phonic.ToolCallInterruptedPayload): void {
     this.pendingToolCallIds.delete(message.tool_call_id);
     this.#logger.warn(
-      {
-        toolName: message.tool_name,
-        callId: message.tool_call_id,
-      },
-      'tool call was cancelled due to user interruption',
+      `Tool call for ${message.tool_name} (call_id: ${message.tool_call_id}) was cancelled due to user interruption.`,
     );
   }
 

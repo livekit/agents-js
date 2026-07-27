@@ -276,23 +276,12 @@ export class SpeechStream extends stt.SpeechStream {
           const delay = Math.min(retries * 5, 10);
           retries++;
           this.#logger.warn(
-            {
-              delay,
-              retries,
-              maxRetry,
-              error: e,
-            },
-            'Failed to connect to Inworld STT, retrying',
+            `Failed to connect to Inworld STT, retrying in ${delay}s: ${e} (${retries}/${maxRetry})`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            {
-              inputClosed: this.input.closed,
-              isClosed: this.closed,
-              error: e,
-            },
-            'Inworld STT disconnected',
+            `Inworld STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }
@@ -332,13 +321,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(
-              {
-                code,
-                'lk.pii.reason': reason.toString(),
-              },
-              'Inworld STT WebSocket closed unexpectedly',
-            );
+            this.#logger.error(`Inworld STT WebSocket closed with code ${code}: ${reason}`);
             reject(new Error('WebSocket closed'));
           }
         });

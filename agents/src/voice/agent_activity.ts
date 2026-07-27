@@ -198,7 +198,7 @@ export async function cleanupReusableResources(
         if (logger) {
           logger.error({ error: output.reason }, 'error cleaning up reusable resources');
         } else {
-          console.error('error cleaning up reusable resources');
+          console.error('error cleaning up reusable resources', output.reason);
         }
       }
     }
@@ -427,8 +427,7 @@ export class AgentActivity implements RecognitionHooks {
         this.llm.capabilities.turnDetection
       ) {
         this.logger.warn(
-          { turnDetection: this.turnDetectionMode },
-          'LLM server-side turn detection is enabled, ignoring turnDetection setting',
+          `turnDetection is set to "${this.turnDetectionMode}", but the LLM is a RealtimeModel and server-side turn detection enabled, ignoring the turnDetection setting`,
         );
         this.turnDetectionMode = undefined;
       }
@@ -560,7 +559,7 @@ export class AgentActivity implements RecognitionHooks {
           !rtReused || capabilities.midSessionToolsUpdate ? this.tools : undefined,
         );
       } catch (error) {
-        this.logger.error({ error }, 'failed to update realtime session');
+        this.logger.error(error, 'failed to update realtime session');
       }
 
       if (!capabilities.audioOutput && !this.tts && this.agentSession.output.audio) {
@@ -578,7 +577,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (error) {
-        this.logger.error({ error }, 'failed to update the instructions');
+        this.logger.error('failed to update the instructions', error);
       }
     }
 
@@ -2016,7 +2015,7 @@ export class AgentActivity implements RecognitionHooks {
       await Promise.race([promise, waitForAbort(signal)]);
     } catch (error) {
       if (!signal.aborted) {
-        this.logger.error({ error, operation: errorMessage }, 'operation failed while waiting');
+        this.logger.error({ error }, errorMessage);
       }
     }
   }
@@ -3661,7 +3660,7 @@ export class AgentActivity implements RecognitionHooks {
           if (output.played === 'partial') break;
         }
       } catch (error) {
-        this.logger.error({ error }, 'error reading messages from the realtime API');
+        this.logger.error(error, 'error reading messages from the realtime API');
       }
     };
 
@@ -4657,7 +4656,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (this.audioRecognition) {
       this.audioRecognition.disableInterruptionDetection().catch((err) => {
-        this.logger.warn({ error: err }, 'error while disabling interruption detection');
+        this.logger.warn({ err }, 'error while disabling interruption detection');
       });
     }
 

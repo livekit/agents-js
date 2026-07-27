@@ -159,14 +159,14 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ error: err }, 'Neuphonic TTS response error');
+          this.#logger.error({ err }, 'Neuphonic TTS response error');
         });
       },
     );
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ error: err }, 'Neuphonic TTS request error');
+      this.#logger.error({ err }, 'Neuphonic TTS request error');
     });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
@@ -263,13 +263,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error({ error }, 'Error parsing Neuphonic WebSocket message');
+                this.#logger.error(`Error parsing WebSocket message: ${error}`);
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error({ error }, 'Neuphonic WebSocket error');
+              this.#logger.error(`WebSocket error: ${error}`);
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -280,13 +280,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             ws.on('close', (code, reason) => {
               if (!closing) {
-                this.#logger.error(
-                  {
-                    code,
-                    'lk.pii.reason': reason.toString(),
-                  },
-                  'Neuphonic WebSocket closed unexpectedly',
-                );
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               // Only reject if we haven't processed all expected frames
@@ -301,11 +295,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
             if (err.message.includes('Queue is closed')) {
               this.#logger.warn(
-                { error: err },
+                { err },
                 'Queue closed during transcript processing (expected during disconnect)',
               );
             } else {
-              this.#logger.error({ error: err }, 'Error in recvTask from Neuphonic WebSocket');
+              this.#logger.error({ err }, 'Error in recvTask from Neuphonic WebSocket');
             }
           }
           break;

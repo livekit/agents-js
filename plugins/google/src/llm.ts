@@ -331,8 +331,8 @@ export class LLM extends llm.LLM {
         // Gemini 3: only supports thinkingLevel
         if (thinkingBudget !== undefined && thinkingLevel === undefined) {
           log().warn(
-            { model: this.#opts.model },
-            'Gemini 3 model does not support thinkingBudget; use thinkingLevel instead',
+            `Model ${this.#opts.model} is Gemini 3 which does not support thinkingBudget. ` +
+              `Please use thinkingLevel ('low' or 'high') instead. Ignoring thinkingBudget.`,
           );
         }
         extras.thinkingConfig = {
@@ -345,8 +345,9 @@ export class LLM extends llm.LLM {
         // Gemini 2.5 and earlier: only supports thinkingBudget
         if (thinkingLevel !== undefined && thinkingBudget === undefined) {
           log().warn(
-            { model: this.#opts.model },
-            'model does not support thinkingLevel; use thinkingBudget instead',
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
           );
           extras.thinkingConfig = { includeThoughts };
         } else if (thinkingBudget !== undefined) {
@@ -465,7 +466,7 @@ export class LLMStream extends llm.LLMStream {
         }
         if (dropped.length > 0) {
           this.logger.warn(
-            { dropped, 'lk.pii.cached_content': cachedContent },
+            { dropped, cachedContent },
             'dropping systemInstruction from Gemini request because cachedContent is set; this field must be baked into the CachedContent resource',
           );
         }

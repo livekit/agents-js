@@ -358,8 +358,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
     if (!mutableSession) {
       this.#logger.warn(
-        { model },
-        'model has limited mid-session update support; updates apply to the next session',
+        `'${model}' has limited mid-session update support. instructions, chat context, and tool updates will not be applied until the next session.`,
       );
     }
 
@@ -815,8 +814,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   ): Promise<llm.GenerationCreatedEvent> {
     if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate) {
       this.#logger.warn(
-        { model: this.options.model },
-        'generateReply is not compatible with this model and will be ignored',
+        `generateReply is not compatible with '${this.options.model}' and will be ignored.`,
       );
       throw new Error(`generateReply is not compatible with '${this.options.model}'`);
     }
@@ -1012,14 +1010,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                   ? ' (message may be truncated - check model name and API permissions)'
                   : '';
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
-                this.#logger.error(
-                  {
-                    code: event.code,
-                    truncated: isTruncated,
-                    error: `${errorMsg}${truncationNote}`,
-                  },
-                  'Gemini Live session error',
-                );
+                this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
 
                 this.emitError(
                   new APIStatusError({
@@ -1035,13 +1026,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                   false,
                 );
               } else {
-                this.#logger.debug(
-                  {
-                    code: event.code,
-                    'lk.pii.reason': event.reason,
-                  },
-                  'Gemini Live session closed',
-                );
+                this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
               }
               this.markCurrentGenerationDone();
             },
@@ -1089,7 +1074,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         await cancelAndWait([sendTask, restartWaitTask], 2000);
       } catch (error) {
-        this.#logger.error({ error }, 'Gemini Realtime API error');
+        this.#logger.error(`Gemini Realtime API error: ${error}`);
 
         if (this.#closed) break;
 
@@ -1114,9 +1099,8 @@ export class RealtimeSession extends llm.RealtimeSession {
           {
             attempt: this.numRetries,
             maxRetries,
-            retryIntervalMs: retryInterval,
           },
-          'Gemini Realtime API connection failed, retrying',
+          `Gemini Realtime API connection failed, retrying in ${retryInterval}ms`,
         );
 
         await delay(retryInterval);
@@ -1200,13 +1184,13 @@ export class RealtimeSession extends llm.RealtimeSession {
             if (activityEnd) await session.sendRealtimeInput({ activityEnd });
             break;
           default:
-            this.#logger.warn({ messageType: msg.type }, 'received unhandled message type');
+            this.#logger.warn(`Warning: Received unhandled message type: ${msg.type}`);
             break;
         }
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error({ error: e }, 'Gemini Live send task failed');
+        this.#logger.error(`Error in send task: ${e}`);
         this.markRestartNeeded();
       }
     } finally {
@@ -1286,10 +1270,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (this.isNewGeneration(response)) {
         this.startNewGeneration();
         if (LK_GOOGLE_DEBUG) {
-          this.#logger.debug(
-            { responseId: this.currentGeneration?.responseId },
-            'new generation started',
-          );
+          this.#logger.debug(`new generation started: ${this.currentGeneration?.responseId}`);
         }
       }
     }
@@ -1328,7 +1309,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error({ error: e }, 'failed to process Gemini Live server event');
+        this.#logger.error(`Error in onReceiveMessage: ${e}`);
         this.markRestartNeeded();
       }
     }
@@ -1657,7 +1638,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
             gen.audioChannel.write(audioFrame);
           } catch (error) {
-            this.#logger.error({ error }, 'Error processing Gemini Live audio data');
+            this.#logger.error('Error processing audio data:', error);
           }
         }
       }

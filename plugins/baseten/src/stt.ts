@@ -138,23 +138,12 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            {
-              delay,
-              retries,
-              maxRetry,
-              error: e,
-            },
-            'failed to connect to Baseten, retrying',
+            `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            {
-              inputClosed: this.input.closed,
-              isClosed: this.closed,
-              error: e,
-            },
-            'Baseten disconnected',
+            `Baseten disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }

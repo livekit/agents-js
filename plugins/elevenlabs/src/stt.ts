@@ -306,13 +306,8 @@ export class STT extends stt.STT {
             });
           } else {
             this.#logger.warn(
-              {
-                stt: this.label,
-                attempt: i + 1,
-                retryIntervalMs: retryInterval,
-                error,
-              },
-              'failed to recognize speech, retrying',
+              { stt: this.label, attempt: i + 1, error },
+              `failed to recognize speech, retrying in ${retryInterval}ms`,
             );
           }
 
@@ -844,7 +839,7 @@ export class SpeechStream extends stt.SpeechStream {
     } else if (messageType === 'committed_transcript') {
       return;
     } else if (messageType === 'session_started') {
-      this.#logger.debug({ sessionId: data.session_id }, 'session started');
+      this.#logger.debug(`Session started with ID: ${data.session_id ?? 'unknown'}`);
     } else if (
       messageType === 'auth_error' ||
       messageType === 'quota_exceeded' ||
@@ -854,13 +849,7 @@ export class SpeechStream extends stt.SpeechStream {
     ) {
       const errorMsg = data.message ?? 'Unknown error';
       const detailsSuffix = data.details ? ` - ${data.details}` : '';
-      this.#logger.error(
-        {
-          messageType,
-          error: `${errorMsg}${detailsSuffix}`,
-        },
-        'ElevenLabs STT returned an error',
-      );
+      this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
       throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
     } else if (
       messageType === 'committed_transcript_with_timestamps' &&

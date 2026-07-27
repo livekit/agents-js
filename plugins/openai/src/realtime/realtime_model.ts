@@ -589,10 +589,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       );
       if (blockingErrors.length > 0) {
         this.#logger.error(
-          {
-            'lk.pii.issues': validation.issues,
-            'lk.pii.blocking_errors': blockingErrors,
-          },
+          { issues: validation.issues, blockingErrors },
           'Invalid chat context supplied to updateChatCtx',
         );
         throw new Error(
@@ -609,7 +606,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug(
           {
             warnings: validation.warnings,
-            'lk.pii.issues': validation.issues,
+            issues: validation.issues,
           },
           'Chat context warnings detected before realtime update',
         );
@@ -676,10 +673,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
     } catch (e) {
-      this.#logger.error(
-        { error: (e as Error).message },
-        'failed to update OpenAI Realtime chat context',
-      );
+      this.#logger.error((e as Error).message);
       throw e;
     } finally {
       unlock();
@@ -1033,7 +1027,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (!this.currentGeneration._doneFut.done) {
       this.currentGeneration._doneFut.resolve();
     }
-    this.#logger.warn({ 'lk.pii.reason': reason }, 'in-progress generation discarded');
+    this.#logger.warn(`In-progress generation discarded due to ${reason}`);
     this.currentGeneration = undefined;
   }
 
@@ -1230,10 +1224,9 @@ export class RealtimeSession extends llm.RealtimeSession {
             {
               attempt: numRetries,
               maxRetries,
-              retryIntervalMs: retryInterval,
               error,
             },
-            'OpenAI Realtime API connection failed, retrying',
+            `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
           );
 
           await delay(retryInterval);
@@ -1378,7 +1371,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
           default:
             if (lkOaiDebug) {
-              this.#logger.debug({ eventType: event.type }, 'unhandled event');
+              this.#logger.debug(`unhandled event: ${event.type}`);
             }
             break;
         }
@@ -1719,7 +1712,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const itemGeneration = this.currentGeneration.messages.get(itemId);
     if (!itemGeneration) {
-      this.#logger.warn({ itemId }, 'itemGeneration not found');
+      this.#logger.warn(`itemGeneration not found for itemId=${itemId}`);
       return;
     }
 
@@ -2035,9 +2028,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           eventId: event.response.id,
           eventResponseStatus: event.response.status,
           eventResponseStatusType: statusType,
-          'lk.pii.event_response_status_reason': statusReason,
+          eventResponseStatusReason: statusReason,
         },
-        'OpenAI Realtime API response finished without completing',
+        `OpenAI Realtime API response done but not complete with status: ${event.response.status} (type=${statusType}, reason=${statusReason})`,
       );
     } else {
       this.#logger.debug({ eventResponseStatus: event.response.status }, 'Unknown response status');

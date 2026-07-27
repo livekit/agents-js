@@ -793,11 +793,7 @@ export class AgentSession<
 
     // Log used IO configuration
     this.logger.debug(
-      {
-        audioInput: this.input.audio?.constructor.name,
-        audioOutput: this.output.audio?.constructor.name,
-      },
-      'using audio io',
+      `using audio io: ${this.input.audio ? '`' + this.input.audio.constructor.name + '`' : '(none)'} -> \`AgentSession\` -> ${this.output.audio ? '`' + this.output.audio.constructor.name + '`' : '(none)'}`,
     );
 
     if (
@@ -814,8 +810,7 @@ export class AgentSession<
     }
 
     this.logger.debug(
-      { transcriptionOutput: this.output.transcription?.constructor.name },
-      'using transcript io',
+      `using transcript io: \`AgentSession\` -> ${this.output.transcription ? '`' + this.output.transcription.constructor.name + '`' : '(none)'}`,
     );
 
     this.started = true;

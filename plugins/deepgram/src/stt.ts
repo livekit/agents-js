@@ -234,8 +234,7 @@ export class STT extends stt.STT {
       ].includes(model)
     ) {
       this.#logger.warn(
-        { model, language, fallbackModel: 'nova-2-general' },
-        'model does not support language, falling back',
+        `${model} does not support language ${language}, falling back to nova-2-general`,
       );
       return 'nova-2-general';
     }
@@ -340,23 +339,12 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            {
-              delay,
-              retries,
-              maxRetry,
-              error: e,
-            },
-            'failed to connect to Deepgram, retrying',
+            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            {
-              inputClosed: this.input.closed,
-              isClosed: this.closed,
-              error: e,
-            },
-            'Deepgram disconnected',
+            `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }
@@ -403,13 +391,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>(async (_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(
-              {
-                code,
-                'lk.pii.reason': reason.toString(),
-              },
-              'Deepgram STT WebSocket closed unexpectedly',
-            );
+            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
             reject(new Error('WebSocket closed'));
           }
         });

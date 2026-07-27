@@ -419,7 +419,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             } catch (e) {
               this.#logger.warn(
                 {
-                  error: e,
+                  err: e,
                   'lk.pii.data': event.data.toString(),
                 },
                 'Unexpected xAI message',

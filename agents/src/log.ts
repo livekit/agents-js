@@ -48,12 +48,7 @@ const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
   ];
 
   return pino(
-    {
-      level: logLevel,
-      serializers: {
-        error: pino.stdSerializers.err,
-      },
-    },
+    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
     multistream(streams),
   );
 };

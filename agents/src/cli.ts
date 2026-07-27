@@ -24,6 +24,9 @@ type CliArgs = {
   cliAddr?: string;
 };
 
+const formatErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
@@ -42,7 +45,7 @@ const runServer = async (args: CliArgs) => {
 
   if (args.room) {
     server.event.once('worker_registered', () => {
-      logger.info({ roomName: args.room }, 'connecting to room');
+      logger.info(`connecting to room ${args.room}`);
       server.simulateJob(args.room!, args.participantIdentity);
     });
   }
@@ -237,7 +240,7 @@ export const runApp = (opts: ServerOptions) => {
         connectAddr: commandOptions.connectAddr,
         record: commandOptions.record === true,
       }).catch((error) => {
-        log().fatal({ error }, 'console mode failed');
+        log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
         process.exit(1);
       });
     });
@@ -261,13 +264,15 @@ export const runApp = (opts: ServerOptions) => {
         const failures: PluginDownloadFailure[] = [];
 
         for (const plugin of Plugin.registeredPlugins) {
-          logger.info({ plugin: plugin.title }, 'Downloading plugin files');
+          logger.info(`Downloading files for ${plugin.title}`);
           try {
             await plugin.downloadFiles();
-            logger.info({ plugin: plugin.title }, 'Finished downloading plugin files');
+            logger.info(`Finished downloading files for ${plugin.title}`);
           } catch (error) {
             failures.push({ plugin, error });
-            logger.error({ error, plugin: plugin.title }, 'failed to download plugin files');
+            logger.error(
+              `Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`,
+            );
           }
         }
 
@@ -281,7 +286,7 @@ export const runApp = (opts: ServerOptions) => {
           process.exit(0);
         })
         .catch((error) => {
-          logger.fatal({ error }, 'error during file downloads');
+          logger.fatal(`Error during file downloads: ${error}`);
           process.exit(1);
         });
     });

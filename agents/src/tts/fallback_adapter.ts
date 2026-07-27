@@ -157,8 +157,7 @@ export class FallbackAdapter extends TTS {
     const tts = this.ttsInstances[index]!;
     if (this.sampleRate !== tts.sampleRate) {
       this._logger.debug(
-        { tts: tts.label, inputSampleRate: tts.sampleRate, outputSampleRate: this.sampleRate },
-        'resampling TTS audio',
+        `resampling ${tts.label} from ${tts.sampleRate}Hz to ${this.sampleRate}Hz`,
       );
       return new AudioResampler(tts.sampleRate, this.sampleRate, tts.numChannels);
     }

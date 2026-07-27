@@ -238,7 +238,7 @@ export class AvatarSession extends voice.AvatarSession {
         return;
       } catch (e) {
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: e }, 'failed to call bey presence api');
+          this.#logger.warn({ error: String(e) }, 'failed to call bey presence api');
         } else {
           this.#logger.error({ error: e }, 'failed to call bey presence api');
         }

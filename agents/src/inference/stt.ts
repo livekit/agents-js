@@ -727,7 +727,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         try {
           this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
         } catch (e) {
-          this.#logger.debug({ error: e }, 'failed to send session.update, ws may be closing');
+          this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
         }
       }
     }
@@ -1074,11 +1074,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       if (e instanceof Error && e.message.includes('Queue is closed')) {
         // Expected behavior on disconnect, log as warning
         this.#logger.warn(
-          { error: e },
+          { err: e },
           'Queue closed during transcript processing (expected during disconnect)',
         );
       } else {
-        this.#logger.error({ error: e }, 'Error putting transcript to queue');
+        this.#logger.error({ err: e }, 'Error putting transcript to queue');
       }
     }
   }

@@ -132,7 +132,7 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.sessionIdValue = session.id;
     this.#logger.debug(
-      { sessionId: this.sessionIdValue, avatarId: this.avatarId },
+      { sessionId: this.sessionIdValue, 'lk.pii.avatar_id': this.avatarId },
       'protoface session started',
     );
 
@@ -152,7 +152,7 @@ export class AvatarSession extends voice.AvatarSession {
         try {
           await this.api.endSession(sessionId);
         } catch (error) {
-          this.#logger.warn({ error, sessionId }, 'failed to end protoface session');
+          this.#logger.warn({ error: String(error), sessionId }, 'failed to end protoface session');
         }
       }
     } finally {

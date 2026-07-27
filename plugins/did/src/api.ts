@@ -128,7 +128,7 @@ export class DIDAPI {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: e }, 'failed to call d-id api');
+          this.#logger.warn({ error: String(e) }, 'failed to call d-id api');
         } else {
           this.#logger.error({ error: e }, 'failed to call d-id api');
         }

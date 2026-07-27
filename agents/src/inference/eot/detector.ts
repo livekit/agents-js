@@ -290,7 +290,7 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   _fallBackToLocal(reason: Error): void {
     if (!this._warnedCloudFailure) {
       this._detLogger.warn(
-        { error: reason },
+        { reason: reason.message },
         'cloud turn detector failed; falling back to local mini model',
       );
       this._warnedCloudFailure = true;
@@ -320,7 +320,7 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   _onLocalFailure(reason: Error): void {
     if (!this._warnedLocalFailure) {
       this._detLogger.warn(
-        { error: reason },
+        { reason: reason.message },
         'local audio turn detector failed; defaulting to 1.0 and retrying on next turn',
       );
       this._warnedLocalFailure = true;

@@ -576,8 +576,7 @@ export class AgentServer {
         )) as unknown as ParticipantInfo;
       } catch (e) {
         this.#logger.fatal(
-          { participantIdentity, roomName, error: e },
-          'participant not found in room',
+          `participant with identity ${participantIdentity} not found in room ${roomName}`,
         );
         throw e;
       }
@@ -634,7 +633,7 @@ export class AgentServer {
     });
 
     ws.addEventListener('error', (event) => {
-      this.#logger.error({ error: event.message }, 'worker WebSocket error');
+      this.#logger.error('worker error:', event.message);
     });
 
     ws.addEventListener('message', (event) => {
@@ -708,7 +707,7 @@ export class AgentServer {
             delete this.#pending[job.id];
             task?.resolve(msg.message.value);
           } else {
-            this.#logger.child({ job }).warn('received assignment for unknown job');
+            this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
           }
           break;
         }
@@ -863,7 +862,7 @@ export class AgentServer {
       this.#pending[req.id] = new PendingAssignment();
 
       const timer = setTimeout(() => {
-        this.#logger.child({ req }).warn('job assignment timed out');
+        this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
         return;
       }, ASSIGNMENT_TIMEOUT);
       const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
@@ -883,7 +882,7 @@ export class AgentServer {
             apiSecret: this.#opts.apiSecret,
           });
         } catch (e) {
-          this.#logger.child({ requestId: req.id }).error({ error: e }, 'error launching job');
+          this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
         }
       } else {
         this.#logger.child({ requestId: req.id }).warn('pending assignment not found');

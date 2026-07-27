@@ -195,7 +195,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
           res.on('error', (err) => {
             if (err.message === 'aborted') return;
-            this.#logger.error({ error: err }, 'Deepgram TTS response error');
+            this.#logger.error({ err }, 'Deepgram TTS response error');
             settle(() => reject(err));
           });
 
@@ -220,7 +220,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
       req.on('error', (err) => {
         if (err.name === 'AbortError') return;
-        this.#logger.error({ error: err }, 'Deepgram TTS request error');
+        this.#logger.error({ err }, 'Deepgram TTS request error');
         settle(() => reject(err));
       });
 
@@ -282,7 +282,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
     } catch (e) {
-      this.#logger.warn({ error: e }, 'error during WebSocket close sequence');
+      console.warn(`Error during WebSocket close sequence: ${e}`);
     } finally {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
@@ -417,10 +417,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               resolve();
               return;
             } else if (message.type === 'Warning') {
-              this.#logger.warn(
-                { 'lk.pii.warning': message.warn_msg },
-                'Deepgram returned a warning',
-              );
+              this.#logger.warn(`Deepgram warning: ${message.warn_msg}`);
             } else if (message.type === 'Error' || message.type === 'error') {
               reject(new APIError('Deepgram TTS returned error', { body: message }));
               return;

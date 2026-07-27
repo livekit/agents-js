@@ -355,7 +355,7 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.all([sendPromise, recvPromise]);
       if (firstError !== undefined) throw firstError;
     } catch (error) {
-      this.#logger.error({ error }, 'Cartesia STT stream error');
+      this.#logger.error('Cartesia STT stream error', { error });
       throw error;
     } finally {
       abortController.abort();
@@ -419,8 +419,7 @@ export class SpeechStream extends stt.SpeechStream {
       // the stream wait forever.
       const drainTimer = setTimeout(() => {
         this.#logger.warn(
-          { timeoutMs: DRAIN_TIMEOUT_MS },
-          'Cartesia STT did not close after done; forcing close',
+          `Cartesia STT did not close within ${DRAIN_TIMEOUT_MS}ms after done; forcing close`,
         );
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CLOSING) {
           ws.terminate();
@@ -448,7 +447,7 @@ export class SpeechStream extends stt.SpeechStream {
         try {
           msg = JSON.parse(data.toString());
         } catch (error) {
-          this.#logger.error({ error }, 'Failed to parse Cartesia STT message');
+          this.#logger.error('Failed to parse Cartesia STT message', { error });
           return;
         }
         try {
@@ -473,7 +472,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.#processStreamEvent(msg);
           }
         } catch (error) {
-          this.#logger.error({ error }, 'Failed to process Cartesia STT message');
+          this.#logger.error('Failed to process Cartesia STT message', { error });
         }
       });
 
@@ -514,13 +513,7 @@ export class SpeechStream extends stt.SpeechStream {
           settle();
           return;
         }
-        this.#logger.warn(
-          {
-            code,
-            'lk.pii.reason': reason.toString(),
-          },
-          'Cartesia STT WebSocket closed',
-        );
+        this.#logger.warn(`Cartesia STT WebSocket closed: ${code} ${reason.toString()}`);
         settle(
           new APIConnectionError({
             message: `Cartesia STT connection closed unexpectedly (code=${code})`,

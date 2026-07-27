@@ -355,7 +355,9 @@ export class ToolExecutor {
       if (settled) return;
       log().error(
         { tool: call.name, callId: call.callId, timeoutMs: DRAIN_TOOL_TIMEOUT_MS },
-        'cancelled tool is still running after the deadline; its execute() may not honor the abort signal',
+        `tool ${call.name} was cancelled but its execute() is still running after the deadline; it likely ` +
+          'does not honor the abort signal. Observe the provided abortSignal in execute() so ' +
+          'cancellation actually stops the work.',
       );
     }, DRAIN_TOOL_TIMEOUT_MS);
     timer.unref?.();

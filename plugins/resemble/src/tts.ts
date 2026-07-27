@@ -161,7 +161,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             this.queue.close();
             doneFut.resolve();
           } catch (error) {
-            this.#logger.error({ error }, 'Error processing Resemble API response');
+            this.#logger.error('Error processing Resemble API response:', error);
             this.queue.close();
             doneFut.resolve();
           }
@@ -174,14 +174,14 @@ export class ChunkedStream extends tts.ChunkedStream {
 
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ error: err }, 'Resemble TTS response error');
+          this.#logger.error({ err }, 'Resemble TTS response error');
         });
       },
     );
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ error: err }, 'Resemble TTS request error');
+      this.#logger.error({ err }, 'Resemble TTS request error');
     });
     req.on('close', () => doneFut.resolve());
     req.write(JSON.stringify(json));
@@ -268,10 +268,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                       lastFrame = frame;
                     }
                   } catch (audioError) {
-                    this.#logger.error(
-                      { error: audioError },
-                      'Error processing Resemble audio content',
-                    );
+                    this.#logger.error(`Error processing audio content: ${audioError}`);
                   }
                 } else if ('type' in json && json.type === 'audio_end') {
                   for (const frame of bstream.flush()) {
@@ -294,11 +291,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                   const errorName = json.error_name || 'Unknown';
                   const explanation = json.error_params?.explanation || 'No details provided';
                   this.#logger
-                    .child({
-                      error: errorName,
-                      'lk.pii.explanation': explanation,
-                    })
-                    .error('Resemble API returned an error');
+                    .child({ error: errorName })
+                    .error(`Resemble API error: ${explanation}`);
 
                   closing = true;
                   this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -308,13 +302,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error({ error }, 'Error parsing Resemble WebSocket message');
+                this.#logger.error(`Error parsing WebSocket message: ${error}`);
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error({ error }, 'Resemble WebSocket error');
+              this.#logger.error(`WebSocket error: ${error}`);
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -325,13 +319,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             ws.on('close', (code, reason) => {
               if (!closing) {
-                this.#logger.error(
-                  {
-                    code,
-                    'lk.pii.reason': reason.toString(),
-                  },
-                  'Resemble WebSocket closed unexpectedly',
-                );
+                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               // Only reject if we haven't received all expected frames
@@ -345,7 +333,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         } catch (err) {
           // Skip log error for normal websocket close
           if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
-            this.#logger.error({ error: err }, 'Error in recvTask from Resemble WebSocket');
+            this.#logger.error({ err }, 'Error in recvTask from Resemble WebSocket');
           }
           break;
         }

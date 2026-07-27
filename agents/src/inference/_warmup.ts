@@ -32,7 +32,7 @@ function getNative(): typeof import('@livekit/local-inference') | undefined {
     return nativeMod;
   } catch (err) {
     log().warn(
-      { error: err },
+      { err: err instanceof Error ? err.message : String(err) },
       '@livekit/local-inference native binding not loadable; local VAD/EOT paths disabled',
     );
     return undefined;

@@ -667,10 +667,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
         if (this.future.done) return;
 
         // If the Task finished before the AgentTask was completed, complete the AgentTask with an error.
-        this.#logger.error(
-          { taskType: this.constructor.name },
-          'task finished before it was completed',
-        );
+        this.#logger.error(`The Task finished before ${this.constructor.name} was completed.`);
         this.complete(
           new Error(`The Task finished before ${this.constructor.name} was completed.`),
         );
@@ -744,8 +741,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
 
       if (session.currentAgent !== this) {
         this.#logger.warn(
-          { agentType: this.constructor.name },
-          'agent task completed after the agent changed; ignoring handoff to the previous agent',
+          `${this.constructor.name} completed, but the agent has changed in the meantime. ` +
+            `Ignoring handoff to the previous agent, likely due to AgentSession.updateAgent being invoked.`,
         );
         await oldActivity.close();
       } else {

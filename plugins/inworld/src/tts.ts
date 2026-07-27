@@ -262,7 +262,7 @@ class WSConnectionPool {
             }),
           );
         } else {
-          this.#logger.error({ error: err, requestId }, 'Inworld WebSocket error');
+          this.#logger.error({ err, requestId }, 'Inworld WebSocket error');
         }
       });
 

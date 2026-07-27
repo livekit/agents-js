@@ -67,7 +67,7 @@ describe('OTEL logging', () => {
     });
   });
 
-  it('exports operational errors under the standard error field', async () => {
+  it('keeps operational errors and reasons in non-PII fields', async () => {
     initializeLogger({ pretty: false, level: 'info' });
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
@@ -79,13 +79,11 @@ describe('OTEL logging', () => {
     enableOtelLogging();
 
     log().error({ error: new Error('connection failed') }, 'provider failed');
+    log().warn({ reason: 'remote close' }, 'provider disconnected');
 
     await vi.waitFor(() => {
-      const errorRecord = emitSpy.mock.calls
-        .map(([logObj]) => logObj)
-        .find((logObj) => {
-          return logObj.msg === 'provider failed';
-        });
+      const records = emitSpy.mock.calls.map(([logObj]) => logObj);
+      const errorRecord = records.find((logObj) => logObj.msg === 'provider failed');
       expect(errorRecord).toMatchObject({
         msg: 'provider failed',
         error: {
@@ -94,6 +92,13 @@ describe('OTEL logging', () => {
         },
       });
       expect(errorRecord).not.toHaveProperty('lk.pii.error');
+
+      const reasonRecord = records.find((logObj) => logObj.msg === 'provider disconnected');
+      expect(reasonRecord).toMatchObject({
+        msg: 'provider disconnected',
+        reason: 'remote close',
+      });
+      expect(reasonRecord).not.toHaveProperty('lk.pii.reason');
     });
   });
 });

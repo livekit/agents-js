@@ -120,7 +120,8 @@ const checkGenerationConfig = (opts: TTSOptions) => {
     if (opts.speed || opts.emotion) {
       logger.warn(
         { model: opts.model, speed: opts.speed, emotion: opts.emotion },
-        'speed and emotion controls are only supported for sonic-2-2025-04-16 or sonic-3 models',
+        `speed and emotion controls are only supported for model '${MODEL_WITH_EXPERIMENTAL_CONTROLS}' ` +
+          `or sonic-3 models, see https://docs.cartesia.ai/developer-tools/changelog for details`,
       );
     }
   }
@@ -352,7 +353,7 @@ export class ChunkedStream extends tts.ChunkedStream {
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ error: err }, 'Cartesia TTS response error');
+          this.#logger.error({ err }, 'Cartesia TTS response error');
           if (!doneFut.done) doneFut.reject(err);
         });
       },
@@ -360,7 +361,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ error: err }, 'Cartesia TTS request error');
+      this.#logger.error({ err }, 'Cartesia TTS request error');
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
@@ -506,13 +507,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         // socket lifecycle and does not close it between turns. If it happens
         // before `done`, surface it so the turn retries rather than ending mid
         // speech, and so withConnection discards the dead socket.
-        this.#logger.debug(
-          {
-            code,
-            'lk.pii.reason': reason.toString(),
-          },
-          'Cartesia TTS WebSocket closed',
-        );
+        this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
         clearTTSChunkTimeout();
         if (!completed && !timedOut && !streamError) {
           streamError = new APIConnectionError({
@@ -523,7 +518,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
 
       const onError = (err: Error) => {
-        this.#logger.error({ error: err }, 'Cartesia WebSocket error');
+        this.#logger.error({ err }, 'Cartesia WebSocket error');
         if (!completed && !timedOut && !streamError) {
           streamError = err instanceof APIError ? err : toRetryableConnectionError(err);
         }
@@ -551,7 +546,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(rawMsg.toString());
             serverMsg = cartesiaMessageSchema.parse(json);
           } catch (parseErr) {
-            this.#logger.warn({ error: parseErr }, 'Failed to parse Cartesia message');
+            this.#logger.warn({ parseErr }, 'Failed to parse Cartesia message');
             continue;
           }
 
@@ -592,8 +587,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             timeout = setTimeout(() => {
               // cartesia chunk timeout quite often, so we make it a debug log
               this.#logger.debug(
-                { timeoutMs: this.#opts.chunkTimeout },
-                'Cartesia WebSocket TTS chunk stream timed out',
+                `Cartesia WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
               );
               // The socket is stuck mid-generation, so it must not return to the
               // pool. Poison it and unblock the reader; the post-loop check turns
@@ -664,11 +658,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             err.message.includes('Channel is closed')
           ) {
             this.#logger.warn(
-              { error: err },
+              { err },
               'Channel closed during transcript processing (expected during disconnect)',
             );
           } else {
-            this.#logger.error({ error: err }, 'Error in recvTask from Cartesia WebSocket');
+            this.#logger.error({ err }, 'Error in recvTask from Cartesia WebSocket');
           }
         }
       } finally {

@@ -656,7 +656,7 @@ class Connection {
         this.#logger.error(
           {
             errorCode: response.error_code,
-            'lk.pii.error_message': response.error_message,
+            errorMessage: response.error_message,
             'lk.pii.response': response,
           },
           'Soniox TTS connection-level error',
@@ -667,7 +667,7 @@ class Connection {
 
     const stream = this.#streams.get(streamId);
     if (stream === undefined) {
-      this.#logger.debug({ streamId }, 'Ignoring message for unknown Soniox TTS stream');
+      this.#logger.debug(`Ignoring message for unknown Soniox TTS stream ${streamId}`);
       return;
     }
 

@@ -346,7 +346,7 @@ export class _JsOutput {
           callId: this.toolCall.callId,
           function: this.toolCall.name,
         },
-        'AI function returned an invalid output',
+        `AI function ${this.toolCall.name} returned an invalid output`,
       );
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
@@ -431,10 +431,9 @@ export function createToolOutput(params: {
     logger.error(
       {
         callId: toolCall.callId,
-        function: toolCall.name,
         'lk.pii.output': finalOutput,
       },
-      'AI function returned an invalid output',
+      `AI function ${toolCall.name} returned an invalid output`,
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
@@ -1173,7 +1172,7 @@ export function performToolExecutions({
             function: toolCall.name,
             speech_id: speechHandle.id,
           },
-          'unknown AI function',
+          `unknown AI function ${toolCall.name}`,
         );
         toolCompleted(
           createToolOutput({
@@ -1189,9 +1188,8 @@ export function performToolExecutions({
           {
             function: toolCall.name,
             speech_id: speechHandle.id,
-            toolType: typeof tool,
           },
-          'unknown tool type',
+          `unknown tool type: ${typeof tool}`,
         );
         continue;
       }
@@ -1226,7 +1224,7 @@ export function performToolExecutions({
             speech_id: speechHandle.id,
             error: error.message,
           },
-          'tried to call AI function with invalid arguments',
+          `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
