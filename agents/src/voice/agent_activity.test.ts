@@ -413,7 +413,12 @@ describe('AgentActivity - mainTask', () => {
     const handle = SpeechHandle.create({ allowInterruptions: true });
     handle._authorizeGeneration();
 
-    const audioOutput = { canPause: true, pause: vi.fn(), resume: vi.fn() };
+    const audioOutput = {
+      canPause: true,
+      pause: vi.fn(),
+      resume: vi.fn(),
+      clearBuffer: vi.fn(),
+    };
     const fakeActivity = {
       cancelSpeechPauseTask: undefined as Promise<void> | undefined,
       falseInterruptionTimer: undefined as NodeJS.Timeout | undefined,
@@ -458,6 +463,79 @@ describe('AgentActivity - mainTask', () => {
     startFalseInterruptionTimer(1 as never);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(audioOutput.resume).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Unit-level guard for the ordering measured end to end in
+   * `confirmed_interruption_audio_leak.test.ts`. It pins the cheap invariant that test cannot:
+   * the sink is only cleared when this call is what interrupted the paused speech.
+   */
+  it('clears the sink before un-gating it, and only when it interrupted the paused speech', async () => {
+    const makeFixture = (handle: SpeechHandle) => {
+      const calls: string[] = [];
+      const audioOutput = {
+        canPause: true,
+        pause: vi.fn(() => {
+          calls.push('pause');
+        }),
+        resume: vi.fn(() => {
+          calls.push('resume');
+        }),
+        clearBuffer: vi.fn(() => {
+          calls.push('clearBuffer');
+        }),
+      };
+      const fakeActivity = {
+        cancelSpeechPauseTask: undefined as Promise<void> | undefined,
+        falseInterruptionTimer: undefined as NodeJS.Timeout | undefined,
+        pausedSpeech: { handle, agentState: 'speaking', timeout: 2000 } as
+          | { handle: SpeechHandle; agentState: string; timeout: number }
+          | undefined,
+        _currentSpeech: handle,
+        logger: { debug: vi.fn(), info: vi.fn() },
+        agentSession: {
+          sessionOptions: {
+            turnHandling: {
+              interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 2000 },
+            },
+          },
+          output: { audio: audioOutput },
+        },
+      };
+      const proto = AgentActivity.prototype as unknown as Record<
+        string,
+        (...args: never[]) => unknown
+      >;
+      return {
+        calls,
+        fakeActivity,
+        cancelSpeechPause: proto['cancelSpeechPause']!.bind(fakeActivity as never) as (options?: {
+          interrupt?: boolean;
+        }) => Promise<void>,
+      };
+    };
+
+    const interrupting = makeFixture(
+      (() => {
+        const h = SpeechHandle.create({ allowInterruptions: true });
+        h._authorizeGeneration();
+        return h;
+      })(),
+    );
+    await raceTimeout(interrupting.cancelSpeechPause(), 2000);
+    expect(interrupting.calls).toEqual(['clearBuffer', 'resume']);
+
+    // `interrupt: false` ends the pause without interrupting — the speech is meant to keep
+    // playing, so clearing its buffer would throw away audio that is still wanted.
+    const resuming = makeFixture(
+      (() => {
+        const h = SpeechHandle.create({ allowInterruptions: true });
+        h._authorizeGeneration();
+        return h;
+      })(),
+    );
+    await raceTimeout(resuming.cancelSpeechPause({ interrupt: false }), 2000);
+    expect(resuming.calls).toEqual(['resume']);
   });
 });
 

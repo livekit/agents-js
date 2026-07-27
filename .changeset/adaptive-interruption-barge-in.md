@@ -4,7 +4,7 @@
 
 Make adaptive interruption actually interrupt
 
-Three defects, each of which on its own could leave a barge-in unheard or un-acted-on.
+Four defects, each of which on its own could leave a barge-in unheard or un-acted-on.
 
 **The overlap gate could be disarmed mid-interruption.** `overlapSpeechStarted` is what lets a
 user's overlapping audio reach the interruption model, and only a VAD start-of-speech raises it.
@@ -26,6 +26,12 @@ false-interruption timer free to put the interrupted audio back on the wire once
 elapsed. That timer exists for overlaps nobody has ruled on yet, so a confirmed verdict now ends
 the pause outright. This also stops the agent roughly 700ms sooner, since committing the
 interruption no longer waits for the final transcript to arrive.
+
+**Ending the pause let one frame of the interrupted speech escape.** `cancelSpeechPause` opens the
+audio output's pause gate so the next speech can be admitted, but frames of the speech it has just
+interrupted are still parked at that gate and were released before the interrupted reply task
+reached its own `clearBuffer()` — 20ms of audio the user had already barged in over. The
+interruption is now signalled to the output before the gate opens, so those frames bail instead.
 
 **A finished interruption silently discarded the next reply.**
 `ParticipantAudioOutput.clearBuffer()` resolves an `interruptedFuture` that frames parked at the
