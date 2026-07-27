@@ -938,7 +938,7 @@ export class MessageAssert extends EventAssert {
     const stream = llm.chat({
       chatCtx,
       toolCtx: [checkIntentTool],
-      toolChoice: { type: 'function', function: { name: 'check_intent' } },
+      toolChoice: 'required',
       extraKwargs: { temperature: 0 },
     });
 
