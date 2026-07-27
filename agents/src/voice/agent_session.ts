@@ -726,7 +726,7 @@ export class AgentSession<
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+          'RoomIO audio output is enabled; preserving and using the existing output.audio',
         );
       }
 

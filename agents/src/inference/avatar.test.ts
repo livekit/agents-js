@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { runWithJobContextAsync } from '../job.js';
@@ -8,11 +9,16 @@ import { initializeLogger } from '../log.js';
 import { type APIConnectOptions } from '../types.js';
 import type * as AvatarIndex from '../voice/avatar/index.js';
 import { AvatarSession, parseAvatarModel } from './avatar.js';
+import type * as InferenceUtils from './utils.js';
 import { INFERENCE_PROVIDER_HEADER } from './utils.js';
 
-const { fakeSinks } = vi.hoisted(() => ({
-  fakeSinks: [] as Array<{ sampleRate?: number; destinationIdentity: string }>,
-}));
+const { fakeSinks, mintAccessToken } = vi.hoisted(() => {
+  let tokenSequence = 0;
+  return {
+    fakeSinks: [] as Array<{ sampleRate?: number; destinationIdentity: string }>,
+    mintAccessToken: vi.fn(async () => `gateway-token-${++tokenSequence}`),
+  };
+});
 
 vi.mock('../voice/avatar/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof AvatarIndex>();
@@ -29,6 +35,11 @@ vi.mock('../voice/avatar/index.js', async (importOriginal) => {
       }
     },
   };
+});
+
+vi.mock('./utils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof InferenceUtils>();
+  return { ...actual, createAccessToken: mintAccessToken };
 });
 
 beforeAll(() => {
@@ -262,10 +273,12 @@ it('sends avatar_id from model string', async () => {
   expect(captured).not.toHaveProperty('image_url');
 });
 
-it('keeps idempotency key stable across retries', async () => {
+it('refreshes authorization while keeping the idempotency key stable across retries', async () => {
+  const authorizations: string[] = [];
   const keys: string[] = [];
   const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
+    authorizations.push(headers.get('Authorization') ?? '');
     keys.push(headers.get('Idempotency-Key') ?? '');
     if (keys.length < 3) return jsonResponse({ error: 'unavailable' }, { status: 503 });
     return jsonResponse({ session_id: 'AVS_1' });
@@ -277,6 +290,7 @@ it('keeps idempotency key stable across retries', async () => {
 
   expect(resp.session_id).toBe('AVS_1');
   expect(keys).toHaveLength(3);
+  expect(new Set(authorizations).size).toBe(3);
   expect(new Set(keys).size).toBe(1);
 });
 
@@ -436,6 +450,32 @@ it('start uses job room name and sid before the rtc room is connected', async ()
   expect(captured?.agent_identity).toBe('job-agent');
 });
 
+it('start falls back to the connected room sid when the job room sid is absent', async () => {
+  let captured: Record<string, unknown> | undefined;
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
+  const room = new FakeConnectedRoom();
+  const jobCtx = {
+    job: { room: { name: 'job-room' } },
+    info: { acceptArguments: { identity: 'job-agent' } },
+    room,
+    addShutdownCallback() {},
+  };
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  await runWithJobContextAsync(jobCtx as never, async () => {
+    await av.start(new FakeAgentSession() as never, room as never, {
+      livekitUrl: 'wss://example.livekit.cloud',
+      livekitApiKey: 'devkey',
+      livekitApiSecret: 'devsecret',
+    });
+  });
+
+  expect(captured?.room_sid).toBe('RM_789');
+});
+
 it('start twice raises without creating a second provider session', async () => {
   const fetchMock = vi.fn(async () =>
     jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' }),
@@ -483,6 +523,84 @@ it('guards overlapping concurrent start calls (only one provider session)', asyn
   expect(rejected).toHaveLength(1);
   expect(String(rejected[0]?.reason)).toMatch(/only be called once/);
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('allows retry after gateway create fails', async () => {
+  const idempotencyKeys: string[] = [];
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '');
+    return idempotencyKeys.length === 1
+      ? jsonResponse({ error: 'unavailable' }, { status: 503 })
+      : jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5 },
+  });
+  const agentSession = new FakeAgentSession();
+  const room = new FakeConnectedRoom();
+  const opts = {
+    livekitUrl: 'wss://example.livekit.cloud',
+    livekitApiKey: 'devkey',
+    livekitApiSecret: 'devsecret',
+  };
+
+  await expect(av.start(agentSession as never, room as never, opts)).rejects.toBeInstanceOf(
+    APIStatusError,
+  );
+  await expect(av.start(agentSession as never, room as never, opts)).resolves.toBeUndefined();
+
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(new Set(idempotencyKeys).size).toBe(1);
+  expect(av.providerSessionId).toBe('ls_1');
+});
+
+it('retries an ambiguous create failure without removing the avatar participant', async () => {
+  const removeParticipant = vi
+    .spyOn(RoomServiceClient.prototype, 'removeParticipant')
+    .mockResolvedValue(undefined as never);
+  const idempotencyKeys: string[] = [];
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '');
+    return idempotencyKeys.length === 1
+      ? jsonResponse({ error: 'response lost after create' }, { status: 503 })
+      : jsonResponse({ session_id: 'AVS_1', provider_session_id: 'ls_1' });
+  });
+  const room = new FakeConnectedRoom();
+  const jobCtx = {
+    job: { room: { name: 'job-room', sid: 'RM_job' } },
+    info: {
+      url: 'wss://example.livekit.cloud',
+      apiKey: 'devkey',
+      apiSecret: 'devsecret',
+      acceptArguments: { identity: 'job-agent' },
+    },
+    room,
+    addShutdownCallback() {},
+  };
+  const av = makeAvatar({
+    fetch: fetchMock as typeof fetch,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5 },
+  });
+  const agentSession = new FakeAgentSession();
+  const opts = {
+    livekitUrl: 'wss://example.livekit.cloud',
+    livekitApiKey: 'devkey',
+    livekitApiSecret: 'devsecret',
+  };
+
+  await runWithJobContextAsync(jobCtx as never, async () => {
+    await expect(av.start(agentSession as never, room as never, opts)).rejects.toBeInstanceOf(
+      APIStatusError,
+    );
+    expect(removeParticipant).not.toHaveBeenCalled();
+
+    await expect(av.start(agentSession as never, room as never, opts)).resolves.toBeUndefined();
+  });
+
+  expect(new Set(idempotencyKeys).size).toBe(1);
+  expect(removeParticipant).not.toHaveBeenCalled();
+  expect(av.providerSessionId).toBe('ls_1');
 });
 
 it('sets ids before audio rebind failures', async () => {
