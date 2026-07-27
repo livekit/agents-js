@@ -10,6 +10,7 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface PinoLogObject {
   level: number;
@@ -182,6 +183,8 @@ export class PinoCloudExporter {
   }
 
   private async sendLogs(logRecords: any[]): Promise<void> {
+    if (uploadGate.disabled) return;
+
     await this.ensureJwt();
 
     const payload = {
@@ -216,7 +219,7 @@ export class PinoCloudExporter {
 
     const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.jwt}`,
