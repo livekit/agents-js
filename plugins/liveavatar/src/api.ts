@@ -186,10 +186,7 @@ export class LiveAvatarAPI {
         if (e instanceof APIStatusError && !e.retryable) {
           throw e;
         }
-        this.#logger.warn(
-          { error: String(e), 'lk.pii.url': url, attempt: i },
-          'LiveAvatar API request failed',
-        );
+        this.#logger.warn({ error: String(e), url, attempt: i }, 'LiveAvatar API request failed');
       }
 
       if (i < maxRetry) {

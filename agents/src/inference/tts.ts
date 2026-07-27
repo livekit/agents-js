@@ -521,10 +521,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       };
     }
 
-    this.#logger.debug(
-      { 'lk.pii.url': url },
-      'inference.TTS creating new websocket connection (pool miss)',
-    );
+    this.#logger.debug({ url }, 'inference.TTS creating new websocket connection (pool miss)');
     const socket = await connectWs(url, headers, timeout);
     socket.send(JSON.stringify(params));
     return socket;

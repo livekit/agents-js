@@ -415,10 +415,7 @@ export function createWarmTransferTask({
         canSubscribe: true,
       } as VideoGrant);
 
-      logger.debug(
-        { 'lk.pii.ws_url': ctx.info.url, humanAgentRoomName },
-        'connecting to human agent room',
-      );
+      logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
       const jwt = await token.toJwt();
 
       room.on(RoomEvent.Disconnected, onHumanAgentRoomClose);

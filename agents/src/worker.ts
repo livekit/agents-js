@@ -485,7 +485,7 @@ export class AgentServer {
 
           this.#logger.warn(
             {
-              'lk.pii.url': this.#opts.wsURL,
+              url: this.#opts.wsURL,
               error: e,
               retry_count: retries,
               max_retry: this.#opts.maxRetry,

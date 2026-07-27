@@ -593,7 +593,7 @@ export class SpeechStream extends stt.SpeechStream {
 
     while (!this.input.closed && !this.closed) {
       const wsUrl = buildWsUrl(this.#opts);
-      this.#logger.info({ 'lk.pii.url': wsUrl }, 'Sarvam STT connecting');
+      this.#logger.info({ url: wsUrl }, 'Sarvam STT connecting');
       const ws = new WebSocket(wsUrl, {
         headers: { 'api-subscription-key': this.#opts.apiKey },
       });

@@ -64,7 +64,7 @@ export class AnamAPI {
 
         logger.debug(
           {
-            'lk.pii.url': url,
+            url,
             method: 'POST',
             headers: redactedHeaders,
             'lk.pii.body': redactedBody,
@@ -83,7 +83,7 @@ export class AnamAPI {
           const text = await res.text();
           logger.error(
             {
-              'lk.pii.url': url,
+              url,
               method: 'POST',
               headers: redactedHeaders,
               'lk.pii.body': redactedBody,
@@ -95,14 +95,14 @@ export class AnamAPI {
           throw new AnamException(`Anam ${path} failed: ${res.status} ${text}`);
         }
         const json = (await res.json()) as T;
-        logger.debug({ 'lk.pii.url': url }, 'Anam API request succeeded');
+        logger.debug({ url }, 'Anam API request succeeded');
         return json;
       } catch (e) {
         lastErr = e;
         if (attempt === maxRetry - 1) break;
         logger.warn(
           {
-            'lk.pii.url': url,
+            url,
             method: 'POST',
             'lk.pii.body':
               body && typeof body === 'object'
