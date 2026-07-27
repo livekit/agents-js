@@ -1032,6 +1032,10 @@ describe('RecorderAudioOutput in front of a real ParticipantAudioOutput', () => 
     expect(await settleOrStall(output.waitForPlayout(), 2000)).not.toBe('did not settle');
 
     output.resume();
+    // The flush `forwardAudio` runs in its `finally` is what ends the interrupted segment. Without
+    // it the sink cannot tell a follow-on turn apart from the interrupted turn's TTS backlog, which
+    // keeps arriving after the resume that admits the next reply.
+    output.flush();
     await output.captureFrame(makeFrame(100, 24000));
     output.flush();
 

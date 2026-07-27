@@ -455,9 +455,17 @@ export class ParticipantAudioOutput extends AudioOutput {
           this.gatedFrames.delete(gate);
         }
       }
-      if (this.interruptCount > this.segmentInterruptCount) {
-        return;
-      }
+    }
+
+    // Tested on every frame, not only the ones that parked at the gate. `cancelSpeechPause`
+    // un-gates the sink to admit the next reply as soon as the handle is interrupted, but the
+    // interrupted reply's `forwardAudio` loop only stops an event loop turn later, when its
+    // abort signal fires — and real TTS hands it seconds of audio ahead of realtime to drain in
+    // the meantime. Those frames find the gate already open, so without this they reach the wire
+    // while the next reply's transcript is streaming. `forwardAudio` always flushes in its
+    // `finally`, which is what opens a fresh segment for the next reply.
+    if (this.interruptCount > this.segmentInterruptCount) {
+      return;
     }
 
     // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
