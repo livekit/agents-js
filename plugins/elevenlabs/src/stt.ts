@@ -62,6 +62,11 @@ export interface STTOptions {
   modelId?: ElevenLabsSTTModels | string;
   keyterms?: string[];
   noVerbatim?: boolean;
+  /**
+   * Preceding text context sent once on the first realtime audio chunk to improve transcription
+   * accuracy. Only supported for Scribe v2 realtime.
+   */
+  previousText?: string;
 }
 
 interface ResolvedSTTOptions {
@@ -75,6 +80,7 @@ interface ResolvedSTTOptions {
   serverVad?: VADOptions | null;
   keyterms?: string[];
   noVerbatim: boolean;
+  previousText: string | null;
 }
 
 export interface STTRecognizeOptions {
@@ -224,6 +230,14 @@ export class STT extends stt.STT {
       log().warn('Server-side VAD is only supported for Scribe v2 realtime model');
     }
 
+    let previousText = opts.previousText ?? null;
+    if (!useRealtime && previousText !== null) {
+      log().warn(
+        '`previousText` is only supported for Scribe v2 realtime model and will be ignored',
+      );
+      previousText = null;
+    }
+
     const includeTimestamps = opts.includeTimestamps ?? false;
     super({
       streaming: useRealtime,
@@ -249,6 +263,7 @@ export class STT extends stt.STT {
       modelId,
       keyterms: opts.keyterms,
       noVerbatim: opts.noVerbatim ?? false,
+      previousText,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -546,6 +561,18 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         ws = await this.#connectWs();
+        if (this.#opts.previousText) {
+          // Must be the first input_audio_chunk on the connection.
+          ws.send(
+            JSON.stringify({
+              message_type: 'input_audio_chunk',
+              audio_base_64: '',
+              commit: false,
+              sample_rate: this.#opts.sampleRate,
+              previous_text: this.#opts.previousText,
+            }),
+          );
+        }
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
