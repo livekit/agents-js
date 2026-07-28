@@ -384,6 +384,14 @@ export class ParticipantAudioOutput extends AudioOutput {
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
+  /** Monotonic count of interruptions signalled through clearBuffer(). */
+  private interruptCount: number = 0;
+  /** interruptCount as of the start of the segment currently being captured. */
+  private segmentInterruptCount: number = 0;
+  /** Whether a frame has been captured since the last flush boundary. */
+  private segmentOpen: boolean = false;
+  /** Wake-up futures for frames parked at the pause gate, all resolved by clearBuffer(). */
+  private gatedFrames: Set<Future<void>> = new Set();
 
   constructor(room: Room, options: AudioOutputOptions) {
     super(options.sampleRate, undefined, { pause: true });
@@ -423,15 +431,41 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   async captureFrame(frame: AudioFrame): Promise<void> {
+    if (!this.segmentOpen) {
+      this.segmentOpen = true;
+      // An interruption raised before this segment began belongs to a speech that is already
+      // over. interruptedFuture stays resolved until the next flush, so without this snapshot
+      // every frame of the new speech bails at the gate below and the reply is lost.
+      this.segmentInterruptCount = this.interruptCount;
+    }
+
     await this.startedFuture.await;
 
     if (!this.playbackEnabledFuture.done) {
       this.audioSource.clearQueue();
       // Race against interruption so a cancel-while-paused can't deadlock an in-flight frame.
-      await Promise.race([this.playbackEnabledFuture.await, this.interruptedFuture.await]);
-      if (this.interruptedFuture.done) {
-        return;
+      // The wake-up is per frame rather than the shared interruptedFuture, which
+      // waitForPlayoutTask may replace while this frame is parked.
+      if (this.interruptCount === this.segmentInterruptCount) {
+        const gate = new Future<void>();
+        this.gatedFrames.add(gate);
+        try {
+          await Promise.race([this.playbackEnabledFuture.await, gate.await]);
+        } finally {
+          this.gatedFrames.delete(gate);
+        }
       }
+    }
+
+    // Tested on every frame, not only the ones that parked at the gate. `cancelSpeechPause`
+    // un-gates the sink to admit the next reply as soon as the handle is interrupted, but the
+    // interrupted reply's `forwardAudio` loop only stops an event loop turn later, when its
+    // abort signal fires — and real TTS hands it seconds of audio ahead of realtime to drain in
+    // the meantime. Those frames find the gate already open, so without this they reach the wire
+    // while the next reply's transcript is streaming. `forwardAudio` always flushes in its
+    // `finally`, which is what opens a fresh segment for the next reply.
+    if (this.interruptCount > this.segmentInterruptCount) {
+      return;
     }
 
     // Count the playback segment only after the pause/interrupt gate above. super.captureFrame
@@ -495,6 +529,7 @@ export class ParticipantAudioOutput extends AudioOutput {
    */
   flush(): void {
     super.flush();
+    this.segmentOpen = false;
 
     if (!this.pushedDuration) {
       return;
@@ -522,9 +557,15 @@ export class ParticipantAudioOutput extends AudioOutput {
   }
 
   clearBuffer(): void {
+    this.interruptCount++;
     // Signal interruption even if no frame has been pushed yet, so a gated captureFrame can bail.
     if (!this.interruptedFuture.done) {
       this.interruptedFuture.resolve();
+    }
+    for (const gate of this.gatedFrames) {
+      if (!gate.done) {
+        gate.resolve();
+      }
     }
   }
 
