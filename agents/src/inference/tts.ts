@@ -581,6 +581,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
+    // Only a `done` from the gateway proves the session owes us no more audio. Every other
+    // way out of this run — `session.closed`, a closed event channel, a swallowed abort —
+    // leaves the gateway mid-synthesis, and a socket recycled in that state hands the
+    // leftover audio to whichever SynthesizeStream picks it up next.
+    let sessionDrained = false;
     // Timestamps are delivered in their own WS message; buffer them and attach
     // to the next audio frame that we forward to the output emitter. This
     // mirrors the semantics of `output_emitter.push_timed_transcript` on the
@@ -830,6 +835,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               sendLastFrame(currentSessionId!, true);
               this.queue.put(SynthesizeStream.END_OF_STREAM);
+              sessionDrained = true;
               await resourceCleanup();
               completionFuture.resolve();
               return;
@@ -920,6 +926,9 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               await resourceCleanup();
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
+              if (!sessionDrained) {
+                this.tts.pool.remove(ws);
+              }
             }
           } catch (e) {
             // If aborted, don't throw - let cleanup handle it
