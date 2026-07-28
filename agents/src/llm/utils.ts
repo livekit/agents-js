@@ -20,7 +20,12 @@ import {
   type ToolOptions,
   sortedToolNames,
 } from './tool_context.js';
-import { isZodSchema, parseZodSchema, zodSchemaToJsonSchema } from './zod-utils.js';
+import {
+  isZodSchema,
+  jsonSchemaAllowsNull,
+  parseZodSchema,
+  zodSchemaToJsonSchema,
+} from './zod-utils.js';
 
 export const THINK_TAG_START = '<think>';
 export const THINK_TAG_END = '</think>';
@@ -343,6 +348,195 @@ export function parseFunctionArguments(
   return args as Record<string, unknown>;
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveJsonSchemaRef(root: Record<string, unknown>, ref: string): unknown {
+  if (!ref.startsWith('#/')) {
+    throw new Error(`Unexpected $ref format ${ref}; does not start with #/`);
+  }
+
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce<unknown>((current, part) => {
+      if (!isJsonObject(current)) {
+        throw new Error(`Encountered non-object while resolving ${ref}`);
+      }
+      const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+      return current[key];
+    }, root);
+}
+
+function jsonTypeMatches(value: unknown, typ: string): boolean {
+  switch (typ) {
+    case 'null':
+      return value === null;
+    case 'object':
+      return isJsonObject(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'integer':
+      return typeof value === 'number' && Number.isInteger(value);
+    case 'number':
+      return typeof value === 'number';
+    case 'string':
+      return typeof value === 'string';
+    default:
+      return true;
+  }
+}
+
+function jsonSchemaMatches(
+  value: unknown,
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+): boolean {
+  const ref = schema.$ref;
+  if (typeof ref === 'string') {
+    const resolved = resolveJsonSchemaRef(root, ref);
+    if (isJsonObject(resolved)) {
+      schema = { ...resolved, ...schema };
+    }
+  }
+
+  if (value === null && 'default' in schema && !jsonSchemaAllowsNull(schema, root)) {
+    return true;
+  }
+
+  if ('const' in schema && value !== schema.const) {
+    return false;
+  }
+  const enumValues = schema.enum;
+  if (Array.isArray(enumValues) && !enumValues.includes(value)) {
+    return false;
+  }
+
+  const typ = schema.type;
+  if (Array.isArray(typ)) {
+    if (!typ.some((item) => typeof item === 'string' && jsonTypeMatches(value, item))) {
+      return false;
+    }
+  } else if (typeof typ === 'string' && !jsonTypeMatches(value, typ)) {
+    return false;
+  }
+
+  if (isJsonObject(value)) {
+    const required = schema.required;
+    if (
+      Array.isArray(required) &&
+      !required.every((key) => typeof key !== 'string' || key in value)
+    ) {
+      return false;
+    }
+
+    const properties = schema.properties;
+    if (isJsonObject(properties)) {
+      if (
+        (schema.additionalProperties === undefined || schema.additionalProperties === false) &&
+        Object.keys(value).some((key) => !(key in properties))
+      ) {
+        return false;
+      }
+
+      for (const [key, item] of Object.entries(value)) {
+        const propertySchema = properties[key];
+        if (isJsonObject(propertySchema) && !jsonSchemaMatches(item, propertySchema, root)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+function injectSchemaDefaults(
+  value: unknown,
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+): unknown {
+  const ref = schema.$ref;
+  if (typeof ref === 'string') {
+    const resolved = resolveJsonSchemaRef(root, ref);
+    if (isJsonObject(resolved)) {
+      schema = { ...resolved, ...schema };
+    }
+  }
+
+  if (value === null) {
+    if ('default' in schema && !jsonSchemaAllowsNull(schema, root)) {
+      return structuredClone(schema.default);
+    }
+    return null;
+  }
+
+  const allOf = schema.allOf;
+  if (Array.isArray(allOf)) {
+    for (const variant of allOf) {
+      if (isJsonObject(variant)) {
+        value = injectSchemaDefaults(value, variant, root);
+      }
+    }
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const variants = schema[unionKey];
+    if (Array.isArray(variants)) {
+      for (const variant of variants) {
+        if (isJsonObject(variant) && jsonSchemaMatches(value, variant, root)) {
+          return injectSchemaDefaults(value, variant, root);
+        }
+      }
+    }
+  }
+
+  if (isJsonObject(value)) {
+    const properties = schema.properties;
+    const additional = schema.additionalProperties;
+    if (isJsonObject(properties) || isJsonObject(additional)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+          const prop = isJsonObject(properties) ? properties[key] : undefined;
+          if (isJsonObject(prop)) {
+            return [key, injectSchemaDefaults(item, prop, root)];
+          }
+          if (isJsonObject(additional)) {
+            return [key, injectSchemaDefaults(item, additional, root)];
+          }
+          return [key, item];
+        }),
+      );
+    }
+  }
+
+  if (Array.isArray(value)) {
+    const prefixItems = schema.prefixItems;
+    const items = schema.items;
+    if (Array.isArray(prefixItems) || Array.isArray(items) || isJsonObject(items)) {
+      return value.map((item, index) => {
+        const prefixItem = Array.isArray(prefixItems) ? prefixItems[index] : undefined;
+        if (isJsonObject(prefixItem)) {
+          return injectSchemaDefaults(item, prefixItem, root);
+        }
+        const tupleItem = Array.isArray(items) ? items[index] : undefined;
+        if (isJsonObject(tupleItem)) {
+          return injectSchemaDefaults(item, tupleItem, root);
+        }
+        if (isJsonObject(items)) {
+          return injectSchemaDefaults(item, items, root);
+        }
+        return item;
+      });
+    }
+  }
+
+  return value;
+}
+
 export async function executeToolCall(
   toolCall: FunctionCall,
   toolCtx: ToolContext,
@@ -380,7 +574,9 @@ export async function executeToolCall(
   // Ensure valid arguments schema
   try {
     if (isZodSchema(tool.parameters)) {
-      const result = await parseZodSchema<object>(tool.parameters, args);
+      const schema = zodSchemaToJsonSchema(tool.parameters, false) as Record<string, unknown>;
+      const argsWithDefaults = injectSchemaDefaults(args, schema, schema);
+      const result = await parseZodSchema<object>(tool.parameters, argsWithDefaults);
       if (result.success) {
         params = result.data;
       } else {

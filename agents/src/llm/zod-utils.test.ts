@@ -9,6 +9,7 @@ import {
   isZod4Schema,
   isZodObjectSchema,
   isZodSchema,
+  jsonSchemaAllowsNull,
   parseZodSchema,
   zodSchemaToJsonSchema,
 } from './zod-utils.js';
@@ -315,6 +316,51 @@ describe('Zod Utils', () => {
 
         const strictSchema = zodSchemaToJsonSchema(schema, true, true);
         expect(strictSchema).toMatchSnapshot();
+      });
+
+      it('should advertise null sentinels for all defaulted strict tool shapes', () => {
+        const schema = z4.object({
+          count: z4.number().default(5),
+          label: z4.enum(['a', 'b']).default('a'),
+          value: z4.union([z4.number(), z4.string()]).default(5),
+          child: z4.object({ x: z4.number().default(1) }).default({ x: 1 }),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        for (const field of ['count', 'label', 'value', 'child']) {
+          const prop = properties[field]!;
+          expect(jsonSchemaAllowsNull(prop, strictSchema), field).toBe(true);
+          expect(prop).not.toHaveProperty('default');
+        }
+      });
+
+      it('should keep defaulted fields non-nullable without strict tool sentinels', () => {
+        const schema = z4.object({
+          count: z4.number().default(5),
+          label: z4.enum(['a', 'b']).default('a'),
+          value: z4.union([z4.number(), z4.string()]).default(5),
+          child: z4.object({ x: z4.number().default(1) }).default({ x: 1 }),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema, true, false) as Record<string, unknown>;
+        const properties = jsonSchema.properties as JSONSchemaProperties;
+
+        for (const field of ['count', 'label', 'value', 'child']) {
+          expect(jsonSchemaAllowsNull(properties[field]!, jsonSchema), field).toBe(false);
+        }
+      });
+
+      it('should preserve genuine null declared through enum membership', () => {
+        const schema = z4.object({
+          value: z4.literal(['x', null]).default('x'),
+        });
+
+        const jsonSchema = zodSchemaToJsonSchema(schema, true, false) as Record<string, unknown>;
+        const properties = jsonSchema.properties as JSONSchemaProperties;
+
+        expect(jsonSchemaAllowsNull(properties.value!, jsonSchema)).toBe(true);
       });
 
       it('should handle nested objects in strict mode', () => {
