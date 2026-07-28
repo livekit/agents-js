@@ -224,10 +224,14 @@ export class ServerOptions {
 }
 
 class PendingAssignment {
-  promise = new Promise<JobAssignment>((resolve) => {
+  promise = new Promise<JobAssignment>((resolve, reject) => {
     this.resolve = resolve; // this is how JavaScript lets you resolve promises externally
+    this.reject = reject;
   });
   resolve(arg: JobAssignment) {
+    arg; // useless call to counteract TypeScript E6133
+  }
+  reject(arg: Error) {
     arg; // useless call to counteract TypeScript E6133
   }
 }
@@ -709,13 +713,22 @@ export class AgentServer {
 
       this.#pending[req.id] = new PendingAssignment();
       const timer = setTimeout(() => {
-        this.#logger.child({ req }).warn(`assignment for job ${req.id} timed out`);
-        return;
+        const pending = this.#pending[req.id];
+        if (pending) {
+          delete this.#pending[req.id];
+          pending.reject(new Error(`assignment timeout for job ${req.id}`));
+        }
       }, ASSIGNMENT_TIMEOUT);
-      const asgn = await this.#pending[req.id]?.promise.then(async (asgn) => {
-        clearTimeout(timer);
-        return asgn;
-      });
+      const asgn = await this.#pending[req.id]?.promise
+        .then(async (asgn) => {
+          clearTimeout(timer);
+          return asgn;
+        })
+        .catch((e) => {
+          clearTimeout(timer);
+          delete this.#pending[req.id];
+          return undefined;
+        });
 
       if (asgn) {
         await this.#procPool.launchJob({
