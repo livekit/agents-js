@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
+import type { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
@@ -67,6 +67,8 @@ import {
 // Maximum number of chat items included in the `lk.chat_ctx` attribute of the
 // `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
 const EOU_MAX_HISTORY_TURNS = 6;
+const MIN_LANGUAGE_DETECTION_LENGTH = 5;
+const NON_SPECIFIC_LANGUAGE_CODES = new Set(['auto', 'multi']);
 
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
@@ -636,6 +638,16 @@ export class AudioRecognition {
     }
   }
 
+  private updateLastLanguage(language: LanguageCode | undefined, transcript: string): void {
+    if (!language || NON_SPECIFIC_LANGUAGE_CODES.has(language)) {
+      return;
+    }
+
+    if (!this.lastLanguage || transcript.length > MIN_LANGUAGE_DETECTION_LENGTH) {
+      this.lastLanguage = language;
+    }
+  }
+
   async start(options?: {
     sttPipeline?: STTPipeline;
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
@@ -1092,9 +1104,10 @@ export class AudioRecognition {
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        const transcript = ev.alternatives?.[0]?.text;
+        const transcript = ev.alternatives?.[0]?.text ?? '';
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
-        this.lastLanguage = ev.alternatives?.[0]?.language;
+        const language = ev.alternatives?.[0]?.language;
+        this.updateLastLanguage(language, transcript);
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -1162,13 +1175,7 @@ export class AudioRecognition {
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
 
-        const MIN_LANGUAGE_DETECTION_LENGTH = 5;
-        if (
-          !this.lastLanguage ||
-          (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
-        ) {
-          this.lastLanguage = preflightLanguage;
-        }
+        this.updateLastLanguage(preflightLanguage, preflightTranscript);
 
         if (!preflightTranscript) {
           return;
