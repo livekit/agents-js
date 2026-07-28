@@ -639,13 +639,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     };
 
     const createInputTask = async (signal: AbortSignal) => {
-      for await (const data of this.input) {
-        if (signal.aborted || closing) break;
-        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+      while (!signal.aborted && !closing) {
+        // Read with the signal so a cancelled attempt stops waiting instead of taking —
+        // and dropping — the next chunk of text, which belongs to the retry.
+        const { done, value } = await this.input.next({ signal });
+        if (done) break;
+        if (value === SynthesizeStream.FLUSH_SENTINEL) {
           sendTokenizerStream.flush();
           continue;
         }
-        sendTokenizerStream.pushText(data);
+        sendTokenizerStream.pushText(value);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
@@ -843,8 +846,24 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               completionFuture.resolve();
               return;
             case 'session.closed':
+              // The gateway dropped the session before it finished the reply. Hand over
+              // the audio it did produce, then fail the attempt: Python has no
+              // `session.closed` branch at all, so the dropped session surfaces there as
+              // a read timeout or a closed socket, i.e. an error that evicts the socket
+              // and lets the retry machinery resynthesize what is left. Resolving here
+              // instead reports a truncated reply as a completed one.
+              for (const frame of bstream.flush()) {
+                sendLastFrame(currentSessionId!, false);
+                lastFrame = frame;
+              }
+              sendLastFrame(currentSessionId!, true);
               await resourceCleanup();
-              completionFuture.resolve();
+              completionFuture.reject(
+                new APIStatusError({
+                  message: 'Gateway closed the TTS session before synthesis completed',
+                  options: { requestId },
+                }),
+              );
               return;
             case 'error':
               this.#logger.error(

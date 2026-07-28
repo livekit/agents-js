@@ -25,10 +25,11 @@ const SAMPLE_RATE = 16000;
 const FRAME_MS = 20;
 const SAMPLES_PER_FRAME = (SAMPLE_RATE * FRAME_MS) / 1000;
 
-/** Audio for the first reply and the second reply carry distinct constant samples so the
- *  test can tell, per frame, which reply's synthesis a frame actually came from. */
-const REPLY_1_SAMPLE = 1000;
-const REPLY_2_SAMPLE = 2000;
+/** Audio from the session that gets dropped and audio from a healthy session carry
+ *  distinct constant samples so the test can tell, per frame, which session's synthesis a
+ *  frame actually came from. */
+const DROPPED_SESSION_SAMPLE = 1000;
+const HEALTHY_SESSION_SAMPLE = 2000;
 
 /** ~6s of already-synthesized audio the gateway still owes after it drops the session. */
 const BACKLOG_FRAMES = 300;
@@ -63,8 +64,8 @@ async function startFakeGateway() {
     sockets.push(ws);
     const index = ++connections;
     const sessionId = `session-${index}`;
-    const sample = index === 1 ? REPLY_1_SAMPLE : REPLY_2_SAMPLE;
-    let flushed = false;
+    const sample = index === 1 ? DROPPED_SESSION_SAMPLE : HEALTHY_SESSION_SAMPLE;
+    let dropped = false;
 
     const send = (payload: string) => {
       if (ws.readyState === ws.OPEN) ws.send(payload);
@@ -76,14 +77,18 @@ async function startFakeGateway() {
         send(JSON.stringify({ type: 'session.created', session_id: sessionId }));
         return;
       }
-      if (event.type !== 'session.flush' || flushed) return;
-      flushed = true;
+      if (event.type !== 'session.flush') return;
 
+      // A healthy session serves every reply it is asked for, so a pooled socket can be
+      // reused across replies.
       if (index > 1) {
         for (let i = 0; i < OWN_FRAMES; i++) send(audioEvent(sessionId, sample));
         send(JSON.stringify({ type: 'done', session_id: sessionId }));
         return;
       }
+
+      if (dropped) return;
+      dropped = true;
 
       // Reply 1: hand over a short prefix, then drop the session mid-synthesis.
       for (let i = 0; i < OWN_FRAMES; i++) send(audioEvent(sessionId, sample));
@@ -145,14 +150,16 @@ describe('inference TTS pooled socket reuse', () => {
       apiSecret: 'secret'.padEnd(32, 'x'),
     });
 
+    // The dropped session fails the attempt, so the first reply is the prefix it did
+    // deliver plus the audio from the retry that finishes it on a healthy session.
     const first = await synthesize(tts, 'Tell me a long story about the lighthouse.');
-    expect(first.samples).toEqual(new Set([REPLY_1_SAMPLE]));
+    expect(first.samples).toEqual(new Set([DROPPED_SESSION_SAMPLE, HEALTHY_SESSION_SAMPLE]));
 
     const second = await synthesize(tts, 'Tell me a long joke about skeletons.');
 
     // The second reply must speak only its own synthesis, and must not inherit the
     // seconds of audio the first session never finished delivering.
-    expect(second.samples).toEqual(new Set([REPLY_2_SAMPLE]));
+    expect(second.samples).toEqual(new Set([HEALTHY_SESSION_SAMPLE]));
     expect(second.frames).toBeLessThan(BACKLOG_FRAMES);
     expect(gateway.connections).toBe(2);
 
