@@ -2061,6 +2061,22 @@ export class AgentActivity implements RecognitionHooks {
         if (speechHandle.interrupted && speechHandle._tasks.length > 0) {
           await ThrowsPromise.race([generation, abortFuture.await]);
         }
+
+        // A pause taken out for this speech cannot outlive it. Nothing can resume a finished
+        // speech, so a record left behind here keeps the sink gated for every later reply and
+        // points the false-interruption resume at a handle that is already gone.
+        if (this.pausedSpeech && this.pausedSpeech.handle === this._currentSpeech) {
+          this.pausedSpeech = undefined;
+          if (this.falseInterruptionTimer !== undefined) {
+            clearTimeout(this.falseInterruptionTimer);
+            this.falseInterruptionTimer = undefined;
+          }
+          const audioOutput = this.agentSession.output.audio;
+          if (audioOutput && audioOutput.canPause) {
+            audioOutput.resume();
+          }
+        }
+
         this._currentSpeech = undefined;
       }
 
