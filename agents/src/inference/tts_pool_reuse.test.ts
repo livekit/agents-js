@@ -15,7 +15,7 @@ import { TTS } from './tts.js';
  * `session.closed` is the only route that reaches that leak. Once the `session.closed`
  * handler rejects the attempt instead of resolving it, the exception path in
  * `ConnectionPool.withConnection` evicts the socket by itself and this test passes with or
- * without the `sessionDrained` eviction in `SynthesizeStream.run`. Read it as coverage of
+ * without the `socketReusable` eviction in `SynthesizeStream.run`. Read it as coverage of
  * the behaviour, not of that eviction.
  */
 

@@ -286,6 +286,29 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
+/**
+ * Longest a gateway session has to stay silent after a `done` before that `done` is accepted
+ * as the end of the flush.
+ *
+ * Several providers answer one `session.flush` with several generations, split at roughly 1kB
+ * of text or 35s of audio, and send a `done` after each. A probe of `inworld/inworld-tts-2`
+ * saw 6 `done` events for a single flush, the first covering 39.4s of the 201.0s the session
+ * went on to produce. Gaps between consecutive generations reached 1.26s, so the grace has to
+ * comfortably exceed that.
+ *
+ * Known limitation: this is only an upper bound. The wait actually taken is
+ * {@link SynthesizeStream.run}'s `drainTimeoutMs`, which caps it at how much synthesized audio
+ * is still unplayed, so a gateway that streams a generation at roughly playback speed leaves
+ * nothing buffered, the wait collapses to about zero, and the first `done` ends the flush —
+ * later generations are dropped and the socket can be recycled while the gateway is still
+ * streaming. The bound is deliberate: it is what keeps this off the turn latency path, and the
+ * providers observed to split a flush produce their audio far faster than realtime (~201s of
+ * audio per flush), so their buffer is deep and the protection does apply. Waiting longer than
+ * the buffer would cost every short reply real silence to cover a case those providers do not
+ * produce. `tts_multi_generation.test.ts` pins both cadences.
+ */
+const DRAIN_IDLE_TIMEOUT = 2000;
+
 export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
@@ -581,14 +604,14 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
-    // Only a `done` from the gateway proves the session owes us no more audio, and a socket
-    // recycled before that hands the leftover audio to whichever SynthesizeStream picks it
-    // up next. `session.closed` is the exit that reaches the pool: it returns from this run
-    // normally, so nothing else evicts the socket. The remaining non-`done` exits — a closed
-    // event channel, a swallowed abort — are only ever reached after `onClose` / `onAbort`
-    // has already removed the socket, so gating reuse on `done` is what keeps reuse tied to
-    // the one event that proves the session is drained rather than to each exit remembering.
-    let sessionDrained = false;
+    // Set only when this run ends on a session that has gone quiet after a `done` and is
+    // still open, which is the one state in which the socket can serve another reply: the
+    // session owes no more audio, and it still exists. A socket recycled any earlier hands
+    // the leftover audio to whichever SynthesizeStream picks it up next. The exits that
+    // return from this run normally are the ones that reach the pool, so nothing else evicts
+    // the socket; the remaining exits — a closed event channel, a swallowed abort — are only
+    // ever reached after `onClose` / `onAbort` has already removed it.
+    let socketReusable = false;
     // Timestamps are delivered in their own WS message; buffer them and attach
     // to the next audio frame that we forward to the output emitter. This
     // mirrors the semantics of `output_emitter.push_timed_transcript` on the
@@ -623,8 +646,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       ws.send(JSON.stringify(validatedEvent));
     };
 
+    // Duration of audio already handed downstream, and when the first frame went out.
+    // Downstream plays out in real time, so the difference bounds how long this run can stall
+    // before the listener would hear silence. See `drainTimeoutMs` below.
+    let emittedAudioMs = 0;
+    let firstEmittedAt: number | undefined;
+
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
+        firstEmittedAt ??= Date.now();
+        emittedAudioMs += (lastFrame.samplesPerChannel / lastFrame.sampleRate) * 1000;
         this.queue.put({
           requestId,
           segmentId,
@@ -781,15 +812,72 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       const serverEventStream = eventChannel.stream();
       const reader = serverEventStream.getReader();
 
+      // Whether a `done` has arrived with nothing after it yet. `done` only marks the end of
+      // one gateway generation, and several providers split a single flushed utterance into
+      // more than one, so it cannot be taken as the end of the flush on its own.
+      let draining = false;
+
+      /**
+       * How long to keep reading before accepting a `done` as the end of the flush.
+       *
+       * Bounded by the audio already handed downstream and not yet played, because that is
+       * exactly how long this run can stall for free: downstream finishes a segment at
+       * `max(END_OF_STREAM, playout end)`, so a wait no longer than the remaining playout adds
+       * nothing to when the turn completes. Short replies therefore keep their old latency,
+       * and only replies with seconds of audio behind them — the only ones the gateway ever
+       * splits — wait out the full grace.
+       *
+       * The bound is also the known limitation of this whole mechanism: at roughly playback
+       * speed `emittedAudioMs` grows as fast as wall time, so this returns about zero and the
+       * first `done` ends the flush. See {@link DRAIN_IDLE_TIMEOUT}.
+       */
+      const drainTimeoutMs = () => {
+        const unplayedMs =
+          firstEmittedAt === undefined
+            ? 0
+            : Math.max(0, emittedAudioMs - (Date.now() - firstEmittedAt));
+        return Math.min(DRAIN_IDLE_TIMEOUT, unplayedMs);
+      };
+
+      /**
+       * End the flush: hand over the trailing audio, close the segment, release the socket.
+       *
+       * `reusable` is whether the session behind the socket can still serve another reply.
+       * Only the caller knows: a session that went quiet is idle and reusable, one the gateway
+       * has closed is finished with this reply but dead.
+       */
+      const finalize = async ({ reusable }: { reusable: boolean }) => {
+        for (const frame of bstream.flush()) {
+          sendLastFrame(currentSessionId!, false);
+          lastFrame = frame;
+        }
+        sendLastFrame(currentSessionId!, true);
+        this.queue.put(SynthesizeStream.END_OF_STREAM);
+        socketReusable = reusable;
+        await resourceCleanup();
+        completionFuture.resolve();
+      };
+
       try {
         await inputSentEvent.wait();
 
         while (!this.closed && !signal.aborted) {
-          const result = await waitUntilTimeout(
-            reader.read(),
-            recvTimeoutMs,
-            () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
-          );
+          let result: Awaited<ReturnType<typeof reader.read>>;
+          try {
+            result = await waitUntilTimeout(
+              reader.read(),
+              draining ? drainTimeoutMs() : recvTimeoutMs,
+              () => new APITimeoutError({ message: 'TTS recv idle timeout' }),
+            );
+          } catch (e) {
+            if (draining && e instanceof APITimeoutError) {
+              // The session produced nothing after its `done`: the flush really is finished,
+              // and the session is idle rather than gone, so the socket can be reused.
+              await finalize({ reusable: true });
+              return;
+            }
+            throw e;
+          }
 
           if (signal.aborted) return;
           if (result.done) return;
@@ -803,6 +891,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           const sessionIdFromEvent = (serverEvent as { session_id?: string }).session_id;
           if (currentSessionId === null && sessionIdFromEvent) {
             currentSessionId = sessionIdFromEvent;
+          }
+
+          const wasDraining = draining;
+          if (serverEvent.type !== 'done') {
+            draining = false;
           }
 
           switch (serverEvent.type) {
@@ -840,19 +933,24 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               }
               break;
             case 'done':
-              for (const frame of bstream.flush()) {
-                sendLastFrame(currentSessionId!, false);
-                lastFrame = frame;
-              }
-              sendLastFrame(currentSessionId!, true);
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-              sessionDrained = true;
-              await resourceCleanup();
-              completionFuture.resolve();
-              return;
+              // Only a candidate end of the flush. Keep reading: if the gateway is merely
+              // between generations it resumes within a gap measured at up to 1.26s, and the
+              // read above finalizes once it has stayed quiet instead.
+              draining = true;
+              break;
             case 'session.closed':
-              // The gateway dropped the session before it finished the reply. Hand over
-              // the audio it did produce, then fail the attempt: Python has no
+              // After a `done` the flush is complete, so this is the gateway tearing down a
+              // session it has nothing left to say on. Finish normally — failing here would
+              // retry a reply the listener has already heard. The socket, though, is spent:
+              // `session.create` is only ever sent when a socket is opened, so a pooled
+              // socket keeps this closed session forever and the next reply would write its
+              // transcript and flush into it and stall until the receive timeout.
+              if (wasDraining) {
+                await finalize({ reusable: false });
+                return;
+              }
+              // Otherwise the gateway dropped the session before it finished the reply. Hand
+              // over the audio it did produce, then fail the attempt: Python has no
               // `session.closed` branch at all, so the dropped session surfaces there as
               // a read timeout or a closed socket, i.e. an error that evicts the socket
               // and lets the retry machinery resynthesize what is left. Resolving here
@@ -875,6 +973,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 { serverEvent },
                 'Received error message from LiveKit TTS WebSocket',
               );
+              // Unlike `session.closed`, an error is not itself evidence that the flush is
+              // over: a `done` is only a candidate end, so a provider that fails while
+              // preparing the next generation has left the reply unfinished. Fail the attempt
+              // and let the retry finish it. What guards a genuinely finished reply from
+              // being retried is the drain timeout above, which resolves this run and closes
+              // the event channel before a later error can be read at all.
               await resourceCleanup();
               completionFuture.reject(
                 new APIError(`LiveKit TTS returned error: ${serverEvent.message}`),
@@ -953,7 +1057,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               await resourceCleanup();
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
-              if (!sessionDrained) {
+              if (!socketReusable) {
                 this.tts.pool.remove(ws);
               }
             }
