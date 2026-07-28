@@ -414,3 +414,75 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
     await synchronizer.close();
   });
 });
+
+describe('TranscriptionSynchronizer segment queued without an outstanding playback finish', () => {
+  const frame = () => new AudioFrame(new Int16Array(160), 8000, 1, 160);
+
+  /**
+   * An interrupted reply whose playback_finished lands before its text-forwarding task
+   * flushes. The finish rotates the segment, so the late flush ends the text input of the
+   * fresh impl instead — leaving a segment that looks "text ended" while carrying no audio
+   * and owing no finish of its own.
+   */
+  const interruptWithLateTextFlush = async (
+    synchronizer: TranscriptionSynchronizer,
+    downstream: MockAudioOutput,
+  ) => {
+    await synchronizer.textOutput.captureText('turn-one');
+    await synchronizer.audioOutput.captureFrame(frame());
+    synchronizer.audioOutput.onPlaybackStarted(Date.now());
+    synchronizer.audioOutput.flush();
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted: true });
+    await synchronizer.barrier();
+    await synchronizer.textOutput.flush();
+    await synchronizer.barrier();
+  };
+
+  const playTurn = async (
+    synchronizer: TranscriptionSynchronizer,
+    downstream: MockAudioOutput,
+    text: string,
+    interrupted: boolean,
+  ) => {
+    await synchronizer.textOutput.captureText(text);
+    await synchronizer.barrier();
+    await synchronizer.audioOutput.captureFrame(frame());
+    synchronizer.audioOutput.onPlaybackStarted(Date.now());
+    await synchronizer.textOutput.flush();
+    synchronizer.audioOutput.flush();
+    downstream.onPlaybackFinished({ playbackPosition: 1, interrupted });
+    const ev = await synchronizer.audioOutput.waitForPlayout();
+    await synchronizer.barrier();
+    return ev;
+  };
+
+  it('does not queue a rotated segment that carried no audio', async () => {
+    const downstream = new MockAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+
+    await interruptWithLateTextFlush(synchronizer, downstream);
+
+    await synchronizer.textOutput.captureText('turn-two-text');
+    await synchronizer.barrier();
+
+    expect(synchronizer._pendingRotatedSegments).toHaveLength(0);
+    await synchronizer.close();
+  });
+
+  it('does not report the previous reply as the next reply synchronized transcript', async () => {
+    const downstream = new MockAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, new MockTextOutput());
+
+    await interruptWithLateTextFlush(synchronizer, downstream);
+
+    const second = await playTurn(synchronizer, downstream, 'turn-two-text', false);
+    const third = await playTurn(synchronizer, downstream, 'turn-three-text', true);
+
+    // a bogus queue entry makes every later finish settle the previous reply's segment, so
+    // the queue stays off by one and each turn reports the text of the turn before it
+    expect(third.synchronizedTranscript ?? '').not.toContain('turn-two');
+    expect(second.synchronizedTranscript).toBe('turn-two-text');
+
+    await synchronizer.close();
+  });
+});
