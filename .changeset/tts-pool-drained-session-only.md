@@ -5,10 +5,9 @@
 fix(inference): only reuse a pooled TTS gateway socket once the session is drained
 
 `inference.TTS` keeps its gateway websockets in a `ConnectionPool` and reuses them across
-replies. A run only proves the gateway owes it no more audio when it receives `done`, but
-several other ways out of `SynthesizeStream.run` also returned normally — a `session.closed`
-event, a closed event channel, or an abort swallowed as `AbortError` — and each of those put
-the socket back in the pool while the gateway was still mid-synthesis.
+replies. A run only proves the gateway owes it no more audio when it receives `done`, but a
+`session.closed` event mid-reply also returned normally from `SynthesizeStream.run`, which
+put the socket back in the pool while the gateway was still mid-synthesis.
 
 The next reply then picked up that socket and read the previous reply's outstanding audio as
 its own. In production this surfaced after a barge-in: the interrupted reply's remaining

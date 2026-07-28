@@ -581,10 +581,13 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
   protected async run(): Promise<void> {
     let closing = false;
     let lastFrame: AudioFrame | undefined;
-    // Only a `done` from the gateway proves the session owes us no more audio. Every other
-    // way out of this run — `session.closed`, a closed event channel, a swallowed abort —
-    // leaves the gateway mid-synthesis, and a socket recycled in that state hands the
-    // leftover audio to whichever SynthesizeStream picks it up next.
+    // Only a `done` from the gateway proves the session owes us no more audio, and a socket
+    // recycled before that hands the leftover audio to whichever SynthesizeStream picks it
+    // up next. `session.closed` is the exit that reaches the pool: it returns from this run
+    // normally, so nothing else evicts the socket. The remaining non-`done` exits — a closed
+    // event channel, a swallowed abort — are only ever reached after `onClose` / `onAbort`
+    // has already removed the socket, so gating reuse on `done` is what keeps reuse tied to
+    // the one event that proves the session is drained rather than to each exit remembering.
     let sessionDrained = false;
     // Timestamps are delivered in their own WS message; buffer them and attach
     // to the next audio frame that we forward to the output emitter. This

@@ -8,6 +8,17 @@ import type { WebSocket as WsSocket } from 'ws';
 import { initializeLogger } from '../log.js';
 import { TTS } from './tts.js';
 
+/**
+ * Pins the user-visible invariant: a reply must never inherit the audio a previous, dropped
+ * session never finished delivering.
+ *
+ * `session.closed` is the only route that reaches that leak. Once the `session.closed`
+ * handler rejects the attempt instead of resolving it, the exception path in
+ * `ConnectionPool.withConnection` evicts the socket by itself and this test passes with or
+ * without the `sessionDrained` eviction in `SynthesizeStream.run`. Read it as coverage of
+ * the behaviour, not of that eviction.
+ */
+
 initializeLogger({ pretty: false });
 
 const SAMPLE_RATE = 16000;
