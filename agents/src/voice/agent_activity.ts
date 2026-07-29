@@ -1576,6 +1576,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (
+      this.vad === undefined &&
       ev.alternatives![0].text &&
       this.turnDetection !== 'manual' &&
       this.turnDetection !== 'realtime_llm'
