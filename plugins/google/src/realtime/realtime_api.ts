@@ -1100,7 +1100,7 @@ export class RealtimeSession extends llm.RealtimeSession {
               // realtimeInput. A context ending on a user question therefore has
               // to leave the history and arrive as realtime text, or the server
               // silently files it away and answers nothing.
-              const history = [...turns] as types.Content[];
+              const history = [...(turns as types.Content[])];
               const question =
                 history[history.length - 1]?.role === 'user'
                   ? textOf(history[history.length - 1]!)
