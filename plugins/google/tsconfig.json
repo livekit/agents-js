@@ -12,4 +12,4 @@
     "entryPointStrategy": "resolve",
     "entryPoints": ["src/index.ts"]
   }
-}
+} 
