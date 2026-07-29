@@ -144,6 +144,15 @@ interface ToolCallStatus {
   createdAt: number;
 }
 
+/** Empty unless the turn is pure text, so non-text turns stay where they are. */
+function textOf(turn: types.Content): string {
+  const parts = turn.parts ?? [];
+  if (parts.length === 0 || parts.some((part) => !part.text)) {
+    return '';
+  }
+  return parts.map((part) => part.text).join('');
+}
+
 /**
  * Google Realtime Model for real-time voice conversations with Gemini models
  */
@@ -1085,24 +1094,26 @@ export class RealtimeSession extends llm.RealtimeSession {
 
           if (turns.length > 0) {
             if (this.#seedsHistoryViaConfig) {
-              // The server reads clientContent as history until it sees
-              // turnComplete, and rejects a history block that ends on a user
-              // turn. Send the completed exchanges as history, then replay a
-              // trailing user turn as a real turn: the frame that closes the
-              // history phase never prompts a reply, so the question has to
-              // arrive after it to be answered.
+              // https://ai.google.dev/api/live#HistoryConfig: the server reads
+              // clientContent as history until it sees turnComplete, that history
+              // never triggers a model call, and the conversation then starts via
+              // realtimeInput. A context ending on a user question therefore has
+              // to leave the history and arrive as realtime text, or the server
+              // silently files it away and answers nothing.
               const history = [...turns] as types.Content[];
-              const pendingUserTurn =
-                history[history.length - 1]?.role === 'user' ? history.pop() : undefined;
+              const question =
+                history[history.length - 1]?.role === 'user'
+                  ? textOf(history[history.length - 1]!)
+                  : '';
+              if (question) {
+                history.pop();
+              }
 
               if (history.length > 0) {
                 await session.sendClientContent({ turns: history, turnComplete: true });
               }
-              if (pendingUserTurn) {
-                await session.sendClientContent({
-                  turns: [pendingUserTurn],
-                  turnComplete: true,
-                });
+              if (question) {
+                session.sendRealtimeInput({ text: question });
               }
             } else {
               await session.sendClientContent({ turns, turnComplete: false });

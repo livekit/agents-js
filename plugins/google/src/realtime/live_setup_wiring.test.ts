@@ -28,6 +28,7 @@ const { clients, live } = vi.hoisted(() => ({
   live: {
     gate: new Promise<void>(() => {}),
     prefill: [] as Array<{ turns: Array<{ role?: string }>; turnComplete?: boolean }>,
+    realtime: [] as Array<{ text?: string }>,
   },
 }));
 
@@ -56,7 +57,7 @@ vi.mock('@google/genai', async (importOriginal) => {
               turns: Array<{ role?: string }>;
               turnComplete?: boolean;
             }) => live.prefill.push(params),
-            sendRealtimeInput: () => {},
+            sendRealtimeInput: (params: { text?: string }) => live.realtime.push(params),
             sendToolResponse: () => {},
             close: () => {},
           };
@@ -103,13 +104,14 @@ describe('RealtimeSession history config wiring', () => {
 });
 
 /**
- * The server reads clientContent as history until it sees turnComplete, rejects
- * a history block ending on a user turn, and never generates from the frame that
- * closes the phase. So a trailing question has to be replayed after the history.
+ * Per https://ai.google.dev/api/live#HistoryConfig the seeded history never
+ * triggers a model call and the conversation starts via realtimeInput, so a
+ * trailing question left inside the history is silently absorbed unanswered.
  */
 describe('seeding a chat context that ends on a user turn', () => {
   async function prefillFor(model: string) {
     live.prefill.length = 0;
+    live.realtime.length = 0;
     let openGate = () => {};
     live.gate = new Promise<void>((resolve) => (openGate = resolve));
 
@@ -124,15 +126,14 @@ describe('seeding a chat context that ends on a user turn', () => {
     return live.prefill;
   }
 
-  it('closes the history phase, then replays the question as a real turn', async () => {
+  it('closes the history phase, then asks as realtime text', async () => {
     const prefill = await prefillFor('gemini-3.1-flash-live-preview');
-    await vi.waitFor(() => expect(prefill).toHaveLength(2));
+    await vi.waitFor(() => expect(live.realtime).toHaveLength(1));
 
-    const [history, question] = prefill;
-    expect(history!.turns.at(-1)?.role).toBe('model');
-    expect(history!.turnComplete).toBe(true);
-    expect(question!.turns.map((turn) => turn.role)).toEqual(['user']);
-    expect(question!.turnComplete).toBe(true);
+    expect(prefill).toHaveLength(1);
+    expect(prefill[0]!.turns.at(-1)?.role).toBe('model');
+    expect(prefill[0]!.turnComplete).toBe(true);
+    expect(live.realtime[0]!.text).toBe('What are we working on?');
   });
 
   it('sends one open frame for models that accept a plain prefill', async () => {
@@ -141,5 +142,6 @@ describe('seeding a chat context that ends on a user turn', () => {
 
     expect(prefill[0]!.turns).toHaveLength(3);
     expect(prefill[0]!.turnComplete).toBe(false);
+    expect(live.realtime).toHaveLength(0);
   });
 });
