@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type * as genai from '@google/genai';
 import { describe, expect, it, vi } from 'vitest';
+import { RealtimeModel } from './realtime_api.js';
 
 interface RecordingSocket {
   sent: string[];
@@ -48,8 +49,6 @@ vi.mock('@google/genai', async (importOriginal) => {
     },
   };
 });
-
-const { RealtimeModel } = await import('./realtime_api.js');
 
 /**
  * Guards the wiring rather than the policy: that `RealtimeSession` installs the
