@@ -27,8 +27,8 @@ export interface LiveSocketHost {
  *
  * `historyConfig` is the only way to seed a Gemini Live session with real
  * `user`/`model` roles: it makes the server treat the leading `clientContent`
- * as history rather than as a turn to answer, which the 3.x live models
- * otherwise reject. The field exists on `LiveClientSetup`, but
+ * as history rather than as a turn to answer, which the 3.1 live model
+ * otherwise rejects. The field exists on `LiveClientSetup`, but
  * `live.connect()` rebuilds that frame from a fixed whitelist of
  * `LiveConnectConfig` fields which omits it, so setting it on the connect
  * config alone is silently dropped. Splice it into the frame instead.
@@ -36,15 +36,11 @@ export interface LiveSocketHost {
  * Remove once https://github.com/googleapis/js-genai/issues/1448 ships; the
  * companion test asserts the field is still dropped without this hook.
  *
- * `getHistoryConfig` is consulted once per connection, so reconnects pick up
- * the chat context as it stands at that point. Returning `undefined` leaves
- * the frame untouched.
- *
  * @returns whether the hook could be installed.
  */
 export function forwardHistoryConfigToSetup(
   client: LiveSocketHost,
-  getHistoryConfig: () => HistoryConfig | undefined,
+  historyConfig: HistoryConfig,
 ): boolean {
   const factory = client.live.webSocketFactory;
   if (!factory) {
@@ -54,11 +50,6 @@ export function forwardHistoryConfigToSetup(
   const createSocket = factory.create.bind(factory);
   factory.create = (...args: never[]) => {
     const socket = createSocket(...args);
-    const historyConfig = getHistoryConfig();
-    if (!historyConfig) {
-      return socket;
-    }
-
     const send = socket.send.bind(socket);
     let setupSent = false;
     socket.send = (message: string) => {
@@ -75,20 +66,23 @@ export function forwardHistoryConfigToSetup(
 }
 
 /**
- * Decides whether a session's initial chat context has to be seeded through
- * `historyConfig`.
+ * Decides whether a session has to seed its history through `historyConfig`.
  *
  * Models that accept mid-session context updates also accept a plain
  * `clientContent` prefill containing `model` turns, so they need nothing extra.
- * The 3.x live models close the socket on such a prefill, and seeding them
- * needs the server to be told up front that the leading `clientContent` is
- * history. With no history to seed there is nothing for the server to wait for.
+ * The 3.1 live model closes the socket on such a prefill, and seeding it needs
+ * the server to be told up front that the leading `clientContent` is history.
+ *
+ * This deliberately ignores whether the session currently holds any history:
+ * the setup frame goes out from the `RealtimeSession` constructor, well before
+ * the framework seeds the chat context, so the only input available this early
+ * is the model itself. Declaring history the server never receives is
+ * harmless — it only permits a prefill, it does not wait for one.
  */
-export function historyConfigForSetup(session: {
+export function historyConfigForSetup(model: {
   mutableChatCtx: boolean;
-  hasInitialHistory: boolean;
 }): HistoryConfig | undefined {
-  if (session.mutableChatCtx || !session.hasInitialHistory) {
+  if (model.mutableChatCtx) {
     return undefined;
   }
   return { initialHistoryInClientContent: true };

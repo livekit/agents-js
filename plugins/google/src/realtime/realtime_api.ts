@@ -520,24 +520,23 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
+
+    // Decided here rather than per connection: the setup frame is written before
+    // the framework seeds the chat context, so the model is the only input.
+    const historyConfig = historyConfigForSetup({
+      // An unstated capability keeps the existing plain-prefill behaviour.
+      mutableChatCtx: realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
+    });
     if (
-      !forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, () =>
-        this.historyConfigForConnect(),
-      )
+      historyConfig &&
+      !forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)
     ) {
       this.#logger.warn(
         'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
       );
     }
-    this.#task = this.#mainTask();
-  }
 
-  private historyConfigForConnect(): types.HistoryConfig | undefined {
-    return historyConfigForSetup({
-      // An unstated capability keeps the existing plain-prefill behaviour.
-      mutableChatCtx: this.realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
-      hasInitialHistory: this._chatCtx.items.length > 0,
-    });
+    this.#task = this.#mainTask();
   }
 
   private async closeActiveSession(): Promise<void> {

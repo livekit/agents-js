@@ -4,7 +4,8 @@
 import { Behavior, FunctionResponseScheduling } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
-import { RealtimeSession } from './realtime_api.js';
+import { historyConfigForSetup } from './live_setup.js';
+import { RealtimeModel, RealtimeSession } from './realtime_api.js';
 
 type ToolCallStatus = {
   name: string;
@@ -19,9 +20,6 @@ type RealtimeSessionInternals = {
     toolResponseScheduling?: FunctionResponseScheduling;
     vertexai?: boolean;
   };
-  _realtimeModel: { capabilities: { midSessionChatCtxUpdate?: boolean } };
-  _chatCtx: llm.ChatContext;
-  historyConfigForConnect(): { initialHistoryInClientContent?: boolean } | undefined;
   currentGeneration?: {
     functionChannel: {
       closed: boolean;
@@ -185,27 +183,18 @@ describe('Google Realtime non-blocking tool scheduling', () => {
 });
 
 describe('Google Realtime initial history seeding', () => {
-  function sessionWith(midSessionChatCtxUpdate: boolean, priorTurns: string[]) {
-    const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
-    session._realtimeModel = { capabilities: { midSessionChatCtxUpdate } };
-    session._chatCtx = llm.ChatContext.empty();
-    for (const content of priorTurns) {
-      session._chatCtx.addMessage({ role: 'assistant', content });
-    }
-    return session;
+  function historyConfigFor(model: string) {
+    const { capabilities } = new RealtimeModel({ model, apiKey: 'test-key' });
+    return historyConfigForSetup({ mutableChatCtx: capabilities.midSessionChatCtxUpdate ?? true });
   }
 
-  it('asks the server to treat the prefill as history when the model cannot take one', () => {
-    expect(sessionWith(false, ['how can I help?']).historyConfigForConnect()).toEqual({
+  it('asks the server to treat the prefill as history on models that reject one', () => {
+    expect(historyConfigFor('gemini-3.1-flash-live-preview')).toEqual({
       initialHistoryInClientContent: true,
     });
   });
 
   it('leaves models that accept a plain prefill alone', () => {
-    expect(sessionWith(true, ['how can I help?']).historyConfigForConnect()).toBeUndefined();
-  });
-
-  it('leaves sessions that start with an empty context alone', () => {
-    expect(sessionWith(false, []).historyConfigForConnect()).toBeUndefined();
+    expect(historyConfigFor('gemini-2.0-flash-live-001')).toBeUndefined();
   });
 });

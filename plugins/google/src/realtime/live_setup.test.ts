@@ -51,12 +51,13 @@ function setupFrameOf(socket: FakeWebSocket): Record<string, unknown> {
   return JSON.parse(socket.sent[0]!).setup;
 }
 
+const HISTORY_CONFIG: HistoryConfig = { initialHistoryInClientContent: true };
+
 describe('forwardHistoryConfigToSetup', () => {
   it('adds historyConfig to the setup frame', () => {
     const { client } = fakeClient();
-    const historyConfig: HistoryConfig = { initialHistoryInClientContent: true };
 
-    forwardHistoryConfigToSetup(client, () => historyConfig);
+    forwardHistoryConfigToSetup(client, HISTORY_CONFIG);
 
     const socket = client.live.webSocketFactory.create();
     socket.send(SETUP_FRAME);
@@ -67,7 +68,7 @@ describe('forwardHistoryConfigToSetup', () => {
   it('keeps the setup fields the SDK already built', () => {
     const { client } = fakeClient();
 
-    forwardHistoryConfigToSetup(client, () => ({ initialHistoryInClientContent: true }));
+    forwardHistoryConfigToSetup(client, HISTORY_CONFIG);
 
     const socket = client.live.webSocketFactory.create();
     socket.send(SETUP_FRAME);
@@ -81,7 +82,7 @@ describe('forwardHistoryConfigToSetup', () => {
   it('leaves every frame after setup untouched', () => {
     const { client } = fakeClient();
 
-    forwardHistoryConfigToSetup(client, () => ({ initialHistoryInClientContent: true }));
+    forwardHistoryConfigToSetup(client, HISTORY_CONFIG);
 
     const socket = client.live.webSocketFactory.create();
     const clientContent = JSON.stringify({
@@ -98,41 +99,22 @@ describe('forwardHistoryConfigToSetup', () => {
     expect(socket.sent.slice(1)).toEqual([clientContent, realtimeInput]);
   });
 
-  it('leaves the setup frame untouched when there is no history to seed', () => {
+  it('applies to reconnects, not just the first socket', () => {
     const { client } = fakeClient();
 
-    forwardHistoryConfigToSetup(client, () => undefined);
-
-    const socket = client.live.webSocketFactory.create();
-    socket.send(SETUP_FRAME);
-
-    expect(socket.sent).toEqual([SETUP_FRAME]);
-  });
-
-  it('re-reads the history config on every reconnect', () => {
-    const { client } = fakeClient();
-    const configs: Array<HistoryConfig | undefined> = [
-      undefined,
-      { initialHistoryInClientContent: true },
-    ];
-
-    forwardHistoryConfigToSetup(client, () => configs.shift());
+    forwardHistoryConfigToSetup(client, HISTORY_CONFIG);
 
     const first = client.live.webSocketFactory.create();
     first.send(SETUP_FRAME);
     const second = client.live.webSocketFactory.create();
     second.send(SETUP_FRAME);
 
-    expect(setupFrameOf(first).historyConfig).toBeUndefined();
+    expect(setupFrameOf(first).historyConfig).toEqual({ initialHistoryInClientContent: true });
     expect(setupFrameOf(second).historyConfig).toEqual({ initialHistoryInClientContent: true });
   });
 
   it('reports failure when the SDK no longer exposes a socket factory', () => {
-    const client = { live: {} };
-
-    expect(
-      forwardHistoryConfigToSetup(client, () => ({ initialHistoryInClientContent: true })),
-    ).toBe(false);
+    expect(forwardHistoryConfigToSetup({ live: {} }, HISTORY_CONFIG)).toBe(false);
   });
 });
 
@@ -183,7 +165,9 @@ describe('forwardHistoryConfigToSetup against the real SDK', () => {
       }) as never,
     };
 
-    expect(forwardHistoryConfigToSetup(host, () => options.fromHook)).toBe(true);
+    if (options.fromHook) {
+      expect(forwardHistoryConfigToSetup(host, options.fromHook)).toBe(true);
+    }
 
     await client.live.connect({
       model: 'gemini-3.1-flash-live-preview',
@@ -214,20 +198,12 @@ describe('forwardHistoryConfigToSetup against the real SDK', () => {
 
 describe('historyConfigForSetup', () => {
   it('seeds history in client content for models that reject a model-role prefill', () => {
-    expect(historyConfigForSetup({ mutableChatCtx: false, hasInitialHistory: true })).toEqual({
+    expect(historyConfigForSetup({ mutableChatCtx: false })).toEqual({
       initialHistoryInClientContent: true,
     });
   });
 
   it('is unused when the model already accepts mid-session context updates', () => {
-    expect(
-      historyConfigForSetup({ mutableChatCtx: true, hasInitialHistory: true }),
-    ).toBeUndefined();
-  });
-
-  it('is unused when there is no history to seed', () => {
-    expect(
-      historyConfigForSetup({ mutableChatCtx: false, hasInitialHistory: false }),
-    ).toBeUndefined();
+    expect(historyConfigForSetup({ mutableChatCtx: true })).toBeUndefined();
   });
 });
