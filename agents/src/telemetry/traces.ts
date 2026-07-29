@@ -731,8 +731,18 @@ function toRFC3339(valueMs: number | Date): string {
   return truncated.toISOString();
 }
 
+/** When a chat item's own speech began, in milliseconds, if it has any. */
+function speechStartMs(item: ChatItem): number | undefined {
+  const startedSpeakingAt = item.type === 'message' ? item.metrics?.startedSpeakingAt : undefined;
+  if (startedSpeakingAt === undefined || !Number.isFinite(startedSpeakingAt)) {
+    return undefined;
+  }
+  return startedSpeakingAt * 1000; // metrics are in seconds
+}
+
 /**
- * Where a chat item belongs on the session timeline, in milliseconds.
+ * Chat items paired with where they belong on the session timeline, in milliseconds,
+ * ordered as the session was heard.
  *
  * `createdAt` records when an item was committed to the chat context, which is a
  * different point in the turn for each role: a user message is committed once its
@@ -741,15 +751,27 @@ function toRFC3339(valueMs: number | Date): string {
  * dashboard places each turn at `metrics.startedSpeakingAt`, so ordering by `createdAt`
  * makes turns render out of order — most visibly when the user barges in while a reply
  * is being generated.
+ *
+ * Items with no speech of their own (tool calls and their output, handoffs, config
+ * updates) are positioned at their own `createdAt`, but never earlier than the item they
+ * follow: a tool call is committed while its reply is still being generated, so on its own
+ * commit time it would sort ahead of the assistant message that requested it.
  */
-function timelineTimestampMs(item: ChatItem): number {
-  const startedSpeakingAt = item.type === 'message' ? item.metrics?.startedSpeakingAt : undefined;
-  if (startedSpeakingAt !== undefined && Number.isFinite(startedSpeakingAt)) {
-    return startedSpeakingAt * 1000; // metrics are in seconds
-  }
-  // Items with no speech of their own (tool calls, handoffs, config updates), plus a
-  // defensive fallback for turns whose playout never reported a start time.
-  return Number.isFinite(item.createdAt) ? item.createdAt : Date.now();
+function timelineOrder(items: ChatItem[]): { item: ChatItem; timestampMs: number }[] {
+  let earliestAllowedMs = Number.NEGATIVE_INFINITY;
+
+  return (
+    items
+      .map((item, index) => {
+        // defensive fallback for items whose commit time never landed
+        const createdAt = Number.isFinite(item.createdAt) ? item.createdAt : Date.now();
+        const timestampMs = speechStartMs(item) ?? Math.max(createdAt, earliestAllowedMs);
+        earliestAllowedMs = Math.max(earliestAllowedMs, timestampMs);
+        return { item, index, timestampMs };
+      })
+      // ties keep their chat context order, which holds a tool call next to its output
+      .sort((a, b) => a.timestampMs - b.timestampMs || a.index - b.index)
+  );
 }
 
 /**
@@ -812,11 +834,9 @@ export async function uploadSessionReport(options: {
 
   // The dashboard orders the transcript by log timestamp, so emit the items in the order
   // they were heard rather than the order they were committed to the chat context.
-  const chatItems = (report.recordingOptions.transcript ? report.chatHistory.items : [])
-    .filter((item) => item) // skip null/undefined items
-    .map((item, index) => ({ item, index, timestampMs: timelineTimestampMs(item) }))
-    // ties keep their chat context order, which holds a tool call next to its output
-    .sort((a, b) => a.timestampMs - b.timestampMs || a.index - b.index);
+  const chatItems = timelineOrder(
+    (report.recordingOptions.transcript ? report.chatHistory.items : []).filter((item) => item), // skip null/undefined items
+  );
 
   // Track last timestamp to ensure monotonic ordering when items have identical timestamps
   // This fixes the issue where function_call and function_call_output with same timestamp

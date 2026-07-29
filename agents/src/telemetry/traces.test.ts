@@ -573,6 +573,78 @@ describe('uploadSessionReport chat item ordering', () => {
       'functionCallOutput',
     ]);
   });
+
+  it('keeps a tool call with the assistant turn that requested it', async () => {
+    // Timings from a real session: the reply's function call is committed 0.4s before TTS
+    // starts playing the text that introduced it, so on commit time alone the call sorts
+    // ahead of the message it belongs to.
+    const agentTurn = ChatMessage.create({
+      role: 'assistant',
+      content: 'Let me check that referral for you.',
+      createdAt: T + 24_218,
+      metrics: { startedSpeakingAt: (T + 25_832) / 1000 },
+    });
+    const call = FunctionCall.create({
+      callId: 'call1',
+      name: 'checkReferral',
+      args: '{}',
+      createdAt: T + 25_433,
+    });
+    const output = FunctionCallOutput.create({
+      callId: 'call1',
+      output: 'found',
+      isError: false,
+      createdAt: T + 30_861,
+    });
+
+    const records = await exportChatItems(new ChatContext([agentTurn, call, output]));
+
+    expect(records.map((r) => r.timestampMs)).toEqual([T + 25_832, T + 25_832.001, T + 30_861]);
+    expect(records.map((r) => Object.keys(r.attributes['chat.item'] as object)[0])).toEqual([
+      'message',
+      'functionCall',
+      'functionCallOutput',
+    ]);
+  });
+
+  it('leaves a slow tool output after a user turn heard while the tool ran', async () => {
+    const agentTurn = ChatMessage.create({
+      role: 'assistant',
+      content: 'One moment while I look that up.',
+      createdAt: T + 1_000,
+      metrics: { startedSpeakingAt: (T + 1_200) / 1000 },
+    });
+    const call = FunctionCall.create({
+      callId: 'call1',
+      name: 'lookup',
+      args: '{}',
+      createdAt: T + 1_400,
+    });
+    const userTurn = ChatMessage.create({
+      role: 'user',
+      content: 'Are you still there?',
+      createdAt: T + 6_000,
+      metrics: { startedSpeakingAt: (T + 4_000) / 1000 },
+    });
+    const output = FunctionCallOutput.create({
+      callId: 'call1',
+      output: 'ok',
+      isError: false,
+      createdAt: T + 9_000,
+    });
+
+    const records = await exportChatItems(new ChatContext([agentTurn, call, userTurn, output]));
+
+    // the output is held at its own commit time rather than dragged up to the turn that
+    // requested it, so the user turn heard mid-tool stays ahead of it
+    expect(records.map((r) => r.timestampMs)).toEqual([T + 1_200, T + 1_400, T + 4_000, T + 9_000]);
+    expect(records.map((r) => Object.keys(r.attributes['chat.item'] as object)[0])).toEqual([
+      'message',
+      'functionCall',
+      'message',
+      'functionCallOutput',
+    ]);
+  });
 });
 
 describe('setupCloudTracer resource identity (fresh provider)', () => {
