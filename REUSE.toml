@@ -66,3 +66,9 @@ SPDX-License-Identifier = "Apache-2.0"
 path = ["**/etc/*.api.md"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# homepage example prompt and knowledge markdown are runtime data; leading comments alter prompts
+[[annotations]]
+path = ["examples/src/homepage/prompts/*.md", "examples/src/homepage/knowledge_base/products/*.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"

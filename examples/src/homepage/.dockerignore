@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Node artifacts
+**/node_modules/
+**/dist/
+**/.turbo/
+**/coverage/
+
+# Caches and test output
+**/.cache/
+**/.vitest/
+**/.tmp
+**/*.log
+**/*.gz
+**/*.tgz
+
+# Environment variables
+**/.env
+**/.env.*
+
+# VCS, editor, OS
+.git
+.gitignore
+.gitattributes
+.github/
+.idea/
+.vscode/
+.DS_Store
+
+# Project docs and tests
+README.md
+LICENSE
+**/*.test.ts
