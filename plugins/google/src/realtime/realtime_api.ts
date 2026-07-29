@@ -478,6 +478,12 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
 
+  /**
+   * Whether the setup frame declares the leading `clientContent` as history.
+   * When it does, that prefill has to close the history phase (see below).
+   */
+  #seedsHistoryViaConfig = false;
+
   #client: GoogleGenAI;
   #task: Promise<void>;
   #logger = log();
@@ -527,13 +533,14 @@ export class RealtimeSession extends llm.RealtimeSession {
       // An unstated capability keeps the existing plain-prefill behaviour.
       mutableChatCtx: realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
     });
-    if (
-      historyConfig &&
-      !forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)
-    ) {
-      this.#logger.warn(
-        'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
-      );
+    if (historyConfig) {
+      if (forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)) {
+        this.#seedsHistoryViaConfig = true;
+      } else {
+        this.#logger.warn(
+          'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
+        );
+      }
     }
 
     this.#task = this.#mainTask();
@@ -1006,12 +1013,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
+        // The SDK forwards the queued setupComplete message before connect()
+        // returns, so this callback can fire before we hold the session. Ignoring
+        // those changes nothing: onReceiveMessage already dropped anything
+        // arriving before activeSession was set, a few lines below.
+        const connected: { session?: types.Session } = {};
         const session = await this.#client.live.connect({
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
             onmessage: (message: types.LiveServerMessage) => {
-              this.onReceiveMessage(session, message);
+              if (connected.session) {
+                this.onReceiveMessage(connected.session, message);
+              }
             },
             // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
@@ -1054,6 +1068,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           },
           config,
         });
+        connected.session = session;
 
         await sessionOpened.wait();
 
@@ -1069,10 +1084,29 @@ export class RealtimeSession extends llm.RealtimeSession {
             .toProviderFormat('google', false);
 
           if (turns.length > 0) {
-            await session.sendClientContent({
-              turns,
-              turnComplete: false,
-            });
+            if (this.#seedsHistoryViaConfig) {
+              // The server reads clientContent as history until it sees
+              // turnComplete, and rejects a history block that ends on a user
+              // turn. Send the completed exchanges as history, then replay a
+              // trailing user turn as a real turn: the frame that closes the
+              // history phase never prompts a reply, so the question has to
+              // arrive after it to be answered.
+              const history = [...turns] as types.Content[];
+              const pendingUserTurn =
+                history[history.length - 1]?.role === 'user' ? history.pop() : undefined;
+
+              if (history.length > 0) {
+                await session.sendClientContent({ turns: history, turnComplete: true });
+              }
+              if (pendingUserTurn) {
+                await session.sendClientContent({
+                  turns: [pendingUserTurn],
+                  turnComplete: true,
+                });
+              }
+            } else {
+              await session.sendClientContent({ turns, turnComplete: false });
+            }
           }
         } finally {
           unlock();

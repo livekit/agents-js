@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as genai from '@google/genai';
+import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
 import { RealtimeModel } from './realtime_api.js';
 
@@ -16,10 +17,18 @@ interface RecordingSocket {
  * Records every client the plugin builds so the test can reach the socket
  * factory that `RealtimeSession` patches. Hoisted because `vi.mock` is.
  */
-const { clients } = vi.hoisted(() => ({
+const { clients, live } = vi.hoisted(() => ({
   clients: [] as Array<{
     live: { webSocketFactory: { create: () => unknown } };
   }>,
+  /**
+   * `gate` holds `connect()` open so a test can seed the chat context before the
+   * main task reaches the prefill, the same order `AgentActivity` uses.
+   */
+  live: {
+    gate: new Promise<void>(() => {}),
+    prefill: [] as Array<{ turns: Array<{ role?: string }>; turnComplete?: boolean }>,
+  },
 }));
 
 vi.mock('@google/genai', async (importOriginal) => {
@@ -39,8 +48,19 @@ vi.mock('@google/genai', async (importOriginal) => {
             return socket;
           },
         },
-        // Parks the session's main task so nothing reaches the network.
-        connect: () => new Promise<never>(() => {}),
+        connect: async ({ callbacks }: { callbacks: { onopen: () => void } }) => {
+          callbacks.onopen();
+          await live.gate;
+          return {
+            sendClientContent: (params: {
+              turns: Array<{ role?: string }>;
+              turnComplete?: boolean;
+            }) => live.prefill.push(params),
+            sendRealtimeInput: () => {},
+            sendToolResponse: () => {},
+            close: () => {},
+          };
+        },
       };
 
       constructor() {
@@ -79,5 +99,47 @@ describe('RealtimeSession history config wiring', () => {
 
   it('leaves the factory alone for models that accept a plain prefill', () => {
     expect(setupFrameFor('gemini-2.0-flash-live-001').historyConfig).toBeUndefined();
+  });
+});
+
+/**
+ * The server reads clientContent as history until it sees turnComplete, rejects
+ * a history block ending on a user turn, and never generates from the frame that
+ * closes the phase. So a trailing question has to be replayed after the history.
+ */
+describe('seeding a chat context that ends on a user turn', () => {
+  async function prefillFor(model: string) {
+    live.prefill.length = 0;
+    let openGate = () => {};
+    live.gate = new Promise<void>((resolve) => (openGate = resolve));
+
+    const session = new RealtimeModel({ model, apiKey: 'test-key' }).session();
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'I am studying for a calculus exam.' });
+    chatCtx.addMessage({ role: 'assistant', content: 'Which topic is giving you trouble?' });
+    chatCtx.addMessage({ role: 'user', content: 'What are we working on?' });
+    await session.updateChatCtx(chatCtx);
+
+    openGate();
+    return live.prefill;
+  }
+
+  it('closes the history phase, then replays the question as a real turn', async () => {
+    const prefill = await prefillFor('gemini-3.1-flash-live-preview');
+    await vi.waitFor(() => expect(prefill).toHaveLength(2));
+
+    const [history, question] = prefill;
+    expect(history!.turns.at(-1)?.role).toBe('model');
+    expect(history!.turnComplete).toBe(true);
+    expect(question!.turns.map((turn) => turn.role)).toEqual(['user']);
+    expect(question!.turnComplete).toBe(true);
+  });
+
+  it('sends one open frame for models that accept a plain prefill', async () => {
+    const prefill = await prefillFor('gemini-2.0-flash-live-001');
+    await vi.waitFor(() => expect(prefill).toHaveLength(1));
+
+    expect(prefill[0]!.turns).toHaveLength(3);
+    expect(prefill[0]!.turnComplete).toBe(false);
   });
 });
