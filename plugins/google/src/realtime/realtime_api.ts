@@ -36,6 +36,11 @@ import { type LLMTools } from '../tools.js';
 import { toToolsConfig } from '../utils.js';
 import type * as api_proto from './api_proto.js';
 import type { LiveAPIModels, Voice } from './api_proto.js';
+import {
+  type LiveSocketHost,
+  forwardHistoryConfigToSetup,
+  historyConfigForSetup,
+} from './live_setup.js';
 
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
@@ -515,7 +520,24 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
 
     this.#client = new GoogleGenAI(clientOptions);
+    if (
+      !forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, () =>
+        this.historyConfigForConnect(),
+      )
+    ) {
+      this.#logger.warn(
+        'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
+      );
+    }
     this.#task = this.#mainTask();
+  }
+
+  private historyConfigForConnect(): types.HistoryConfig | undefined {
+    return historyConfigForSetup({
+      // An unstated capability keeps the existing plain-prefill behaviour.
+      mutableChatCtx: this.realtimeModel.capabilities.midSessionChatCtxUpdate ?? true,
+      hasInitialHistory: this._chatCtx.items.length > 0,
+    });
   }
 
   private async closeActiveSession(): Promise<void> {

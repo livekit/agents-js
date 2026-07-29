@@ -19,6 +19,9 @@ type RealtimeSessionInternals = {
     toolResponseScheduling?: FunctionResponseScheduling;
     vertexai?: boolean;
   };
+  _realtimeModel: { capabilities: { midSessionChatCtxUpdate?: boolean } };
+  _chatCtx: llm.ChatContext;
+  historyConfigForConnect(): { initialHistoryInClientContent?: boolean } | undefined;
   currentGeneration?: {
     functionChannel: {
       closed: boolean;
@@ -178,5 +181,31 @@ describe('Google Realtime non-blocking tool scheduling', () => {
     session.clearPendingToolCallIdsForResponses(result?.functionResponses ?? []);
 
     expect(session.pendingToolCallIds.has('call_123')).toBe(false);
+  });
+});
+
+describe('Google Realtime initial history seeding', () => {
+  function sessionWith(midSessionChatCtxUpdate: boolean, priorTurns: string[]) {
+    const session = Object.create(RealtimeSession.prototype) as RealtimeSessionInternals;
+    session._realtimeModel = { capabilities: { midSessionChatCtxUpdate } };
+    session._chatCtx = llm.ChatContext.empty();
+    for (const content of priorTurns) {
+      session._chatCtx.addMessage({ role: 'assistant', content });
+    }
+    return session;
+  }
+
+  it('asks the server to treat the prefill as history when the model cannot take one', () => {
+    expect(sessionWith(false, ['how can I help?']).historyConfigForConnect()).toEqual({
+      initialHistoryInClientContent: true,
+    });
+  });
+
+  it('leaves models that accept a plain prefill alone', () => {
+    expect(sessionWith(true, ['how can I help?']).historyConfigForConnect()).toBeUndefined();
+  });
+
+  it('leaves sessions that start with an empty context alone', () => {
+    expect(sessionWith(false, []).historyConfigForConnect()).toBeUndefined();
   });
 });
