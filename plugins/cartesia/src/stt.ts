@@ -135,6 +135,7 @@ type STTEventMessage =
   | STTTurnEndEvent
   | STTErrorEvent;
 
+/** @public */
 export type STTOptions = {
   apiKey: string;
   // eslint-disable-next-line @typescript-eslint/ban-types
@@ -143,6 +144,30 @@ export type STTOptions = {
   baseUrl: string;
   audioChunkDurationMS: number;
   language: string;
+  /**
+   * Likelihood above which the model starts a turn. Range 0.5-0.9, Cartesia default 0.8.
+   * Turn-detecting models only.
+   */
+  turnStartThreshold?: number;
+  /**
+   * Likelihood below which the model emits `turn.eager_end`. Range 0.3-0.6, Cartesia
+   * default 0.4. Turn-detecting models only.
+   */
+  turnEagerEndThreshold?: number;
+  /**
+   * Likelihood below which the model ends the turn. Range 0.05-0.5, Cartesia default 0.2.
+   * Turn-detecting models only.
+   */
+  turnEndThreshold?: number;
+  /**
+   * Maximum time in milliseconds to wait after the user stops speaking before ending the turn.
+   * Range 640-11200, Cartesia default 5600. Turn-detecting models only.
+   */
+  turnEndTimeoutMs?: number;
+  /**
+   * Key terms to improve recall of specific words and phrases. Turn-detecting models only.
+   */
+  keyterm?: string[];
 };
 
 const defaultSTTOptions = {
@@ -164,6 +189,11 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
     language:
       override.language !== undefined ? normalizeLanguage(override.language) : base.language,
+    turnStartThreshold: override.turnStartThreshold ?? base.turnStartThreshold,
+    turnEagerEndThreshold: override.turnEagerEndThreshold ?? base.turnEagerEndThreshold,
+    turnEndThreshold: override.turnEndThreshold ?? base.turnEndThreshold,
+    turnEndTimeoutMs: override.turnEndTimeoutMs ?? base.turnEndTimeoutMs,
+    keyterm: override.keyterm ?? base.keyterm,
   };
 }
 
@@ -174,6 +204,26 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
  */
 function resolveSTTModel(language: string): STTModel {
   return getBaseLanguage(language) === 'en' ? 'ink-2' : 'ink-whisper';
+}
+
+function validateTurnDetectionOptions(opts: STTOptions) {
+  if (!opts.model.startsWith('ink-whisper')) return;
+
+  const turnOnlyParams: [string, unknown][] = [
+    ['turn_start_threshold', opts.turnStartThreshold],
+    ['turn_eager_end_threshold', opts.turnEagerEndThreshold],
+    ['turn_end_threshold', opts.turnEndThreshold],
+    ['turn_end_timeout_ms', opts.turnEndTimeoutMs],
+    ['keyterm', opts.keyterm],
+  ];
+  for (const [paramName, paramValue] of turnOnlyParams) {
+    if (paramValue !== undefined) {
+      throw new Error(
+        `The '${paramName}' parameter is only supported by turn-detecting models ` +
+          `(e.g. ink-2); model '${opts.model}' does not support it.`,
+      );
+    }
+  }
 }
 
 /**
@@ -198,6 +248,8 @@ function resolveSTTModel(language: string): STTModel {
  *   turnHandling: { turnDetection: 'stt' },
  * });
  * ```
+ *
+ * @public
  */
 export class STT extends stt.STT {
   #opts: STTOptions;
@@ -224,6 +276,8 @@ export class STT extends stt.STT {
     if (opts.model === undefined) {
       this.#opts.model = resolveSTTModel(this.#opts.language);
     }
+
+    validateTurnDetectionOptions(this.#opts);
   }
 
   override get label(): string {
@@ -255,9 +309,12 @@ export class STT extends stt.STT {
     if (opts.language !== undefined && opts.model === undefined) {
       this.#opts.model = resolveSTTModel(this.#opts.language);
     }
+
+    validateTurnDetectionOptions(this.#opts);
   }
 }
 
+/** @public */
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
@@ -641,6 +698,21 @@ export class SpeechStream extends stt.SpeechStream {
       sample_rate: this.#opts.sampleRate.toString(),
       encoding: AUDIO_ENCODING,
     });
+    if (this.#opts.turnStartThreshold !== undefined) {
+      params.append('turn_start_threshold', this.#opts.turnStartThreshold.toString());
+    }
+    if (this.#opts.turnEagerEndThreshold !== undefined) {
+      params.append('turn_eager_end_threshold', this.#opts.turnEagerEndThreshold.toString());
+    }
+    if (this.#opts.turnEndThreshold !== undefined) {
+      params.append('turn_end_threshold', this.#opts.turnEndThreshold.toString());
+    }
+    if (this.#opts.turnEndTimeoutMs !== undefined) {
+      params.append('turn_end_timeout_ms', this.#opts.turnEndTimeoutMs.toString());
+    }
+    for (const term of this.#opts.keyterm ?? []) {
+      params.append('keyterm', term);
+    }
 
     const wsBase = this.#opts.baseUrl.replace(/^http/, 'ws');
     return `${wsBase}/stt/turns/websocket?${params.toString()}`;

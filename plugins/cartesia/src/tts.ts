@@ -57,6 +57,7 @@ const MAX_SESSION_DURATION_MS = 300_000;
 // without widening the constructor signature the base class fixes.
 const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 
+/** @public */
 export interface TTSOptions {
   model: TTSModels | string;
   encoding: TTSEncoding;
@@ -134,6 +135,7 @@ const checkGenerationConfig = (opts: TTSOptions) => {
   }
 };
 
+/** @public */
 export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
@@ -289,6 +291,7 @@ export class TTS extends tts.TTS {
   }
 }
 
+/** @public */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'cartesia.ChunkedStream';
   #logger = log();
@@ -380,6 +383,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 }
 
+/** @public */
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
