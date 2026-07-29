@@ -59,10 +59,20 @@ export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standar
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
 export interface CartesiaOptions {
-  /** Minimum volume threshold. Default: not specified. */
+  /** Minimum volume threshold. ink-whisper only. Default: not specified. */
   min_volume?: number;
-  /** Maximum silence duration in seconds. Default: not specified. */
+  /** Maximum silence duration in seconds. ink-whisper only. Default: not specified. */
   max_silence_duration_secs?: number;
+  /** Turn start threshold for turn-detecting models (e.g. ink-2). Range 0.5-0.9. Default: 0.8. */
+  turn_start_threshold?: number;
+  /** Eager turn end threshold for turn-detecting models (e.g. ink-2). Range 0.3-0.6. Default: 0.4. */
+  turn_eager_end_threshold?: number;
+  /** Turn end threshold for turn-detecting models (e.g. ink-2). Range 0.05-0.5. Default: 0.2. */
+  turn_end_threshold?: number;
+  /** Turn end timeout in milliseconds for turn-detecting models (e.g. ink-2). Range 640-11200. Default: 5600. */
+  turn_end_timeout_ms?: number;
+  /** Key terms for recognition. Up to 100 terms totaling 1200 characters. */
+  keyterm?: string | string[];
 }
 
 export interface DeepgramOptions {
