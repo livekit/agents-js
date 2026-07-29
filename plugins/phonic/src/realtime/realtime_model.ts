@@ -247,7 +247,8 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session(): RealtimeSession {
+  session(_options: { turnDetectionDisabled?: boolean } = {}): RealtimeSession {
+    // Disabling server-side turn detection is unsupported (canDisableTurnDetection=false).
     return new RealtimeSession(this);
   }
 

@@ -400,7 +400,9 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session() {
+  session(_options: { turnDetectionDisabled?: boolean } = {}) {
+    // Gemini drives manual turns via activity start/end, so disabling server-side turn detection
+    // is unsupported (canDisableTurnDetection=false).
     return new RealtimeSession(this);
   }
 

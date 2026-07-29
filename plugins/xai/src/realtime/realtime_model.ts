@@ -46,5 +46,11 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });
+    this.capabilities.canDisableTurnDetection = false;
+  }
+
+  override session(_options: { turnDetectionDisabled?: boolean } = {}) {
+    // Manual turn-taking is unsupported by xAI realtime for now.
+    return super.session({ turnDetectionDisabled: false });
   }
 }

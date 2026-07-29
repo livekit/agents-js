@@ -56,6 +56,11 @@ export interface RealtimeCapabilities {
   audioOutput: boolean;
   /** Whether function call items already in the chat context can be resumed. */
   manualFunctionCalls: boolean;
+  /**
+   * Whether server-side turn detection can be disabled for a session so the client drives
+   * turn-taking. Set by plugins that implement `session({ turnDetectionDisabled: true })`.
+   */
+  canDisableTurnDetection?: boolean;
   /** Whether the chat context can be updated mid-session. */
   midSessionChatCtxUpdate?: boolean;
   /** Whether the instructions can be updated mid-session. */
@@ -113,7 +118,7 @@ export abstract class RealtimeModel {
     return 'RealtimeModel';
   }
 
-  abstract session(): RealtimeSession;
+  abstract session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession;
 
   abstract close(): Promise<void>;
 }
