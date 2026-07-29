@@ -14,7 +14,7 @@ import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace
 import FormData from 'form-data';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatContext } from '../llm/chat_context.js';
+import { ChatContext, ChatMessage, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { setTracerProvider, setupCloudTracer, tracer, uploadSessionReport } from './traces.js';
@@ -339,14 +339,17 @@ describe('setupCloudTracer with a user-configured provider', () => {
   });
 });
 
-function makeReport(recordingOptions: SessionReport['recordingOptions']): SessionReport {
+function makeReport(
+  recordingOptions: SessionReport['recordingOptions'],
+  chatHistory: ChatContext = ChatContext.empty(),
+): SessionReport {
   return {
     jobId: 'job1',
     roomId: 'room1',
     room: 'room-name',
     options: {},
     events: [],
-    chatHistory: ChatContext.empty(),
+    chatHistory,
     enableRecording: true,
     recordingOptions,
     startedAt: 1_700_000_000_000,
@@ -480,6 +483,95 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('uploadSessionReport chat item ordering', () => {
+  const T = 1_700_000_000_000;
+  let prevKey: string | undefined;
+  let prevSecret: string | undefined;
+
+  beforeEach(() => {
+    prevKey = process.env.LIVEKIT_API_KEY;
+    prevSecret = process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_API_KEY = 'devkey';
+    process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (prevKey === undefined) delete process.env.LIVEKIT_API_KEY;
+    else process.env.LIVEKIT_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+    else process.env.LIVEKIT_API_SECRET = prevSecret;
+  });
+
+  async function exportChatItems(chatHistory: ChatContext) {
+    const exportSpy = vi
+      .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
+      .mockResolvedValue(undefined);
+    mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      cloudHostname: 'example.livekit.cloud',
+      report: makeReport(
+        { audio: false, traces: false, logs: false, transcript: true, redaction: false },
+        chatHistory,
+      ),
+    });
+
+    const records = exportSpy.mock.calls[0]?.[0] ?? [];
+    return records.filter((record) => record.body === 'chat item');
+  }
+
+  it('orders chat items by when speech was heard, not when the item was committed', async () => {
+    // Mirrors a real session: the agent's reply to a previous turn is committed
+    // (createdAt) while the user is already barging in, and the user turn is only
+    // committed once its transcript is final — so committed order is the reverse of
+    // the order the two turns were actually heard in.
+    const agentTurn = ChatMessage.create({
+      role: 'assistant',
+      content: 'Do you have a physician referral for this visit?',
+      createdAt: T + 1_000,
+      metrics: { startedSpeakingAt: (T + 4_000) / 1000 },
+    });
+    const userTurn = ChatMessage.create({
+      role: 'user',
+      content: 'Are you there?',
+      createdAt: T + 3_000,
+      metrics: { startedSpeakingAt: (T + 500) / 1000 },
+    });
+
+    const records = await exportChatItems(new ChatContext([agentTurn, userTurn]));
+
+    expect(records.map((r) => r.timestampMs)).toEqual([T + 500, T + 4_000]);
+    expect(
+      records.map((r) => (r.attributes['chat.item'] as { message: { role: string } }).message.role),
+    ).toEqual(['USER', 'ASSISTANT']);
+  });
+
+  it('keeps items without speech metrics on createdAt, nudging collisions to stay ordered', async () => {
+    const call = FunctionCall.create({
+      callId: 'call1',
+      name: 'lookup',
+      args: '{}',
+      createdAt: T + 2_000,
+    });
+    const output = FunctionCallOutput.create({
+      callId: 'call1',
+      output: 'ok',
+      isError: false,
+      createdAt: T + 2_000,
+    });
+
+    const records = await exportChatItems(new ChatContext([call, output]));
+
+    expect(records.map((r) => r.timestampMs)).toEqual([T + 2_000, T + 2_000.001]);
+    expect(records.map((r) => Object.keys(r.attributes['chat.item'] as object)[0])).toEqual([
+      'functionCall',
+      'functionCallOutput',
+    ]);
   });
 });
 

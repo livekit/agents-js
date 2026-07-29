@@ -732,6 +732,27 @@ function toRFC3339(valueMs: number | Date): string {
 }
 
 /**
+ * Where a chat item belongs on the session timeline, in milliseconds.
+ *
+ * `createdAt` records when an item was committed to the chat context, which is a
+ * different point in the turn for each role: a user message is committed once its
+ * transcript is final (after the user stopped speaking), while an assistant message is
+ * committed when its reply started generating (before any audio reached the room). The
+ * dashboard places each turn at `metrics.startedSpeakingAt`, so ordering by `createdAt`
+ * makes turns render out of order — most visibly when the user barges in while a reply
+ * is being generated.
+ */
+function timelineTimestampMs(item: ChatItem): number {
+  const startedSpeakingAt = item.type === 'message' ? item.metrics?.startedSpeakingAt : undefined;
+  if (startedSpeakingAt !== undefined && Number.isFinite(startedSpeakingAt)) {
+    return startedSpeakingAt * 1000; // metrics are in seconds
+  }
+  // Items with no speech of their own (tool calls, handoffs, config updates), plus a
+  // defensive fallback for turns whose playout never reported a start time.
+  return Number.isFinite(item.createdAt) ? item.createdAt : Date.now();
+}
+
+/**
  * Upload session report to LiveKit Cloud observability.
  * @param options - Configuration with agentName, cloudHostname, and report
  */
@@ -789,21 +810,22 @@ export async function uploadSessionReport(options: {
     },
   });
 
+  // The dashboard orders the transcript by log timestamp, so emit the items in the order
+  // they were heard rather than the order they were committed to the chat context.
+  const chatItems = (report.recordingOptions.transcript ? report.chatHistory.items : [])
+    .filter((item) => item) // skip null/undefined items
+    .map((item, index) => ({ item, index, timestampMs: timelineTimestampMs(item) }))
+    // ties keep their chat context order, which holds a tool call next to its output
+    .sort((a, b) => a.timestampMs - b.timestampMs || a.index - b.index);
+
   // Track last timestamp to ensure monotonic ordering when items have identical timestamps
   // This fixes the issue where function_call and function_call_output with same timestamp
   // get reordered by the dashboard
   let lastTimestamp = 0;
-  const chatItems = report.recordingOptions.transcript ? report.chatHistory.items : [];
-  for (const item of chatItems) {
-    // Skip null/undefined items
-    if (!item) continue;
-
+  for (const { item, timestampMs } of chatItems) {
     // Ensure monotonically increasing timestamps for proper ordering
     // Add 0.001ms (1 microsecond) offset when timestamps collide
-    // Also handle undefined/NaN timestamps from realtime mode (defensive)
-    const hasValidTimestamp = Number.isFinite(item.createdAt);
-    let itemTimestamp = hasValidTimestamp ? item.createdAt : Date.now();
-
+    let itemTimestamp = timestampMs;
     if (itemTimestamp <= lastTimestamp) {
       itemTimestamp = lastTimestamp + 0.001; // Add 1 microsecond
     }
