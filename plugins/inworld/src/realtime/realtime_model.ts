@@ -189,6 +189,15 @@ export class RealtimeSession extends OpenAIRealtimeSession {
         resolve(ws);
       });
 
+      // Without this, `ws` re-throws handshake failures (ECONNREFUSED, DNS, HTTP 401) as
+      // uncaught exceptions on nextTick — crashing the job instead of rejecting for retry.
+      ws.once('error', (error) => {
+        if (!waiting) return;
+        waiting = false;
+        clearTimeout(timeout);
+        reject(error);
+      });
+
       ws.once('close', () => {
         if (!waiting) return;
         waiting = false;

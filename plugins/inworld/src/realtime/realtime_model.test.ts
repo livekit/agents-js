@@ -237,6 +237,34 @@ describe('RealtimeModel API key resolution', () => {
   });
 });
 
+describe('RealtimeSession connection errors', () => {
+  it('rejects refused connections without an uncaught exception', async () => {
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error) => {
+      uncaught.push(error);
+    };
+    process.on('uncaughtException', onUncaught);
+
+    try {
+      const model = new RealtimeModel({
+        apiKey: API_KEY,
+        // Port 1 is almost always closed → ECONNREFUSED during the handshake.
+        baseURL: 'ws://127.0.0.1:1/session',
+        connOptions: { maxRetry: 0, retryIntervalMs: 100, timeoutMs: 2000 },
+      });
+      const session = model.session();
+
+      // Give the handshake time to fail; the error listener should reject cleanly.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await session.close().catch(() => undefined);
+
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  });
+});
+
 describe('RealtimeSession wire format', () => {
   let server: TestServer;
 
