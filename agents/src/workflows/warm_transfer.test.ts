@@ -57,17 +57,6 @@ describe('createWarmTransferTask', () => {
     ).toThrow(/must not be empty/);
   });
 
-  it('rejects both caller hangup options together', () => {
-    expect(() =>
-      createWarmTransferTask({
-        sipCallTo: '+15551234567',
-        sipTrunkId: 'ST_dummy',
-        callerHangupNotice: { text: 'The caller disconnected. Hanging up now.' },
-        callerHangupInstruction: 'Generate a short notice.',
-      }),
-    ).toThrow(/cannot both be set/);
-  });
-
   it('rejects an empty deterministic notice', () => {
     expect(() =>
       createWarmTransferTask({
@@ -205,7 +194,7 @@ describe('startCallerHangupSpeech', () => {
     await expect(stream?.getReader().read()).resolves.toEqual({ value: frame, done: false });
   });
 
-  it('cancels decoded audio and falls back when say throws', () => {
+  it('uses a supplied fallback instruction when the deterministic notice cannot be played', () => {
     const { session, say, generateReply, generatedHandle } = createSession();
     const error = new Error('AgentSession is closing, cannot use say()');
     const cancel = vi.fn();

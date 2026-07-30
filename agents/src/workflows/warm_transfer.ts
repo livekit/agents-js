@@ -109,15 +109,15 @@ export interface WarmTransferTaskOptions {
   /**
    * Deterministic notice spoken to the human agent before their call is ended when the caller
    * hangs up mid-transfer. If the notice cannot be scheduled, the error is logged and the task
-   * falls back to a generated reply using the built-in caller-hangup instruction. Cannot be
-   * combined with {@link callerHangupInstruction}.
+   * falls back to a generated reply using {@link callerHangupInstruction}, or the built-in
+   * instruction when none is provided.
    */
   callerHangupNotice?: CallerHangupNotice;
   /**
    * Instructions used to generate the reply spoken to the human agent before their call is
    * ended when the caller hangs up mid-transfer (after the human agent answered but before
-   * the merge). Used only when {@link callerHangupNotice} is not provided, and falls back to a
-   * built-in instruction when omitted.
+   * the merge). Used when no {@link callerHangupNotice} is configured, or when a configured notice
+   * cannot be played. Falls back to a built-in instruction when omitted.
    */
   callerHangupInstruction?: string | null;
   /**
@@ -184,10 +184,6 @@ export function createWarmTransferTask({
 
   if (rawRoomName !== undefined && rawRoomName.length === 0) {
     throw new Error('`roomName` must not be empty');
-  }
-
-  if (callerHangupNotice && callerHangupInstruction != null) {
-    throw new Error('`callerHangupNotice` and `callerHangupInstruction` cannot both be set');
   }
 
   if (callerHangupNotice && callerHangupNotice.text.trim().length === 0) {
