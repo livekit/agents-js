@@ -957,7 +957,7 @@ describe('RealtimeSession chat context update events', () => {
     expect(events[0]?.type).toBe('conversation.item.create');
     const createEvent = events[0] as api_proto.ConversationItemCreateEvent;
     expect(createEvent.item.id).toBe('parent_message');
-    expect(createEvent.previous_item_id).toBeUndefined();
+    expect(createEvent.previous_item_id).toBe('root');
   });
 });
 
