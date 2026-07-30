@@ -282,6 +282,39 @@ function keytermsExtraForModel(
   return { [key]: [...new Set([...existing, ...sessionKeyterms])] };
 }
 
+// Models verified to carry word timings. Unknown models stay disabled until verified.
+const WORD_ALIGNED_MODELS = new Set([
+  'deepgram/nova-3',
+  'deepgram/nova-3-medical',
+  'deepgram/nova-2',
+  'deepgram/nova-2-medical',
+  'deepgram/nova-2-conversationalai',
+  'deepgram/nova-2-phonecall',
+  'deepgram/flux-general',
+  'deepgram/flux-general-en',
+  'deepgram/flux-general-multi',
+  'cartesia/ink-whisper',
+  'assemblyai/universal-streaming',
+  'assemblyai/universal-streaming-multilingual',
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+  'elevenlabs/scribe_v2_realtime',
+  'xai/stt-1',
+  'speechmatics/enhanced',
+  'speechmatics/standard',
+]);
+
+/**
+ * Word-level alignment, which adaptive interruption relies on to gatekeep transcripts.
+ *
+ * Returns false when the model sends no word timings, and for `auto`, where the provider is
+ * picked server-side per language and cannot be known here. Claiming alignment we do not have
+ * is the costlier error because it disables the fast VAD barge-in path.
+ */
+function alignedTranscriptForModel(model: string | undefined): 'word' | false {
+  return model && WORD_ALIGNED_MODELS.has(model) ? 'word' : false;
+}
+
 type _STTModels =
   | DeepgramModels
   | DeepgramFluxModels
@@ -424,10 +457,12 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
+    const initialModel =
+      typeof opts?.model === 'string' ? parseSTTModelString(opts.model)[0] : undefined;
     super({
       streaming: true,
       interimResults: true,
-      alignedTranscript: 'word',
+      alignedTranscript: alignedTranscriptForModel(initialModel),
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms:
         keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
@@ -543,6 +578,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this._vadPromise = undefined;
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        alignedTranscript: alignedTranscriptForModel(this.opts.model),
       });
     }
 
