@@ -1093,8 +1093,9 @@ export class AgentActivity implements RecognitionHooks {
       ) {
         this.logger.warn(
           "changing turnDetection at runtime does not update a realtime model's server-side turn detection " +
-            '(resolved at session start); it stays %s for this session.',
-          this.rtTurnDetectionEnabled ? 'enabled' : 'disabled',
+            `(resolved at session start); it stays ${
+              this.rtTurnDetectionEnabled ? 'enabled' : 'disabled'
+            } for this session.`,
         );
       }
 

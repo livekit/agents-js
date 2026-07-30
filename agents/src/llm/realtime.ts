@@ -96,6 +96,15 @@ export interface InputTranscriptionCompleted {
 
 export interface RealtimeSessionReconnectedEvent {}
 
+export interface RealtimeSessionOptions {
+  /**
+   * Disable the model's server-side turn detection for this session so the client drives
+   * turn-taking. Honored only by plugins reporting `canDisableTurnDetection`; the model itself
+   * is left unchanged and stays reusable.
+   */
+  turnDetectionDisabled?: boolean;
+}
+
 export abstract class RealtimeModel {
   private _capabilities: RealtimeCapabilities;
 
@@ -118,7 +127,7 @@ export abstract class RealtimeModel {
     return 'RealtimeModel';
   }
 
-  abstract session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession;
+  abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 
   abstract close(): Promise<void>;
 }

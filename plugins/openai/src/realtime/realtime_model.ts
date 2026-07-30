@@ -276,7 +276,21 @@ export class RealtimeModel extends llm.RealtimeModel {
    *
    * @throws Error if required Azure parameters are missing or invalid.
    */
-  static withAzure(options: {
+  static withAzure({
+    azureDeployment,
+    azureEndpoint,
+    apiVersion,
+    apiKey,
+    entraToken,
+    baseURL,
+    voice = 'marin',
+    temperature, // eslint-disable-line @typescript-eslint/no-unused-vars
+    inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
+    inputAudioNoiseReduction,
+    turnDetection,
+    speed,
+    tracing,
+  }: {
     azureDeployment: string;
     azureEndpoint?: string;
     apiVersion?: string;
@@ -292,19 +306,8 @@ export class RealtimeModel extends llm.RealtimeModel {
     speed?: number;
     tracing?: api_proto.TracingConfig;
   }) {
-    const {
-      azureDeployment,
-      azureEndpoint: initialAzureEndpoint,
-      temperature: _temperature,
-      voice = 'marin',
-      inputAudioTranscription = AZURE_DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
-      inputAudioNoiseReduction,
-      speed,
-      tracing,
-    } = options;
-    const { entraToken } = options;
-    let { apiVersion, apiKey, baseURL, turnDetection } = options;
-    let azureEndpoint = initialAzureEndpoint;
+    // capture intent before applying the azure default, so the framework can still
+    // auto-disable server-side turn detection when the user didn't configure it
     const canDisableTurnDetection = turnDetection === undefined;
     if (turnDetection === undefined) {
       turnDetection = AZURE_DEFAULT_TURN_DETECTION;
@@ -352,7 +355,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     return model;
   }
 
-  session(options: { turnDetectionDisabled?: boolean } = {}) {
+  session(options: llm.RealtimeSessionOptions = {}) {
     return new RealtimeSession(this, options);
   }
 
@@ -489,7 +492,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Task<void>;
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel, options: { turnDetectionDisabled?: boolean } = {}) {
+  constructor(realtimeModel: RealtimeModel, options: llm.RealtimeSessionOptions = {}) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;

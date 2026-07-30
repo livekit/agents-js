@@ -8,6 +8,7 @@ import {
   type RealtimeCapabilities,
   RealtimeModel,
   RealtimeSession,
+  type RealtimeSessionOptions,
   type ToolChoice,
   ToolContext,
 } from '../llm/index.js';
@@ -58,7 +59,7 @@ class FakeRealtimeSession extends RealtimeSession {
   readonly chatCtx = ChatContext.empty();
   readonly tools = ToolContext.empty();
 
-  constructor(model: RealtimeModel, options: { turnDetectionDisabled?: boolean } = {}) {
+  constructor(model: RealtimeModel, options: RealtimeSessionOptions = {}) {
     super(model);
     this.turnDetectionDisabled = options.turnDetectionDisabled ?? false;
   }
@@ -84,7 +85,7 @@ class FakeRealtimeModel extends RealtimeModel {
     return 'fake-realtime';
   }
 
-  session(options: { turnDetectionDisabled?: boolean } = {}): RealtimeSession {
+  session(options: RealtimeSessionOptions = {}): RealtimeSession {
     const session = new FakeRealtimeSession(this, options);
     this.createdSessions.push(session);
     return session;
@@ -246,10 +247,7 @@ describe('realtime auto-disable turn detection', () => {
 
     updateTurnDetection(session, activity, 'manual');
 
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('resolved at session start'),
-      'enabled',
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('it stays enabled for this session'));
   });
 
   it('does not warn when reverting runtime turn detection to automatic', () => {
@@ -260,10 +258,7 @@ describe('realtime auto-disable turn detection', () => {
 
     updateTurnDetection(session, activity, null);
 
-    expect(warn).not.toHaveBeenCalledWith(
-      expect.stringContaining('resolved at session start'),
-      expect.anything(),
-    );
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('resolved at session start'));
   });
 
   it('does not warn when server-side turn detection state is unchanged', () => {
@@ -274,10 +269,7 @@ describe('realtime auto-disable turn detection', () => {
 
     updateTurnDetection(session, activity, 'manual');
 
-    expect(warn).not.toHaveBeenCalledWith(
-      expect.stringContaining('resolved at session start'),
-      expect.anything(),
-    );
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('resolved at session start'));
   });
 
   it('supersedes the default turn detector silently', () => {
