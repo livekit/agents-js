@@ -170,13 +170,14 @@ describe('RealtimeModel defaults', () => {
     });
   });
 
-  it('allows auto_tool_response to be turned on explicitly', () => {
+  it('forces auto_tool_response to false even when requested', () => {
     const model = new RealtimeModel({
       apiKey: API_KEY,
       providerData: { auto_tool_response: true },
     });
 
-    expect(model._providerData.auto_tool_response).toBe(true);
+    expect(model._providerData.auto_tool_response).toBe(false);
+    expect(model.capabilities.autoToolReplyGeneration).toBe(false);
   });
 
   it('merges caching overrides over the enabled default', () => {
@@ -303,7 +304,7 @@ describe('RealtimeSession wire format', () => {
     }
   });
 
-  it('propagates an auto_tool_response override to the wire', async () => {
+  it('sends auto_tool_response false on the wire even when requested true', async () => {
     const model = new RealtimeModel({
       apiKey: API_KEY,
       baseURL: server.baseURL,
@@ -314,7 +315,7 @@ describe('RealtimeSession wire format', () => {
     try {
       const event = await server.firstEvent;
 
-      expect(event.session.providerData.auto_tool_response).toBe(true);
+      expect(event.session.providerData.auto_tool_response).toBe(false);
     } finally {
       await session.close().catch(() => undefined);
     }

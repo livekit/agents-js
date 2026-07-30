@@ -59,9 +59,7 @@ export default defineAgent({
         ttsModel: 'inworld-tts-2',
         sttModel: 'inworld/inworld-stt-1',
         providerData: {
-          // false (default): agent owns post-tool turns so maxToolSteps can chain.
-          auto_tool_response: false,
-          // Off for this short demo prompt; plugin default remains enabled. Cache < 1024 tokens will be rejected.
+          // Off for this short demo prompt; plugin default remains enabled.
           caching: { enabled: false },
           tts: { delivery_mode: 'BALANCED' },
           responsiveness: { level: 0.6 },

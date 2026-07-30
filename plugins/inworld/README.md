@@ -92,19 +92,19 @@ form a given field wants.
 
 ### Defaults: `auto_tool_response` and caching
 
-`providerData.auto_tool_response` defaults to `false`, which means the Inworld
-server does not automatically speak after a tool returns a result. Turn
-continuation is left to the agent, so a tool result flows back through the
-LiveKit voice pipeline and the agent decides whether to generate a follow-up
-reply — that is what makes `voiceOptions.maxToolSteps` work for chained tool
-calls. Set it to `true` if you would rather have Inworld drive the follow-up
-response itself, in which case the agent will not add a step of its own.
+`providerData.auto_tool_response` is always forced to `false`. Turn continuation
+after a tool result stays with the LiveKit agent (`voiceOptions.maxToolSteps`),
+which matches `capabilities.autoToolReplyGeneration === false` inherited from
+the OpenAI Realtime base. Setting `auto_tool_response: true` is ignored — if
+both the Inworld server and the agent generated a follow-up, the user would hear
+two competing replies.
 
 `providerData.caching` defaults to `{ enabled: true }`, opting the session into
 explicit prompt caching for instructions and tools. Gemini and Anthropic honor
 the breakpoints; providers with only implicit caching ignore them. Override with
 `caching: { enabled: false }` (or pass `ttl` / `cache_instructions` /
-`cache_tools`) via `providerData`.
+`cache_tools`) via `providerData`. Prefer disabling caching for short prompts
+(providers typically require ~1024 tokens before a cache entry is useful).
 
 ### Debugging
 

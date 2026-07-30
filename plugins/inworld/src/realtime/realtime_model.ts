@@ -30,6 +30,7 @@ type InworldSessionUpdate = realtime.SessionUpdateEvent['session'] & {
   };
 };
 
+/** Options for {@link RealtimeModel}. */
 export interface RealtimeModelOptions
   extends Omit<OpenAIRealtimeModelOptions, 'model' | 'baseURL' | 'azureDeployment' | 'apiVersion'> {
   /** LLM in `provider/model` form. @defaultValue `'google-ai-studio/gemini-3.1-flash-lite'` */
@@ -52,6 +53,10 @@ export interface RealtimeModelOptions
    * @defaultValue `'wss://api.inworld.ai/api/v1/realtime/session'`
    */
   baseURL?: string;
+  /**
+   * Inworld-specific session options. Merged over `{ caching: { enabled: true } }`.
+   * `auto_tool_response` is always forced to `false` (see {@link ProviderData.auto_tool_response}).
+   */
   providerData?: ProviderData;
 }
 
@@ -125,10 +130,13 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     });
 
     this._ttsModel = options.ttsModel ?? DEFAULT_TTS_MODEL;
+    // Explicit prompt caching on by default. auto_tool_response is always forced false: the OpenAI
+    // base hard-codes capabilities.autoToolReplyGeneration=false, so enabling Inworld's server-side
+    // follow-up would double-speak with the agent-side tool_response turn.
     this._providerData = {
-      auto_tool_response: false,
       ...options.providerData,
       caching: { enabled: true, ...options.providerData?.caching },
+      auto_tool_response: false,
     };
   }
 
