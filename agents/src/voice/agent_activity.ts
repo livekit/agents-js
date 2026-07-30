@@ -3080,7 +3080,11 @@ export class AgentActivity implements RecognitionHooks {
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
+    // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
+      // function call is created during LLM generation, might be before the speech is authorized
+      // reset the `createdAt` to the start time of the tool execution
+      f.createdAt = Date.now();
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
@@ -3754,7 +3758,11 @@ export class AgentActivity implements RecognitionHooks {
       ),
     );
 
+    // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
+      // function call is created during the model generation, might be before the speech is
+      // authorized; reset the `createdAt` to the start time of the tool execution
+      f.createdAt = Date.now();
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
