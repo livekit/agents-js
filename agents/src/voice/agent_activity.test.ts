@@ -26,6 +26,7 @@ import { LLM, type LLMStream } from '../llm/llm.js';
 import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
 import { log } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage } from './agent_activity.js';
@@ -164,6 +165,58 @@ describe('AgentActivity - mainTask', () => {
     expect(capturedEvents[0]?.isFinal).toBe(false);
     expect(capturedEvents[0]?.itemId).toBe('item_123');
   });
+
+  it.each([
+    { hasLocalVad: false, shouldInterrupt: true },
+    { hasLocalVad: true, shouldInterrupt: false },
+  ])(
+    'interim transcript interrupts only without local VAD: $hasLocalVad',
+    ({ hasLocalVad, shouldInterrupt }) => {
+      const capturedEvents: UserInputTranscribedEvent[] = [];
+      const interruptByAudioActivity = vi.fn();
+      const activity = Object.assign(Object.create(AgentActivity.prototype), {
+        agent: { llm: undefined, vad: undefined, turnHandling: undefined },
+        agentSession: {
+          _textOnly: false,
+          llm: undefined,
+          vad: hasLocalVad ? {} : undefined,
+          turnDetection: undefined,
+          emit: (_type: AgentSessionEventTypes, ev: UserInputTranscribedEvent) => {
+            capturedEvents.push(ev);
+          },
+        },
+        interruptByAudioActivity,
+      });
+      const ev: SpeechEvent = {
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
+        alternatives: [
+          {
+            text: 'hello',
+            language: 'en',
+            startTime: 0,
+            endTime: 0,
+            confidence: 1,
+          },
+        ],
+      };
+
+      (
+        AgentActivity.prototype.onInterimTranscript as (
+          this: unknown,
+          ev: SpeechEvent,
+          speaking: boolean | undefined,
+        ) => void
+      ).call(activity, ev, undefined);
+
+      expect(capturedEvents).toHaveLength(1);
+      expect(capturedEvents[0]?.transcript).toBe('hello');
+      if (shouldInterrupt) {
+        expect(interruptByAudioActivity).toHaveBeenCalledOnce();
+      } else {
+        expect(interruptByAudioActivity).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('should recover when speech handle is interrupted after authorization', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
