@@ -61,6 +61,8 @@ export default defineAgent({
         providerData: {
           // false (default): agent owns post-tool turns so maxToolSteps can chain.
           auto_tool_response: false,
+          // Off for this short demo prompt; plugin default remains enabled. Cache < 1024 tokens will be rejected.
+          caching: { enabled: false },
           tts: { delivery_mode: 'BALANCED' },
           responsiveness: { level: 0.6 },
         },
