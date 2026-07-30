@@ -424,9 +424,10 @@ export class SpeechStream extends stt.SpeechStream {
           const data = result.value;
 
           let frames: AudioFrame[];
+          let hasEnded = false;
           if (data === SpeechStream.FLUSH_SENTINEL) {
             frames = stream.flush();
-            this.#audioDurationCollector.flush();
+            hasEnded = true;
           } else if (
             data.sampleRate === this.#opts.sampleRate &&
             data.channels === this.#opts.numChannels
@@ -442,6 +443,11 @@ export class SpeechStream extends stt.SpeechStream {
               this.#audioDurationCollector.push(frameDuration);
               ws.send(frame.data.buffer);
             }
+          }
+
+          if (hasEnded) {
+            this.#audioDurationCollector.flush();
+            ws.send(JSON.stringify({ type: 'Finalize' }));
           }
         }
       } finally {

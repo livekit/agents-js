@@ -603,11 +603,19 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+              }
 
-                if (hasEnded) {
-                  this.#audioDurationCollector.flush();
-                  hasEnded = false;
-                }
+              if (hasEnded) {
+                this.#audioDurationCollector.flush();
+                ws?.send(
+                  JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: '',
+                    commit: true,
+                    sample_rate: this.#opts.sampleRate,
+                  }),
+                );
+                hasEnded = false;
               }
             }
           } finally {
