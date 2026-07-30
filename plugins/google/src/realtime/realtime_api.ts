@@ -488,10 +488,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private generationPendingTurnComplete?: ResponseGeneration;
 
   /**
-   * Whether the setup frame declares the leading `clientContent` as history.
-   * When it does, that prefill has to close the history phase (see below).
+   * Whether the server will read the leading `clientContent` as history rather than
+   * as a turn to answer. The prefill is sent the same way either way — after the
+   * session starts — but when this is set it has to close the history phase (see below).
    */
-  #seedsHistoryViaConfig = false;
+  #prefillReadAsHistory = false;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -544,7 +545,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
     if (historyConfig) {
       if (forwardHistoryConfigToSetup(this.#client as unknown as LiveSocketHost, historyConfig)) {
-        this.#seedsHistoryViaConfig = true;
+        this.#prefillReadAsHistory = true;
       } else {
         this.#logger.warn(
           'unable to reach the Gemini Live socket factory; an initial chat context will not be seeded with its original roles',
@@ -1093,7 +1094,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             .toProviderFormat('google', false);
 
           if (turns.length > 0) {
-            if (this.#seedsHistoryViaConfig) {
+            if (this.#prefillReadAsHistory) {
               // https://ai.google.dev/api/live#HistoryConfig: the server reads
               // clientContent as history until it sees turnComplete, that history
               // never triggers a model call, and the conversation then starts via
