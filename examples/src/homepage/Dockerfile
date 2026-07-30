@@ -16,9 +16,11 @@ RUN apt-get update -qq \
 WORKDIR /app
 
 COPY . .
+# No download-files step: this agent reaches every model through inference, and krisp
+# ships its own weights, so no plugin here implements downloadFiles. The source example
+# needs it for the local silero VAD and turn detector.
 RUN pnpm install --frozen-lockfile \
   && pnpm --filter livekit-agents-examples... build \
-  && node agents/dist/bin/livekit-agents.js download-files \
   && pnpm store prune
 
 ENV NODE_ENV=production
