@@ -64,10 +64,8 @@ export interface RealtimeModelOptions {
 export interface PhonicToolConfig {
   name: string;
   require_speech_before_tool_call?: boolean;
-  wait_for_speech_before_tool_call?: boolean;
   forbid_speech_after_tool_call?: boolean;
   forbid_tool_call_after_speech?: boolean;
-  allow_tool_chaining?: boolean;
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -420,9 +418,11 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
           },
           tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          // fixed, not configurable: the plugin does not support tool chaining or tool calls
+          // during agent speech within the RealtimeSession generations framework
+          wait_for_speech_before_tool_call: true,
+          allow_tool_chaining: false,
           require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
-          wait_for_speech_before_tool_call: cfg?.wait_for_speech_before_tool_call ?? true,
-          allow_tool_chaining: cfg?.allow_tool_chaining ?? false,
           forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
           forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
         };
