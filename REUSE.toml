@@ -61,6 +61,12 @@ path = ["**/README.md"]
 SPDX-FileCopyrightText = "2026 LiveKit, Inc."
 SPDX-License-Identifier = "Apache-2.0"
 
+# Source-authored homepage knowledge and prompt assets
+[[annotations]]
+path = ["examples/src/homepage/knowledge_base/products/*.md", "examples/src/homepage/prompts/*.md"]
+SPDX-FileCopyrightText = "2026 LiveKit, Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # API Extractor reports
 [[annotations]]
 path = ["**/etc/*.api.md"]
