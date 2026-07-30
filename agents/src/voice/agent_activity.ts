@@ -1315,12 +1315,23 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession.amd?.onTranscript(ev.transcript);
       }
 
+      const turnStartedAt = ev.turnStartedAt;
+
+      const userMetrics: MetricsReport = {};
+      if (turnStartedAt !== undefined) {
+        userMetrics.startedSpeakingAt = turnStartedAt / 1000; // ms -> seconds
+      }
+
       const message = ChatMessage.create({
         role: 'user',
         content: ev.transcript,
         id: ev.itemId,
+        createdAt: turnStartedAt,
+        metrics: userMetrics,
       });
-      this.agent._chatCtx.items.push(message);
+      // insert rather than append: this transcript can arrive after the reply that
+      // answered it, and the turn it belongs to began before that reply
+      this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }
   }
@@ -3707,6 +3718,9 @@ export class AgentActivity implements RecognitionHooks {
           const assistantMetrics: MetricsReport = {};
           if (ev.responseId) {
             assistantMetrics.providerRequestIds = [ev.responseId];
+          }
+          if (startedSpeakingAt !== undefined) {
+            assistantMetrics.startedSpeakingAt = startedSpeakingAt / 1000; // ms -> seconds
           }
 
           const message = ChatMessage.create({

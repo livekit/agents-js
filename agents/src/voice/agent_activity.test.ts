@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AgentConfigUpdate,
   ChatContext,
+  ChatMessage,
   FunctionCall,
   FunctionCallOutput,
 } from '../llm/chat_context.js';
@@ -1366,5 +1367,121 @@ describe('AgentActivity - interruption while waiting for tools', () => {
 
     expect(shouldContinue).toBe(false);
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 789);
+  });
+});
+
+/**
+ * A realtime provider only publishes the final user transcript once the reply has
+ * finished generating, so committing the message at that moment stamps the user turn
+ * later than the reply it prompted and the transcript renders them out of order. The
+ * provider reports when the turn began via `turnStartedAt`.
+ */
+describe('AgentActivity - realtime user turn timing', () => {
+  function buildRealtimeActivity() {
+    const chatCtx = new ChatContext();
+    const fakeActivity = {
+      vad: undefined,
+      stt: undefined,
+      audioRecognition: undefined,
+      isInterruptionDetectionEnabled: false,
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _updateUserState: vi.fn(),
+        _conversationItemAdded: vi.fn(),
+      },
+      interrupt: vi.fn(),
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const proto = AgentActivity.prototype as unknown as Record<string, (...args: never[]) => void>;
+    return {
+      chatCtx,
+      transcribed: (transcript: string, itemId: string, turnStartedAt?: number) =>
+        proto.onInputAudioTranscriptionCompleted!.call(fakeActivity, {
+          transcript,
+          itemId,
+          isFinal: true,
+          turnStartedAt,
+        } as never),
+    };
+  }
+
+  it('stamps the user message where the turn began, not at transcript delivery', () => {
+    vi.useFakeTimers();
+    try {
+      // the provider withholds the transcript until its reply is done generating
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_000_000);
+      // seconds, so the dashboard can place the turn where it happened
+      expect(message.metrics?.startedSpeakingAt).toBe(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('places the turn before the reply it prompted when its transcript lands later', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // the reply is committed first, because the provider held the user transcript back
+      chatCtx.insert(
+        ChatMessage.create({ role: 'assistant', content: 'you are Brian', createdAt: 1_003_000 }),
+      );
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      expect(
+        chatCtx.items.map((item) => (item.type === 'message' ? item.role : item.type)),
+      ).toEqual(['user', 'assistant']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pairs each turn with its own start, even when transcripts arrive late', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_010_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // both transcripts land after the second turn began; each keeps its own start
+      transcribed('first', 'item_1', 1_000_000);
+      transcribed('second', 'item_2', 1_005_000);
+
+      const [first, second] = chatCtx.items;
+      if (first?.type !== 'message' || second?.type !== 'message') {
+        throw new Error('expected chat messages');
+      }
+      expect(first.createdAt).toBe(1_000_000);
+      expect(second.createdAt).toBe(1_005_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to delivery time when the provider reports no turn start', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_002_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('text injected turn', 'item_1');
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_002_000);
+      expect(message.metrics?.startedSpeakingAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
