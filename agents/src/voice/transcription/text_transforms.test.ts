@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
-import { applyTextTransforms, replace } from './text_transforms.js';
+import { applyTextTransforms, filterEmoji, filterMarkdown, replace } from './text_transforms.js';
 
 function streamText(text: string, chunkSize: number): ReadableStream<string> {
   return new ReadableStream<string>({
@@ -56,6 +56,294 @@ async function collectChunks(stream: ReadableStream<string>): Promise<string[]> 
   }
   return result;
 }
+
+async function filtered(text: string, chunkSize: number): Promise<string> {
+  return collect(filterMarkdown(streamText(text, chunkSize)));
+}
+
+const markdownInput = `# Mathematics and Markdown Guide
+
+Hi there~~ How are you?  # the ~~ shouldn't be removed.
+This document shows **bold text** and *italic text* with some math.
+
+## Basic Math Operations
+- Addition: 2 + 3 = 5
+- Subtraction: 10 - 4 = 6
+- Multiplication: 3 * 7 = 21
+- Division: 15 / 3 = 5
+- Comparison: 10 > 5 is true
+
+### Code Examples
+Use \`print()\` function to display: \`print(2 + 3 * 4)\`
+
+The result is **14** because multiplication has higher precedence.
+
+> Important: Order of operations matters in math!
+> Remember: PEMDAS (Parentheses, Exponents, Multiplication/Division, Addition/Subtraction)
+
+## Advanced Examples
+1. Complex equation: (a + b) * c = result
+2. Variable assignment: x = 5, y = 3
+3. Conditional: if x > y then...
+
+Here's a [useful calculator](https://calculator.com) for verification.
+
+![Math diagram](diagram.png) shows the relationships.
+
+~~Outdated formula~~ has been removed.
+
+\`\`\`python
+def calculate(a, b):
+    return a + b * 2
+\`\`\`
+
+Regular text continues with normal punctuation! Math symbols like + - * / are preserved when not at line start.
+
+## Identifier and Variable Tests
+Here we test variables like test_case_one, my_variable_name, and function_names_with_underscores.
+Private variables like _private_var and __dunder_method__ should remain unchanged.
+Constants like MAX_SIZE_LIMIT and file_path_example.py are common.
+
+But _this should be italic_ and **this should be bold** in markdown.
+Also *single asterisk italic* and __double underscore bold__ should work.
+
+Code identifiers: calculate_total(), get_user_data(), process_file_contents()
+Class names: MyClass_Name, some_module_function, API_ENDPOINT_URL
+
+This is a sentence. 这是一个中文句子。これは日本語の文章です。你好！LiveKit是一个直播音频和视频应用程序和服务的平台，我们正在测试Markdown~~过滤~~。`;
+
+const markdownExpectedOutput = `Mathematics and Markdown Guide
+
+Hi there~~ How are you?  # the ~~ shouldn't be removed.
+This document shows bold text and italic text with some math.
+
+Basic Math Operations
+Addition: 2 + 3 = 5
+Subtraction: 10 - 4 = 6
+Multiplication: 3 * 7 = 21
+Division: 15 / 3 = 5
+Comparison: 10 > 5 is true
+
+Code Examples
+Use print() function to display: print(2 + 3 * 4)
+
+The result is 14 because multiplication has higher precedence.
+
+Important: Order of operations matters in math!
+Remember: PEMDAS (Parentheses, Exponents, Multiplication/Division, Addition/Subtraction)
+
+Advanced Examples
+1. Complex equation: (a + b) * c = result
+2. Variable assignment: x = 5, y = 3
+3. Conditional: if x > y then...
+
+Here's a useful calculator for verification.
+
+Math diagram shows the relationships.
+
+ has been removed.
+
+
+def calculate(a, b):
+    return a + b * 2
+
+
+Regular text continues with normal punctuation! Math symbols like + - * / are preserved when not at line start.
+
+Identifier and Variable Tests
+Here we test variables like test_case_one, my_variable_name, and function_names_with_underscores.
+Private variables like _private_var and __dunder_method__ should remain unchanged.
+Constants like MAX_SIZE_LIMIT and file_path_example.py are common.
+
+But this should be italic and this should be bold in markdown.
+Also single asterisk italic and double underscore bold should work.
+
+Code identifiers: calculate_total(), get_user_data(), process_file_contents()
+Class names: MyClass_Name, some_module_function, API_ENDPOINT_URL
+
+This is a sentence. 这是一个中文句子。これは日本語の文章です。你好！LiveKit是一个直播音频和视频应用程序和服务的平台，我们正在测试Markdown。`;
+
+const emphasisCases = [
+  ['He said *hello* again.', 'He said hello again.'],
+  ['This is **bold** text.', 'This is bold text.'],
+  ['_underscore italic_ here.', 'underscore italic here.'],
+  ['__underscore bold__ here.', 'underscore bold here.'],
+  ['This is ***very important*** text.', 'This is very important text.'],
+  ['Call ***now***!', 'Call now!'],
+  ['___Totally___ critical.', 'Totally critical.'],
+  ['Use ***both*** and **bold** and *italic*.', 'Use both and bold and italic.'],
+  ['Hi **Frankie**!', 'Hi Frankie!'],
+  ['See **Dr. Smith**.', 'See Dr. Smith.'],
+  ['Scheduled for **Monday**, at 9am.', 'Scheduled for Monday, at 9am.'],
+  ['Press (**1**) to confirm.', 'Press (1) to confirm.'],
+  ['Try "**this**" first.', 'Try "this" first.'],
+  ['Options: **a**, **b**, or **c**?', 'Options: a, b, or c?'],
+  ['He said *hello*!', 'He said hello!'],
+  ['It was *amazing*, really.', 'It was amazing, really.'],
+  ['Hi ***Frankie***!', 'Hi Frankie!'],
+  ['Press (***1***) to confirm.', 'Press (1) to confirm.'],
+  ['**_mixed_** here.', 'mixed here.'],
+  ['_**mixed**_ here.', 'mixed here.'],
+  ['这是**很重要**的文本。', '这是很重要的文本。'],
+  ['这是***非常重要***的文本。', '这是非常重要的文本。'],
+  ['这是*重要*的文本。', '这是重要的文本。'],
+  ['テスト**強調**です。', 'テスト強調です。'],
+  ['**中文**开头。', '中文开头。'],
+  ['นี่คือ**ข้อความ**สำคัญ', 'นี่คือข้อความสำคัญ'],
+  ['이것은 **중요**합니다.', '이것은 중요합니다.'],
+  ['한국어**강조**입니다.', '한국어강조입니다.'],
+  ['한국어***강조***입니다.', '한국어강조입니다.'],
+  ['이것은 *중요*합니다.', '이것은 중요합니다.'],
+] as const;
+
+const preserveCases = [
+  '2 * 3 = 6',
+  'Use *.py files',
+  'x**2 + y**2 = z**2',
+  'a ** b evaluated right-to-left',
+  'cost = a *** b',
+  '__dunder_method__ stays',
+  'a___b and MAX___VALUE',
+  'snake___case___name',
+  'call some_function_name here',
+  'テスト__強調__です。',
+  '变量__name__的值',
+  '한국어__강조__입니다.',
+  '****quad****',
+  '____quad____',
+  '**bold***italic*',
+  '*italic***bold**',
+  'see ***** here',
+  'unterminated ***open',
+  'unterminated ___open',
+] as const;
+
+const horizontalRuleCases = [
+  ['before\n---\nafter', 'before\n\nafter'],
+  ['before\n***\nafter', 'before\n\nafter'],
+  ['before\n___\nafter', 'before\n\nafter'],
+  ['before\n-----\nafter', 'before\n\nafter'],
+  ['before\n  ---  \nafter', 'before\n\nafter'],
+  ['*****', ''],
+  ['before\n* * *\nafter', 'before\n\nafter'],
+  ['before\n- - -\nafter', 'before\n\nafter'],
+  ['before\n_ _ _\nafter', 'before\n\nafter'],
+  ['before\n   - - - \nafter', 'before\n\nafter'],
+  ['wait --- what?', 'wait --- what?'],
+  ['a -- b', 'a -- b'],
+  ['before\n    ---\nafter', 'before\n    ---\nafter'],
+  ['before\n\t---\nafter', 'before\n\t---\nafter'],
+] as const;
+
+describe('textTransforms.filterMarkdown', () => {
+  for (const chunkSize of [1, 2, 3, 5, 7, 11, 50]) {
+    it(`filters mixed markdown with chunk size ${chunkSize}`, async () => {
+      expect(await filtered(markdownInput, chunkSize)).toBe(markdownExpectedOutput);
+    });
+  }
+
+  for (const [text, expected] of emphasisCases) {
+    for (const chunkSize of [1, 2, 3, 7, 50]) {
+      it(`strips emphasis from ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(expected);
+      });
+    }
+  }
+
+  for (const text of preserveCases) {
+    for (const chunkSize of [1, 3, 7, 50]) {
+      it(`preserves ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(text);
+      });
+    }
+  }
+
+  for (const [text, expected] of horizontalRuleCases) {
+    for (const chunkSize of [1, 3, 50]) {
+      it(`handles horizontal rule ${JSON.stringify(text)} with chunk size ${chunkSize}`, async () => {
+        expect(await filtered(text, chunkSize)).toBe(expected);
+      });
+    }
+  }
+
+  for (const [text] of [...emphasisCases, ...horizontalRuleCases]) {
+    it(`produces chunk-independent output for ${JSON.stringify(text)}`, async () => {
+      const outputs = new Set(
+        await Promise.all([1, 2, 3, 5, 7, 11, 50, 1000].map((size) => filtered(text, size))),
+      );
+      expect(outputs.size).toBe(1);
+    });
+  }
+
+  for (const text of preserveCases) {
+    it(`produces chunk-independent output for ${JSON.stringify(text)}`, async () => {
+      const outputs = new Set(
+        await Promise.all([1, 2, 3, 5, 7, 11, 50, 1000].map((size) => filtered(text, size))),
+      );
+      expect(outputs.size).toBe(1);
+    });
+  }
+});
+
+const emojiInput = `Hello! 😀 Welcome to our app! 🎉
+
+This message contains various emojis:
+- Happy faces: 😊 😃 🙂 😄
+- Hearts: ❤️ 💙 💚 💛 🧡 💜
+- Animals: 🐶 🐱 🐸 🦊 🐘
+- Food: 🍎 🍕 🍔 🍦 🎂
+- Activities: ⚽ 🏀 🎮 🎵 📚
+- Weather: ☀️ 🌙 ⭐ 🌈 ⛅
+- Flags: 🇺🇸 🇬🇧 🇯🇵 🇩🇪
+
+Complex emojis with modifiers:
+- Skin tones: 👋🏻 👋🏽 👋🏿
+- Gender variants: 👨‍💻 👩‍💻 🧑‍💻
+- Family emojis: 👨‍👩‍👧‍👦 👩‍👩‍👧
+- Professional: 👨‍⚕️ 👩‍🏫 👮‍♂️
+
+Numbers with keycaps: 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣
+
+Mixed content with regular text and punctuation! 🚀
+The app works great. Let's celebrate! 🎊
+
+End of emoji test. 🔚`;
+
+const emojiExpectedOutput = `Hello!  Welcome to our app!${' '}
+
+This message contains various emojis:
+- Happy faces:${' '.repeat(4)}
+- Hearts:${' '.repeat(6)}
+- Animals:${' '.repeat(5)}
+- Food:${' '.repeat(5)}
+- Activities:${' '.repeat(5)}
+- Weather:${' '.repeat(5)}
+- Flags:${' '.repeat(4)}
+
+Complex emojis with modifiers:
+- Skin tones:${' '.repeat(3)}
+- Gender variants:${' '.repeat(3)}
+- Family emojis:${' '.repeat(2)}
+- Professional:${' '.repeat(3)}
+
+Numbers with keycaps: 1 2 3 4 5
+
+Mixed content with regular text and punctuation!${' '}
+The app works great. Let's celebrate!${' '}
+
+End of emoji test. `;
+
+describe('textTransforms.filterEmoji', () => {
+  for (const chunkSize of [1, 5, 10, 30]) {
+    it(`filters emoji with chunk size ${chunkSize}`, async () => {
+      const codePoints = Array.from(emojiInput);
+      const chunks = Array.from({ length: Math.ceil(codePoints.length / chunkSize) }, (_, index) =>
+        codePoints.slice(index * chunkSize, (index + 1) * chunkSize).join(''),
+      );
+      expect(await collect(filterEmoji(streamChunks(chunks)))).toBe(emojiExpectedOutput);
+    });
+  }
+});
 
 describe('textTransforms.replace', () => {
   for (const chunkSize of [1, 2, 5, 11, 50]) {
