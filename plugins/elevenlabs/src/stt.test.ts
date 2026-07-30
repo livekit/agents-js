@@ -39,6 +39,9 @@ async function startWebSocketServer() {
 }
 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  for (const client of wss.clients) {
+    client.terminate();
+  }
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
 
@@ -288,6 +291,14 @@ describe('ElevenLabs STT', () => {
         sample_rate: 16000,
       });
       expect(typeof receivedMessages[0]?.audio_base_64).toBe('string');
+      expect(receivedMessages).toContainEqual(
+        expect.objectContaining({
+          message_type: 'input_audio_chunk',
+          audio_base_64: '',
+          commit: true,
+          sample_rate: 16000,
+        }),
+      );
 
       const speechEvents = events.filter(
         (event) => event.type !== sttLib.SpeechEventType.RECOGNITION_USAGE,
@@ -314,6 +325,73 @@ describe('ElevenLabs STT', () => {
         startTimeOffset: 1,
       });
     } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('commits the turn when no audio is left to send', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const receivedMessages: Record<string, unknown>[] = [];
+    let requestUrl = '';
+    let stream: ReturnType<STT['stream']> | undefined;
+
+    wss.on('connection', (ws, req) => {
+      requestUrl = req.url ?? '';
+      ws.on('message', (raw) => {
+        receivedMessages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      });
+    });
+
+    try {
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+      stream = eleven.stream();
+
+      await waitUntil(() => requestUrl !== '');
+
+      stream.pushFrame(makeFrame(800));
+      await waitUntil(() => receivedMessages.length >= 1);
+
+      stream.flush();
+      await waitUntil(() => receivedMessages.some((message) => message.commit === true));
+
+      expect(receivedMessages[0]?.commit).toBe(false);
+      expect(receivedMessages.find((message) => message.commit === true)?.audio_base_64).toBe('');
+    } finally {
+      stream?.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('commits after the buffered audio', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const receivedMessages: Record<string, unknown>[] = [];
+    let requestUrl = '';
+    let stream: ReturnType<STT['stream']> | undefined;
+
+    wss.on('connection', (ws, req) => {
+      requestUrl = req.url ?? '';
+      ws.on('message', (raw) => {
+        receivedMessages.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+      });
+    });
+
+    try {
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+      stream = eleven.stream();
+
+      await waitUntil(() => requestUrl !== '');
+
+      stream.pushFrame(makeFrame(480));
+      stream.flush();
+      await waitUntil(() => receivedMessages.some((message) => message.commit === true));
+
+      const commitIndex = receivedMessages.findIndex((message) => message.commit === true);
+      expect(commitIndex).toBeGreaterThan(0);
+      expect(
+        receivedMessages.slice(0, commitIndex).some((message) => message.audio_base_64 !== ''),
+      ).toBe(true);
+    } finally {
+      stream?.close();
       await closeWebSocketServer(wss);
     }
   });

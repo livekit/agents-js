@@ -582,7 +582,7 @@ export class SpeechStream extends stt.SpeechStream {
               const data = result.value;
               let frames: AudioFrame[];
               if (data === SpeechStream.FLUSH_SENTINEL) {
-                frames = audioByteStream.flush();
+                frames = audioByteStream.flush() ?? [];
                 hasEnded = true;
               } else {
                 frames = audioByteStream.write(data.data);
@@ -603,11 +603,19 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+              }
 
-                if (hasEnded) {
-                  this.#audioDurationCollector.flush();
-                  hasEnded = false;
-                }
+              if (hasEnded) {
+                this.#audioDurationCollector.flush();
+                ws?.send(
+                  JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: '',
+                    commit: true,
+                    sample_rate: this.#opts.sampleRate,
+                  }),
+                );
+                hasEnded = false;
               }
             }
           } finally {

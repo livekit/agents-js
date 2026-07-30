@@ -21,6 +21,8 @@ import { WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
+const FINALIZE_MSG = JSON.stringify({ type: 'Finalize' });
+
 export interface STTOptions {
   apiKey?: string;
   language?: STTLanguages | string;
@@ -412,6 +414,7 @@ export class SpeechStream extends stt.SpeechStream {
       // we need to put it outside loop to avoid constant re-registration of the listener
       const abortPromise = waitForAbort(this.abortSignal);
 
+      let hasEnded = false;
       try {
         while (!this.closed) {
           const result = await Promise.race([this.input.next(), abortPromise]);
@@ -425,8 +428,8 @@ export class SpeechStream extends stt.SpeechStream {
 
           let frames: AudioFrame[];
           if (data === SpeechStream.FLUSH_SENTINEL) {
-            frames = stream.flush();
-            this.#audioDurationCollector.flush();
+            frames = stream.flush() ?? [];
+            hasEnded = true;
           } else if (
             data.sampleRate === this.#opts.sampleRate &&
             data.channels === this.#opts.numChannels
@@ -443,8 +446,18 @@ export class SpeechStream extends stt.SpeechStream {
               ws.send(frame.data.buffer);
             }
           }
+
+          if (hasEnded) {
+            this.#audioDurationCollector.flush();
+            ws.send(FINALIZE_MSG);
+            hasEnded = false;
+          }
         }
       } finally {
+        if (hasEnded) {
+          this.#audioDurationCollector.flush();
+          ws.send(FINALIZE_MSG);
+        }
         closing = true;
         ws.send(JSON.stringify({ type: 'CloseStream' }));
         wsMonitor.cancel();

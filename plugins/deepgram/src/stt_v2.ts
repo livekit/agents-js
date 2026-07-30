@@ -391,7 +391,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
       if ('abort' in result || result.done) {
         if (!('abort' in result) && result.done) {
           // Normal stream end
-          hasEnded = true;
+          break;
         } else {
           // Reconnect triggered - break loop immediately
           break;
@@ -406,7 +406,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         const frames: AudioFrame[] = [];
 
         if (data === SpeechStreamv2.FLUSH_SENTINEL) {
-          frames.push(...audioBstream.flush());
+          frames.push(...(audioBstream.flush() ?? []));
           hasEnded = true;
         } else {
           frames.push(...audioBstream.write((data as AudioFrame).data.buffer as ArrayBuffer));
@@ -418,15 +418,13 @@ class SpeechStreamv2 extends stt.SpeechStream {
           if (this.#ws!.readyState === WebSocket.OPEN) {
             this.#ws!.send(frame.data);
           }
+        }
 
-          if (hasEnded) {
-            this.#audioDurationCollector.flush();
-            hasEnded = false;
-          }
+        if (hasEnded) {
+          this.#audioDurationCollector.flush();
+          hasEnded = false;
         }
       }
-
-      if (hasEnded) break;
     }
 
     // Only send CloseStream if we are exiting normally (not reconnecting)
