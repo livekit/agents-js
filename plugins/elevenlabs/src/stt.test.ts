@@ -318,6 +318,59 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('commits the turn when no audio is left to send', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      // 50ms is exactly one repack chunk, so flush() returns no frames.
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 1);
+
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[1]?.audio_base_64).toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('commits after the buffered audio', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(480));
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[0]?.audio_base_64).not.toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let requestUrl = '';
