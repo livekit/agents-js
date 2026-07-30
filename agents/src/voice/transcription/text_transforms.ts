@@ -88,11 +88,10 @@ function hasIncompletePattern(buffer: string): boolean {
 
   if (unbalanced(buffer, '*') || unbalanced(buffer, '_')) return true;
 
-  const backticks = countMatches(buffer, /`/g);
-  if (backticks % 2 === 1) return true;
-
-  const doubleTildes = countMatches(buffer, /~~/g);
-  if (doubleTildes % 2 === 1) return true;
+  // incomplete code (`text`) or strikethrough (~~text~~)
+  if (countOccurrences(buffer, '`') % 2 === 1 || countOccurrences(buffer, '~~') % 2 === 1) {
+    return true;
+  }
 
   const openBrackets = countMatches(buffer, /\[/g);
   const completeLinks = countMatches(buffer, completeLinksPattern);
