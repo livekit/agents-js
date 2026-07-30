@@ -57,12 +57,13 @@ export interface RealtimeModelOptions {
 }
 
 /**
- * Per-tool behavior overrides passed through to Phonic's tool_config. `name` is required; every
- * other field is optional and falls back to the plugin default when omitted. Keys are snake_case
- * to match Phonic's wire format (direct passthrough).
+ * Per-tool behavior overrides for `configsForTools` (see README). `name` is required; every other
+ * field is optional and falls back to the plugin default when omitted. Keys are snake_case to match
+ * Phonic's wire format (direct passthrough).
  */
 export interface PhonicToolConfig {
   name: string;
+  require_speech_before_tool_call?: boolean;
   wait_for_speech_before_tool_call?: boolean;
   forbid_speech_after_tool_call?: boolean;
   forbid_tool_call_after_speech?: boolean;
@@ -166,16 +167,8 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
-       * Per-tool behavior overrides, one entry per tool (`{ name, ... }`). Each object may carry
-       * up to the full behavior set — `wait_for_speech_before_tool_call`,
-       * `forbid_speech_after_tool_call`, `forbid_tool_call_after_speech`, `allow_tool_chaining`
-       * — and any omitted field falls back to the plugin default. Tools with no entry keep the
-       * defaults.
-       *
-       * `forbid_speech_after_tool_call` suppresses Phonic's auto-generated reply after the tool
-       * (for tools that always hand off; a non-handoff tool set here leaves the agent silent).
-       * `forbid_tool_call_after_speech` makes Phonic drop the tool call if the agent already
-       * spoke that turn.
+       * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
+       * fields fall back to the plugin defaults. See the README for the available fields.
        */
       configsForTools?: PhonicToolConfig[];
       /**
@@ -414,9 +407,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     return Object.entries(tools)
       .filter(([, tool]) => llm.isFunctionTool(tool))
       .map(([name, tool]) => {
-        // Per-tool overrides from configsForTools; omitted fields fall back to the defaults
-        // below. Tool chaining and tool calls during speech are disabled by default for ease
-        // of implementation within the RealtimeSession generations framework.
         const cfg = this.configsForTools.get(name);
         return {
           type: 'custom_websocket',
@@ -430,11 +420,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             },
           },
           tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
           wait_for_speech_before_tool_call: cfg?.wait_for_speech_before_tool_call ?? true,
           allow_tool_chaining: cfg?.allow_tool_chaining ?? false,
-          // Phonic does not auto-generate a spoken reply after this tool (tools that hand off).
           forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
-          // Phonic drops this tool's call if the agent already spoke this turn.
           forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
         };
       });
