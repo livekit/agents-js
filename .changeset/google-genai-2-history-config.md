@@ -7,3 +7,5 @@ Upgrade `@google/genai` to 2.x and seed the initial chat context of Gemini 3.x l
 Models whose chat context cannot be updated mid-session (the 3.x live models) close the socket on a prefill containing `model` turns, so an initial context had to be flattened into `user` turns to survive. Those sessions now send `historyConfig.initialHistoryInClientContent`, which tells the server the leading `clientContent` is history, and the prefill keeps its `user`/`assistant` roles.
 
 Per the [`HistoryConfig` reference](https://ai.google.dev/api/live#HistoryConfig) the seeded history never triggers a model call and the conversation then starts through `realtimeInput`, so a context ending on a user question is seeded as the completed exchanges followed by that question as realtime text. Left inside the history it would be filed away unanswered.
+
+Also report when a user turn began on the final input transcript. Gemini withholds that transcript until its reply has finished generating, which had every reply landing ahead of the question it answered in the Cloud transcript.

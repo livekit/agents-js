@@ -1445,6 +1445,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         itemId: targetGen.inputId,
         transcript: targetGen.inputTranscription,
         isFinal: true,
+        // This fires once the reply is done generating, seconds after the user
+        // spoke, so hand over when the turn actually began. The generation is
+        // created as soon as the server takes the turn, which is always before
+        // any of its own audio reaches the room.
+        turnStartedAt: targetGen._createdTimestamp,
       } as llm.InputTranscriptionCompleted);
 
       // since gemini doesn't give us a view of the chat history on the server side,
