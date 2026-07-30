@@ -69,10 +69,16 @@ function countMatches(text: string, pattern: RegExp): number {
   return Array.from(text.matchAll(pattern)).length;
 }
 
+function countOccurrences(text: string, token: string): number {
+  return text.split(token).length - 1;
+}
+
+// Delimiters are literals, so counting by split keeps callers free of regex escaping
+// and compiles no pattern per buffer on the streaming path.
 function unbalanced(buffer: string, delimiter: string): boolean {
-  const doubles = countMatches(buffer, new RegExp(`${delimiter}${delimiter}`, 'g'));
+  const doubles = countOccurrences(buffer, delimiter.repeat(2));
   if (doubles % 2 === 1) return true;
-  return (countMatches(buffer, new RegExp(delimiter, 'g')) - doubles * 2) % 2 === 1;
+  return (countOccurrences(buffer, delimiter) - doubles * 2) % 2 === 1;
 }
 
 function hasIncompletePattern(buffer: string): boolean {
@@ -80,7 +86,7 @@ function hasIncompletePattern(buffer: string): boolean {
     return true;
   }
 
-  if (unbalanced(buffer, '\\*') || unbalanced(buffer, '_')) return true;
+  if (unbalanced(buffer, '*') || unbalanced(buffer, '_')) return true;
 
   const backticks = countMatches(buffer, /`/g);
   if (backticks % 2 === 1) return true;
