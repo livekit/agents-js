@@ -921,6 +921,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 finalReceived = true;
                 resourceCleanup();
                 break;
+              case 'start_of_speech':
+                this.processStartOfSpeech();
+                break;
               case 'interim_transcript':
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
@@ -1002,6 +1005,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
+  /** Onset reported by a provider that detects it server-side (e.g. Cartesia Ink-2).
+   *
+   * Without this the first transcript has to stand in for onset, which lands about
+   * 800ms late because it waits for a word to be decoded.
+   */
+  private processStartOfSpeech(): void {
+    if (this.speaking) return;
+    this.speaking = true;
+    this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+  }
+
   private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
@@ -1013,11 +1027,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     if (!text && eventType !== SpeechEventType.FINAL_TRANSCRIPT) return;
 
     try {
-      // We'll have a more accurate way of detecting when speech started when we have VAD
-      if (!this.speaking) {
-        this.speaking = true;
-        this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
-      }
+      this.processStartOfSpeech();
 
       // The gateway carries provider-specific data on the `extra` field
       // of the transcript message. We surface it on SpeechData.metadata.
