@@ -459,10 +459,16 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     const initialModel =
       typeof opts?.model === 'string' ? parseSTTModelString(opts.model)[0] : undefined;
+    const normalizedFallback = opts?.fallback ? normalizeSTTFallback(opts.fallback) : undefined;
+    const alignmentModels = [
+      initialModel,
+      ...(normalizedFallback?.map(({ model }) => model) ?? []),
+    ];
+    const alignedTranscript = alignmentModels.every(alignedTranscriptForModel) ? 'word' : false;
     super({
       streaming: true,
       interimResults: true,
-      alignedTranscript: alignedTranscriptForModel(initialModel),
+      alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms:
         keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
@@ -477,7 +483,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      fallback,
       connOptions,
       vad,
     } = opts || {};
@@ -511,7 +516,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         nextModel = parsedModel as TModel;
       }
     }
-    const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
     this.vad = resolveVADForModel(nextModel, vad);
 
     this.opts = {
@@ -576,9 +580,13 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     if (nextOpts.model !== undefined) {
       this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
+      const alignmentModels = [
+        this.opts.model,
+        ...(this.opts.fallback?.map(({ model }) => model) ?? []),
+      ];
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
-        alignedTranscript: alignedTranscriptForModel(this.opts.model),
+        alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
     }
 

@@ -457,6 +457,27 @@ describe('STT aligned transcript capability', () => {
     );
   });
 
+  it.each([
+    ['cartesia/ink-whisper', 'word'],
+    ['cartesia/ink-2', false],
+    ['new-provider/new-turn-model', false],
+  ] as const)('constrains alignment based on fallback model %s', (fallback, expected) => {
+    const stt = makeStt({ model: 'deepgram/nova-3', fallback });
+
+    expect(stt.capabilities.alignedTranscript).toBe(expected);
+  });
+
+  it('still accounts for fallback alignment when the primary model changes', () => {
+    const stt = makeStt({
+      model: 'cartesia/ink-2',
+      fallback: 'new-provider/new-turn-model',
+    });
+
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
   it('surfaces the gateway Ink-2 payload without word alignment', () => {
     const { stream, events } = makeSpeechStream();
 
