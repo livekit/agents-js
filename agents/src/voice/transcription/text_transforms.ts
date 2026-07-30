@@ -6,7 +6,8 @@ import { readStream } from '../../utils.js';
 
 export type BuiltinTextTransform = 'filter_markdown' | 'filter_emoji';
 export type TextTransform =
-  BuiltinTextTransform | ((text: ReadableStream<string>) => ReadableStream<string>);
+  | BuiltinTextTransform
+  | ((text: ReadableStream<string>) => ReadableStream<string>);
 
 // Scripts that can put emphasis delimiters flush against word characters.
 const flushEmphasisScripts =
