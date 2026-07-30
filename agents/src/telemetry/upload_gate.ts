@@ -79,6 +79,8 @@ const otlpHttpTargets = new Set<string>();
 let otlpHttpInterceptorInstalled = false;
 let originalHttpRequest: RequestFn | undefined;
 let originalHttpsRequest: RequestFn | undefined;
+let installedHttpRequest: RequestFn | undefined;
+let installedHttpsRequest: RequestFn | undefined;
 
 export function registerOtlpHttpUploadGateTarget(rawUrl: string): void {
   const url = new URL(rawUrl);
@@ -96,8 +98,10 @@ function installOtlpHttpInterceptor(): void {
 
   originalHttpRequest = httpModule.request as RequestFn;
   originalHttpsRequest = httpsModule.request as RequestFn;
-  httpModule.request = wrapRequest(originalHttpRequest) as typeof httpModule.request;
-  httpsModule.request = wrapRequest(originalHttpsRequest) as typeof httpsModule.request;
+  installedHttpRequest = wrapRequest(originalHttpRequest);
+  installedHttpsRequest = wrapRequest(originalHttpsRequest);
+  httpModule.request = installedHttpRequest as typeof httpModule.request;
+  httpsModule.request = installedHttpsRequest as typeof httpsModule.request;
   // OpenTelemetry 2.x loads request through ESM, which may already have cached the old binding.
   syncBuiltinESMExports();
 }
@@ -109,15 +113,17 @@ function resetOtlpHttpInterceptor(): void {
   const require = createRequire(import.meta.url);
   const httpModule = require('node:http') as typeof httpTypes;
   const httpsModule = require('node:https') as typeof httpsTypes;
-  if (originalHttpRequest) {
+  if (originalHttpRequest && httpModule.request === installedHttpRequest) {
     httpModule.request = originalHttpRequest as typeof httpModule.request;
   }
-  if (originalHttpsRequest) {
+  if (originalHttpsRequest && httpsModule.request === installedHttpsRequest) {
     httpsModule.request = originalHttpsRequest as typeof httpsModule.request;
   }
   syncBuiltinESMExports();
   originalHttpRequest = undefined;
   originalHttpsRequest = undefined;
+  installedHttpRequest = undefined;
+  installedHttpsRequest = undefined;
   otlpHttpInterceptorInstalled = false;
 }
 

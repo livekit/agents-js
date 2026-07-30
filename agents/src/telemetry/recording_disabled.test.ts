@@ -10,6 +10,7 @@ import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
 import http from 'node:http';
+import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
@@ -199,6 +200,24 @@ describe('recording disabled upload gate', () => {
 
     uploadGate.reset();
     expect(http.request).toBe(originalRequest);
+  });
+
+  it('preserves HTTP request wrappers installed after the upload gate', () => {
+    const originalRequest = http.request;
+
+    registerOtlpHttpUploadGateTarget('http://127.0.0.1/observability/traces/otlp/v0');
+    const uploadGateRequest = http.request;
+    const laterRequest: typeof http.request = (...args) => uploadGateRequest(...args);
+    http.request = laterRequest;
+    syncBuiltinESMExports();
+
+    try {
+      uploadGate.reset();
+      expect(http.request).toBe(laterRequest);
+    } finally {
+      http.request = originalRequest;
+      syncBuiltinESMExports();
+    }
   });
 
   it('warns once per session', () => {
