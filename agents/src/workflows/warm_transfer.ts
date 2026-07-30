@@ -56,8 +56,8 @@ export interface CallerHangupNotice {
   text: string;
   /**
    * Optional prerecorded audio matching {@link text}. Accepts a file path, a
-   * {@link BuiltinAudioClip}, or an async iterable of audio frames. When omitted, the task uses the
-   * configured TTS model, falling back to a generated reply when TTS is unavailable.
+   * {@link BuiltinAudioClip}, or an async iterable of audio frames. When omitted, the task attempts
+   * to synthesize {@link text} with the configured TTS model.
    */
   audio?: AudioSourceType;
 }
@@ -108,7 +108,9 @@ export interface WarmTransferTaskOptions {
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
    * Deterministic notice spoken to the human agent before their call is ended when the caller
-   * hangs up mid-transfer. Cannot be combined with {@link callerHangupInstruction}.
+   * hangs up mid-transfer. If the notice cannot be scheduled, the error is logged and the task
+   * falls back to a generated reply using the built-in caller-hangup instruction. Cannot be
+   * combined with {@link callerHangupInstruction}.
    */
   callerHangupNotice?: CallerHangupNotice;
   /**
@@ -770,10 +772,11 @@ export async function notifyHumanAgentOfHangup(
   session: Pick<AgentSession, 'interrupt' | 'say' | 'generateReply' | 'shutdown'>,
   callerHangupNotice: CallerHangupNotice | undefined,
   callerHangupInstruction: string | null | undefined,
-  timeoutMs = 10_000,
+  timeoutMs = CALLER_HANGUP_NOTICE_TIMEOUT_MS,
 ): Promise<void> {
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  timeout.unref();
   try {
     session.interrupt();
     const handle = startCallerHangupSpeech(
@@ -802,11 +805,14 @@ function resolveNoticeAudio(
   }
 
   const source = isBuiltinAudioClip(audio) ? getBuiltinAudioPath(audio) : audio;
-  return typeof source === 'string'
-    ? audioFramesFromFile(source, { abortSignal })
-    : ReadableStream.from(source);
+  if (typeof source === 'string') {
+    // Decode to 48 kHz mono: RoomIO expects mono, and rate mismatches are resampled downstream.
+    return audioFramesFromFile(source, { abortSignal });
+  }
+  return ReadableStream.from(source);
 }
 
+const CALLER_HANGUP_NOTICE_TIMEOUT_MS = 10_000;
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
