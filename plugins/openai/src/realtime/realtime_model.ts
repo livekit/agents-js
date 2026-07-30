@@ -458,22 +458,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
   private instructions?: string;
-  /**
-   * The model this session was created from.
-   *
-   * `protected` so provider plugins that subclass this session (e.g. Inworld) can read
-   * provider-specific model state from {@link createWsConn} / {@link createSessionUpdateEvent}.
-   */
+
   protected oaiRealtimeModel: RealtimeModel;
-  // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
-  // per-session copy of options so updateOptions can diff against the session's
-  // own state instead of the shared model-level state.
-  /**
-   * Per-session copy of the model options.
-   *
-   * `protected` so subclasses can read `apiKey`, `baseURL`, and `connOptions` when overriding
-   * {@link createWsConn}.
-   */
   protected _options: RealtimeOptions;
   private currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
@@ -528,13 +514,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.messageChannel.put(command);
   }
 
-  /**
-   * Build the initial (and post-reconnect) `session.update` event.
-   *
-   * `protected` so provider plugins that subclass this session can append provider-specific
-   * fields. Note this runs inside the base constructor, so overrides must not read subclass
-   * instance fields — only {@link oaiRealtimeModel} and {@link _options} are initialized by then.
-   */
   protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent {
     const opts = this._options;
     const maxOutputTokens =
@@ -1068,14 +1047,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.responseCreatedFutures = {};
   }
 
-  /**
-   * Dial the Realtime WebSocket endpoint.
-   *
-   * `protected` so provider plugins that subclass this session can supply their own URL and auth
-   * headers. Note this runs inside the base constructor (via the main task), so overrides must not
-   * read subclass instance fields — only {@link oaiRealtimeModel} and {@link _options} are
-   * initialized by then.
-   */
   protected async createWsConn(): Promise<WebSocket> {
     const headers: Record<string, string> = {
       'User-Agent': 'LiveKit-Agents-JS',

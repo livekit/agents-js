@@ -40,7 +40,6 @@ import * as inworld from '@livekit/agents-plugin-inworld';
 
 const session = new voice.AgentSession({
   llm: new inworld.realtime.RealtimeModel({
-    model: 'openai/gpt-4o-mini',
     voice: 'Ashley',
   }),
 });
@@ -54,15 +53,16 @@ also means `@livekit/agents-plugin-openai` is a peer dependency of this package.
 ### Options
 
 `model` selects the LLM driving the conversation and must use the full
-`provider/model` form, defaulting to `openai/gpt-4o-mini`. `voice` and `ttsModel`
-control synthesis, defaulting to `Ashley` and `inworld-tts-2`. `sttModel`
-controls user transcription and defaults to `inworld/inworld-stt-1`; it is a
-convenience over the inherited `inputAudioTranscription` option, and is ignored
-if you set that option explicitly. `apiKey` falls back to `$INWORLD_API_KEY`, and
-`baseURL` defaults to `wss://api.inworld.ai/api/v1/realtime/session` — supplying
-an `http`/`https` URL is fine, as the scheme is rewritten to `ws`/`wss`. All
-remaining options from the OpenAI Realtime model, such as `turnDetection`,
-`modalities`, `toolChoice`, and `connOptions`, are accepted unchanged.
+`provider/model` form, defaulting to `google-ai-studio/gemini-3.1-flash-lite`.
+`voice` and `ttsModel` control synthesis, defaulting to `Ashley` and
+`inworld-tts-2`. `sttModel` controls user transcription and defaults to
+`inworld/inworld-stt-1`; it is a convenience over the inherited
+`inputAudioTranscription` option, and is ignored if you set that option
+explicitly. `apiKey` falls back to `$INWORLD_API_KEY`, and `baseURL` defaults to
+`wss://api.inworld.ai/api/v1/realtime/session` — supplying an `http`/`https` URL
+is fine, as the scheme is rewritten to `ws`/`wss`. All remaining options from
+the OpenAI Realtime model, such as `turnDetection`, `modalities`, `toolChoice`,
+and `connOptions`, are accepted unchanged.
 
 ### Provider data
 
@@ -90,7 +90,7 @@ matches the Inworld wire format and is intentional — the TypeScript types in
 `inworld.realtime.ProviderData` encode it, so your editor will tell you which
 form a given field wants.
 
-### Tool calls and `auto_tool_response`
+### Defaults: `auto_tool_response` and caching
 
 `providerData.auto_tool_response` defaults to `false`, which means the Inworld
 server does not automatically speak after a tool returns a result. Turn
@@ -99,6 +99,12 @@ LiveKit voice pipeline and the agent decides whether to generate a follow-up
 reply — that is what makes `voiceOptions.maxToolSteps` work for chained tool
 calls. Set it to `true` if you would rather have Inworld drive the follow-up
 response itself, in which case the agent will not add a step of its own.
+
+`providerData.caching` defaults to `{ enabled: true }`, opting the session into
+explicit prompt caching for instructions and tools. Gemini and Anthropic honor
+the breakpoints; providers with only implicit caching ignore them. Override with
+`caching: { enabled: false }` (or pass `ttl` / `cache_instructions` /
+`cache_tools`) via `providerData`.
 
 ### Debugging
 

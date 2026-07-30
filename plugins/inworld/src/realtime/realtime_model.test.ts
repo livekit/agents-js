@@ -11,24 +11,14 @@ import { RealtimeModel, RealtimeSession, buildWsUrl } from './realtime_model.js'
 
 const API_KEY = 'aW53b3JsZC10ZXN0LWtleQ==';
 
-/**
- * Loosely-typed view of a parsed wire event. The `any` is deliberate: these assertions walk the raw
- * JSON that actually crossed the socket, which is precisely what the compile-time event types cannot
- * describe (Inworld adds fields the OpenAI types do not model).
- */
+// Inworld adds fields OpenAI types do not model; assert against raw wire JSON.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type WireEvent = Record<string, any>;
 
-/**
- * The Inworld session dials immediately from its constructor, so wire-level assertions need a real
- * server on the other end. Mirrors the fixture style in
- * plugins/openai/src/realtime/realtime_model.test.ts.
- */
+/** Local WS server; session dials in the constructor so assertions need a real peer. */
 interface TestServer {
   baseURL: string;
-  /** Resolves with the upgrade request of the first connection. */
   firstRequest: Promise<IncomingMessage>;
-  /** Resolves with the first client event received, parsed. */
   firstEvent: Promise<WireEvent>;
   close: () => Promise<void>;
 }
@@ -66,7 +56,6 @@ async function startServer(): Promise<TestServer> {
     firstRequest,
     firstEvent,
     close: async () => {
-      // WebSocketServer.close() waits on live clients, so hang up on them first.
       for (const socket of sockets) socket.terminate();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -124,14 +113,17 @@ describe('RealtimeModel defaults', () => {
   it('applies the Inworld defaults', () => {
     const model = new RealtimeModel({ apiKey: API_KEY });
 
-    expect(model.model).toBe('openai/gpt-4o-mini');
+    expect(model.model).toBe('google-ai-studio/gemini-3.1-flash-lite');
     expect(model._options.voice).toBe('Ashley');
     expect(model._options.baseURL).toBe('wss://api.inworld.ai/api/v1/realtime/session');
     expect(model._ttsModel).toBe('inworld-tts-2');
     expect(model._options.inputAudioTranscription).toEqual({
       model: 'inworld/inworld-stt-1',
     });
-    expect(model._providerData).toEqual({ auto_tool_response: false });
+    expect(model._providerData).toEqual({
+      auto_tool_response: false,
+      caching: { enabled: true },
+    });
   });
 
   it('reports the Inworld provider and label instead of deriving them from the URL', () => {
@@ -164,7 +156,7 @@ describe('RealtimeModel defaults', () => {
     expect(model._options.baseURL).toBe('wss://example.test/session');
   });
 
-  it('merges providerData over the auto_tool_response default', () => {
+  it('merges providerData over the defaults', () => {
     const model = new RealtimeModel({
       apiKey: API_KEY,
       providerData: { user_id: 'user-1', tts: { delivery_mode: 'BALANCED' } },
@@ -172,6 +164,7 @@ describe('RealtimeModel defaults', () => {
 
     expect(model._providerData).toEqual({
       auto_tool_response: false,
+      caching: { enabled: true },
       user_id: 'user-1',
       tts: { delivery_mode: 'BALANCED' },
     });
@@ -184,6 +177,28 @@ describe('RealtimeModel defaults', () => {
     });
 
     expect(model._providerData.auto_tool_response).toBe(true);
+  });
+
+  it('merges caching overrides over the enabled default', () => {
+    const model = new RealtimeModel({
+      apiKey: API_KEY,
+      providerData: { caching: { ttl: '5m', cache_tools: false } },
+    });
+
+    expect(model._providerData.caching).toEqual({
+      enabled: true,
+      ttl: '5m',
+      cache_tools: false,
+    });
+  });
+
+  it('allows caching to be turned off explicitly', () => {
+    const model = new RealtimeModel({
+      apiKey: API_KEY,
+      providerData: { caching: { enabled: false } },
+    });
+
+    expect(model._providerData.caching).toEqual({ enabled: false });
   });
 });
 
@@ -267,7 +282,7 @@ describe('RealtimeSession wire format', () => {
       const event = await server.firstEvent;
 
       expect(event.type).toBe('session.update');
-      expect(event.session.model).toBe('openai/gpt-4o-mini');
+      expect(event.session.model).toBe('google-ai-studio/gemini-3.1-flash-lite');
       expect(event.session.audio.output.voice).toBe('Ashley');
       expect(event.session.audio.output.model).toBe('inworld-tts-2');
       expect(event.session.audio.input.transcription).toEqual({
@@ -275,9 +290,10 @@ describe('RealtimeSession wire format', () => {
       });
       expect(event.session.providerData).toEqual({
         auto_tool_response: false,
+        caching: { enabled: true },
         ...providerData,
       });
-      // Casing is mixed on purpose and must survive serialization verbatim.
+      // camelCase keys in text_generation_config must survive verbatim.
       expect(event.session.providerData.text_generation_config).toEqual({
         maxNewTokens: 256,
         topP: 0.9,
@@ -304,13 +320,7 @@ describe('RealtimeSession wire format', () => {
     }
   });
 
-  // Regression test for the constructor ordering trap.
-  //
-  // Both overridden hooks run *inside* the base class constructor, and the repo compiles with
-  // `useDefineForClassFields`, so any instance field declared on the Inworld session would be
-  // defined to `undefined` only after `super()` returns — silently dropping `audio.output.model`
-  // and `providerData` from the very first session.update. A real session (not a prototype stub) is
-  // required to catch this.
+  // Regression: hooks run inside super(); subclass fields would be clobbered by useDefineForClassFields.
   it('populates the Inworld fields even though the hooks run inside super()', async () => {
     const model = new RealtimeModel({
       apiKey: API_KEY,
@@ -329,6 +339,7 @@ describe('RealtimeSession wire format', () => {
       expect(event.session.audio.output.model).toBe('inworld-tts-1.5-max');
       expect(event.session.providerData).toEqual({
         auto_tool_response: false,
+        caching: { enabled: true },
         user_id: 'ordering-check',
       });
     } finally {

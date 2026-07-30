@@ -12,23 +12,17 @@ type OpenAIRealtimeModelOptions = NonNullable<ConstructorParameters<typeof OpenA
 
 // Ref: python livekit-plugins/livekit-plugins-inworld/livekit/plugins/inworld/realtime/realtime_model.py
 const DEFAULT_WS_URL = 'wss://api.inworld.ai/api/v1/realtime/session';
-const DEFAULT_LLM_MODEL = 'openai/gpt-4o-mini';
+const DEFAULT_LLM_MODEL = 'google-ai-studio/gemini-3.1-flash-lite';
 const DEFAULT_TTS_MODEL = 'inworld-tts-2';
 const DEFAULT_STT_MODEL = 'inworld/inworld-stt-1';
 const DEFAULT_VOICE = 'Ashley';
 
 const USER_AGENT = 'LiveKit Agents';
 
-/**
- * Inworld's `session.audio.output` carries a `model` field selecting the TTS model. The OpenAI
- * `RealtimeAudioConfigOutput` interface has no such field, so widen it locally.
- */
+/** Inworld adds `model` on `session.audio.output`; OpenAI's type does not. */
 type InworldAudioConfigOutput = realtime.RealtimeAudioConfigOutput & { model?: string };
 
-/**
- * Inworld's `session` object carries a `providerData` bag of Inworld-specific options. The OpenAI
- * `SessionUpdateEvent['session']` type has no such field, so widen it locally.
- */
+/** Inworld adds `providerData` on `session.update`; OpenAI's type does not. */
 type InworldSessionUpdate = realtime.SessionUpdateEvent['session'] & {
   providerData?: ProviderData;
   audio?: realtime.SessionUpdateEvent['session']['audio'] & {
@@ -36,67 +30,37 @@ type InworldSessionUpdate = realtime.SessionUpdateEvent['session'] & {
   };
 };
 
-/** Options for {@link RealtimeModel}. */
 export interface RealtimeModelOptions
   extends Omit<OpenAIRealtimeModelOptions, 'model' | 'baseURL' | 'azureDeployment' | 'apiVersion'> {
-  /**
-   * The LLM to run the conversation, in `provider/model` form.
-   *
-   * @defaultValue `'openai/gpt-4o-mini'`
-   */
+  /** LLM in `provider/model` form. @defaultValue `'google-ai-studio/gemini-3.1-flash-lite'` */
   model?: string;
-  /**
-   * The Inworld TTS model used for audio output.
-   *
-   * @defaultValue `'inworld-tts-2'`
-   */
+  /** TTS model for audio output. @defaultValue `'inworld-tts-2'` */
   ttsModel?: string;
   /**
-   * The Inworld STT model used for user transcription, in `provider/model` form.
-   *
-   * Ignored when `inputAudioTranscription` is supplied explicitly.
+   * STT model in `provider/model` form. Ignored when `inputAudioTranscription` is set.
    *
    * @defaultValue `'inworld/inworld-stt-1'`
    */
   sttModel?: string;
-  /**
-   * The Inworld voice for audio output.
-   *
-   * @defaultValue `'Ashley'`
-   */
+  /** @defaultValue `'Ashley'` */
   voice?: string;
-  /**
-   * Inworld API key. Falls back to `$INWORLD_API_KEY`.
-   *
-   * The Inworld key is already base64-encoded and is sent as an HTTP `Basic` credential.
-   */
+  /** Falls back to `$INWORLD_API_KEY`. Already base64-encoded; sent as HTTP Basic. */
   apiKey?: string;
   /**
-   * WebSocket endpoint for the Realtime session.
-   *
-   * `http://` and `https://` are rewritten to `ws://` and `wss://` respectively.
+   * Realtime WebSocket endpoint. `http(s)://` is rewritten to `ws(s)://`.
    *
    * @defaultValue `'wss://api.inworld.ai/api/v1/realtime/session'`
    */
   baseURL?: string;
-  /**
-   * Inworld-specific session options, merged over `{ auto_tool_response: false }`.
-   *
-   * @see {@link ProviderData}
-   */
   providerData?: ProviderData;
 }
 
 /**
  * Build the Inworld Realtime WebSocket URL.
  *
- * Deliberately does **not** use the OpenAI plugin's `processBaseURL` helper: that helper appends a
- * `/realtime` path segment and a `?model=` query parameter, neither of which Inworld accepts.
+ * Unlike OpenAI's `processBaseURL`, this does not append `/realtime` or `?model=`.
  *
- * The scheme of `baseURL` is respected: `http://` maps to `ws://`, `https://` maps to `wss://`.
- * A `key` query parameter is generated if absent and preserved if the caller supplied one.
- *
- * @internal Exported for testing purposes.
+ * @internal
  */
 export function buildWsUrl(baseURL: string): string {
   const url = new URL(baseURL);
@@ -116,19 +80,8 @@ export function buildWsUrl(baseURL: string): string {
 }
 
 /**
- * A Realtime model backed by the Inworld Realtime API.
- *
- * Inworld speaks the OpenAI Realtime wire protocol, so this subclasses the OpenAI plugin's
- * {@link realtime.RealtimeModel} and overrides only auth, the URL shape, and the Inworld-specific
- * fields on the initial `session.update`.
- *
- * @example
- * ```ts
- * const model = new RealtimeModel({
- *   voice: 'Ashley',
- *   providerData: { tts: { delivery_mode: 'BALANCED' } },
- * });
- * ```
+ * Inworld Realtime model. Subclasses the OpenAI Realtime plugin; overrides auth, URL shape, and
+ * Inworld-specific fields on the initial `session.update`.
  */
 export class RealtimeModel extends OpenAIRealtimeModel {
   /** @internal */
@@ -140,12 +93,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     return 'inworld.RealtimeModel';
   }
 
-  /**
-   * The provider name reported in metrics and traces.
-   *
-   * Overridden because the base implementation derives this from the URL host, which would yield
-   * `api.inworld.ai`.
-   */
+  /** Fixed to `'Inworld'`; the base class would derive this from the URL host. */
   override get provider(): string {
     return 'Inworld';
   }
@@ -176,10 +124,12 @@ export class RealtimeModel extends OpenAIRealtimeModel {
           : options.inputAudioTranscription,
     });
 
-    // Safe to assign after super(): the `useDefineForClassFields` ordering trap only affects the
-    // session, whose overridden hooks run *during* the base constructor.
     this._ttsModel = options.ttsModel ?? DEFAULT_TTS_MODEL;
-    this._providerData = { auto_tool_response: false, ...options.providerData };
+    this._providerData = {
+      auto_tool_response: false,
+      ...options.providerData,
+      caching: { enabled: true, ...options.providerData?.caching },
+    };
   }
 
   override session(): RealtimeSession {
@@ -188,23 +138,13 @@ export class RealtimeModel extends OpenAIRealtimeModel {
 }
 
 /**
- * A session against the Inworld Realtime API.
+ * Inworld Realtime session.
  *
- * Like the base OpenAI session, this also emits the raw `openai_server_event_received` and
- * `openai_client_event_queued` events, which are the fastest way to debug wire-level issues.
- *
- * ## Implementation constraint: no instance fields
- *
- * Both overridden hooks below run *inside* the base class constructor — `createWsConn` via the main
- * task that `super()` kicks off synchronously, and `createSessionUpdateEvent` on the last line of
- * `super()`. Because the repo compiles with `useDefineForClassFields`, any field declared on this
- * subclass is defined to `undefined` only *after* `super()` returns, which would clobber anything
- * the hooks tried to stash. So this class declares no fields and the hooks read only
- * `this.oaiRealtimeModel` and `this._options`, both of which the base constructor assigns before
- * either hook fires.
+ * Declares no instance fields: `createWsConn` / `createSessionUpdateEvent` run inside the base
+ * constructor, and with `useDefineForClassFields` any subclass field would be reset to `undefined`
+ * after `super()`. Read model state via `oaiRealtimeModel` / `_options` instead.
  */
 export class RealtimeSession extends OpenAIRealtimeSession {
-  /** The Inworld model this session was created from. */
   private get inworldModel(): RealtimeModel {
     return this.oaiRealtimeModel as RealtimeModel;
   }
@@ -217,10 +157,9 @@ export class RealtimeSession extends OpenAIRealtimeSession {
       );
     }
 
+    // Inworld keys are already base64-encoded; use Basic (not Bearer).
     const headers: Record<string, string> = {
       'User-Agent': USER_AGENT,
-      // Inworld API keys are already base64-encoded, so they are passed through as-is with the
-      // `Basic` scheme rather than `Bearer`.
       Authorization: `Basic ${apiKey}`,
     };
 

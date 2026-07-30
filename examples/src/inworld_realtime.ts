@@ -2,12 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Realtime voice agent backed by the Inworld Realtime API.
-//
 // Ref: python examples/voice_agents/inworld_realtime_api.py
-//
-// Requires INWORLD_API_KEY, plus LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET.
-// Run with: pnpm build && node ./examples/src/inworld_realtime.ts dev --log-level=debug
+// Requires INWORLD_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET.
+// Run: pnpm build && node ./examples/src/inworld_realtime.ts dev --log-level=debug
 import {
   type JobContext,
   ServerOptions,
@@ -28,7 +25,7 @@ const getWeather = llm.tool({
     location: z.string().describe('The location to get the weather for'),
   }),
   execute: async ({ location }) => {
-    return `The weather in ${location} is sunny today.`;
+    return `The weather in ${location} is sunny today. The temperature is 70 degrees Fahrenheit.`;
   },
 });
 
@@ -42,7 +39,6 @@ class WeatherAgent extends voice.Agent {
   }
 
   async onEnter(): Promise<void> {
-    // Seed the conversation so the model has something to open on, then let it speak first.
     this.chatCtx.addMessage({
       role: 'assistant',
       content: 'I can look up the weather. Which city are you in?',
@@ -59,21 +55,17 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
       llm: new inworld.realtime.RealtimeModel({
-        // The LLM driving the conversation, in `provider/model` form.
-        model: 'openai/gpt-4o-mini',
         voice: 'Ashley',
         ttsModel: 'inworld-tts-2',
         sttModel: 'inworld/inworld-stt-1',
         providerData: {
-          // Left at the default `false` so the *agent*, not the Inworld server, decides when to
-          // speak after a tool returns. That is what `maxToolSteps` below relies on.
+          // false (default): agent owns post-tool turns so maxToolSteps can chain.
           auto_tool_response: false,
           tts: { delivery_mode: 'BALANCED' },
           responsiveness: { level: 0.6 },
         },
       }),
       voiceOptions: {
-        // allow chaining of tool calls
         maxToolSteps: 5,
       },
     });
