@@ -6,6 +6,7 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
+import { checkInterruptionOptionRanges } from '../../option_ranges.js';
 import { asError } from '../../utils.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
@@ -20,65 +21,6 @@ type InterruptionCallbacks = {
 };
 
 export type AdaptiveInterruptionDetectorOptions = Partial<InterruptionOptions>;
-
-/** The interruption probability threshold is 0..1. */
-function checkedThreshold(threshold: number): number {
-  console.assert(threshold >= 0);
-  console.assert(threshold <= 1);
-  return threshold;
-}
-
-/** Durations are seconds and never negative. */
-function checkedDurationInS(duration: number): number {
-  console.assert(duration >= 0);
-  return duration;
-}
-
-/** The server caps the analysis window at 3 seconds. */
-function checkedMaxAudioDurationInS(duration: number): number {
-  console.assert(duration >= 0);
-  console.assert(duration <= 3);
-  return duration;
-}
-
-/** A detection needs at least one 25ms frame. */
-function checkedMinFrames(minFrames: number): number {
-  console.assert(Number.isInteger(minFrames));
-  console.assert(minFrames >= 1);
-  return minFrames;
-}
-
-/**
- * Caller requirements for the ranged {@link InterruptionOptions} fields.
- *
- * Fields are spelled out rather than reusing the option type: freerange does
- * not analyze mapped types.
- */
-function checkInterruptionOptionRanges(options: {
-  threshold?: number;
-  maxAudioDurationInS?: number;
-  audioPrefixDurationInS?: number;
-  detectionIntervalInS?: number;
-  inferenceTimeout?: number;
-  minInterruptionDurationInS?: number;
-  minFrames?: number;
-}): void {
-  if (options.threshold !== undefined) checkedThreshold(options.threshold);
-  if (options.maxAudioDurationInS !== undefined) {
-    checkedMaxAudioDurationInS(options.maxAudioDurationInS);
-  }
-  if (options.audioPrefixDurationInS !== undefined) {
-    checkedDurationInS(options.audioPrefixDurationInS);
-  }
-  if (options.detectionIntervalInS !== undefined) {
-    checkedDurationInS(options.detectionIntervalInS);
-  }
-  if (options.inferenceTimeout !== undefined) checkedDurationInS(options.inferenceTimeout);
-  if (options.minInterruptionDurationInS !== undefined) {
-    checkedDurationInS(options.minInterruptionDurationInS);
-  }
-  if (options.minFrames !== undefined) checkedMinFrames(options.minFrames);
-}
 
 export class AdaptiveInterruptionDetector extends (EventEmitter as new () => TypedEventEmitter<InterruptionCallbacks>) {
   options: InterruptionOptions;

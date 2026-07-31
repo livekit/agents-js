@@ -17,6 +17,8 @@
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",
     "typecheck": "turbo typecheck",
+    "fr": "pnpm --filter @livekit/agents run fr",
+    "fr:audit": "pnpm --filter @livekit/agents run fr:audit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:examples": "vitest run examples",

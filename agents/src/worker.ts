@@ -29,6 +29,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
+import { checkServerOptionRanges } from './option_ranges.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -143,53 +144,6 @@ export class WorkerPermissions {
     this.canPublishSources = canPublishSources;
     this.hidden = hidden;
   }
-}
-
-/** Timeouts are milliseconds and never negative. */
-function checkedTimeoutMs(value: number): number {
-  console.assert(value >= 0);
-  return value;
-}
-
-/** Process, retry and memory counts are non-negative integers. */
-function checkedCount(value: number): number {
-  console.assert(Number.isInteger(value));
-  console.assert(value >= 0);
-  return value;
-}
-
-/** TCP ports are integers in 0..65535; 0 asks the OS to pick one. */
-function checkedPort(value: number): number {
-  console.assert(Number.isInteger(value));
-  console.assert(value >= 0);
-  console.assert(value <= 65535);
-  return value;
-}
-
-/**
- * Caller requirements for the ranged {@link ServerOptions} fields.
- *
- * `loadThreshold` is only required to be non-negative: `Infinity` disables
- * load-based availability, so it cannot take a plain `number` contract.
- */
-function checkServerOptionRanges(opts: {
-  numIdleProcesses?: number;
-  drainTimeout?: number;
-  shutdownProcessTimeout?: number;
-  initializeProcessTimeout?: number;
-  maxRetry?: number;
-  port?: number;
-  jobMemoryWarnMB?: number;
-  jobMemoryLimitMB?: number;
-}): void {
-  if (opts.numIdleProcesses !== undefined) checkedCount(opts.numIdleProcesses);
-  if (opts.drainTimeout !== undefined) checkedTimeoutMs(opts.drainTimeout);
-  if (opts.shutdownProcessTimeout !== undefined) checkedTimeoutMs(opts.shutdownProcessTimeout);
-  if (opts.initializeProcessTimeout !== undefined) checkedTimeoutMs(opts.initializeProcessTimeout);
-  if (opts.maxRetry !== undefined) checkedCount(opts.maxRetry);
-  if (opts.port !== undefined) checkedPort(opts.port);
-  if (opts.jobMemoryWarnMB !== undefined) checkedCount(opts.jobMemoryWarnMB);
-  if (opts.jobMemoryLimitMB !== undefined) checkedCount(opts.jobMemoryLimitMB);
 }
 
 /**

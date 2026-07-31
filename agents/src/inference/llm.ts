@@ -10,6 +10,7 @@ import {
   ThinkingTokenFilter,
   stripThinkingTokens,
 } from '../llm/utils.js';
+import { checkChatCompletionOptionRanges } from '../option_ranges.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
@@ -102,70 +103,6 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   // livekit-typed arguments
   tool_choice?: ToolChoice;
   response_format?: ResponseFormat;
-}
-
-/** Sampling temperature, as documented by the OpenAI-compatible API. */
-function checkedTemperature(temperature: number): number {
-  console.assert(temperature >= 0);
-  console.assert(temperature <= 2);
-  return temperature;
-}
-
-/** Nucleus sampling probability mass. */
-function checkedTopP(topP: number): number {
-  console.assert(topP >= 0);
-  console.assert(topP <= 1);
-  return topP;
-}
-
-/** Presence and frequency penalties live in -2..2. */
-function checkedPenalty(penalty: number): number {
-  console.assert(penalty >= -2);
-  console.assert(penalty <= 2);
-  return penalty;
-}
-
-/** Token and completion counts are positive integers. */
-function checkedTokenCount(count: number): number {
-  console.assert(Number.isInteger(count));
-  console.assert(count >= 1);
-  return count;
-}
-
-/** The API returns log-probabilities for at most 20 tokens per position. */
-function checkedTopLogprobs(topLogprobs: number): number {
-  console.assert(Number.isInteger(topLogprobs));
-  console.assert(topLogprobs >= 0);
-  console.assert(topLogprobs <= 20);
-  return topLogprobs;
-}
-
-/**
- * Caller requirements for the ranged {@link ChatCompletionOptions} fields.
- *
- * Fields are spelled out rather than reusing the option type: freerange does
- * not analyze an interface with an index signature.
- */
-function checkChatCompletionOptionRanges(options: {
-  temperature?: number;
-  top_p?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  n?: number;
-  top_logprobs?: number;
-}): void {
-  if (options.temperature !== undefined) checkedTemperature(options.temperature);
-  if (options.top_p !== undefined) checkedTopP(options.top_p);
-  if (options.presence_penalty !== undefined) checkedPenalty(options.presence_penalty);
-  if (options.frequency_penalty !== undefined) checkedPenalty(options.frequency_penalty);
-  if (options.max_tokens !== undefined) checkedTokenCount(options.max_tokens);
-  if (options.max_completion_tokens !== undefined) {
-    checkedTokenCount(options.max_completion_tokens);
-  }
-  if (options.n !== undefined) checkedTokenCount(options.n);
-  if (options.top_logprobs !== undefined) checkedTopLogprobs(options.top_logprobs);
 }
 
 export type LLMModels =

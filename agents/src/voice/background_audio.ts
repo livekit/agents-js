@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { audioFramesFromFile, loopAudioFramesFromFile } from '../audio.js';
 import { log } from '../log.js';
+import { checkAudioConfigRanges } from '../option_ranges.js';
 import { Future, Task, cancelAndWait } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type AgentStateChangedEvent } from './events.js';
@@ -47,27 +48,6 @@ export interface AudioConfig {
   source: AudioSourceType;
   volume?: number;
   probability?: number;
-}
-
-/**
- * Volume is a gain multiplier. It must be positive: the playback path feeds it
- * to `Math.log10`, which is `-Infinity` at 0 and `NaN` below it.
- */
-function checkedVolume(volume: number): number {
-  console.assert(volume > 0);
-  return volume;
-}
-
-/** Selection weights are non-negative; a zero weight is skipped. */
-function checkedProbability(probability: number): number {
-  console.assert(probability >= 0);
-  return probability;
-}
-
-/** Caller requirements for the ranged {@link AudioConfig} fields. */
-function checkAudioConfigRanges(config: { volume?: number; probability?: number }): void {
-  if (config.volume !== undefined) checkedVolume(config.volume);
-  if (config.probability !== undefined) checkedProbability(config.probability);
 }
 
 export interface BackgroundAudioPlayerOptions {

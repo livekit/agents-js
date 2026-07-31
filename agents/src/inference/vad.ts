@@ -11,6 +11,7 @@
  */
 import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import { log } from '../log.js';
+import { checkVADOptionRanges } from '../option_ranges.js';
 import { VAD as BaseVAD, VADStream as BaseVADStream, VADEventType } from '../vad.js';
 import { _getLocalInferenceModule } from './_warmup.js';
 
@@ -33,41 +34,6 @@ export interface VADOptions {
   /** Sigmoid probability threshold for deactivation (defaults to
    * `max(activationThreshold - 0.15, 0.01)`). */
   deactivationThreshold: number;
-}
-
-/** Sigmoid thresholds are probabilities: positive, at most 1. */
-function checkedThreshold(value: number): number {
-  console.assert(value > 0);
-  console.assert(value <= 1);
-  return value;
-}
-
-/** Durations are measured in milliseconds and never negative. */
-function checkedDurationMs(value: number): number {
-  console.assert(value >= 0);
-  return value;
-}
-
-/**
- * Caller requirements for every ranged `VADOptions` field the user may pass.
- *
- * Fields are spelled out rather than taking `Partial<VADOptions>`: freerange
- * does not analyze mapped types.
- */
-function checkVADOptionRanges(opts: {
-  activationThreshold?: number;
-  deactivationThreshold?: number;
-  minSpeechDuration?: number;
-  minSilenceDuration?: number;
-  prefixPaddingDuration?: number;
-  maxBufferedSpeech?: number;
-}): void {
-  if (opts.activationThreshold !== undefined) checkedThreshold(opts.activationThreshold);
-  if (opts.deactivationThreshold !== undefined) checkedThreshold(opts.deactivationThreshold);
-  if (opts.minSpeechDuration !== undefined) checkedDurationMs(opts.minSpeechDuration);
-  if (opts.minSilenceDuration !== undefined) checkedDurationMs(opts.minSilenceDuration);
-  if (opts.prefixPaddingDuration !== undefined) checkedDurationMs(opts.prefixPaddingDuration);
-  if (opts.maxBufferedSpeech !== undefined) checkedDurationMs(opts.maxBufferedSpeech);
 }
 
 const defaultVADOptions: VADOptions = {

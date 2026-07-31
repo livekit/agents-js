@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BaseStreamingTurnDetector } from '../../inference/eot/base.js';
 import { log } from '../../log.js';
+import { checkTurnHandlingOptionRanges } from '../../option_ranges.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
@@ -159,76 +160,6 @@ export function resolveEndpointing(
       ? streamingEndpointingOptions
       : defaultEndpointingOptions;
   return { ...base, ...stripUndefined(overrides) };
-}
-
-/** Delays and durations are milliseconds and never negative. */
-function checkedDurationMs(value: number): number {
-  console.assert(value >= 0);
-  return value;
-}
-
-/** Exponential moving average coefficients are 0..1. */
-function checkedCoefficient(value: number): number {
-  console.assert(value >= 0);
-  console.assert(value <= 1);
-  return value;
-}
-
-/** Word and retry counts are non-negative integers. */
-function checkedCount(value: number): number {
-  console.assert(Number.isInteger(value));
-  console.assert(value >= 0);
-  return value;
-}
-
-/**
- * Caller requirements for the ranged {@link TurnHandlingOptions} fields.
- *
- * Fields are spelled out rather than reusing the option types: freerange does
- * not analyze mapped types such as `Partial<EndpointingOptions>`.
- */
-function checkTurnHandlingOptionRanges(config: {
-  endpointing?: { minDelay?: number; maxDelay?: number; alpha?: number };
-  // `backchannelBoundary` is omitted: freerange cannot read a
-  // `number | [number, number] | null` union, and reading it makes the whole
-  // function unanalyzable.
-  interruption?: {
-    minDuration?: number;
-    minWords?: number;
-    falseInterruptionTimeout?: number;
-  };
-  preemptiveGeneration?: { maxSpeechDuration?: number; maxRetries?: number };
-  userTurnLimit?: { maxWords?: number | null; maxDuration?: number | null };
-}): void {
-  const endpointing = config.endpointing;
-  if (endpointing !== undefined) {
-    if (endpointing.minDelay !== undefined) checkedDurationMs(endpointing.minDelay);
-    if (endpointing.maxDelay !== undefined) checkedDurationMs(endpointing.maxDelay);
-    if (endpointing.alpha !== undefined) checkedCoefficient(endpointing.alpha);
-  }
-
-  const interruption = config.interruption;
-  if (interruption !== undefined) {
-    if (interruption.minDuration !== undefined) checkedDurationMs(interruption.minDuration);
-    if (interruption.minWords !== undefined) checkedCount(interruption.minWords);
-    if (interruption.falseInterruptionTimeout !== undefined) {
-      checkedDurationMs(interruption.falseInterruptionTimeout);
-    }
-  }
-
-  const preemptive = config.preemptiveGeneration;
-  if (preemptive !== undefined) {
-    if (preemptive.maxSpeechDuration !== undefined) checkedDurationMs(preemptive.maxSpeechDuration);
-    if (preemptive.maxRetries !== undefined) checkedCount(preemptive.maxRetries);
-  }
-
-  const userTurnLimit = config.userTurnLimit;
-  if (userTurnLimit !== undefined) {
-    const maxWords = userTurnLimit.maxWords;
-    if (maxWords !== undefined && maxWords !== null) checkedCount(maxWords);
-    const maxDuration = userTurnLimit.maxDuration;
-    if (maxDuration !== undefined && maxDuration !== null) checkedDurationMs(maxDuration);
-  }
 }
 
 export function mergeWithDefaults(config: TurnHandlingOptions) {

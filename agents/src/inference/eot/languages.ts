@@ -11,6 +11,7 @@
  */
 import { APIError } from '../../_exceptions.js';
 import type { LanguageCode } from '../../language.js';
+import { checkedEotThreshold } from '../../option_ranges.js';
 
 /** Full model name (used for telemetry/billing via `detector.model`). */
 export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
@@ -75,13 +76,6 @@ const round4 = (value: number): number => Math.round(value * 1e4) / 1e4;
  * a per-language map, or `undefined` (use the defaults).
  */
 export type ThresholdOverride = number | Record<string, number> | undefined;
-
-/** Turn-detector thresholds are probabilities: 0..1. */
-export function checkedEotThreshold(threshold: number): number {
-  console.assert(threshold >= 0);
-  console.assert(threshold <= 1);
-  return threshold;
-}
 
 function normalizeOverrides(overrides: ThresholdOverride): ThresholdOverride {
   if (overrides === undefined) {
