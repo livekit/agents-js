@@ -1011,9 +1011,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
    * 800ms late because it waits for a word to be decoded.
    */
   private processStartOfSpeech(): void {
-    if (this.speaking) return;
-    this.speaking = true;
-    this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+    if (this.speaking || this.queue.closed) return;
+    try {
+      this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+      this.speaking = true;
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('Queue is closed')) return;
+      throw e;
+    }
   }
 
   private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
