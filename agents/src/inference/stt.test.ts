@@ -5,11 +5,14 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
 import {
+  SpeechStream as InferenceSpeechStream,
   STT,
   type STTFallbackModel,
+  type STTModels,
   type XaiSTTModels,
   normalizeSTTFallback,
   parseSTTModelString,
@@ -31,6 +34,100 @@ function makeStt(overrides: Record<string, unknown> = {}) {
   };
   return new STT({ ...defaults, ...overrides });
 }
+
+function makeSpeechStream() {
+  const events: SpeechEvent[] = [];
+  const stream = Object.assign(Object.create(InferenceSpeechStream.prototype), {
+    queue: {
+      closed: false,
+      put: (event: SpeechEvent) => events.push(event),
+    },
+    speaking: false,
+    requestId: 'req-1',
+    speechDuration: 0,
+    _startTimeOffset: 0,
+    _pendingExtra: undefined,
+    opts: { language: 'en' },
+  }) as InferenceSpeechStream<STTModels>;
+  return { stream, events };
+}
+
+function transcript(transcript: string, isFinal = false) {
+  return {
+    type: isFinal ? ('final_transcript' as const) : ('interim_transcript' as const),
+    transcript,
+    language: 'en',
+    start: 0,
+    duration: isFinal ? 1 : 0,
+    confidence: 1,
+    words: [],
+  };
+}
+
+describe('Inference STT start of speech', () => {
+  it('reports onset immediately from a start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+    expect(stream._speaking).toBe(true);
+  });
+
+  it('does not report onset twice when a transcript follows', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    expect(events.splice(0).map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.INTERIM_TRANSCRIPT]);
+  });
+
+  it('ignores a duplicate start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+  });
+
+  it('falls back to the first transcript for providers without onset', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([
+      SpeechEventType.START_OF_SPEECH,
+      SpeechEventType.INTERIM_TRANSCRIPT,
+    ]);
+  });
+
+  it('does not report onset from an empty interim alone', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript(''), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events).toEqual([]);
+    expect(stream._speaking).toBe(false);
+  });
+
+  it('resets onset after the turn ends', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processTranscript'](
+      transcript('are you open on sunday', true),
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+    expect(stream._speaking).toBe(false);
+
+    stream['processStartOfSpeech']();
+    expect(events.map(({ type }) => type)).toContain(SpeechEventType.START_OF_SPEECH);
+  });
+});
 
 describe('parseSTTModelString', () => {
   it('simple model without language', () => {
