@@ -2,9 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { isInstructions } from '../llm/chat_context.js';
-import { DEFAULT_EXPRESSIVE_OPTIONS } from '../voice/agent_session.js';
-import * as presets from '../voice/presets.js';
 import {
   TranscriptMarkupStripper,
   convertMarkup,
@@ -119,19 +116,6 @@ describe('xAI dialect', () => {
     // prosody stays angle-bracketed, and normalize is a no-op for xAI
     expect(convertMarkup('xai', raw)).toBe('[laugh] [pause] [long-pause] <whisper>hi</whisper>');
     expect(normalizeMarkup('xai', raw)).toBe(raw);
-  });
-
-  it('resolves presets to xAI-tuned bodies', () => {
-    for (const preset of [presets.CUSTOMER_SERVICE, presets.CASUAL]) {
-      const opts = presets.resolveOptions(preset, {
-        providerKey: 'xai',
-        defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS,
-      });
-      const tmpl = opts.ttsInstructionsTemplate!;
-      const body = isInstructions(tmpl) ? tmpl.common : tmpl;
-      // tuned body, not the agnostic default (which has no xai marker reference)
-      expect(body).toContain('<expr type="prosody" label="whisper">');
-    }
   });
 });
 

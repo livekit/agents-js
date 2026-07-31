@@ -97,6 +97,7 @@ import {
   DEFAULT_EXPRESSIVE_OPTIONS,
   type ExpressiveOptions,
   type TurnDetectionMode,
+  resolveExpressiveOptions,
 } from './agent_session.js';
 import {
   AudioRecognition,
@@ -137,7 +138,6 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
-import { resolveOptions as resolveExpressivePreset } from './presets.js';
 import { type InputDetails, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
@@ -1923,10 +1923,8 @@ export class AgentActivity implements RecognitionHooks {
       expr = this.agentSession.sessionOptions.expressive;
     }
     if (typeof expr === 'object') {
-      // a `preset` selector resolves to the active TTS provider's tuned preset
-      // (falling back to the agnostic default); explicit fields override on top
       const providerKey = this.tts ? this.tts._markupProviderKey() : '';
-      return resolveExpressivePreset(expr, {
+      return resolveExpressiveOptions(expr, {
         providerKey,
         defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS,
       });
@@ -1934,7 +1932,7 @@ export class AgentActivity implements RecognitionHooks {
     if (!expr) {
       return undefined;
     }
-    return resolveExpressivePreset(
+    return resolveExpressiveOptions(
       {},
       {
         providerKey: this.tts._markupProviderKey(),

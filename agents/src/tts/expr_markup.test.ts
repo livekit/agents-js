@@ -12,6 +12,7 @@
  * provider's instruction block advertises only what that provider supports.
  */
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_EXPRESSIVE_OPTIONS, resolveExpressiveOptions } from '../voice/agent_session.js';
 import {
   TranscriptMarkupStripper,
   convertMarkup,
@@ -20,6 +21,7 @@ import {
   normalizeMarkup,
   splitAllMarkup,
   splitMarkup,
+  steeringInstructions,
   supportedNonverbals,
 } from './_provider_format.js';
 
@@ -193,13 +195,15 @@ describe('Fish Audio dialect', () => {
   });
 
   it('filters sounds and examples with steering', () => {
-    let instructions = llmInstructions('fishaudio', { nonverbalSounds: {} });
+    let instructions = llmInstructions('fishaudio', { nonverbalSounds: false });
     expect(instructions).toBeDefined();
     expect(instructions).not.toContain('laughing');
     expect(instructions).not.toContain('clear throat');
     expect(instructions).toContain('Examples:');
 
-    instructions = llmInstructions('fishaudio', { nonverbalSounds: { laughing: true } });
+    instructions = llmInstructions('fishaudio', {
+      nonverbalSounds: { reflexSounds: false },
+    });
     expect(instructions).toBeDefined();
     expect(instructions).toContain('laughing');
     expect(instructions).not.toContain('clear throat');
@@ -210,6 +214,86 @@ describe('Fish Audio dialect', () => {
       laughing: ['laughing', 'chuckling'],
       reflexSounds: ['clear throat'],
     });
+  });
+
+  it('includes the register rule for every markup-capable provider', () => {
+    for (const provider of ['fishaudio', 'inworld', 'xai', 'cartesia']) {
+      expect(llmInstructions(provider), provider).toContain('REGISTER of the moment');
+    }
+  });
+
+  it('matches Fish register guidance to steering', () => {
+    const defaultInstructions = llmInstructions('fishaudio');
+    expect(defaultInstructions).toContain('Laughter belongs only');
+    expect(defaultInstructions).toContain('Save fillers for relaxed moments');
+
+    const composed = llmInstructions('fishaudio', {
+      nonverbalSounds: false,
+      disfluencies: false,
+    });
+    expect(composed?.toLowerCase()).not.toContain('laugh');
+    expect(composed?.toLowerCase()).not.toContain('filler');
+    expect(composed).not.toContain('Um, uh');
+  });
+
+  it('accepts a boolean for non-verbal sounds', () => {
+    const off = llmInstructions('fishaudio', { nonverbalSounds: false });
+    const on = llmInstructions('fishaudio', { nonverbalSounds: true });
+    const defaultInstructions = llmInstructions('fishaudio');
+    expect(off).not.toContain('type="sound"');
+    expect(off).not.toContain('laughing');
+    for (const instructions of [on, defaultInstructions]) {
+      expect(instructions).toContain('laughing, chuckling, clear throat');
+    }
+  });
+
+  it('renders all-on forms like omission', () => {
+    for (const provider of ['fishaudio', 'inworld', 'xai']) {
+      for (const nonverbalSounds of [true, {}]) {
+        const steering = { nonverbalSounds };
+        expect(steeringInstructions(provider, steering)).toBe('');
+        expect(llmInstructions(provider, steering)).toBe(llmInstructions(provider));
+      }
+    }
+    expect(steeringInstructions('fishaudio', { nonverbalSounds: false })).toBe('');
+    const partial = steeringInstructions('fishaudio', {
+      nonverbalSounds: { laughing: false },
+    });
+    expect(partial).toContain('clear-throat');
+    expect(partial.toLowerCase()).not.toContain('laugh');
+  });
+
+  it('treats a non-verbal object as a sparse opt-out', () => {
+    const steering = { nonverbalSounds: { laughing: false } };
+    const fish = llmInstructions('fishaudio', steering);
+    expect(fish).not.toContain('laughing');
+    expect(fish).toContain('clear throat');
+
+    const inworld = llmInstructions('inworld', steering);
+    expect(inworld).not.toContain('label="laugh"');
+    for (const kept of ['sigh', 'breathe', 'clear throat', 'cough', 'yawn']) {
+      expect(inworld).toContain(kept);
+    }
+
+    const xai = llmInstructions('xai', steering);
+    expect(xai).not.toContain('laugh-speak');
+    expect(xai).toContain('whisper');
+  });
+
+  it('merges steering sparsely over defaults', () => {
+    const resolved = resolveExpressiveOptions(
+      { speechSteering: {} },
+      { providerKey: 'fishaudio', defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS },
+    ).speechSteering!;
+    expect(resolved.disfluencies).toBe(true);
+    expect(resolved.nonverbalSounds).toBeUndefined();
+
+    const composed = resolveExpressiveOptions(
+      { speechSteering: { nonverbalSounds: false, disfluencies: false } },
+      { providerKey: 'fishaudio', defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS },
+    ).speechSteering!;
+    expect(composed.nonverbalSounds).toBe(false);
+    expect(composed.disfluencies).toBe(false);
   });
 
   it('includes disfluent examples only when enabled', () => {

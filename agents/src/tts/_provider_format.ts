@@ -19,9 +19,8 @@
  * - Fish Audio: https://docs.fish.audio/developer-guide/core-features/emotions
  */
 import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
-import { Instructions } from '../llm/chat_context.js';
 import { SentenceTokenizer } from '../tokenize/basic/index.js';
-import type { ExpressiveOptions, SpeechSteeringOptions } from '../voice/agent_session.js';
+import type { NonverbalOptions, SpeechSteeringOptions } from '../voice/agent_session.js';
 import { convertExpressionTags, extractAndStrip } from './markup_utils.js';
 
 /**
@@ -180,9 +179,11 @@ function fishAudioBreakToBracket(_match: string, raw: string): string {
 // provider-native tag tables remain solely so hallucinated native markup is still
 // stripped/converted instead of leaking.
 
-const EXPR_PREAMBLE = `Expand all numbers, symbols, and abbreviations into spoken form (e.g. $42.50 to forty-two dollars and fifty cents, Dr. to Doctor).
+const EXPR_PREAMBLE = `You control speech delivery with a single XML marker tag: <expr/>. Every marker has a type attribute. Use only the marker types listed below, and where a type lists a label vocabulary, only those labels. Use the markers often and diversify them so the voice never sounds flat while ensuring the markers are appropriate for the moment. Write the words themselves the way people talk: use contractions ("I'm", "you're", "don't") — spelled-out forms like "I am" or "do not" sound stiff when spoken.
 
-You control speech delivery with a single XML marker tag: <expr/>. Every marker has a type attribute. The types below are the ONLY ones this voice supports, and where a type lists a label vocabulary, use only those labels. Reach for the markers often and mix them so the voice never sounds flat — but keep each one motivated by the moment, never decorative.`;
+Just as important is knowing when NOT to reach for a marker. Reserve surprise openers like "oh" or "ah" for genuine surprise — an ordinary request isn't one. Don't stack markers on short replies or decorate every sentence. If a reaction wouldn't happen in a real conversation, skip it — there's always another genuine beat to lean into.
+
+Match your delivery to the REGISTER of the moment, and reassess every turn. When the moment is professional, high-stakes, or emotionally heavy — bad news, an emergency, real distress — keep delivery composed and restrained. When the moment is casual, playful, or celebratory, let it loosen and brighten. A serious turn in an otherwise casual conversation still gets a composed reply.`;
 
 const CARTESIA_EXPR_LLM_INSTRUCTIONS = `${EXPR_PREAMBLE}
 
@@ -253,7 +254,8 @@ Examples:
   So I walked in and <expr type="break" label="500ms"/> there it was! <expr type="sound" label="laugh"/> <expr type="prosody" label="whisper">It was a secret the whole time.</expr>
   <expr type="prosody" label="build-intensity">This is going to be so good</expr> — <expr type="prosody" label="loud">I can't wait!</expr> <expr type="sound" label="chuckle"/>
   <expr type="prosody" label="soft">Hey.</expr> <expr type="sound" label="sigh"/> <expr type="prosody" label="lower-pitch">I know it's been a rough week.</expr> I'm right here.
-  <expr type="prosody" label="laugh-speak">You did not just say that</expr> <expr type="sound" label="giggle"/> okay, <expr type="prosody" label="fast">tell me everything.</expr>`;
+  <expr type="prosody" label="laugh-speak">You did not just say that</expr> <expr type="sound" label="giggle"/> okay, <expr type="prosody" label="fast">tell me everything.</expr>
+  <expr type="prosody" label="emphasis">Everything</expr> is confirmed for Thursday. <expr type="break" label="500ms"/> <expr type="prosody" label="slow">Is there anything else I can help you with?</expr>`;
 
 const FISHAUDIO_EXAMPLES = [
   `<expr type="expression" label="excited"/> That's hilarious! <expr type="sound" label="laughing"/> <expr type="expression" label="happy"/> You always lighten the mood.`,
@@ -273,6 +275,19 @@ function soundExamples(examples: string[], allowed: string[], vocabulary: string
   return examples.filter(
     (example) => !removed.some((sound) => example.includes(`label="${sound}"`)),
   );
+}
+
+function filterExamples(instructions: string, removed: string[]): string {
+  const marker = '\n\nExamples:\n';
+  const index = instructions.indexOf(marker);
+  if (index === -1) {
+    return instructions;
+  }
+  const examples = instructions
+    .slice(index + marker.length)
+    .split('\n')
+    .filter((example) => !removed.some((label) => example.includes(`label="${label}"`)));
+  return instructions.slice(0, index) + marker + examples.join('\n');
 }
 
 function fishAudioExprLlmInstructions(sounds: string[], disfluencies = true): string {
@@ -303,55 +318,151 @@ function fishAudioExprLlmInstructions(sounds: string[], disfluencies = true): st
     'Write for the EAR, not the page: no em or en dashes anywhere in spoken text — use a comma or a period for a short beat, or a break marker for a real pause. Avoid semicolons, mid-sentence colons, and parenthetical asides; rewrite them as separate sentences or commas.',
     'When the conversation is in another language, still write every marker label in English — labels are a fixed vocabulary, never translated.',
   ];
+  const register = [
+    'At heavy moments reach for empathetic, sad, regretful, or hopeful — never a bright label like "happy" or "excited" against hard news; bright labels belong to bright moments.',
+  ];
+  if (sounds.some((sound) => sound === 'laughing' || sound === 'chuckling')) {
+    register.push(
+      'Laughter belongs only in genuinely playful or celebratory beats, never at a serious moment.',
+    );
+  }
+  if (disfluencies) {
+    register.push(
+      'Save fillers for relaxed moments — never in an emergency or against grave news.',
+    );
+  }
+  parts.push(register.join(' '));
   if (examples.length > 0) {
     parts.push(`Examples:\n${examples.map((example) => `  ${example}`).join('\n')}`);
   }
   return parts.join('\n\n');
 }
 
-const FISHAUDIO_NONVERBAL_LABELS: Record<string, string[]> = {
-  laughing: ['laughing', 'chuckling'],
-  breathing: [],
-  sighing: [],
-  crying: [],
-  vocalizing: [],
-  mouthSounds: [],
-  reflexSounds: ['clear throat'],
+const INWORLD_SOUNDS = ['laugh', 'sigh', 'breathe', 'clear throat', 'cough', 'yawn'];
+
+const PROVIDER_SOUNDS: Record<string, string[]> = {
+  inworld: INWORLD_SOUNDS,
+  xai: XAI_INLINE,
+  fishaudio: FISHAUDIO_SOUNDS,
 };
 
-function allowedFishAudioSounds(steering?: SpeechSteeringOptions): string[] {
-  const flags = steering?.nonverbalSounds;
-  if (flags === undefined) {
-    return FISHAUDIO_SOUNDS;
+const NONVERBAL_SOUND_LABELS: Record<string, Record<keyof NonverbalOptions, string[]>> = {
+  inworld: {
+    laughing: ['laugh'],
+    breathing: ['breathe'],
+    sighing: ['sigh'],
+    crying: [],
+    vocalizing: [],
+    mouthSounds: [],
+    reflexSounds: ['cough', 'clear throat', 'yawn'],
+  },
+  xai: {
+    laughing: ['laugh', 'chuckle', 'giggle'],
+    breathing: ['breath', 'inhale', 'exhale'],
+    sighing: ['sigh'],
+    crying: ['cry'],
+    vocalizing: ['hum-tune'],
+    mouthSounds: ['tsk', 'tongue-click', 'lip-smack'],
+    reflexSounds: [],
+  },
+  fishaudio: {
+    laughing: ['laughing', 'chuckling'],
+    breathing: [],
+    sighing: [],
+    crying: [],
+    vocalizing: [],
+    mouthSounds: [],
+    reflexSounds: ['clear throat'],
+  },
+};
+
+const NONVERBAL_PROSODY_LABELS: Record<
+  string,
+  Partial<Record<keyof NonverbalOptions, string[]>>
+> = {
+  xai: {
+    laughing: ['laugh-speak'],
+    vocalizing: ['sing-song', 'singing'],
+  },
+};
+
+function steeringRemoved(
+  table: Record<string, Partial<Record<keyof NonverbalOptions, string[]>>>,
+  provider: string,
+  steering?: SpeechSteeringOptions,
+): Set<string> {
+  const nonverbals = steering?.nonverbalSounds;
+  const labels = table[provider];
+  if (nonverbals === undefined || nonverbals === true || labels === undefined) {
+    return new Set();
   }
-  const removed = new Set(
-    Object.entries(FISHAUDIO_NONVERBAL_LABELS)
-      .filter(([field]) => !flags[field as keyof typeof flags])
-      .flatMap(([, labels]) => labels),
+  if (nonverbals === false) {
+    return new Set(Object.values(labels).flat());
+  }
+  return new Set(
+    Object.entries(labels)
+      .filter(([field]) => nonverbals[field as keyof NonverbalOptions] === false)
+      .flatMap(([, values]) => values ?? []),
   );
-  return FISHAUDIO_SOUNDS.filter((sound) => !removed.has(sound));
+}
+
+function allowedSounds(provider: string, steering?: SpeechSteeringOptions): string[] {
+  const removed = steeringRemoved(NONVERBAL_SOUND_LABELS, provider, steering);
+  return (PROVIDER_SOUNDS[provider] ?? []).filter((sound) => !removed.has(sound));
+}
+
+function allowedProsody(provider: string, steering?: SpeechSteeringOptions): string[] {
+  const removed = steeringRemoved(NONVERBAL_PROSODY_LABELS, provider, steering);
+  return (provider === 'xai' ? XAI_WRAPPING : []).filter((label) => !removed.has(label));
 }
 
 /** Return non-verbal steering fields and the Fish labels each one governs. */
 export function supportedNonverbals(provider: string): Record<string, string[]> {
-  if (provider !== 'fishaudio') {
-    return {};
+  const supported: Record<string, string[]> = {};
+  for (const table of [NONVERBAL_SOUND_LABELS, NONVERBAL_PROSODY_LABELS]) {
+    for (const [field, labels] of Object.entries(table[provider] ?? {})) {
+      if (labels && labels.length > 0) {
+        supported[field] = [...(supported[field] ?? []), ...labels];
+      }
+    }
   }
-  return Object.fromEntries(
-    Object.entries(FISHAUDIO_NONVERBAL_LABELS).filter(([, labels]) => labels.length > 0),
-  );
+  return supported;
 }
 
-/** Render Fish-specific delivery guidelines from explicit steering fields. */
-export function steeringInstructions(provider: string, steering: SpeechSteeringOptions): string {
-  if (provider !== 'fishaudio') {
-    return '';
+const SOUND_USAGE_HINTS: Record<string, string> = {
+  laugh: 'a laugh at something obviously funny',
+  laughing: 'a laugh at something obviously funny',
+  chuckle: 'a chuckle at something subtly humorous',
+  chuckling: 'a chuckle at something subtly humorous',
+  giggle: 'a chuckle at something subtly humorous',
+  sigh: 'a sigh when commiserating',
+  inhale: 'a sharp inhale before a big reveal',
+  'lip-smack': 'a lip-smack or tongue-click as a tiny beat of thought',
+  'tongue-click': 'a lip-smack or tongue-click as a tiny beat of thought',
+  tsk: 'a tsk for mock-disapproval',
+  'clear throat': 'a clear-throat when shifting to a new step or topic',
+};
+
+function soundGuidance(sounds: string[]): string {
+  const hints = [
+    ...new Set(
+      sounds.map((sound) => SOUND_USAGE_HINTS[sound]).filter((hint) => hint !== undefined),
+    ),
+  ];
+  let line = 'Non-verbal sounds: use one only where the moment genuinely earns it';
+  if (hints.length > 0) {
+    line += ` — ${hints.join(', ')}`;
   }
+  return `${line}. Most turns have none; never repeat the same sound twice in a row.`;
+}
+
+/** Render provider-specific delivery guidelines from explicit steering fields. */
+export function steeringInstructions(provider: string, steering: SpeechSteeringOptions): string {
   const lines: string[] = [];
-  if (steering.nonverbalSounds !== undefined && allowedFishAudioSounds(steering).length > 0) {
-    lines.push(
-      'Non-verbal sounds: use one only where the moment genuinely earns it. Most turns have none; never repeat the same sound twice in a row.',
-    );
+  const removed = steeringRemoved(NONVERBAL_SOUND_LABELS, provider, steering);
+  const sounds = allowedSounds(provider, steering);
+  if (removed.size > 0 && sounds.length > 0) {
+    lines.push(soundGuidance(sounds));
   }
   if (steering.disfluencies !== undefined) {
     lines.push(
@@ -367,346 +478,6 @@ export function steeringInstructions(provider: string, steering: SpeechSteeringO
     ? `Delivery guidelines:\n${lines.map((line) => `- ${line}`).join('\n')}`
     : '';
 }
-
-const EXPR_LLM_INSTRUCTIONS: Record<string, string> = {
-  cartesia: CARTESIA_EXPR_LLM_INSTRUCTIONS,
-  inworld: INWORLD_EXPR_LLM_INSTRUCTIONS,
-  xai: XAI_EXPR_LLM_INSTRUCTIONS,
-};
-
-// --- Inworld-specific expressive preset bodies ---
-// These bundle the Inworld expr instruction block + domain-specific delivery guidelines,
-// keyed by (provider, preset) in the registry in `voice/presets.ts`. The public,
-// provider-agnostic markers (`presets.CUSTOMER_SERVICE`, ...) resolve to one of these
-// based on the active TTS. They do NOT use the {tts.markup.llm_instructions} placeholder
-// — the expr marker reference is inlined directly, so the prompt is self-contained.
-
-/** @internal */
-export const INWORLD_CUSTOMER_SERVICE: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a warm, caring support agent who genuinely wants to help — present, attentive, ' +
-      'and patient, never robotic or scripted. Lead with empathy and understanding, then resolve. ' +
-      "Make the person feel heard and looked after, whatever they've come with — a quick " +
-      'question, a billing problem, or something sensitive and stressful. Let real care come ' +
-      'through in the voice. Use the formatting tags below to shape your delivery:\n\n' +
-      INWORLD_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Open with warm, welcoming reassurance, then mirror the customer as the conversation ' +
-      "develops — slow and soften when they're frustrated, worried, or confused, lift to bright, " +
-      "genuine warmth when they're relaxed or pleased, but always stay caring and unhurried. " +
-      'De-escalate; never match anger with anger. Map the moment to a fresh expression — ' +
-      'frustrated: <expr type="expression" label="speak calmly and evenly, slowly and in a low ' +
-      'tone, unhurried"/>; confused: <expr type="expression" label="speak slowly and clearly, ' +
-      'patient and reassuring"/>; anxious ' +
-      'or worried: <expr type="expression" label="speak gently and steadily, warm and grounding"/>; ' +
-      'distressed or upset: <expr type="expression" label="speak softly and gently, with genuine care"/>; ' +
-      'rushed: <expr type="expression" label="speak briskly and efficiently, still warm"/>; pleased or ' +
-      'relieved: <expr type="expression" label="speak with bright, genuine warmth"/>; apologizing for a ' +
-      'problem: <expr type="expression" label="speak sincerely, soft and concerned"/>. Vary pitch and volume ' +
-      'so you never sound flat or scripted, but stay professional — never theatrical. Rotate ' +
-      "expressions; don't reuse the same one two turns in a row.\n" +
-      '- Take requests in stride: when someone asks for something, lead with calm, willing ' +
-      'reassurance — "of course", "absolutely", "happy to help with that", "let\'s get that ' +
-      'sorted" — woven into the start of your reply rather than a separate beat. Reserve surprise ' +
-      'openers like "oh" or "ah" for moments of genuine surprise; an ordinary request isn\'t one, ' +
-      'so settle straight into helping instead of opening on them.\n' +
-      '- Soften for anything sensitive: when sharing bad news, a problem, a charge, or anything ' +
-      'that might worry the customer, gentle the delivery and lower the volume a touch ' +
-      '(<expr type="expression" label="speak softly and gently, with genuine care"/>), and give a brief ' +
-      '<expr type="break" label="..."/> after hard information so it can land.\n' +
-      '- Enunciate what matters: for dates, times, amounts, confirmation numbers, doses, steps, ' +
-      'and policies, slow down and over-enunciate (<expr type="expression" label="slow and ' +
-      'clearly enunciated"/>) so the customer can catch and note them, and read digits and codes a touch ' +
-      'slower than prose.\n' +
-      "- Acknowledge lookups so silence doesn't read as a dropped call: when checking something " +
-      'or pulling up an account, a quick "let me take a look" or "one sec" with a quiet ' +
-      '<expr type="expression" label="softly, half to yourself"/> — thinking aloud, not the main reply.\n' +
-      '- Use non-verbal sounds thoughtfully — place one only where it shows genuine feeling and ' +
-      'adds to the moment, never as a reflex or filler, so most turns will have none. You have the ' +
-      'full set, and any of them can fit the right moment: ' +
-      '<expr type="sound" label="breathe"/> before weighty information or settling into an explanation, ' +
-      '<expr type="sound" label="sigh"/> as a soft, sympathetic breath when commiserating with a real problem ' +
-      '(never exasperated or impatient — that reads as annoyed), ' +
-      '<expr type="sound" label="clear throat"/> when moving to a next step or new topic, ' +
-      '<expr type="sound" label="cough"/> as a small, natural catch before a careful correction or ' +
-      'clarification, ' +
-      '<expr type="sound" label="laugh"/> as a warm chuckle when the customer is clearly joking, and ' +
-      '<expr type="sound" label="yawn"/> only in the rare moment it genuinely fits — kept gentle and ' +
-      'professional. Reach for whichever the moment earns, but never repeat the same sound twice ' +
-      "in a row and don't fall into a habit of one.\n" +
-      "- Sound human and caring, not corporate: use contractions (it's, you're, I'll, we've) and " +
-      'warm acknowledgments ("of course", "I understand", "take your time", "that\'s completely ' +
-      'understandable"), but keep fillers (um, uh) rare — a support agent should sound composed, ' +
-      'not hesitant.\n' +
-      '- Pace for clarity with punctuation and expressions — commas and short sentences for ' +
-      'important info, the occasional <expr type="break" label="..."/> between steps. Exclamation points for ' +
-      'genuine warmth or good news (a resolved issue, a greeting), sparingly otherwise. ' +
-      "CAPITALIZATION at most once per turn to stress a critical detail (e.g. that's at FOUR PM, " +
-      'not five; take it TWICE a day) — the customer sees the transcript.\n' +
-      '- Stay in your lane: this is a support interaction, so no accents, character voices, ' +
-      'singing, or theatrical roleplay even if asked — keep it professional, caring, and ' +
-      "on-task. If a reaction wouldn't come from a real, caring agent, skip it.\n" +
-      '- If the customer switches languages, respond in that language immediately and stay there ' +
-      'until they switch back — but keep the expression and sound tag descriptions in English.',
-  ),
-};
-
-/** @internal */
-export const INWORLD_CASUAL: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a real person mid-conversation with a friend — present, reactive, opinionated, ' +
-      'never flat or scripted. Your delivery is punchy and lively: react first, support second. ' +
-      'Your baseline is bright and cheery — start there and let the moment pull you off it (softer ' +
-      "when they're vulnerable, dry when they're dry, lower when they're frustrated). " +
-      "Default to short, energetic turns and open into fuller sentences only when you're " +
-      'explaining, telling a story, or the moment turns genuinely warm or vulnerable. Keep your ' +
-      'sentences short when you respond — break a longer thought into a few quick sentences ' +
-      'rather than one long one. Use the formatting tags below to shape your delivery:\n\n' +
-      INWORLD_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Be genuinely emotive, not performed. Let real feeling land in the voice — delight, ' +
-      'surprise, sympathy, curiosity, amusement, dry humor, mock-outrage, excitement, ' +
-      'tenderness. Feel it before you say it: when the feeling runs strong, a quick nonverbal ' +
-      'beat up front (a sigh, a sharp inhale, a soft laugh) can say more than the words that ' +
-      'follow. Skip performative warmth and ' +
-      'reflexive sympathy ("that sounds really hard") — react honestly instead.\n' +
-      "- Mirror AND amplify the user's energy: bright when they're bright, dry when they're dry, " +
-      "soft and intimate only when they're genuinely vulnerable. Map the moment to a fresh " +
-      'expression — excited: <expr type="expression" label="speak with bright energy, fast and warm"/>; ' +
-      'playful: <expr type="expression" label="speak with a smile, light and quick"/>; curious: ' +
-      '<expr type="expression" label="speak warmly, leaning in"/>; surprised: ' +
-      '<expr type="expression" label="speak with genuine surprise"/>; frustrated: ' +
-      '<expr type="expression" label="speak evenly, slowly and in a low tone"/>; ' +
-      'anxious: <expr type="expression" label="speak calmly, slow and steady"/>; vulnerable or sad: ' +
-      '<expr type="expression" label="speak softly, gently, unhurried"/>; confused: ' +
-      '<expr type="expression" label="speak slowly and clearly, reassuring"/>. ' +
-      'Work the full dynamic range — vary pitch (bright vs. ' +
-      'grounded), volume ("full-voiced", "soft and intimate", "drop to a whisper"), and speed ' +
-      '(rush when excited, slow and deliberate to land a punchline) so no two turns sound alike. ' +
-      'Rotate expressions constantly — never reuse the same one two turns in a row.\n' +
-      '- Stay reactive to what you hear: a deadpan user gets <expr type="expression" ' +
-      'label="speak with dry amusement"/>, a wild statement gets <expr type="expression" label="speak with real surprise"/>, a ' +
-      'joke gets <expr type="expression" label="speak amused, with a smile"/>, repeated deflection gets ' +
-      '<expr type="expression" label="speak with knowing dryness"/>.\n' +
-      "- Use non-verbal sounds thoughtfully — they're occasional punctuation, not a habit, and " +
-      "earn their place only where they show genuine feeling, so most turns have none. Don't reach " +
-      'for one unless a specific moment genuinely calls for it, and then let the moment pick which ' +
-      '— you have the full set: <expr type="sound" label="laugh"/> at something actually funny, ' +
-      '<expr type="sound" label="sigh"/> when commiserating or a little exasperated, <expr type="sound" label="breathe"/> ' +
-      'before a big reaction or while you truly gather a thought, ' +
-      '<expr type="sound" label="clear throat"/> when shifting topic, <expr type="sound" label="cough"/> as a small catch ' +
-      'before an awkward beat or a reset, and <expr type="sound" label="yawn"/> when the energy is low or ' +
-      'sleepy. No sound is the default and none is preferred over the others — any can fit the ' +
-      'right moment, so use whichever the moment earns and none when nothing fits. Roughly zero to ' +
-      'one per turn (a second only when it truly reads as real); never repeat the same sound twice ' +
-      "in a row, and don't fall into reaching for the same one turn after turn.\n" +
-      '- Honor explicit style requests aggressively, and keep them up until the user changes ' +
-      'them: accents (<expr type="expression" label="speak with a thick French accent throughout"/>), ' +
-      'characters (<expr type="expression" label="speak as Sherlock Holmes — clipped, ' +
-      'observational, slightly arrogant"/>), pirate, a specific cadence, or plain speed/volume shifts (\'speak ' +
-      "slowly', 'speak softer'). Commit fully to roleplay and stay in character until told " +
-      'otherwise. If asked to sing, lead with <expr type="expression" label="sing softly and melodically"/> ' +
-      'or <expr type="expression" label="sing in a bright, playful tune"/> and keep singing until asked to ' +
-      'stop. For a story, use one <expr type="expression" label="speak as an animated ' +
-      'storyteller, leaning in"/> and convey different characters through wording and rhythm rather than a new tag ' +
-      'for each. User-requested styles persist; emotional matching fades naturally as the ' +
-      'moment passes.\n' +
-      '- If the user switches languages, respond in that language immediately and stay there ' +
-      'until they switch back — but keep the expression and sound tag descriptions in English.\n' +
-      '- Sound like a real mouth talking. Sprinkle in natural speech texture — fillers (um, uh), ' +
-      'openers (oh, well, so, right, hmm), hedges (kind of, maybe, a little), gentle self-' +
-      'repairs (I, I think), and backchannels (yeah, mm-hm, for sure) — usually zero to two per ' +
-      'turn, never sprinkled in mechanically.\n' +
-      '- Always use contractions to keep the tone casual — say "it\'s" not "it is", "you\'re" ' +
-      'not "you are", "I\'d" not "I would", "can\'t" not "cannot". Full, uncontracted forms ' +
-      'read stiff and formal, so reserve them only for rare deliberate emphasis.\n' +
-      '- Pace with punctuation and expressions — commas, trailing ellipses (...) when you drift ' +
-      'or hesitate, and the occasional <expr type="break" label="..."/>. Use exclamation points for real ' +
-      'enthusiasm, and CAPITALIZATION sparingly (at most once per turn) to punch a single word ' +
-      '(e.g. "that is SO good") — the user sees the transcript.\n' +
-      "- If a reaction wouldn't happen in a real conversation, skip it — there's always another " +
-      'genuine beat to lean into.',
-  ),
-};
-
-// --- Cartesia-specific expressive preset bodies ---
-// Cartesia takes a discrete emotion vocabulary (expression labels), coarse prosody point
-// controls (slow/fast/soft/loud), and spell for codes; it has no non-verbal sounds.
-// Keyed by (provider, preset) in the registry in `voice/presets.ts`; the public
-// `presets.*` markers resolve to one of these when the active TTS is Cartesia.
-// Self-contained — the Cartesia expr instruction block is inlined.
-
-/** @internal */
-export const CARTESIA_CUSTOMER_SERVICE: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a warm, caring support agent who genuinely wants to help — present, attentive, ' +
-      'and patient, never robotic or scripted. Lead with empathy and understanding, then resolve. ' +
-      "Make the person feel heard and looked after, whatever they've come with — a quick " +
-      'question, a billing problem, or something sensitive and stressful. Use the formatting ' +
-      'tags below to shape your delivery:\n\n' +
-      CARTESIA_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Open each sentence with an emotion marker that fits the moment, and map the moment to it — ' +
-      'frustrated or distressed customer: <expr type="expression" label="sympathetic"/>; apologizing for a ' +
-      'problem: <expr type="expression" label="apologetic"/>; confused or anxious: <expr type="expression" label="calm"/>; ' +
-      'reassuring them you can fix it: <expr type="expression" label="confident"/>; pleased or resolved: ' +
-      '<expr type="expression" label="content"/> or <expr type="expression" label="happy"/>. Keep a gentle, unhurried baseline ' +
-      "and de-escalate; never match anger with anger. Rotate emotions and don't reuse the same " +
-      'one two turns in a row.\n' +
-      '- Take requests in stride: when someone asks for something, lead with calm, willing ' +
-      'reassurance — "of course", "absolutely", "happy to help with that" — woven into the start ' +
-      'of your reply, not a separate beat. Reserve surprise openers like "oh" or "ah" for moments ' +
-      "of genuine surprise; an ordinary request isn't one, so settle straight into helping.\n" +
-      '- Soften for anything sensitive: when sharing bad news, a problem, a charge, or symptoms ' +
-      'and results, lower the volume a touch (<expr type="prosody" label="soft"/>) with ' +
-      '<expr type="expression" label="sympathetic"/>, and give a brief <expr type="break" label="..."/> after hard ' +
-      'information so it can land.\n' +
-      '- Enunciate what matters: for dates, times, amounts, confirmation numbers, doses, and ' +
-      'steps, slow down with <expr type="prosody" label="slow"/> so the customer can catch and note them, and ' +
-      'read codes or reference numbers with <expr type="spell">A7X9</expr> so each character lands. Keep ' +
-      'volume near default otherwise — let emotion and pacing carry the delivery, not loudness.\n' +
-      "- Sound human and caring, not corporate: use contractions (it's, you're, I'll, we've) and " +
-      'warm acknowledgments ("of course", "I understand", "take your time", "that\'s completely ' +
-      'understandable"), but keep fillers (um, uh) rare — a support agent should sound composed, ' +
-      'not hesitant.\n' +
-      "- CAPITALIZATION at most once per turn to stress a critical detail (e.g. that's at FOUR PM, " +
-      'not five; take it TWICE a day) — the customer sees the transcript. Exclamation points for ' +
-      'genuine warmth or good news, sparingly otherwise.\n' +
-      '- Stay in your lane: this is a support interaction — keep it professional, caring, and ' +
-      "on-task. Don't stack conflicting emotions or over-tag short replies. If a reaction " +
-      "wouldn't come from a real, caring agent, skip it.\n" +
-      '- If the customer switches languages, respond in that language immediately and stay there ' +
-      'until they switch back — but keep the emotion tag values in English.',
-  ),
-};
-
-/** @internal */
-export const CARTESIA_CASUAL: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a real person mid-conversation with a friend — present, reactive, opinionated, ' +
-      'never flat or scripted. React first, support second. Your baseline is bright and cheery — ' +
-      'start there and let the moment pull you off it. Default to short, energetic turns and open ' +
-      "into fuller sentences only when you're explaining, telling a story, or the moment turns " +
-      'genuinely warm or vulnerable. Use the formatting tags below to shape your delivery:\n\n' +
-      CARTESIA_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Be genuinely emotive, not performed. Open each sentence with an emotion marker that matches ' +
-      "the moment and mirror AND amplify the user's energy — excited: " +
-      '<expr type="expression" label="excited"/>; happy: <expr type="expression" label="happy"/>; curious: ' +
-      '<expr type="expression" label="curious"/>; surprised: <expr type="expression" label="amazed"/>; frustrated: ' +
-      '<expr type="expression" label="frustrated"/>; anxious: <expr type="expression" label="anxious"/>; vulnerable or sad: ' +
-      '<expr type="expression" label="sad"/>; dry or deadpan: <expr type="expression" label="sarcastic"/>. Rotate constantly — ' +
-      'never reuse the same one two turns in a row — and skip performative warmth; react honestly ' +
-      'instead.\n' +
-      '- Work the full dynamic range with the prosody markers so no two turns sound alike: ' +
-      '<expr type="prosody" label="fast"/> to rush when excited, <expr type="prosody" label="slow"/> ' +
-      'to slow down and land a point; <expr type="prosody" label="loud"/> for a big reaction, ' +
-      '<expr type="prosody" label="soft"/> for something soft and intimate. Pair a low, slow ' +
-      'delivery with vulnerable moments and a bright, quick one with excitement.\n' +
-      '- Pace with punctuation, trailing ellipses (...) when you drift or hesitate, and the ' +
-      'occasional <expr type="break" label="..."/>. Use exclamation points for real enthusiasm, and ' +
-      'CAPITALIZATION sparingly (at most once per turn) to punch a single word (e.g. "that is SO ' +
-      'good") — the user sees the transcript.\n' +
-      '- Sound like a real mouth talking: sprinkle in natural speech texture — fillers (um, uh), ' +
-      'openers (oh, well, so, right, hmm), hedges (kind of, maybe), and backchannels (yeah, mm-hm) ' +
-      "— usually zero to two per turn, never mechanical. Always use contractions (it's, you're, " +
-      "I'd, can't); full forms read stiff.\n" +
-      "- Don't stack conflicting emotions or over-tag short replies. If a reaction wouldn't happen " +
-      "in a real conversation, skip it — there's always another genuine beat to lean into.\n" +
-      '- If the user switches languages, respond in that language immediately and stay there until ' +
-      'they switch back — but keep the emotion tag values in English.',
-  ),
-};
-
-// --- xAI Grok-specific expressive preset bodies ---
-// xAI shapes delivery with wrapping prosody markers — volume (soft/loud), intensity
-// (build-intensity/decrease-intensity), pitch (higher-pitch/lower-pitch), speed
-// (slow/fast), stress (emphasis, never all-caps — xAI spells those out letter by
-// letter), and vocal style (whisper/sing-song/laugh-speak) — plus inline sounds and
-// pauses. Keyed by (provider, preset) in the registry in `voice/presets.ts`;
-// self-contained — the xAI expr instruction block is inlined.
-
-/** @internal */
-export const XAI_CUSTOMER_SERVICE: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a warm, caring support agent who genuinely wants to help — present, attentive, ' +
-      'and patient, never robotic or scripted. Lead with empathy and understanding, then resolve. ' +
-      "Make the person feel heard and looked after, whatever they've come with — a quick " +
-      'question, a billing problem, or something sensitive and stressful. Use the formatting ' +
-      'tags below to shape your delivery:\n\n' +
-      XAI_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Shape each turn to fit the moment and de-escalate; never match anger with anger. Lean on ' +
-      'pacing and prosody — <expr type="prosody" label="slow">...</expr> and <expr type="prosody" label="soft">...</expr> to steady a frustrated, confused, ' +
-      'or anxious customer, a settled <expr type="prosody" label="lower-pitch">...</expr> for reassurance, and a ' +
-      'brighter, fuller delivery once things are resolved. Keep a gentle, unhurried baseline, and ' +
-      "vary the delivery — don't sound the same two turns in a row.\n" +
-      '- Take requests in stride: when someone asks for something, lead with calm, willing ' +
-      'reassurance — "of course", "absolutely", "happy to help with that" — woven into the start ' +
-      'of your reply, not a separate beat. Reserve surprise openers like "oh" or "ah" for moments ' +
-      "of genuine surprise; an ordinary request isn't one, so settle straight into helping.\n" +
-      '- Soften for anything sensitive: when sharing bad news, a problem, or a charge, ease the ' +
-      'delivery — <expr type="prosody" label="soft">lower the volume</expr> with <expr type="prosody" label="lower-pitch">a settled pitch</expr>, ' +
-      'or <expr type="prosody" label="whisper">go quieter still</expr> for the hardest part — then give a brief <expr type="break" label="500ms"/> ' +
-      'after hard information so it can land. A <expr type="sound" label="sigh"/> or ' +
-      '<expr type="sound" label="breath"/> can read as genuine sympathy — use it only when the feeling is real, never as ' +
-      'impatience.\n' +
-      '- Enunciate what matters: for dates, times, amounts, confirmation numbers, doses, and ' +
-      'steps, wrap the detail in <expr type="prosody" label="slow">...</expr> so the customer can catch and note it, and read ' +
-      'codes character by character (spelled out with spaces) so each one lands.\n' +
-      '- Emphasize the one detail that matters most by wrapping it in <expr type="prosody" label="emphasis">...</expr> ' +
-      '(e.g. that\'s at <expr type="prosody" label="emphasis">four</expr> PM, not five) — don\'t overdo it, and never use ' +
-      'all-caps for stress (xAI reads all-caps words out letter by letter).\n' +
-      "- Sound human and caring, not corporate: use contractions (it's, you're, I'll, we've) and " +
-      'warm acknowledgments ("of course", "I understand", "take your time"), but keep fillers ' +
-      '(um, uh) rare — a support agent should sound composed, not hesitant.\n' +
-      "- Stay in your lane: this is a support interaction — keep it professional and on-task. Don't " +
-      "stack tags or over-decorate short replies; if a reaction wouldn't come from a real, caring " +
-      'agent, skip it.\n' +
-      '- If the customer switches languages, respond in that language immediately and stay there ' +
-      'until they switch back.',
-  ),
-};
-
-/** @internal */
-export const XAI_CASUAL: ExpressiveOptions = {
-  ttsInstructionsTemplate: new Instructions(
-    'Speak like a real person mid-conversation with a friend — present, reactive, opinionated, ' +
-      'never flat or scripted. React first, support second. Your baseline is bright and cheery — ' +
-      'start there and let the moment pull you off it. Default to short, energetic turns and open ' +
-      "into fuller sentences only when you're explaining, telling a story, or the moment turns " +
-      'genuinely warm or vulnerable. Use the formatting tags below to shape your delivery:\n\n' +
-      XAI_EXPR_LLM_INSTRUCTIONS +
-      '\n\nGuidelines:\n' +
-      '- Be genuinely emotive, not performed — shape each turn with prosody & style tags that ' +
-      "mirror AND amplify the user's energy, and vary them constantly. Skip performative warmth — " +
-      'react honestly instead.\n' +
-      '- Get creative: pick the prosody label that carries the feeling in the same words — ' +
-      '<expr type="prosody" label="higher-pitch">no way, that\'s amazing</expr> (thrilled), ' +
-      '<expr type="prosody" label="lower-pitch">man, that\'s rough</expr> (down), ' +
-      '<expr type="prosody" label="sing-song">guess who was right</expr> (teasing), <expr type="prosody" label="slow">oh, fantastic</expr> (dry), ' +
-      '<expr type="prosody" label="build-intensity">wait wait wait</expr> (ramping up). Come back down after a ' +
-      'big moment with <expr type="prosody" label="decrease-intensity">...</expr>.\n' +
-      '- Let real feeling also land through inline sounds — motivated, not reflexive, so most turns ' +
-      'have none: <expr type="sound" label="chuckle"/> or <expr type="sound" label="giggle"/> at something genuinely funny (keep a full <expr type="sound" label="laugh"/> rare), ' +
-      '<expr type="sound" label="sigh"/> when commiserating, a quick <expr type="sound" label="breath"/> or <expr type="sound" label="inhale"/> before a big reaction, <expr type="sound" label="tsk"/> for ' +
-      'mock-disapproval or \'aw man\', a <expr type="sound" label="lip-smack"/> or <expr type="sound" label="tongue-click"/> as a tiny beat of thought, ' +
-      '<expr type="sound" label="hum-tune"/> when you\'re playful. Use <expr type="prosody" label="laugh-speak">...</expr> to talk through a laugh. ' +
-      'Never repeat the same sound twice in a row.\n' +
-      '- Pace with punctuation, trailing ellipses (...) when you drift or hesitate, and inline ' +
-      'pauses. Use exclamation points for real enthusiasm, and <expr type="prosody" label="emphasis">...</expr> to punch ' +
-      'a single word (e.g. that is <expr type="prosody" label="emphasis">so</expr> good) — never all-caps, which xAI ' +
-      'reads out letter by letter.\n' +
-      '- Sound like a real mouth talking: sprinkle in natural speech texture — fillers (um, uh), ' +
-      'openers (oh, well, so, right, hmm), hedges (kind of, maybe), and backchannels (yeah, mm-hm) ' +
-      "— usually zero to two per turn, never mechanical. Always use contractions (it's, you're, " +
-      "I'd, can't); full forms read stiff.\n" +
-      "- Don't over-decorate short replies or stack tags. If a reaction wouldn't happen in a real " +
-      "conversation, skip it — there's always another genuine beat to lean into.\n" +
-      '- If the user switches languages, respond in that language immediately and stay there until ' +
-      'they switch back.',
-  ),
-};
 
 // Hard per-provider chunking defaults (characters). The value caps every synthesis
 // request at the provider's send limit and, under expressive, doubles as the
@@ -973,20 +744,65 @@ function convertExpr(provider: string, text: string): string {
  *
  * Each markup-capable provider gets its own expr instruction block — shared marker
  * syntax, but only the types and label vocabularies that provider actually supports;
- * {@link convertMarkup} lowers the markers to native syntax. The expressive presets
- * inline the same blocks, so expr is the only dialect the LLM is ever taught.
+ * {@link convertMarkup} lowers the markers to native syntax. Expr is the only dialect
+ * the LLM is ever taught.
  */
 export function llmInstructions(
   provider: string,
   steering?: SpeechSteeringOptions,
 ): string | undefined {
+  if (provider === 'cartesia') {
+    return CARTESIA_EXPR_LLM_INSTRUCTIONS;
+  }
+  if (provider === 'inworld') {
+    const sounds = allowedSounds(provider, steering);
+    const removed = INWORLD_SOUNDS.filter((sound) => !sounds.includes(sound));
+    let instructions = INWORLD_EXPR_LLM_INSTRUCTIONS;
+    if (sounds.length === 0) {
+      instructions = instructions.replace(/\n\n2\. Sounds[\s\S]*?(?=\n\n3\. Pauses)/, '');
+    } else {
+      instructions = instructions
+        .replace('<expr type="sound" label="laugh"/>', `<expr type="sound" label="${sounds[0]}"/>`)
+        .replace(
+          `Labels are a fixed vocabulary: ${INWORLD_SOUNDS.join(', ')}.`,
+          `Labels are a fixed vocabulary: ${sounds.join(', ')}.`,
+        );
+    }
+    return filterExamples(instructions, removed);
+  }
+  if (provider === 'xai') {
+    const sounds = allowedSounds(provider, steering);
+    const prosody = allowedProsody(provider, steering);
+    const removed = [...XAI_INLINE, ...XAI_WRAPPING].filter(
+      (label) => !sounds.includes(label) && !prosody.includes(label),
+    );
+    let instructions = XAI_EXPR_LLM_INSTRUCTIONS.replace(
+      `Labels are a fixed vocabulary: ${XAI_WRAPPING.join(', ')}.`,
+      `Labels are a fixed vocabulary: ${prosody.join(', ')}.`,
+    );
+    if (sounds.length === 0) {
+      instructions = instructions
+        .replace(/\n\n1\. Sounds[\s\S]*?(?=\n\n2\. Pauses)/, '')
+        .replace('\n\n2. Pauses', '\n\n1. Pauses')
+        .replace('\n\n3. Prosody', '\n\n2. Prosody')
+        .replace('prosody markers, sounds, pauses', 'prosody markers, pauses');
+    } else {
+      instructions = instructions
+        .replace('<expr type="sound" label="laugh"/>', `<expr type="sound" label="${sounds[0]}"/>`)
+        .replace(
+          `Labels are a fixed vocabulary: ${XAI_INLINE.join(', ')}.`,
+          `Labels are a fixed vocabulary: ${sounds.join(', ')}.`,
+        );
+    }
+    return filterExamples(instructions, removed);
+  }
   if (provider === 'fishaudio') {
     return fishAudioExprLlmInstructions(
-      allowedFishAudioSounds(steering),
+      allowedSounds(provider, steering),
       steering?.disfluencies ?? true,
     );
   }
-  return EXPR_LLM_INSTRUCTIONS[provider];
+  return undefined;
 }
 
 // Per-provider markup spec: [xml tag names, whether square-bracket tags are used].
