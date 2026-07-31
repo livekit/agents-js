@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { RoomServiceClient } from 'livekit-server-sdk';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { runWithJobContextAsync } from '../job.js';
 import { initializeLogger } from '../log.js';
@@ -44,6 +44,10 @@ vi.mock('./utils.js', async (importOriginal) => {
 
 beforeAll(() => {
   initializeLogger({ level: 'silent', pretty: false });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 function makeAvatar(overrides: Partial<ConstructorParameters<typeof AvatarSession>[0]> = {}) {
@@ -133,51 +137,23 @@ describe('AvatarSession constructor', () => {
   });
 
   it('uses LIVEKIT_API_KEY fallback credentials', () => {
-    const oldKey = process.env.LIVEKIT_API_KEY;
-    const oldSecret = process.env.LIVEKIT_API_SECRET;
-    const oldInferenceKey = process.env.LIVEKIT_INFERENCE_API_KEY;
-    const oldInferenceSecret = process.env.LIVEKIT_INFERENCE_API_SECRET;
-    try {
-      delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      process.env.LIVEKIT_API_KEY = 'env-key';
-      process.env.LIVEKIT_API_SECRET = 'env-secret';
-      const av = new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' });
-      expect(av['apiKey']).toBe('env-key');
-      expect(av['apiSecret']).toBe('env-secret');
-    } finally {
-      if (oldKey === undefined) delete process.env.LIVEKIT_API_KEY;
-      else process.env.LIVEKIT_API_KEY = oldKey;
-      if (oldSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
-      else process.env.LIVEKIT_API_SECRET = oldSecret;
-      if (oldInferenceKey === undefined) delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      else process.env.LIVEKIT_INFERENCE_API_KEY = oldInferenceKey;
-      if (oldInferenceSecret === undefined) delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      else process.env.LIVEKIT_INFERENCE_API_SECRET = oldInferenceSecret;
-    }
+    vi.stubEnv('LIVEKIT_INFERENCE_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_SECRET', undefined);
+    vi.stubEnv('LIVEKIT_API_KEY', 'env-key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'env-secret');
+
+    const av = new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' });
+    expect(av['apiKey']).toBe('env-key');
+    expect(av['apiSecret']).toBe('env-secret');
   });
 
   it('rejects missing credentials', () => {
-    const oldKey = process.env.LIVEKIT_API_KEY;
-    const oldSecret = process.env.LIVEKIT_API_SECRET;
-    const oldInferenceKey = process.env.LIVEKIT_INFERENCE_API_KEY;
-    const oldInferenceSecret = process.env.LIVEKIT_INFERENCE_API_SECRET;
-    try {
-      delete process.env.LIVEKIT_API_KEY;
-      delete process.env.LIVEKIT_API_SECRET;
-      delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      expect(() => new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' })).toThrow();
-    } finally {
-      if (oldKey === undefined) delete process.env.LIVEKIT_API_KEY;
-      else process.env.LIVEKIT_API_KEY = oldKey;
-      if (oldSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
-      else process.env.LIVEKIT_API_SECRET = oldSecret;
-      if (oldInferenceKey === undefined) delete process.env.LIVEKIT_INFERENCE_API_KEY;
-      else process.env.LIVEKIT_INFERENCE_API_KEY = oldInferenceKey;
-      if (oldInferenceSecret === undefined) delete process.env.LIVEKIT_INFERENCE_API_SECRET;
-      else process.env.LIVEKIT_INFERENCE_API_SECRET = oldInferenceSecret;
-    }
+    vi.stubEnv('LIVEKIT_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_API_SECRET', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_KEY', undefined);
+    vi.stubEnv('LIVEKIT_INFERENCE_API_SECRET', undefined);
+
+    expect(() => new AvatarSession({ model: 'lemonslice', baseURL: 'https://x/v1' })).toThrow();
   });
 
   it('supports custom identity', () => {
@@ -462,17 +438,11 @@ it.each([
 });
 
 it('start without livekitUrl raises', async () => {
-  const oldUrl = process.env.LIVEKIT_URL;
-  try {
-    delete process.env.LIVEKIT_URL;
-    const av = makeAvatar();
-    await expect(
-      av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never),
-    ).rejects.toThrow(/livekitUrl/);
-  } finally {
-    if (oldUrl === undefined) delete process.env.LIVEKIT_URL;
-    else process.env.LIVEKIT_URL = oldUrl;
-  }
+  vi.stubEnv('LIVEKIT_URL', undefined);
+
+  await expect(
+    makeAvatar().start(new FakeAgentSession() as never, new FakeConnectedRoom() as never),
+  ).rejects.toThrow(/livekitUrl/);
 });
 
 it('start uses job room name and sid before the rtc room is connected', async () => {
