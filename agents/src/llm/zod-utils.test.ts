@@ -336,7 +336,7 @@ describe('Zod Utils', () => {
         }
       });
 
-      it('should keep defaulted fields non-nullable without strict tool sentinels', () => {
+      it('should keep defaulted fields non-nullable when not generating a strict schema', () => {
         const schema = z4.object({
           count: z4.number().default(5),
           label: z4.enum(['a', 'b']).default('a'),
@@ -349,6 +349,7 @@ describe('Zod Utils', () => {
 
         for (const field of ['count', 'label', 'value', 'child']) {
           expect(jsonSchemaAllowsNull(properties[field]!, jsonSchema), field).toBe(false);
+          expect(properties[field], field).toHaveProperty('default');
         }
       });
 
@@ -357,10 +358,43 @@ describe('Zod Utils', () => {
           value: z4.literal(['x', null]).default('x'),
         });
 
-        const jsonSchema = zodSchemaToJsonSchema(schema, true, false) as Record<string, unknown>;
-        const properties = jsonSchema.properties as JSONSchemaProperties;
+        for (const strict of [false, true]) {
+          const jsonSchema = zodSchemaToJsonSchema(schema, true, strict) as Record<string, unknown>;
+          const properties = jsonSchema.properties as JSONSchemaProperties;
 
-        expect(jsonSchemaAllowsNull(properties.value!, jsonSchema)).toBe(true);
+          expect(jsonSchemaAllowsNull(properties.value!, jsonSchema), `strict=${strict}`).toBe(
+            true,
+          );
+        }
+      });
+
+      it('should not treat a property named "default" as a schema keyword', () => {
+        const schema = z4.object({
+          default: z4.string(),
+          other: z4.number(),
+          cfg: z4.object({ default: z4.boolean() }),
+        });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.default).toEqual({ type: 'string' });
+        expect(properties.other).toEqual({ type: 'number' });
+        expect((properties.cfg as Record<string, unknown>).properties).toEqual({
+          default: { type: 'boolean' },
+        });
+        expect(properties).not.toHaveProperty('anyOf');
+      });
+
+      it('should not double up the null branch of an already nullable union', () => {
+        const schema = z3.object({ role: z3.string().default('user') });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.role).toEqual({
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+        });
       });
 
       it('should handle nested objects in strict mode', () => {

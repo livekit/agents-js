@@ -411,6 +411,48 @@ describe('executeToolCall', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toMatch(/Arguments parsing failed/);
   });
+
+  it('should preserve a genuine null for a nullable defaulted argument', async () => {
+    const maybe = tool({
+      name: 'maybe',
+      description: 'maybe',
+      parameters: z.object({ n: z.number().nullable().default(3) }),
+      execute: async ({ n }) => n,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-nullable-1',
+        name: 'maybe',
+        args: '{"n":null}',
+      }),
+      new ToolContext([maybe]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(null);
+  });
+
+  it('should accept an argument named "default"', async () => {
+    const configure = tool({
+      name: 'configure',
+      description: 'configure',
+      parameters: z.object({ default: z.string(), retries: z.number().default(2) }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-name-1',
+        name: 'configure',
+        args: '{"default":"eco","retries":null}',
+      }),
+      new ToolContext([configure]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ default: 'eco', retries: 2 });
+  });
 });
 
 describe('computeChatCtxDiff', () => {

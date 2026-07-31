@@ -141,17 +141,49 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function applyNullSentinelForDefaults(jsonSchema: unknown): void {
-  if (Array.isArray(jsonSchema)) {
-    jsonSchema.forEach(applyNullSentinelForDefaults);
-    return;
-  }
+/**
+ * Descends only through positions that hold subschemas, so a user-declared property named
+ * `default` (or `items`, `not`, ...) is never treated as a schema keyword.
+ *
+ * `unionAllowsNull` marks a variant whose enclosing union already advertises a null branch;
+ * such a variant drops `default` without widening, since the sibling branch is the sentinel.
+ */
+function applyNullSentinelForDefaults(jsonSchema: unknown, unionAllowsNull: boolean = false): void {
   if (!isPlainObject(jsonSchema)) {
     return;
   }
 
-  for (const value of Object.values(jsonSchema)) {
-    applyNullSentinelForDefaults(value);
+  for (const mapKey of ['$defs', 'definitions', 'properties'] as const) {
+    const subschemas = jsonSchema[mapKey];
+    if (isPlainObject(subschemas)) {
+      for (const subschema of Object.values(subschemas)) {
+        applyNullSentinelForDefaults(subschema);
+      }
+    }
+  }
+
+  for (const key of ['items', 'prefixItems', 'additionalProperties', 'not'] as const) {
+    const subschema = jsonSchema[key];
+    if (Array.isArray(subschema)) {
+      for (const item of subschema) {
+        applyNullSentinelForDefaults(item);
+      }
+    } else {
+      applyNullSentinelForDefaults(subschema);
+    }
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const variants = jsonSchema[unionKey];
+    if (!Array.isArray(variants)) {
+      continue;
+    }
+    const hasNullVariant =
+      unionKey !== 'allOf' &&
+      variants.some((variant) => isPlainObject(variant) && variant.type === 'null');
+    for (const variant of variants) {
+      applyNullSentinelForDefaults(variant, hasNullVariant);
+    }
   }
 
   if (!Object.prototype.hasOwnProperty.call(jsonSchema, 'default')) {
@@ -159,7 +191,9 @@ function applyNullSentinelForDefaults(jsonSchema: unknown): void {
   }
 
   delete jsonSchema.default;
-  addNullSentinel(jsonSchema);
+  if (!unionAllowsNull) {
+    addNullSentinel(jsonSchema);
+  }
 }
 
 function addNullSentinel(jsonSchema: Record<string, unknown>): void {
