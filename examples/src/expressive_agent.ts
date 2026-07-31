@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 // cue-cli e2e harness agent for expressive mode (expr marker dialect).
 // Registered with explicit dispatch as `expressive-agent-js`.
 import {
@@ -13,7 +12,6 @@ import {
   defineAgent,
   inference,
   tool,
-  voice,
 } from '@livekit/agents';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -42,7 +40,7 @@ export default defineAgent({
       // Inworld: free-form expression labels (with spaces) — exercises both the
       // expr dialect lowering and the transcript pacing fix.
       tts: new inference.TTS({ model: 'inworld/inworld-tts-2' }),
-      expressive: voice.presets.CASUAL,
+      expressive: true,
     });
 
     await session.start({ agent, room: ctx.room });

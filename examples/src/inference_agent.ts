@@ -74,7 +74,7 @@ export default defineAgent({
         voice: 'Sarah',
         modelOptions: { delivery_mode: 'CREATIVE' },
       }),
-      expressive: voice.presets.CASUAL,
+      expressive: true,
       // Flip userState to "away" after 10s of mutual silence so we can
       // check whether they're still there (default is 15s).
       userAwayTimeout: 10.0,

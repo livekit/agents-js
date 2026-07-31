@@ -380,7 +380,7 @@ export default defineAgent({
         voice: 'Nate',
         modelOptions: { delivery_mode: 'CREATIVE' },
       }),
-      expressive: voice.presets.CASUAL,
+      expressive: true,
       userData: {
         filename: 'survey_results.csv',
         candidateName: '',

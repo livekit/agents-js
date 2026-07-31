@@ -27,7 +27,13 @@ import {
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
 import type { FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
-import { AgentHandoffItem, ChatContext, ChatMessage, Instructions } from '../llm/chat_context.js';
+import {
+  AgentHandoffItem,
+  ChatContext,
+  ChatMessage,
+  Instructions,
+  isInstructions,
+} from '../llm/chat_context.js';
 import type {
   LLM,
   RealtimeModel,
@@ -43,6 +49,7 @@ import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metri
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
+import { steeringInstructions } from '../tts/_provider_format.js';
 import type { TTS, TTSError } from '../tts/tts.js';
 import {
   DEFAULT_API_CONNECT_OPTIONS,
@@ -92,7 +99,6 @@ import {
   type KeytermsOptions,
   resolveKeytermsOptions,
 } from './keyterm_detection.js';
-import type { Preset } from './presets.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
@@ -179,25 +185,20 @@ export function resolveRecordingOptions(
  * Configuration for the expressive pipeline.
  *
  * Controls how TTS markup instructions are injected into the LLM when expressive is
- * enabled. All keys are optional; common shapes:
- *
- * - `{ preset: Preset.CASUAL }` — a domain preset, resolved to the active
- *   TTS provider's tuned tags (see `voice/presets`). Prefer the `presets.*` constants.
- * - `{ preset: ..., ttsInstructionsAppend: '...' }` — a preset plus your own
- *   rules appended after it resolves.
- * - `{ ttsInstructionsTemplate: '...' }` — a fully custom prompt.
- *
- * Any explicit template overrides the corresponding part of the resolved preset; unset
- * parts fall back to the resolved preset (or the provider-agnostic default).
+ * enabled. The provider-neutral instructions infer the appropriate register from each
+ * conversational turn. Use `speechSteering` only to opt out of default behavior, or
+ * provide a custom template or appended instructions for application-specific rules.
  */
 export interface ExpressiveOptions {
-  preset?: Preset;
   speechSteering?: SpeechSteeringOptions;
   ttsInstructionsTemplate?: Instructions | string;
   ttsInstructionsAppend?: string;
 }
 
-/** Non-verbal vocalizations a TTS may produce. Omitted fields default to off. */
+/**
+ * Non-verbal vocalizations a TTS may produce. This is a sparse opt-out: omitted fields
+ * default to on, and a category set to `false` is never advertised to the LLM.
+ */
 export interface NonverbalOptions {
   laughing?: boolean;
   breathing?: boolean;
@@ -208,10 +209,17 @@ export interface NonverbalOptions {
   reflexSounds?: boolean;
 }
 
-/** Provider-agnostic controls for generated speech delivery. */
+/**
+ * Provider-agnostic controls for generated speech delivery. Every field is a sparse
+ * override on the default full sound vocabulary and light fillers.
+ */
 export interface SpeechSteeringOptions {
   disfluencies?: boolean;
-  nonverbalSounds?: NonverbalOptions;
+  /**
+   * `true` or omission keeps every sound, `false` disables every sound, and an object
+   * disables only categories explicitly set to `false`.
+   */
+  nonverbalSounds?: boolean | NonverbalOptions;
   pace?: 'slow' | 'normal' | 'fast';
 }
 
@@ -223,6 +231,37 @@ export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
   ),
   speechSteering: { disfluencies: true },
 };
+
+function appendInstructions(template: Instructions | string, extra: string): Instructions {
+  if (isInstructions(template)) {
+    return new Instructions(template.common + '\n\n' + extra, {
+      audio: template.audio,
+      text: template.text,
+    });
+  }
+  return new Instructions(template + '\n\n' + extra);
+}
+
+/** Resolve expressive options against framework defaults for a provider. */
+export function resolveExpressiveOptions(
+  expr: ExpressiveOptions,
+  options: { providerKey: string; defaultOptions: ExpressiveOptions },
+): ExpressiveOptions {
+  const { providerKey, defaultOptions } = options;
+  let ttsTemplate = expr.ttsInstructionsTemplate ?? defaultOptions.ttsInstructionsTemplate!;
+  const speechSteering = {
+    ...defaultOptions.speechSteering,
+    ...expr.speechSteering,
+  };
+  const steering = steeringInstructions(providerKey, speechSteering);
+  if (steering) {
+    ttsTemplate = appendInstructions(ttsTemplate, steering);
+  }
+  if (expr.ttsInstructionsAppend) {
+    ttsTemplate = appendInstructions(ttsTemplate, expr.ttsInstructionsAppend);
+  }
+  return { ttsInstructionsTemplate: ttsTemplate, speechSteering };
+}
 
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
@@ -376,7 +415,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * provider's markup tags (emotion/expression/pauses/...), the tags are converted
    * to the provider's native syntax before synthesis, and stripped from the room
    * transcript. Pass `true` for the provider-agnostic default prompt, or an
-   * {@link ExpressiveOptions} (e.g. a `presets.*` constant) to tune it.
+   * {@link ExpressiveOptions} to tune it.
    * @defaultValue false
    */
   expressive?: boolean | ExpressiveOptions;

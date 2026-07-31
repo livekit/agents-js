@@ -388,7 +388,7 @@ export default defineAgent({
         voice: 'Sarah',
         modelOptions: { delivery_mode: 'CREATIVE', speaking_rate: 1.1 },
       }),
-      expressive: voice.presets.CUSTOMER_SERVICE,
+      expressive: true,
       userData: userdata,
       maxToolSteps: 10,
       // Flip userState to "away" after 10s of mutual silence so we can
