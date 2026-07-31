@@ -410,6 +410,57 @@ it('start sends mint inputs and no token', async () => {
   expect(captured?.room_sid).toBe('RM_789');
 });
 
+it('start warns when the gateway minted a different avatar identity', async () => {
+  const fetchMock = vi.fn(async () =>
+    jsonResponse({
+      session_id: 'AVS_1',
+      provider_session_id: 'ls_1',
+      avatar_identity: 'gateway-normalized-avatar',
+    }),
+  );
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  // The logger is the process-wide `log()` singleton, so drop calls made by earlier tests.
+  const warn = vi.spyOn(av['logger'], 'warn').mockClear();
+  await av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never, {
+    livekitUrl: 'wss://example.livekit.cloud',
+  });
+
+  expect(warn).toHaveBeenCalledWith(
+    expect.objectContaining({
+      requestedIdentity: 'lemonslice-inference-avatar',
+      mintedIdentity: 'gateway-normalized-avatar',
+    }),
+    expect.stringContaining('different identity than requested'),
+  );
+});
+
+it.each([
+  ['echoes the requested identity', 'lemonslice-inference-avatar'],
+  ['omits avatar_identity', undefined],
+])('start does not warn when the gateway %s', async (_label, avatarIdentity) => {
+  const fetchMock = vi.fn(async () =>
+    jsonResponse({
+      session_id: 'AVS_1',
+      provider_session_id: 'ls_1',
+      avatar_identity: avatarIdentity,
+    }),
+  );
+
+  const av = makeAvatar({ fetch: fetchMock as typeof fetch });
+  // The logger is the process-wide `log()` singleton, so drop calls made by earlier tests.
+  const warn = vi.spyOn(av['logger'], 'warn').mockClear();
+  await av.start(new FakeAgentSession() as never, new FakeConnectedRoom() as never, {
+    livekitUrl: 'wss://example.livekit.cloud',
+  });
+
+  // Scoped to the mismatch message: the shared logger also carries unrelated warnings.
+  expect(warn).not.toHaveBeenCalledWith(
+    expect.anything(),
+    expect.stringContaining('different identity than requested'),
+  );
+});
+
 it('start without livekitUrl raises', async () => {
   const oldUrl = process.env.LIVEKIT_URL;
   try {

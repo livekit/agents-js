@@ -78,6 +78,8 @@ type CreateSessionResponse = {
   session_id?: string;
   provider_session_id?: string;
   terminate_token?: string;
+  /** The identity the gateway minted the worker token for; authoritative over the local value. */
+  avatar_identity?: string;
   sample_rate?: number;
 };
 
@@ -259,6 +261,24 @@ export class AvatarSession extends BaseAvatarSession {
             providerSessionId: this._providerSessionId,
           },
           'avatar gateway create response had no terminate_token; this session cannot be explicitly terminated and will bill until its provider idle timeout',
+        );
+      }
+
+      // The worker joins under the identity in the minted token, so a mismatch means every
+      // identity-keyed operation here (RPC destination, join wait, removeParticipant cleanup)
+      // is addressing a participant that will never exist. Older gateways omit the field.
+      if (
+        createResp.avatar_identity &&
+        createResp.avatar_identity !== this.avatarParticipantIdentity
+      ) {
+        this.logger.warn(
+          {
+            provider: this.providerName,
+            sessionId: this._sessionId,
+            requestedIdentity: this.avatarParticipantIdentity,
+            mintedIdentity: createResp.avatar_identity,
+          },
+          'avatar gateway minted the worker token for a different identity than requested; the avatar participant will join as the minted identity and this session will not reach it',
         );
       }
 
