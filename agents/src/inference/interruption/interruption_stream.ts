@@ -54,8 +54,8 @@ export class InterruptionStreamSentinel {
     return { type: 'overlap-speech-started', speechDuration, startedAt, userSpeakingSpan };
   }
 
-  static overlapSpeechEnded(endedAt: number): OverlapSpeechEnded {
-    return { type: 'overlap-speech-ended', endedAt };
+  static overlapSpeechEnded(endedAt: number, agentEnded = false): OverlapSpeechEnded {
+    return { type: 'overlap-speech-ended', endedAt, agentEnded };
   }
 
   static flush(): Flush {
@@ -287,6 +287,7 @@ export class InterruptionStreamBase {
                 type: 'overlapping_speech',
                 detectedAt: chunk.endedAt,
                 isInterruption: false,
+                agentEnded: chunk.agentEnded,
                 overlapStartedAt: this.overlapSpeechStartedAt,
                 speechInput: e.speechInput,
                 probabilities: e.probabilities,

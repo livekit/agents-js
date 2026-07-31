@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-baseten",
-  "version": "1.5.4",
+  "version": "1.6.0",
   "description": "Baseten plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -53,7 +53,7 @@
     "@microsoft/api-extractor": "^7.35.0",
     "@types/node": "^22.18.11",
     "@types/ws": "catalog:",
-    "tsx": "^4.7.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {

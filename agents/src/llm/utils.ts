@@ -5,6 +5,7 @@ import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import type { JSONSchema7 } from 'json-schema';
 import { jsonrepair } from 'jsonrepair';
 import sharp from 'sharp';
+import { log } from '../log.js';
 import type { UnknownUserData } from '../voice/run_context.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -51,11 +52,43 @@ function partialMarkerLength(content: string, markers: string[]): number {
   return longest;
 }
 
+function flattenDeltaContent(content: string | unknown[] | null | undefined) {
+  if (content === null || content === undefined || typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (typeof part === 'string') {
+        parts.push(part);
+        continue;
+      }
+
+      const text =
+        typeof part === 'object' && part !== null && 'text' in part ? part.text : undefined;
+      if (typeof text === 'string') {
+        parts.push(text);
+      }
+    }
+
+    // No text part carries no content, unlike a part containing an empty string.
+    return parts.length > 0 ? parts.join('') : undefined;
+  }
+
+  log().warn(
+    { contentType: typeof content },
+    'unexpected streaming delta content type; dropping the chunk',
+  );
+  return undefined;
+}
+
 export function stripThinkingTokens(
-  content: string | null | undefined,
+  content: string | unknown[] | null | undefined,
   state: ThinkingTokenFilter,
   { final = false }: { final?: boolean } = {},
 ): string | undefined {
+  content = flattenDeltaContent(content);
   if (content !== null && content !== undefined) {
     state.buffer += content;
   }

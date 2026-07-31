@@ -38,6 +38,7 @@ import {
   type InputTranscriptionCompleted,
   LLM,
   type MessageGeneration,
+  RealtimeError,
   RealtimeModel,
   type RealtimeModelError,
   type RealtimeSession,
@@ -135,7 +136,7 @@ import {
   updateInstructions,
 } from './generation.js';
 import type { PlaybackFinishedEvent, TimedString } from './io.js';
-import { type InputDetails, SpeechHandle } from './speech_handle.js';
+import { type InputDetails, REPLY_TASK_CANCEL_TIMEOUT, SpeechHandle } from './speech_handle.js';
 import {
   ToolExecutor,
   cancelTaskTool,
@@ -256,8 +257,6 @@ export class AgentActivity implements RecognitionHooks {
   agent: Agent;
   agentSession: AgentSession;
 
-  private static readonly REPLY_TASK_CANCEL_TIMEOUT = 5000;
-
   private started = false;
   private audioRecognition?: AudioRecognition;
   private realtimeSession?: RealtimeSession;
@@ -296,6 +295,7 @@ export class AgentActivity implements RecognitionHooks {
   private readonly closeAbort = new AbortController();
   private interruptionDetector?: AdaptiveInterruptionDetector;
   private isInterruptionDetectionEnabled: boolean;
+  private interruptionDetected = false;
   private isInterruptionByAudioActivityEnabled: boolean;
   private isDefaultInterruptionByAudioActivityEnabled: boolean;
 
@@ -331,6 +331,7 @@ export class AgentActivity implements RecognitionHooks {
     this.onError(ev);
 
   private readonly onInterruptionOverlappingSpeech = (ev: OverlappingSpeechEvent): void => {
+    this.interruptionDetected = ev.isInterruption;
     this.agentSession.emit(AgentSessionEventTypes.OverlappingSpeech, ev);
   };
 
@@ -780,6 +781,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get vad(): VAD | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.vad || this.agentSession.vad;
   }
 
@@ -796,6 +800,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get stt(): STT | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.stt || this.agentSession.stt;
   }
 
@@ -815,6 +822,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   get tts(): TTS | undefined {
+    if (this.agentSession._textOnly) {
+      return undefined;
+    }
     return this.agent.tts || this.agentSession.tts;
   }
 
@@ -1317,12 +1327,23 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession.amd?.onTranscript(ev.transcript);
       }
 
+      const turnStartedAt = ev.turnStartedAt;
+
+      const userMetrics: MetricsReport = {};
+      if (turnStartedAt !== undefined) {
+        userMetrics.startedSpeakingAt = turnStartedAt / 1000; // ms -> seconds
+      }
+
       const message = ChatMessage.create({
         role: 'user',
         content: ev.transcript,
         id: ev.itemId,
+        createdAt: turnStartedAt,
+        metrics: userMetrics,
       });
-      this.agent._chatCtx.items.push(message);
+      // insert rather than append: this transcript can arrive after the reply that
+      // answered it, and the turn it belongs to began before that reply
+      this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }
   }
@@ -1393,6 +1414,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agentSession._userSpeakingSpan,
       );
     }
+    this.interruptionDetected = false;
 
     if (this.falseInterruptionTimer) {
       // cancel the timer when user starts speaking but leave the paused state unchanged
@@ -1454,6 +1476,17 @@ export class AgentActivity implements RecognitionHooks {
       ev.speechDuration >= this.agentSession.sessionOptions.turnHandling.interruption?.minDuration
     ) {
       this.interruptByAudioActivity();
+    }
+  }
+
+  onBackchannelConfirmed(): void {
+    if (
+      this.isInterruptionDetectionEnabled &&
+      this.realtimeSession !== undefined &&
+      this.turnDetection !== 'manual' &&
+      this.turnDetection !== 'realtime_llm'
+    ) {
+      this.realtimeSession.clearAudio();
     }
   }
 
@@ -1566,6 +1599,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (
+      this.vad === undefined &&
       ev.alternatives![0].text &&
       this.turnDetection !== 'manual' &&
       this.turnDetection !== 'realtime_llm'
@@ -1890,6 +1924,22 @@ export class AgentActivity implements RecognitionHooks {
         );
         return false;
       }
+    }
+
+    if (
+      !this.stt &&
+      this.turnDetection !== 'manual' &&
+      this.llm instanceof RealtimeModel &&
+      !this.llm.capabilities.turnDetection &&
+      this.isInterruptionDetectionEnabled &&
+      (info.backchannelOverAgent ||
+        (!this.interruptionDetected &&
+          this._currentSpeech !== undefined &&
+          !this._currentSpeech.interrupted))
+    ) {
+      this.cancelPreemptiveGeneration();
+      this.realtimeSession?.clearAudio();
+      return false;
     }
 
     const oldTask = this._userTurnCompletedTask;
@@ -2625,7 +2675,7 @@ export class AgentActivity implements RecognitionHooks {
 
       if (speechHandle.interrupted) {
         replyAbortController.abort();
-        await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
         if (audioOutput) {
           audioOutput.clearBuffer();
           await audioOutput.waitForPlayout();
@@ -2875,7 +2925,7 @@ export class AgentActivity implements RecognitionHooks {
 
     if (speechHandle.interrupted) {
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
       return;
     }
 
@@ -2988,7 +3038,7 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (speechHandle.interrupted) {
-          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
           if (audioOutput) {
             audioOutput.clearBuffer();
             // During shutdown (room disconnected / activity closing) the
@@ -3043,7 +3093,7 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
-        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
         // The segment's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
@@ -3053,7 +3103,11 @@ export class AgentActivity implements RecognitionHooks {
     //TODO(AJS-272): before executing tools, make sure we generated all the text
     // (this ensure everything is kept ordered)
 
+    // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
+      // function call is created during LLM generation, might be before the speech is authorized
+      // reset the `createdAt` to the start time of the tool execution
+      f.createdAt = Date.now();
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
@@ -3148,7 +3202,7 @@ export class AgentActivity implements RecognitionHooks {
       );
 
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
 
       const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
 
@@ -3189,7 +3243,7 @@ export class AgentActivity implements RecognitionHooks {
       if (speechHandle._hasGenerations) {
         speechHandle._markGenerationDone();
       }
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
       this._commitInterruptedToolOutputs(toolOutput, speechHandle, replyStartedAt);
       return;
     }
@@ -3573,7 +3627,7 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         if (speechHandle.interrupted) {
-          await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+          await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
           if (audioOutput) {
             audioOutput.clearBuffer();
             const playbackEv = await audioOutput.waitForPlayout();
@@ -3611,7 +3665,7 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         abortController.signal.removeEventListener('abort', abortMessage);
-        await cancelAndWait(forwardTasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
         // The message's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
@@ -3673,12 +3727,21 @@ export class AgentActivity implements RecognitionHooks {
 
         traceTextParts.push(forwardedText);
         if (addToChatCtx) {
+          const assistantMetrics: MetricsReport = {};
+          if (ev.responseId) {
+            assistantMetrics.providerRequestIds = [ev.responseId];
+          }
+          if (startedSpeakingAt !== undefined) {
+            assistantMetrics.startedSpeakingAt = startedSpeakingAt / 1000; // ms -> seconds
+          }
+
           const message = ChatMessage.create({
             role: 'assistant',
             content: forwardedText,
             id: output.message.messageId,
             interrupted,
             createdAt: startedSpeakingAt,
+            metrics: assistantMetrics,
           });
           this.agent._chatCtx.insert(message);
           speechHandle._itemAdded([message]);
@@ -3721,7 +3784,11 @@ export class AgentActivity implements RecognitionHooks {
       ),
     );
 
+    // items are ordered by `createdAt`
     const onToolExecutionStarted = (f: FunctionCall) => {
+      // function call is created during the model generation, might be before the speech is
+      // authorized; reset the `createdAt` to the start time of the tool execution
+      f.createdAt = Date.now();
       speechHandle._itemAdded([f]);
       this.agent._chatCtx.items.push(f);
       this.agentSession._toolItemsAdded([f]);
@@ -3752,7 +3819,7 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all realtime generation tasks due to interruption',
       );
       replyAbortController.abort();
-      await cancelAndWait(tasks, AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
       addRealtimeMessageOutputs(messageOutputs);
 
       const anySkipped = messageOutputs.some((output) => output.played === 'skipped');
@@ -3774,7 +3841,7 @@ export class AgentActivity implements RecognitionHooks {
         }
       }
       speechHandle._markGenerationDone();
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
 
       // TODO(brian): close tees
       return;
@@ -3943,6 +4010,36 @@ export class AgentActivity implements RecognitionHooks {
     this.scheduleSpeech(replySpeechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL, true);
   }
 
+  /**
+   * Cancel the tool-execution task, tolerating a cancellation that overruns its budget.
+   *
+   * `Task.cancelAndWait` throws once the budget expires, and every caller still has work to do
+   * afterwards — committing the interrupted tool outputs above all. A tool that ignores its abort
+   * signal must degrade to a warning, not propagate and drop outputs the LLM has already seen.
+   */
+  private async cancelToolExecutions(
+    executeToolsTask: Pick<Task<void>, 'cancelAndWait'>,
+    speechHandle: SpeechHandle,
+    toolOutput: ToolOutput,
+  ): Promise<void> {
+    try {
+      await executeToolsTask.cancelAndWait(REPLY_TASK_CANCEL_TIMEOUT);
+    } catch (error) {
+      this.logger.warn(
+        {
+          error,
+          speech_id: speechHandle.id,
+          timeout: REPLY_TASK_CANCEL_TIMEOUT,
+          tool_calls: toolOutput.output.map((output) => ({
+            function: output.toolCall.name,
+            call_id: output.toolCall.callId,
+          })),
+        },
+        'tool execution task did not settle within the cancellation budget, continuing teardown',
+      );
+    }
+  }
+
   /** @internal */
   async _waitForToolExecution({
     executeToolsTask,
@@ -3956,7 +4053,7 @@ export class AgentActivity implements RecognitionHooks {
     createdAt: number;
   }): Promise<boolean> {
     if (speechHandle.interrupted) {
-      await executeToolsTask.cancelAndWait(AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
       this._commitInterruptedToolOutputs(toolOutput, speechHandle, createdAt);
       return false;
     }
@@ -4089,7 +4186,23 @@ export class AgentActivity implements RecognitionHooks {
         role: 'user',
         content: userInput,
       });
-      await this.realtimeSession.updateChatCtx(chatCtx);
+      try {
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        if (error instanceof RealtimeError) {
+          this.logger.warn(
+            { error: error.message },
+            'failed to update the chat context before generating the reply',
+          );
+        } else {
+          this.logger.error(
+            { error },
+            'failed to update the chat context before generating the reply',
+          );
+          speechHandle._markDone(error);
+          return;
+        }
+      }
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);
     }
@@ -4323,7 +4436,7 @@ export class AgentActivity implements RecognitionHooks {
         this._currentSpeech._cancel();
       }
 
-      await cancelAndWait(Array.from(this.speechTasks), AgentActivity.REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(Array.from(this.speechTasks), REPLY_TASK_CANCEL_TIMEOUT);
       await this._toolExecutor.drain();
 
       if (this._currentSpeech && !this._currentSpeech.done()) {
@@ -4377,16 +4490,25 @@ export class AgentActivity implements RecognitionHooks {
   private resolveInterruptionDetector(): AdaptiveInterruptionDetector | undefined {
     const agentInterruptionDetection = this.agent.turnHandling?.interruption?.mode;
     const sessionInterruptionDetection = this.agentSession.interruptionDetection;
-    if (
-      !(
+
+    let canGatekeep: boolean;
+    if (this.llm instanceof RealtimeModel) {
+      // Realtime commits turns manually; barge-in withholds the commit, so no STT is needed.
+      canGatekeep = !this.llm.capabilities.turnDetection;
+    } else {
+      // The STT pipeline gatekeeps by holding and flushing transcripts.
+      canGatekeep = !!(
         this.stt &&
         this.stt.capabilities.alignedTranscript &&
-        this.stt.capabilities.streaming &&
-        this.vad !== undefined &&
-        this.turnDetection !== 'manual' &&
-        this.turnDetection !== 'realtime_llm' &&
-        !(this.llm instanceof RealtimeModel)
-      )
+        this.stt.capabilities.streaming
+      );
+    }
+
+    if (
+      !canGatekeep ||
+      this.vad === undefined ||
+      this.turnDetection === 'manual' ||
+      this.turnDetection === 'realtime_llm'
     ) {
       if (
         agentInterruptionDetection === 'adaptive' ||

@@ -4,6 +4,12 @@ Support for avatar generation and animation with [LemonSlice](https://lemonslice
 
 See [https://docs.livekit.io/agents/models/avatar/plugins/lemonslice/](https://docs.livekit.io/agents/models/avatar/plugins/lemonslice/) for more information.
 
+> **Inference variant:** [`inference_avatar.ts`](../../examples/src/inference_avatar.ts) is a
+> minimal example that provisions the avatar through **LiveKit Inference** instead of this BYOK
+> plugin. The agent needs only `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` (no `LEMONSLICE_API_KEY`);
+> the gateway creates the provider session with LiveKit's wholesale key. Requires the
+> `avatar_lemonslice` feature flag on your project. Run it with `LEMONSLICE_IMAGE_URL` set.
+
 ## Installation
 
 ```bash

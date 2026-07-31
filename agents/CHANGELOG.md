@@ -1,5 +1,82 @@
 # @livekit/agents
 
+## 1.6.0
+
+### Minor Changes
+
+- Require OpenTelemetry JS SDK 2.x and experimental packages 0.2xx. Migrate resources to - [#2105](https://github.com/livekit/agents-js/pull/2105) ([@davidzhao](https://github.com/davidzhao))
+  `resourceFromAttributes`, configure processors with `spanProcessors`, and pass
+  `registerSpanProcessor` when using a custom tracer provider.
+
+### Patch Changes
+
+- Include agent identity in telemetry resource attributes: stamp `lk.agent_name` when the job carries an agent name, and honor `OTEL_RESOURCE_ATTRIBUTES` (via the standard env detector) so environment-provided resource attributes reach cloud tracing. - [#2110](https://github.com/livekit/agents-js/pull/2110) ([@jmcclanahan](https://github.com/jmcclanahan))
+
+- Add agent-simulation support: resolve the scenario dispatch from the job's `lk.simulator.dispatch` attribute into a `SimulationContext`, end the job when the simulator participant leaves, run the new `defineAgent` `onSimulationEnd` callback on `finalizeSimulation`, and disable STT/TTS/VAD and audio I/O under text simulations. - [#2075](https://github.com/livekit/agents-js/pull/2075) ([@u9g](https://github.com/u9g))
+
+- Expose realtime provider response IDs on assistant message metrics as `providerRequestIds`. - [#2084](https://github.com/livekit/agents-js/pull/2084) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix a deadlock where a recorder-wrapped audio output could leave `waitForPlayout` stranded when - [#2114](https://github.com/livekit/agents-js/pull/2114) ([@toubatbrian](https://github.com/toubatbrian))
+  an interrupt arrived before the recorder had registered its segment. `RecorderAudioOutput` now
+  registers its own segment before forwarding a frame downstream, and attributes each playback
+  finish to the segment it belongs to instead of relying on a global counter.
+
+  A recorded segment is also timestamped when it opens rather than when the wrapped output accepts
+  its first frame, so a finish that lands while that frame is parked no longer clamps the segment's
+  playback position to zero and drop the audio the sink reported as played. And a segment whose
+  downstream capture throws now releases the capture latch on both the recorder and the wrapped
+  output, so a caller that retries after a transient rejection is no longer rejected forever with
+  `recorder capture has no active segment`.
+
+  A finish reported by the wrapped output settles its segment whether or not the recorder has been
+  flushed. The `AudioOutput` contract lets a sink report a finish as soon as its playout ends, and
+  `TranscriptionSynchronizer` does exactly that when it reconciles a dropped segment from
+  `waitForPlayout`, so requiring a flush first would strand the caller.
+
+  `waitForPlayout` no longer depends on a flush either. A segment the wrapped output never counted
+  is settled once that output reports its own playout complete, since at that point no finish can
+  ever arrive for it. Waiting for a flush instead only worked because `performAudioForwarding` — the
+  one thing that captures frames — happens to flush in a `finally`; a caller that waited without
+  flushing hung forever.
+
+  Behavior change: `waitForPlayout` now blocks while a frame is still in flight inside the wrapped
+  output. Previously it could return immediately with a fabricated
+  `{ playbackPosition: 0, interrupted: false }`, reporting a turn as completed while its audio had
+  not been handed to the sink yet. Callers that relied on the early return will now wait for the
+  real playback result.
+
+- Add Fish Audio model and option types to inference TTS. - [#2102](https://github.com/livekit/agents-js/pull/2102) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Support adaptive interruption gating for realtime models without server-side turn detection. - [#2099](https://github.com/livekit/agents-js/pull/2099) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add `inference.AvatarSession` for provisioning avatar sessions through the LiveKit Inference gateway. - [#2101](https://github.com/livekit/agents-js/pull/2101) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Use required tool choice for message judge LLM calls. - [#2128](https://github.com/livekit/agents-js/pull/2128) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Allow failed inference avatar provisioning to be retried safely without duplicate provider sessions or cleanup callbacks, fall back to the connected room SID when dispatch metadata omits it, refresh gateway authentication across retries, and preserve the avatar audio output in RoomIO so synchronized transcription and avatar playback share the same output. - [#2103](https://github.com/livekit/agents-js/pull/2103) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Do not drop realtime replies when the pre-reply chat context update times out. - [#2083](https://github.com/livekit/agents-js/pull/2083) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix updateAgent handoffs so run() captures onEnter output without waiting indefinitely on long-lived onEnter flows. - [#2098](https://github.com/livekit/agents-js/pull/2098) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+## 1.5.5
+
+### Patch Changes
+
+- Default AMD to wait for endpointing backstop before settling after speech. - [#2089](https://github.com/livekit/agents-js/pull/2089) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Prevent interrupted voice replies from deadlocking when audio recording wraps synchronized playout. - [#2091](https://github.com/livekit/agents-js/pull/2091) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Add raw chat message text access and strip LiveKit expression markup from assistant text content. - [#2087](https://github.com/livekit/agents-js/pull/2087) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve custom OpenTelemetry tracer providers when LiveKit Cloud tracing is enabled, and support sharing an OpenTelemetry 2.x provider with LiveKit Cloud via the `registerSpanProcessor` and `createCloudSpanProcessor` options of `setTracerProvider` together with the new `FanoutSpanProcessor` helper. - [#2051](https://github.com/livekit/agents-js/pull/2051) ([@dtran26](https://github.com/dtran26))
+
+- Prevent in-flight tool calls from being re-issued on later turns and preserve completed tool outputs when a turn is interrupted. - [#2077](https://github.com/livekit/agents-js/pull/2077) ([@toubatbrian](https://github.com/toubatbrian))
+
+- fix(stt): propagate fallback stream start offset - [#1928](https://github.com/livekit/agents-js/pull/1928) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add job, simulation, and redaction telemetry metadata to session recording uploads. - [#2079](https://github.com/livekit/agents-js/pull/2079) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.5.4
 
 ### Patch Changes

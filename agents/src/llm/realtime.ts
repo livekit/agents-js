@@ -71,10 +71,30 @@ export interface RealtimeCapabilities {
   nativeTranscriptSync?: boolean;
 }
 
+/**
+ * Error raised by a realtime provider when an operation fails or times out
+ * (for example a chat-context update or reply generation).
+ */
+export class RealtimeError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RealtimeError';
+    Error.captureStackTrace(this, RealtimeError);
+  }
+}
+
 export interface InputTranscriptionCompleted {
   itemId: string;
   transcript: string;
   isFinal: boolean;
+  /**
+   * When the turn this transcript belongs to began, in milliseconds since epoch.
+   *
+   * A provider that withholds the final transcript until its reply has finished
+   * generating should set this, so the user message can be placed on the session
+   * timeline where the turn happened rather than where the transcript arrived.
+   */
+  turnStartedAt?: number;
 }
 
 export interface RealtimeSessionReconnectedEvent {}

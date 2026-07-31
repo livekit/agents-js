@@ -19,11 +19,15 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AgentConfigUpdate,
   ChatContext,
+  ChatMessage,
   FunctionCall,
   FunctionCallOutput,
 } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
+import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import { log } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage } from './agent_activity.js';
@@ -162,6 +166,58 @@ describe('AgentActivity - mainTask', () => {
     expect(capturedEvents[0]?.isFinal).toBe(false);
     expect(capturedEvents[0]?.itemId).toBe('item_123');
   });
+
+  it.each([
+    { hasLocalVad: false, shouldInterrupt: true },
+    { hasLocalVad: true, shouldInterrupt: false },
+  ])(
+    'interim transcript interrupts only without local VAD: $hasLocalVad',
+    ({ hasLocalVad, shouldInterrupt }) => {
+      const capturedEvents: UserInputTranscribedEvent[] = [];
+      const interruptByAudioActivity = vi.fn();
+      const activity = Object.assign(Object.create(AgentActivity.prototype), {
+        agent: { llm: undefined, vad: undefined, turnHandling: undefined },
+        agentSession: {
+          _textOnly: false,
+          llm: undefined,
+          vad: hasLocalVad ? {} : undefined,
+          turnDetection: undefined,
+          emit: (_type: AgentSessionEventTypes, ev: UserInputTranscribedEvent) => {
+            capturedEvents.push(ev);
+          },
+        },
+        interruptByAudioActivity,
+      });
+      const ev: SpeechEvent = {
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
+        alternatives: [
+          {
+            text: 'hello',
+            language: 'en',
+            startTime: 0,
+            endTime: 0,
+            confidence: 1,
+          },
+        ],
+      };
+
+      (
+        AgentActivity.prototype.onInterimTranscript as (
+          this: unknown,
+          ev: SpeechEvent,
+          speaking: boolean | undefined,
+        ) => void
+      ).call(activity, ev, undefined);
+
+      expect(capturedEvents).toHaveLength(1);
+      expect(capturedEvents[0]?.transcript).toBe('hello');
+      if (shouldInterrupt) {
+        expect(interruptByAudioActivity).toHaveBeenCalledOnce();
+      } else {
+        expect(interruptByAudioActivity).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('should recover when speech handle is interrupted after authorization', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
@@ -1096,6 +1152,103 @@ describe('AgentActivity - interrupted tool completion', () => {
   });
 });
 
+describe('AgentActivity - realtime reply chat context push', () => {
+  function buildRealtimeReplyActivity(updateError?: unknown) {
+    const generationEvent = {} as GenerationCreatedEvent;
+    const realtimeSession = {
+      chatCtx: ChatContext.empty(),
+      tools: ToolContext.empty(),
+      updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
+        if (updateError) {
+          throw updateError;
+        }
+        realtimeSession.chatCtx = chatCtx.copy();
+      }),
+      updateTools: vi.fn(async () => {}),
+      updateOptions: vi.fn(),
+      generateReply: vi.fn(async () => generationEvent),
+    };
+    const activity = {
+      realtimeSession,
+      toolChoice: undefined,
+      _onEnterIgnoredTools: () => [],
+      agent: { _chatCtx: ChatContext.empty() },
+      agentSession: {
+        _conversationItemAdded: vi.fn(),
+      },
+      realtimeGenerationTask: vi.fn(async () => {}),
+      logger: { info() {}, debug() {}, warn: vi.fn(), error: vi.fn() },
+    };
+    Object.setPrototypeOf(activity, AgentActivity.prototype);
+
+    return { activity, realtimeSession };
+  }
+
+  async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
+    const realtimeReplyTask = (
+      AgentActivity.prototype as unknown as {
+        realtimeReplyTask(
+          this: unknown,
+          args: {
+            speechHandle: SpeechHandle;
+            modelSettings: { toolChoice?: never };
+            abortController: AbortController;
+            userInput: string;
+          },
+        ): Promise<void>;
+      }
+    ).realtimeReplyTask;
+
+    await realtimeReplyTask.call(activity, {
+      speechHandle,
+      modelSettings: {},
+      abortController: new AbortController(),
+      userInput: 'hello',
+    });
+  }
+
+  it('generates a reply when updateChatCtx succeeds', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity();
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+  });
+
+  it('still generates a reply when updateChatCtx raises RealtimeError', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(
+      new RealtimeError('update_chat_ctx timed out.'),
+    );
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+    expect(activity.agent._chatCtx.items.some((item) => item.type === 'message')).toBe(true);
+  });
+
+  it('marks the speech handle failed for unexpected updateChatCtx errors', async () => {
+    const error = new Error('boom');
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(error);
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).not.toHaveBeenCalled();
+    expect(activity.realtimeGenerationTask).not.toHaveBeenCalled();
+    expect(handle.done()).toBe(true);
+    expect(handle.exception()).toBe(error);
+  });
+});
+
 describe('AgentActivity - interruption while waiting for tools', () => {
   function buildToolOutput() {
     const call = FunctionCall.create({
@@ -1138,6 +1291,7 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     Object.assign(activity, {
       _backgroundSpeeches: new Set<SpeechHandle>(),
       _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
+      logger: log(),
     });
     const waitForToolExecution = (
       activity as unknown as { _waitForToolExecution: WaitForToolExecution }
@@ -1188,5 +1342,146 @@ describe('AgentActivity - interruption while waiting for tools', () => {
     await expect(waiting).resolves.toBe(false);
     expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
     expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('still commits outputs when cancelling the tool task overruns its budget', async () => {
+    // `Task.cancelAndWait` throws once the cooperative-cancel budget expires. A tool that
+    // ignores its abort signal must not take the commit down with it — the LLM has already
+    // seen these outputs, so dropping them leaves the function calls dangling.
+    const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: {
+        result: new Promise<void>(() => {}),
+        cancelAndWait: vi.fn(async () => {
+          throw new Error('Task cancellation timed out');
+        }),
+      },
+      toolOutput,
+      speechHandle,
+      createdAt: 789,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 789);
+  });
+});
+
+/**
+ * A realtime provider only publishes the final user transcript once the reply has
+ * finished generating, so committing the message at that moment stamps the user turn
+ * later than the reply it prompted and the transcript renders them out of order. The
+ * provider reports when the turn began via `turnStartedAt`.
+ */
+describe('AgentActivity - realtime user turn timing', () => {
+  function buildRealtimeActivity() {
+    const chatCtx = new ChatContext();
+    const fakeActivity = {
+      vad: undefined,
+      stt: undefined,
+      audioRecognition: undefined,
+      isInterruptionDetectionEnabled: false,
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _updateUserState: vi.fn(),
+        _conversationItemAdded: vi.fn(),
+      },
+      interrupt: vi.fn(),
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const proto = AgentActivity.prototype as unknown as Record<string, (...args: never[]) => void>;
+    return {
+      chatCtx,
+      transcribed: (transcript: string, itemId: string, turnStartedAt?: number) =>
+        proto.onInputAudioTranscriptionCompleted!.call(fakeActivity, {
+          transcript,
+          itemId,
+          isFinal: true,
+          turnStartedAt,
+        } as never),
+    };
+  }
+
+  it('stamps the user message where the turn began, not at transcript delivery', () => {
+    vi.useFakeTimers();
+    try {
+      // the provider withholds the transcript until its reply is done generating
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_000_000);
+      // seconds, so the dashboard can place the turn where it happened
+      expect(message.metrics?.startedSpeakingAt).toBe(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('places the turn before the reply it prompted when its transcript lands later', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // the reply is committed first, because the provider held the user transcript back
+      chatCtx.insert(
+        ChatMessage.create({ role: 'assistant', content: 'you are Brian', createdAt: 1_003_000 }),
+      );
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      expect(
+        chatCtx.items.map((item) => (item.type === 'message' ? item.role : item.type)),
+      ).toEqual(['user', 'assistant']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pairs each turn with its own start, even when transcripts arrive late', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_010_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // both transcripts land after the second turn began; each keeps its own start
+      transcribed('first', 'item_1', 1_000_000);
+      transcribed('second', 'item_2', 1_005_000);
+
+      const [first, second] = chatCtx.items;
+      if (first?.type !== 'message' || second?.type !== 'message') {
+        throw new Error('expected chat messages');
+      }
+      expect(first.createdAt).toBe(1_000_000);
+      expect(second.createdAt).toBe(1_005_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to delivery time when the provider reports no turn start', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_002_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('text injected turn', 'item_1');
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_002_000);
+      expect(message.metrics?.startedSpeakingAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

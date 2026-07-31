@@ -73,6 +73,7 @@ export {
 } from './llm.js';
 
 export {
+  RealtimeError,
   RealtimeModel,
   RealtimeSession,
   type GenerationCreatedEvent,

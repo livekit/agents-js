@@ -23,7 +23,43 @@ const NUM_CHANNELS = 1;
 const XAI_WEBSOCKET_URL = 'wss://api.x.ai/v1/tts';
 const DEFAULT_VOICE = 'ara';
 
-export type GrokVoices = 'Ara' | 'Eve' | 'Leo' | 'Rex' | 'Sal';
+export type GrokVoices =
+  | 'carina'
+  | 'zagan'
+  | 'helix'
+  | 'orion'
+  | 'luna'
+  | 'iris'
+  | 'altair'
+  | 'zenith'
+  | 'perseus'
+  | 'helios'
+  | 'lux'
+  | 'kepler'
+  | 'rigel'
+  | 'cosmo'
+  | 'celeste'
+  | 'ursa'
+  | 'sirius'
+  | 'lumen'
+  | 'castor'
+  | 'naksh'
+  | 'atlas'
+  | 'ara'
+  | 'eve'
+  | 'leo'
+  | 'rex'
+  | 'sal'
+  /** @deprecated Use `'ara'` instead. */
+  | 'Ara'
+  /** @deprecated Use `'eve'` instead. */
+  | 'Eve'
+  /** @deprecated Use `'leo'` instead. */
+  | 'Leo'
+  /** @deprecated Use `'rex'` instead. */
+  | 'Rex'
+  /** @deprecated Use `'sal'` instead. */
+  | 'Sal';
 
 export type TTSLanguages =
   | 'auto'

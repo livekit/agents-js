@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
-import { AudioFrame, type ParticipantKind } from '@livekit/rtc-node';
+import type { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
@@ -67,6 +67,8 @@ import {
 // Maximum number of chat items included in the `lk.chat_ctx` attribute of the
 // `eou_detection` span (mirrors Python's `_EOU_MAX_HISTORY_TURNS`).
 const EOU_MAX_HISTORY_TURNS = 6;
+const MIN_LANGUAGE_DETECTION_LENGTH = 5;
+const NON_SPECIFIC_LANGUAGE_CODES = new Set(['auto', 'multi']);
 
 export interface EndOfTurnInfo {
   /** The new transcript text from the user's speech. */
@@ -88,6 +90,8 @@ export interface EndOfTurnInfo {
    * caller drives its own `generateReply` (e.g. leaving a voicemail).
    */
   skipReply?: boolean;
+  /** The turn's speech overlapped agent speech and was classified a backchannel. */
+  backchannelOverAgent?: boolean;
 }
 
 type EndOfTurnMetrics = {
@@ -139,6 +143,7 @@ export interface PreemptiveGenerationInfo {
 
 export interface RecognitionHooks {
   onInterruption: (ev: OverlappingSpeechEvent) => void;
+  onBackchannelConfirmed: () => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
   onEndOfSpeech: (ev: VADEvent) => void;
@@ -373,6 +378,8 @@ export class AudioRecognition {
   private isAgentSpeaking: boolean;
   private agentSpeechStartedAt?: number;
   private interruptionDetected?: boolean;
+  private overlapInCurrentTurn = false;
+  private turnBackchannelOverAgent = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
@@ -631,6 +638,16 @@ export class AudioRecognition {
     }
   }
 
+  private updateLastLanguage(language: LanguageCode | undefined, transcript: string): void {
+    if (!language || NON_SPECIFIC_LANGUAGE_CODES.has(language)) {
+      return;
+    }
+
+    if (!this.lastLanguage || transcript.length > MIN_LANGUAGE_DETECTION_LENGTH) {
+      this.lastLanguage = language;
+    }
+  }
+
   async start(options?: {
     sttPipeline?: STTPipeline;
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
@@ -772,7 +789,7 @@ export class AudioRecognition {
       // so it does not emit a synthetic `isInterruption: false` event following a real
       // interruption.
       if (priorIgnoreUserTranscriptUntil === undefined) {
-        this.onEndOfOverlapSpeech(Date.now());
+        this.onEndOfOverlapSpeech(Date.now(), undefined, true);
       }
       await this.flushHeldTranscripts(endCooldown);
     }
@@ -784,6 +801,8 @@ export class AudioRecognition {
       if (!this.endpointing.overlapping) {
         this.endpointing.onStartOfSpeech(startedAt, true);
       }
+      this.turnBackchannelOverAgent = false;
+      this.overlapInCurrentTurn = true;
       this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(
           speechDuration,
@@ -795,7 +814,7 @@ export class AudioRecognition {
   }
 
   /** End interruption inference when overlap speech ends. */
-  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span) {
+  async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span, agentEnded = false) {
     if (!this.isInterruptionEnabled) {
       return;
     }
@@ -803,7 +822,9 @@ export class AudioRecognition {
       userSpeakingSpan.setAttribute(traceTypes.ATTR_IS_INTERRUPTION, 'false');
     }
 
-    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.overlapSpeechEnded(endedAt));
+    return this.trySendInterruptionSentinel(
+      InterruptionStreamSentinel.overlapSpeechEnded(endedAt, agentEnded),
+    );
   }
 
   /**
@@ -1083,9 +1104,10 @@ export class AudioRecognition {
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
-        const transcript = ev.alternatives?.[0]?.text;
+        const transcript = ev.alternatives?.[0]?.text ?? '';
         const confidence = ev.alternatives?.[0]?.confidence ?? 0;
-        this.lastLanguage = ev.alternatives?.[0]?.language;
+        const language = ev.alternatives?.[0]?.language;
+        this.updateLastLanguage(language, transcript);
 
         if (!transcript) {
           // stt final transcript received but no transcript
@@ -1153,13 +1175,7 @@ export class AudioRecognition {
         const preflightConfidence = ev.alternatives?.[0]?.confidence ?? 0;
         const preflightLanguage = ev.alternatives?.[0]?.language;
 
-        const MIN_LANGUAGE_DETECTION_LENGTH = 5;
-        if (
-          !this.lastLanguage ||
-          (preflightLanguage && preflightTranscript.length > MIN_LANGUAGE_DETECTION_LENGTH)
-        ) {
-          this.lastLanguage = preflightLanguage;
-        }
+        this.updateLastLanguage(preflightLanguage, preflightTranscript);
 
         if (!preflightTranscript) {
           return;
@@ -1222,6 +1238,8 @@ export class AudioRecognition {
           const ctx = this.userTurnContext(span);
           this.endpointing.onStartOfSpeech(speechStartTime, this.isAgentSpeaking);
           this.interruptionDetected = undefined;
+          this.turnBackchannelOverAgent = false;
+          this.overlapInCurrentTurn = this.isAgentSpeaking;
           otelContext.with(ctx, () => {
             this.hooks.onStartOfSpeech({
               type: VADEventType.START_OF_SPEECH,
@@ -1316,6 +1334,13 @@ export class AudioRecognition {
     }
 
     this.interruptionDetected = ev.isInterruption;
+
+    if (this.overlapInCurrentTurn && !ev.agentEnded) {
+      this.turnBackchannelOverAgent = !ev.isInterruption;
+      if (!ev.isInterruption && !this.speaking) {
+        this.hooks.onBackchannelConfirmed();
+      }
+    }
 
     if (ev.isInterruption) {
       this.hooks.onInterruption(ev);
@@ -1639,6 +1664,7 @@ export class AudioRecognition {
           endOfUtteranceDelay: metrics.endOfUtteranceDelay,
           startedSpeakingAt: metrics.startedSpeakingAt,
           stoppedSpeakingAt: metrics.stoppedSpeakingAt,
+          backchannelOverAgent: this.turnBackchannelOverAgent,
         });
 
         if (committed) {
@@ -1670,6 +1696,8 @@ export class AudioRecognition {
           }
         }
 
+        this.turnBackchannelOverAgent = false;
+        this.overlapInCurrentTurn = false;
         this.userTurnCommitted = false;
       };
 
@@ -1833,6 +1861,8 @@ export class AudioRecognition {
               const ctx = this.userTurnContext(span);
               this.endpointing.onStartOfSpeech(startTime, this.isAgentSpeaking);
               this.interruptionDetected = undefined;
+              this.turnBackchannelOverAgent = false;
+              this.overlapInCurrentTurn = this.isAgentSpeaking;
               otelContext.with(ctx, () => this.hooks.onStartOfSpeech(ev));
             }
             this.speaking = true;

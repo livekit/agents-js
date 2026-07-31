@@ -45,6 +45,7 @@ import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -54,6 +55,7 @@ import {
   DEFAULT_SESSION_CONNECT_OPTIONS,
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
+  recordingEnabled,
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
@@ -127,12 +129,14 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * All keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Redaction defaults to the project setting; `false` is ignored when
+ * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
  * - `record: { audio: true, traces: false }` — granular
+ * - `record: { redaction: true }` — enable redaction for the session
  */
 export interface RecordingOptions {
   /** Record session audio. Defaults to `true`. */
@@ -143,6 +147,8 @@ export interface RecordingOptions {
   logs?: boolean;
   /** Upload the conversation transcript (chat history). Defaults to `true`. */
   transcript?: boolean;
+  /** Enable redaction. `false` does not disable project redaction. */
+  redaction?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -153,6 +159,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   traces: true,
   logs: true,
   transcript: true,
+  redaction: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -160,6 +167,7 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   traces: false,
   logs: false,
   transcript: false,
+  redaction: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
@@ -371,6 +379,14 @@ type ActivityTransitionOptions = {
   waitOnEnter?: boolean;
 };
 
+/** True when the surrounding job runs under a text simulation (the simulated
+ * user interacts over text streams only). */
+function resolveTextOnly(): boolean {
+  const jobCtx = getJobContext(false);
+  const simCtx = jobCtx?.simulationContext();
+  return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
+}
+
 export class AgentSession<
   UserData = UnknownUserData,
 > extends (EventEmitter as new () => TypedEmitter<AgentSessionCallbacks>) {
@@ -432,6 +448,11 @@ export class AgentSession<
    */
   _usingDefaultVad: boolean = false;
 
+  /** @internal True when the current job is a text simulation. */
+  get _textOnly(): boolean {
+    return resolveTextOnly();
+  }
+
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
 
@@ -471,12 +492,7 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return (
-      this._recordingOptions.audio ||
-      this._recordingOptions.traces ||
-      this._recordingOptions.logs ||
-      this._recordingOptions.transcript
-    );
+    return recordingEnabled(this._recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -700,6 +716,15 @@ export class AgentSession<
         this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
+      if (this._textOnly) {
+        // Under a text simulation the simulated user interacts over text
+        // streams only: no audio I/O. STT/TTS/VAD are dropped in the
+        // constructor.
+        this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+        inputOptions = { ...inputOptions, audioEnabled: false };
+        outputOptions = { ...outputOptions, audioEnabled: false };
+      }
+
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -709,7 +734,7 @@ export class AgentSession<
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+          'RoomIO audio output is enabled; preserving and using the existing output.audio',
         );
       }
 
@@ -831,13 +856,16 @@ export class AgentSession<
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this._recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
+      } else if (recordingEnabled(this._recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
@@ -887,7 +915,15 @@ export class AgentSession<
         }
       }
 
-      await this._updateActivity(agent);
+      await this._updateActivity(agent, { waitOnEnter: false });
+
+      // Watch onEnter so run() captures its output without awaiting long-lived
+      // onEnter flows that need a future user turn to complete.
+      const onEnterTask = this.activity?._onEnterTask;
+      const runState = this._globalRunState;
+      if (onEnterTask && runState && !runState.done()) {
+        runState._watchHandle(onEnterTask);
+      }
     };
 
     const oldTask = this.updateActivityTask;

@@ -76,6 +76,7 @@ export function createSessionReport(opts: SessionReportOptions): SessionReport {
       traces: false,
       logs: false,
       transcript: false,
+      redaction: false,
     },
     startedAt: opts.startedAt ?? Date.now(),
     timestamp,

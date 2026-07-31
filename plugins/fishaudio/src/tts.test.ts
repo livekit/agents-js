@@ -214,6 +214,62 @@ describe('FishAudio streaming', () => {
     expect(request.normalize).toBe(false);
   });
 
+  it('sets normalizeLoudness in prosody', async () => {
+    const request = await captureStartRequest({ normalizeLoudness: false });
+    expect(request.prosody).toEqual({ normalize_loudness: false });
+  });
+
+  it('sets normalizeLoudness with speed and volume', async () => {
+    const request = await captureStartRequest({
+      speed: 1.2,
+      volume: -3.0,
+      normalizeLoudness: true,
+    });
+    expect(request.prosody).toEqual({
+      speed: 1.2,
+      volume: -3.0,
+      normalize_loudness: true,
+    });
+  });
+
+  it('omits generation tuning by default', async () => {
+    const request = await captureStartRequest();
+    expect(request).not.toHaveProperty('max_new_tokens');
+    expect(request).not.toHaveProperty('min_chunk_length');
+    expect(request).not.toHaveProperty('condition_on_previous_chunks');
+    expect(request).not.toHaveProperty('early_stop_threshold');
+  });
+
+  it('sets generation tuning params from the constructor', async () => {
+    const request = await captureStartRequest({
+      maxNewTokens: 512,
+      minChunkLength: 25,
+      conditionOnPreviousChunks: false,
+      earlyStopThreshold: 0.8,
+    });
+    expect(request.max_new_tokens).toBe(512);
+    expect(request.min_chunk_length).toBe(25);
+    expect(request.condition_on_previous_chunks).toBe(false);
+    expect(request.early_stop_threshold).toBe(0.8);
+  });
+
+  it('sets generation tuning params from updateOptions', async () => {
+    const request = await captureStartRequest({}, (fishAudio) => {
+      fishAudio.updateOptions({
+        maxNewTokens: 2048,
+        minChunkLength: 30,
+        conditionOnPreviousChunks: false,
+        earlyStopThreshold: 0.5,
+        normalizeLoudness: false,
+      });
+    });
+    expect(request.max_new_tokens).toBe(2048);
+    expect(request.min_chunk_length).toBe(30);
+    expect(request.condition_on_previous_chunks).toBe(false);
+    expect(request.early_stop_threshold).toBe(0.5);
+    expect(request.prosody).toEqual({ normalize_loudness: false });
+  });
+
   it('snapshots options when each stream is constructed', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const requests: Record<string, unknown>[] = [];
@@ -340,6 +396,62 @@ describe('FishAudio streaming', () => {
       expect(() => fishAudio.updateOptions({ topP: -0.1 })).toThrow('topP must be between 0 and 1');
     } finally {
       await fishAudio.close();
+    }
+  });
+
+  it('validates generation tuning params', async () => {
+    expect(() => new TTS({ apiKey: 'test-key', maxNewTokens: -1 })).toThrow(
+      'maxNewTokens must be non-negative',
+    );
+    expect(() => new TTS({ apiKey: 'test-key', minChunkLength: 150 })).toThrow(
+      'minChunkLength must be between 0 and 100',
+    );
+    expect(() => new TTS({ apiKey: 'test-key', earlyStopThreshold: 1.5 })).toThrow(
+      'earlyStopThreshold must be between 0 and 1',
+    );
+
+    const fishAudio = new TTS({ apiKey: 'test-key' });
+    try {
+      expect(() => fishAudio.updateOptions({ maxNewTokens: -1 })).toThrow(
+        'maxNewTokens must be non-negative',
+      );
+      expect(() => fishAudio.updateOptions({ minChunkLength: -5 })).toThrow(
+        'minChunkLength must be between 0 and 100',
+      );
+      expect(() => fishAudio.updateOptions({ earlyStopThreshold: -0.1 })).toThrow(
+        'earlyStopThreshold must be between 0 and 1',
+      );
+    } finally {
+      await fishAudio.close();
+    }
+  });
+
+  it('drops normalizeLoudness on the s1 constructor', async () => {
+    const request = await captureStartRequest({ model: 's1', normalizeLoudness: true });
+    expect(request.prosody).toBeNull();
+  });
+
+  it('drops normalizeLoudness on s1 updateOptions', async () => {
+    const request = await captureStartRequest({ model: 's1' }, (fishAudio) => {
+      fishAudio.updateOptions({ normalizeLoudness: true });
+    });
+    expect(request.prosody).toBeNull();
+  });
+
+  it('drops normalizeLoudness when switching to s1', async () => {
+    const request = await captureStartRequest(
+      { model: 's2-pro', normalizeLoudness: true },
+      (fishAudio) => {
+        fishAudio.updateOptions({ model: 's1' });
+      },
+    );
+    expect(request.prosody).toBeNull();
+  });
+
+  it('keeps normalizeLoudness on the s2 pro family', async () => {
+    for (const model of ['s2-pro', 's2.1-pro'] as const) {
+      const request = await captureStartRequest({ model, normalizeLoudness: false });
+      expect(request.prosody).toEqual({ normalize_loudness: false });
     }
   });
 

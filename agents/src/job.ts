@@ -20,7 +20,15 @@ import * as path from 'node:path';
 import type { Logger } from 'pino';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { log } from './log.js';
+import { SimulationContext, parseSimulationDispatch } from './simulation.js';
 import { flushOtelLogs, setupCloudTracer, uploadSessionReport } from './telemetry/index.js';
+import {
+  ATTRIBUTE_REDACTION_ENABLED,
+  ATTRIBUTE_SIMULATION_ENABLED,
+  ATTRIBUTE_SIMULATOR,
+  ATTRIBUTE_SIMULATOR_DISPATCH,
+  recordingEnabled,
+} from './types.js';
 import { isCloud } from './utils.js';
 import type { AgentSession, ResolvedRecordingOptions } from './voice/agent_session.js';
 import { AgentsConsole } from './voice/console_io.js';
@@ -134,6 +142,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal */
   _sessionDirectory: string;
 
+  // Lazily built from the job's simulation attributes; undefined when not
+  // under a simulation. #simulationResolved guards the one-time parse.
+  #simulationCtx?: SimulationContext;
+  #simulationResolved = false;
+  /** @internal onSimulationEnd callback, injected by the job runner from the
+   * agent definition. */
+  _simulationEndFnc?: (ctx: SimulationContext) => unknown;
+
   private connected: boolean = false;
 
   constructor(
@@ -151,6 +167,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#onShutdown = onShutdown;
     this.onParticipantConnected = this.onParticipantConnected.bind(this);
     this.#room.on(RoomEvent.ParticipantConnected, this.onParticipantConnected);
+    this.onParticipantDisconnected = this.onParticipantDisconnected.bind(this);
+    // Registered unconditionally: a simulator participant identifies itself by
+    // its lk.simulator attribute, and gating on simulationContext() here would
+    // miss user-token runs where no dispatch rides the job.
+    this.#room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
     this.#logger = log().child({
       jobId: this.#info.job.id,
       roomName: this.#info.job.room?.name,
@@ -170,6 +191,45 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
 
   get job(): proto.Job {
     return this.#info.job;
+  }
+
+  /** Returns the {@link SimulationContext} when this job is running under a
+   * simulation, or `undefined` for a normal/production session.
+   *
+   * Resolved once and cached. The framework hands it to `onSimulationEnd`
+   * when the run finishes; read it earlier (e.g. from the entrypoint) to
+   * reach `scenario.userdata` for seeding mocks. Resolves synchronously from
+   * the job's `lk.simulator.dispatch` attribute (a protojson
+   * `SimulationDispatch`), available as soon as the job starts. */
+  simulationContext(): SimulationContext | undefined {
+    if (this.#simulationResolved) {
+      return this.#simulationCtx;
+    }
+    // The simulation attributes ride the agent dispatch and land on the job
+    // delivered to the agent.
+    this.#simulationResolved = true;
+    const raw = this.#info.job.attributes?.[ATTRIBUTE_SIMULATOR_DISPATCH] ?? '';
+    if (!raw) {
+      return undefined;
+    }
+
+    let dispatch;
+    try {
+      dispatch = parseSimulationDispatch(raw);
+    } catch (error) {
+      this.#logger.warn({ error }, 'failed to parse the simulation dispatch job attribute');
+      return undefined;
+    }
+    if (!dispatch.simulationRunId) {
+      this.#logger.warn('simulation dispatch attribute has no simulation_run_id, ignoring');
+      return undefined;
+    }
+
+    this.#simulationCtx = new SimulationContext(
+      dispatch,
+      this as JobContext<unknown> as JobContext,
+    );
+    return this.#simulationCtx;
   }
 
   get workerId(): string {
@@ -393,12 +453,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     if (!this.isFakeJob) {
       const url = new URL(this.#info.url);
 
-      if (report.enableRecording && isCloud(url)) {
+      if ((recordingEnabled(report.recordingOptions) || report.enableRecording) && isCloud(url)) {
         try {
           await uploadSessionReport({
             agentName: this.job.agentName,
             cloudHostname: url.hostname,
             report,
+            metadata: this._otelMetadata(report.recordingOptions),
           });
           this.#logger.info(
             {
@@ -439,6 +500,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    */
   shutdown(reason = '') {
     this.#onShutdown(reason);
+  }
+
+  private onParticipantDisconnected(p: RemoteParticipant): void {
+    if (!(ATTRIBUTE_SIMULATOR in (p.attributes ?? {}))) {
+      return;
+    }
+    this.#logger.debug('simulator disconnected, shutting down the job');
+    this.shutdown('simulation completed');
   }
 
   /** @internal */
@@ -496,9 +565,34 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomId: this.job.room!.sid,
       jobId: this.job.id,
       cloudHostname: url.hostname,
+      agentName: this.job.agentName,
       enableTraces: options.traces,
       enableLogs: options.logs,
+      metadata: this._otelMetadata(options),
     });
+  }
+
+  /** @internal */
+  _otelMetadata(options?: ResolvedRecordingOptions): Record<string, boolean> | undefined {
+    const metadata: Record<string, boolean> = {};
+    const dispatch = this.job.attributes?.[ATTRIBUTE_SIMULATOR_DISPATCH];
+    if (dispatch) {
+      try {
+        const parsed = JSON.parse(dispatch) as {
+          simulationRunId?: unknown;
+          simulation_run_id?: unknown;
+        };
+        if (parsed.simulationRunId || parsed.simulation_run_id) {
+          metadata[ATTRIBUTE_SIMULATION_ENABLED] = true;
+        }
+      } catch {
+        // Ignore malformed simulation dispatch metadata, matching Python's parse-failure behavior.
+      }
+    }
+    if (options?.redaction) {
+      metadata[ATTRIBUTE_REDACTION_ENABLED] = true;
+    }
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 }
 

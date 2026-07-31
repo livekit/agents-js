@@ -73,6 +73,19 @@ export interface TTSOptions {
   opusBitrate?: OpusBitrate;
   /** Whether Fish normalizes the input text before synthesis. Defaults to true. */
   normalize?: boolean;
+  /**
+   * Whether Fish normalizes output loudness for more consistent volume. Unset
+   * uses Fish's server default. Not supported by the `s1` model.
+   */
+  normalizeLoudness?: boolean;
+  /** Maximum audio tokens Fish generates per text chunk. Unset uses Fish's server default. */
+  maxNewTokens?: number;
+  /** Minimum characters before Fish splits text into a new chunk (0-100). */
+  minChunkLength?: number;
+  /** Whether Fish uses previous audio as context for voice consistency across chunks. */
+  conditionOnPreviousChunks?: boolean;
+  /** Early stopping threshold for batch processing (0-1). */
+  earlyStopThreshold?: number;
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
@@ -91,6 +104,11 @@ interface ResolvedTTSOptions {
   mp3Bitrate: MP3Bitrate;
   opusBitrate: OpusBitrate;
   normalize: boolean;
+  normalizeLoudness?: boolean;
+  maxNewTokens?: number;
+  minChunkLength?: number;
+  conditionOnPreviousChunks?: boolean;
+  earlyStopThreshold?: number;
   tokenizer: tokenize.SentenceTokenizer;
 }
 
@@ -120,16 +138,31 @@ const validateProbability = (name: string, value: number) => {
   }
 };
 
+const validateMaxNewTokens = (maxNewTokens: number) => {
+  if (!Number.isFinite(maxNewTokens) || maxNewTokens < 0) {
+    throw new Error('maxNewTokens must be non-negative');
+  }
+};
+
+const validateMinChunkLength = (minChunkLength: number) => {
+  if (!Number.isFinite(minChunkLength) || minChunkLength < 0 || minChunkLength > 100) {
+    throw new Error('minChunkLength must be between 0 and 100');
+  }
+};
+
 // Fish Audio's wire format mirrors the upstream Python SDK so the server
 // doesn't fall back to its own larger defaults — in particular the docs default
 // of `chunk_length=300` produces large bursts that leave audible gaps between
 // chunk boundaries.
 const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<string, unknown> => {
   const prosody =
-    opts.speed !== undefined || opts.volume !== undefined
+    opts.speed !== undefined || opts.volume !== undefined || opts.normalizeLoudness !== undefined
       ? {
           ...(opts.speed !== undefined ? { speed: opts.speed } : {}),
           ...(opts.volume !== undefined ? { volume: opts.volume } : {}),
+          ...(opts.normalizeLoudness !== undefined
+            ? { normalize_loudness: opts.normalizeLoudness }
+            : {}),
         }
       : null;
 
@@ -149,6 +182,14 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
     prosody,
     top_p: opts.topP,
     temperature: opts.temperature,
+    ...(opts.maxNewTokens !== undefined ? { max_new_tokens: opts.maxNewTokens } : {}),
+    ...(opts.minChunkLength !== undefined ? { min_chunk_length: opts.minChunkLength } : {}),
+    ...(opts.conditionOnPreviousChunks !== undefined
+      ? { condition_on_previous_chunks: opts.conditionOnPreviousChunks }
+      : {}),
+    ...(opts.earlyStopThreshold !== undefined
+      ? { early_stop_threshold: opts.earlyStopThreshold }
+      : {}),
   };
 };
 
@@ -174,8 +215,19 @@ export class TTS extends tts.TTS {
     validateProbability('temperature', temperature);
     const topP = opts.topP ?? DEFAULT_OPTS.topP;
     validateProbability('topP', topP);
+    if (opts.maxNewTokens !== undefined) validateMaxNewTokens(opts.maxNewTokens);
+    if (opts.minChunkLength !== undefined) validateMinChunkLength(opts.minChunkLength);
+    if (opts.earlyStopThreshold !== undefined) {
+      validateProbability('earlyStopThreshold', opts.earlyStopThreshold);
+    }
 
     const sampleRate = opts.sampleRate ?? DEFAULT_OPTS.sampleRate;
+    const model = opts.model ?? DEFAULT_OPTS.model;
+    let normalizeLoudness = opts.normalizeLoudness;
+    if (normalizeLoudness !== undefined && model === 's1') {
+      log().warn('normalizeLoudness is not supported by the s1 model, dropping');
+      normalizeLoudness = undefined;
+    }
 
     super(sampleRate, NUM_CHANNELS, { streaming: true });
 
@@ -187,7 +239,7 @@ export class TTS extends tts.TTS {
 
     this.#opts = {
       apiKey,
-      model: opts.model ?? DEFAULT_OPTS.model,
+      model,
       voiceId: opts.voiceId ?? DEFAULT_OPTS.voiceId,
       sampleRate,
       baseURL: opts.baseURL ?? DEFAULT_OPTS.baseURL,
@@ -200,6 +252,11 @@ export class TTS extends tts.TTS {
       mp3Bitrate: opts.mp3Bitrate ?? DEFAULT_OPTS.mp3Bitrate,
       opusBitrate: opts.opusBitrate ?? DEFAULT_OPTS.opusBitrate,
       normalize: opts.normalize ?? DEFAULT_OPTS.normalize,
+      normalizeLoudness,
+      maxNewTokens: opts.maxNewTokens,
+      minChunkLength: opts.minChunkLength,
+      conditionOnPreviousChunks: opts.conditionOnPreviousChunks,
+      earlyStopThreshold: opts.earlyStopThreshold,
       tokenizer,
     };
 
@@ -232,12 +289,21 @@ export class TTS extends tts.TTS {
     mp3Bitrate?: MP3Bitrate;
     opusBitrate?: OpusBitrate;
     normalize?: boolean;
+    normalizeLoudness?: boolean;
+    maxNewTokens?: number;
+    minChunkLength?: number;
+    conditionOnPreviousChunks?: boolean;
+    earlyStopThreshold?: number;
   }): void {
     if (opts.model !== undefined && opts.model !== this.#opts.model) {
       this.#opts.model = opts.model;
       // The model is sent as a connection header at ws-handshake time, not in the
       // per-request body, so a pooled socket keeps the old model.
       this.#pool.invalidate();
+      if (opts.model === 's1' && this.#opts.normalizeLoudness !== undefined) {
+        log().warn('normalizeLoudness is not supported by the s1 model, dropping');
+        this.#opts.normalizeLoudness = undefined;
+      }
     }
     if (opts.voiceId !== undefined) this.#opts.voiceId = opts.voiceId;
     if (opts.latencyMode !== undefined) this.#opts.latencyMode = opts.latencyMode;
@@ -258,6 +324,28 @@ export class TTS extends tts.TTS {
     if (opts.mp3Bitrate !== undefined) this.#opts.mp3Bitrate = opts.mp3Bitrate;
     if (opts.opusBitrate !== undefined) this.#opts.opusBitrate = opts.opusBitrate;
     if (opts.normalize !== undefined) this.#opts.normalize = opts.normalize;
+    if (opts.normalizeLoudness !== undefined) {
+      if (this.#opts.model === 's1') {
+        log().warn('normalizeLoudness is not supported by the s1 model, dropping');
+      } else {
+        this.#opts.normalizeLoudness = opts.normalizeLoudness;
+      }
+    }
+    if (opts.maxNewTokens !== undefined) {
+      validateMaxNewTokens(opts.maxNewTokens);
+      this.#opts.maxNewTokens = opts.maxNewTokens;
+    }
+    if (opts.minChunkLength !== undefined) {
+      validateMinChunkLength(opts.minChunkLength);
+      this.#opts.minChunkLength = opts.minChunkLength;
+    }
+    if (opts.conditionOnPreviousChunks !== undefined) {
+      this.#opts.conditionOnPreviousChunks = opts.conditionOnPreviousChunks;
+    }
+    if (opts.earlyStopThreshold !== undefined) {
+      validateProbability('earlyStopThreshold', opts.earlyStopThreshold);
+      this.#opts.earlyStopThreshold = opts.earlyStopThreshold;
+    }
   }
 
   synthesize(

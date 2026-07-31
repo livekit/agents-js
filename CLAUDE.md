@@ -19,7 +19,7 @@ LiveKit Agents for Node.js — a TypeScript framework for building realtime, mul
 - **`examples/`** — Example agents (private, not published). Run with `pnpm build && node ./examples/src/<file>.ts dev`.
 - **`tests/e2e/`** — End-to-end tests via Docker (separate from unit tests co-located in each package).
 
-**Tooling:** pnpm 9.7.0 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
+**Tooling:** pnpm 11 workspaces, Turborepo for builds, tsup for bundling (CJS + ESM), TypeScript 5.4+, Vitest for tests, Changesets for versioning.
 
 ## Common Commands
 
@@ -29,8 +29,8 @@ pnpm build:agents           # Build only @livekit/agents and its deps
 pnpm build:plugins          # Build only plugins and their deps
 pnpm clean:build            # Clean dist/ dirs then rebuild
 pnpm test                   # Run all tests (vitest)
-pnpm test -- --testPathPattern=agents/src/llm  # Run tests by path
-pnpm test -- --testNamePattern="chat context"  # Run tests by name
+pnpm test agents/src/llm            # Run tests by path
+pnpm test -t "chat context"         # Run tests by name
 pnpm test:watch             # Watch mode
 pnpm lint                   # ESLint all packages
 pnpm lint:fix               # ESLint with auto-fix

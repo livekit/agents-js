@@ -289,6 +289,76 @@ describe('stripThinkingTokens', () => {
       collectVisibleText(['before<|channel>thought\nprivate reasoning'], GEMMA_THINK_TAGS),
     ).toBe('before');
   });
+
+  it('flattens list-shaped delta content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: 'Hallo' }], state)).toBe('Hallo');
+  });
+
+  it('flattens multiple and string parts', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [{ type: 'text', text: 'Hello ' }, 'from ', { type: 'text', text: 'LiveKit' }],
+        state,
+      ),
+    ).toBe('Hello from LiveKit');
+  });
+
+  it('strips thinking tokens inside list parts', () => {
+    const state = new ThinkingTokenFilter();
+    const visible: string[] = [];
+    for (const chunk of [
+      [{ type: 'text', text: '<think>private ' }],
+      [{ type: 'text', text: 'reasoning</think>answer' }],
+    ]) {
+      const content = stripThinkingTokens(chunk, state);
+      if (content !== undefined) {
+        visible.push(content);
+      }
+    }
+
+    const content = stripThinkingTokens(undefined, state, { final: true });
+    if (content !== undefined) {
+      visible.push(content);
+    }
+    expect(visible.join('')).toBe('answer');
+  });
+
+  it('ignores list parts without text', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [
+          { type: 'image_url', image_url: { url: 'https://x' } },
+          { type: 'text', text: 'hi' },
+        ],
+        state,
+      ),
+    ).toBe('hi');
+  });
+
+  it('treats a list without any text part as no content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([], state)).toBeUndefined();
+    expect(
+      stripThinkingTokens([{ type: 'image_url', image_url: { url: 'https://x' } }], state),
+    ).toBeUndefined();
+  });
+
+  it('keeps an empty text part as empty content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: '' }], state)).toBe('');
+  });
+
+  it('flattens object parts with a text property', () => {
+    class Part {
+      text = 'typed part';
+    }
+
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([new Part()], state)).toBe('typed part');
+  });
 });
 
 describe('executeToolCall', () => {

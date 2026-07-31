@@ -7,6 +7,12 @@ export interface OverlappingSpeechEvent {
   type: 'overlapping_speech';
   detectedAt: number;
   isInterruption: boolean;
+  /**
+   * True when the overlap ended because the agent finished speaking rather than the user.
+   * The user may still be talking, so `isInterruption` (always false here) is inconclusive
+   * and must not be treated as a confirmed backchannel verdict.
+   */
+  agentEnded?: boolean;
   totalDurationInS: number;
   predictionDurationInS: number;
   detectionDelayInS: number;
@@ -66,6 +72,8 @@ export interface OverlapSpeechEnded {
   type: 'overlap-speech-ended';
   /** Absolute timestamp (ms) when overlap speech ended, used as the non-interruption event timestamp. */
   endedAt: number;
+  /** Whether the overlap ended because agent speech ended, not because user speech ended. */
+  agentEnded?: boolean;
 }
 
 export interface Flush {
