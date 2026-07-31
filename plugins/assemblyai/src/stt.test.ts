@@ -256,6 +256,67 @@ describe('AssemblyAI options', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('recomputes chatContext when updateOptions changes the model', () => {
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+
+    stt.updateOptions({ speechModel: 'universal-streaming-english' });
+    expect(stt.capabilities.chatContext).toBe(false);
+
+    stt.updateOptions({ speechModel: 'universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+
+  it('stops forwarding assistant replies after switching to a non-U3 model', () => {
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'universal-3-5-pro' });
+    stt.updateOptions({ speechModel: 'universal-streaming-english' });
+
+    const update = vi.spyOn(stt, 'updateOptions');
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(
+        ChatMessage.create({ role: 'assistant', content: ['ignored after switch'] }),
+      ),
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('rejects U3-Pro-only fields passed alongside a non-U3 model', () => {
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'universal-3-5-pro' });
+    expect(() =>
+      stt.updateOptions({ speechModel: 'universal-streaming-english', agentContext: 'x' }),
+    ).toThrow(/agentContext/);
+  });
+
+  it('drops stale agent_context from the connect query after switching to a non-U3 model', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    try {
+      const stt = new STT({ apiKey: 'test-key', baseUrl, speechModel: 'universal-3-5-pro' });
+      // carryover auto-populates agentContext while on a U3 Pro model
+      stt._pushConversationItem(
+        createConversationItemAddedEvent(
+          ChatMessage.create({ role: 'assistant', content: ['remembered context'] }),
+        ),
+      );
+      // switching to a model that can't accept it must drop the stale value
+      stt.updateOptions({ speechModel: 'universal-streaming-english' });
+
+      const stream = stt.stream();
+      await waitUntil(() => requestUrl !== '');
+      stream.close();
+
+      const url = new URL(`ws://127.0.0.1${requestUrl}`);
+      expect(url.searchParams.get('speech_model')).toBe('universal-streaming-english');
+      expect(url.searchParams.has('agent_context')).toBe(false);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('forwards inactivity timeout to the streaming query', async () => {
     const { wss, baseUrl } = await startWebSocketServer();
     let requestUrl = '';
