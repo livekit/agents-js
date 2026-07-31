@@ -19,6 +19,7 @@ import {
   intervalForRetry,
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
+import type { SpeechSteeringOptions } from '../voice/agent_session.js';
 import type { TimedString } from '../voice/io.js';
 import type { ExpressiveTag } from './_provider_format.js';
 import {
@@ -26,6 +27,7 @@ import {
   normalizeMarkup,
   llmInstructions as providerLlmInstructions,
   splitMarkup,
+  supportedNonverbals,
 } from './_provider_format.js';
 
 /**
@@ -86,6 +88,11 @@ export interface SynthesizeStreamStartedTime {
   hrTime: bigint;
 }
 
+/** Capabilities exposed by the expressive markup pipeline for a voice. */
+export interface TTSMarkupInfo {
+  nonverbals: Record<string, string[]>;
+}
+
 /**
  * Declares TTS markup capabilities for the expressive pipeline.
  *
@@ -104,14 +111,19 @@ export class TTSMarkup {
     return this.#tts._markupProviderKey();
   }
 
+  /** Return the queryable expressive markup capabilities for this voice. */
+  get info(): TTSMarkupInfo {
+    return { nonverbals: supportedNonverbals(this.#providerKey()) };
+  }
+
   /**
    * Return instructions for the LLM describing available markup tags.
    *
    * The framework injects this into the LLM system prompt when
    * `expressive` is enabled. Returns `undefined` if this TTS has no markup support.
    */
-  llmInstructions(): string | undefined {
-    return providerLlmInstructions(this.#providerKey());
+  llmInstructions(speechSteering?: SpeechSteeringOptions): string | undefined {
+    return providerLlmInstructions(this.#providerKey(), speechSteering);
   }
 
   /** Strip markup and collect the stripped tags in one pass. */

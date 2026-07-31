@@ -192,8 +192,27 @@ export function resolveRecordingOptions(
  */
 export interface ExpressiveOptions {
   preset?: Preset;
+  speechSteering?: SpeechSteeringOptions;
   ttsInstructionsTemplate?: Instructions | string;
   ttsInstructionsAppend?: string;
+}
+
+/** Non-verbal vocalizations a TTS may produce. Omitted fields default to off. */
+export interface NonverbalOptions {
+  laughing?: boolean;
+  breathing?: boolean;
+  sighing?: boolean;
+  crying?: boolean;
+  vocalizing?: boolean;
+  mouthSounds?: boolean;
+  reflexSounds?: boolean;
+}
+
+/** Provider-agnostic controls for generated speech delivery. */
+export interface SpeechSteeringOptions {
+  disfluencies?: boolean;
+  nonverbalSounds?: NonverbalOptions;
+  pace?: 'slow' | 'normal' | 'fast';
 }
 
 export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
@@ -202,6 +221,7 @@ export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions = {
       'Use them when appropriate to make your speech more expressive and natural:\n\n' +
       '{tts.markup.llm_instructions}',
   ),
+  speechSteering: { disfluencies: true },
 };
 
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {

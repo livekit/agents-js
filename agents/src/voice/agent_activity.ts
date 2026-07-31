@@ -1931,7 +1931,16 @@ export class AgentActivity implements RecognitionHooks {
         defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS,
       });
     }
-    return expr ? DEFAULT_EXPRESSIVE_OPTIONS : undefined;
+    if (!expr) {
+      return undefined;
+    }
+    return resolveExpressivePreset(
+      {},
+      {
+        providerKey: this.tts._markupProviderKey(),
+        defaultOptions: DEFAULT_EXPRESSIVE_OPTIONS,
+      },
+    );
   }
 
   /**
@@ -1948,7 +1957,9 @@ export class AgentActivity implements RecognitionHooks {
 
     const turnModality = speechHandle?.inputDetails.modality;
 
-    const ttsInstructions = this.tts ? this.tts.markup.llmInstructions() : undefined;
+    const ttsInstructions = this.tts
+      ? this.tts.markup.llmInstructions(options.speechSteering)
+      : undefined;
     if (ttsInstructions) {
       const ttsTemplate = toInstructions(options.ttsInstructionsTemplate!);
       const text = ttsTemplate.render({

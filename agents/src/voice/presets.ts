@@ -39,6 +39,7 @@ import {
   INWORLD_CUSTOMER_SERVICE,
   XAI_CASUAL,
   XAI_CUSTOMER_SERVICE,
+  steeringInstructions,
 } from '../tts/_provider_format.js';
 import type { ExpressiveOptions } from './agent_session.js';
 
@@ -95,6 +96,15 @@ export function resolveOptions(
     preset !== undefined ? REGISTRY[providerKey]?.[preset] ?? defaultOptions : defaultOptions;
 
   let ttsTmpl = expr.ttsInstructionsTemplate ?? base.ttsInstructionsTemplate!;
+  const speechSteering = {
+    ...defaultOptions.speechSteering,
+    ...base.speechSteering,
+    ...expr.speechSteering,
+  };
+  const steering = steeringInstructions(providerKey, speechSteering);
+  if (steering) {
+    ttsTmpl = append(ttsTmpl, steering);
+  }
   const extra = expr.ttsInstructionsAppend;
   if (extra) {
     ttsTmpl = append(ttsTmpl, extra);
@@ -102,6 +112,7 @@ export function resolveOptions(
 
   return {
     ttsInstructionsTemplate: ttsTmpl,
+    speechSteering,
   };
 }
 
