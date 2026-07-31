@@ -154,7 +154,7 @@ export class KrispVivaFilter extends FrameProcessor<AudioFrame> {
   ) {
     super();
     const provider = resolveAuthProvider(opts.authProvider);
-    this.inner = buildBackend(mode, provider, opts.noiseSuppressionLevel ?? 100);
+    this.inner = buildBackend(mode, provider, opts.noiseSuppressionLevel ?? 75);
   }
 
   isEnabled(): boolean {
