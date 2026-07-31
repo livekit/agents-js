@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { BaseStreamingTurnDetector } from '../../inference/eot/base.js';
 import { log } from '../../log.js';
+import { checkTurnHandlingOptionRanges } from '../../option_ranges.js';
 import {
   type AgentSessionOptions,
   type InternalSessionOptions,
@@ -162,6 +163,7 @@ export function resolveEndpointing(
 }
 
 export function mergeWithDefaults(config: TurnHandlingOptions) {
+  checkTurnHandlingOptionRanges(config);
   const endpointingOverrides = stripUndefined(config.endpointing);
   return {
     // Keep an explicit `null` (opt-out) — only an absent value falls back to

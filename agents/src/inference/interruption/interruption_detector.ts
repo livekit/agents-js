@@ -6,6 +6,7 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
+import { checkInterruptionOptionRanges } from '../../option_ranges.js';
 import { asError } from '../../utils.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
@@ -30,6 +31,8 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
 
   constructor(options: AdaptiveInterruptionDetectorOptions = {}) {
     super();
+
+    checkInterruptionOptionRanges(options);
 
     const {
       maxAudioDurationInS,
@@ -161,6 +164,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
     threshold?: number;
     minInterruptionDurationInS?: number;
   }): Promise<void> {
+    checkInterruptionOptionRanges(options);
     if (options.threshold !== undefined) {
       this.options.threshold = options.threshold;
     }

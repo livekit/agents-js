@@ -8,6 +8,7 @@ import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
+import { type RangedSTTModelOptions, checkSTTModelOptionRanges } from '../option_ranges.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
   STT as BaseSTT,
@@ -424,6 +425,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
+    checkSTTModelOptionRanges(
+      typeof opts?.model === 'string' ? opts.model : undefined,
+      modelOptions as RangedSTTModelOptions,
+    );
     super({
       streaming: true,
       interimResults: true,
@@ -529,6 +534,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     const mergedModelOptions = opts.modelOptions
       ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
       : this.opts.modelOptions;
+    checkSTTModelOptionRanges(
+      nextOpts.model ?? this.opts.model,
+      mergedModelOptions as RangedSTTModelOptions,
+    );
 
     this.opts = {
       ...this.opts,

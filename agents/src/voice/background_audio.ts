@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { audioFramesFromFile, loopAudioFramesFromFile } from '../audio.js';
 import { log } from '../log.js';
+import { checkAudioConfigRanges } from '../option_ranges.js';
 import { Future, Task, cancelAndWait } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type AgentStateChangedEvent } from './events.js';
@@ -177,6 +178,9 @@ export class BackgroundAudioPlayer {
    * Return undefined if no sound is selected (when sum of probabilities < 1.0).
    */
   private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | undefined {
+    for (const sound of sounds) {
+      checkAudioConfigRanges(sound);
+    }
     const totalProbability = sounds.reduce((sum, sound) => sum + (sound.probability ?? 1.0), 0);
 
     if (totalProbability <= 0) {
@@ -235,6 +239,7 @@ export class BackgroundAudioPlayer {
     }
 
     if (typeof source === 'object' && 'source' in source) {
+      checkAudioConfigRanges(source);
       return {
         source: this.normalizeBuiltinAudio(source.source),
         volume: source.volume ?? 1.0,

@@ -45,6 +45,7 @@ import { ToolContext, toToolContext } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { checkAgentSessionOptionRanges } from '../option_ranges.js';
 import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
@@ -509,6 +510,8 @@ export class AgentSession<
 
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
+
+    checkAgentSessionOptionRanges(options);
 
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);

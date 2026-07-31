@@ -11,6 +11,7 @@
  */
 import { APIError } from '../../_exceptions.js';
 import type { LanguageCode } from '../../language.js';
+import { checkedZeroToOne } from '../../option_ranges.js';
 
 /** Full model name (used for telemetry/billing via `detector.model`). */
 export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
@@ -77,12 +78,15 @@ const round4 = (value: number): number => Math.round(value * 1e4) / 1e4;
 export type ThresholdOverride = number | Record<string, number> | undefined;
 
 function normalizeOverrides(overrides: ThresholdOverride): ThresholdOverride {
-  if (overrides === undefined || typeof overrides !== 'object') {
+  if (overrides === undefined) {
     return overrides;
+  }
+  if (typeof overrides !== 'object') {
+    return checkedZeroToOne(overrides);
   }
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(overrides)) {
-    out[normalizeLanguage(k)] = Number(v);
+    out[normalizeLanguage(k)] = checkedZeroToOne(Number(v));
   }
   return out;
 }

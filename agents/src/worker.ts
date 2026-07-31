@@ -29,6 +29,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { log } from './log.js';
+import { checkServerOptionRanges } from './option_ranges.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
@@ -255,6 +256,16 @@ export class ServerOptions {
     if (!this.agent) {
       throw new Error('No Agent file was passed to the worker');
     }
+    checkServerOptionRanges({
+      numIdleProcesses,
+      drainTimeout,
+      shutdownProcessTimeout,
+      initializeProcessTimeout,
+      maxRetry,
+      port,
+      jobMemoryWarnMB,
+      jobMemoryLimitMB,
+    });
     this.requestFunc = requestFunc;
     this.loadFunc = loadFunc;
     this.loadThreshold = simulation ? Infinity : loadThreshold || Default.loadThreshold(production);

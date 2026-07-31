@@ -2,7 +2,7 @@
   "files": ["globals.d.ts"],
   "compilerOptions": {
     "rootDir": ".",
-    "baseUrl": ".",
+    // No `baseUrl`: `paths` resolves relative to this file, and TS 6 (bundled by freerange) errors on it.
     "target": "es2022",
     "types": ["node"],
     "module": "node16",
@@ -18,8 +18,8 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "paths": {
-      "@livekit/agents": ["agents/src"],
-      "@livekit/agents-plugin-*": ["plugins/*/src"]
+      "@livekit/agents": ["./agents/src"],
+      "@livekit/agents-plugin-*": ["./plugins/*/src"]
     }
   },
 

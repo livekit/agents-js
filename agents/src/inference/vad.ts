@@ -11,6 +11,7 @@
  */
 import { AudioFrame, AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import { log } from '../log.js';
+import { checkVADOptionRanges } from '../option_ranges.js';
 import { VAD as BaseVAD, VADStream as BaseVADStream, VADEventType } from '../vad.js';
 import { _getLocalInferenceModule } from './_warmup.js';
 
@@ -64,6 +65,7 @@ export class VAD extends BaseVAD {
     if (opts.deactivationThreshold !== undefined && opts.deactivationThreshold <= 0) {
       throw new Error('deactivationThreshold must be greater than 0');
     }
+    checkVADOptionRanges(opts);
     this._model = model;
     const activation = opts.activationThreshold ?? defaultVADOptions.activationThreshold;
     this._opts = {
@@ -88,6 +90,7 @@ export class VAD extends BaseVAD {
 
   /** Update one or more knobs at runtime, propagating to live streams. */
   updateOptions(opts: Partial<VADOptions>): void {
+    checkVADOptionRanges(opts);
     this._opts = { ...this._opts, ...opts };
     for (const ref of this.#streams) {
       const stream = ref.deref();

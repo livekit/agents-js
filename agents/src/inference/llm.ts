@@ -10,6 +10,7 @@ import {
   ThinkingTokenFilter,
   stripThinkingTokens,
 } from '../llm/utils.js';
+import { checkChatCompletionOptionRanges } from '../option_ranges.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
@@ -217,6 +218,8 @@ export class LLM extends llm.LLM {
       inferenceClass,
     } = opts;
 
+    if (modelOptions !== undefined) checkChatCompletionOptionRanges(modelOptions);
+
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
     const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
     if (!lkApiKey) {
@@ -282,6 +285,7 @@ export class LLM extends llm.LLM {
       this.opts.model = model;
     }
     if (modelOptions !== undefined) {
+      checkChatCompletionOptionRanges(modelOptions);
       this.opts.modelOptions = { ...modelOptions };
     }
   }
