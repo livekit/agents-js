@@ -9,12 +9,14 @@ import {
   APITimeoutError,
   type AudioBuffer,
   AudioByteStream,
+  Future,
   createTimedString,
   log,
   mergeFrames,
   normalizeLanguage,
   shortuuid,
   stt,
+  waitForAbort,
 } from '@livekit/agents';
 import { type AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
@@ -34,8 +36,20 @@ export interface STTOptions {
   encoding: STTEncoding | string;
   wordTimestamps: boolean;
   diarize: boolean;
-  /** End-of-utterance silence timeout in milliseconds. Valid range: 100-10000ms. */
+  /** Silence before the server finalizes an utterance. Valid range: 100-10000ms. */
   eouTimeoutMs: number;
+  /** Finalize transcripts on trailing silence detection. */
+  endpointing: boolean;
+  /** Keyword and intensifier pairs used to boost streaming recognition. */
+  keywords: [string, number][];
+  /** Apply punctuation and capitalization to streaming transcripts. */
+  format: boolean;
+  /** Include sentence-level utterances in streaming transcript metadata. */
+  sentenceTimestamps: boolean;
+  /** Redact names, addresses, and phone numbers in streaming transcripts. */
+  redactPii: boolean;
+  /** Redact payment card data in streaming transcripts. */
+  redactPci: boolean;
   baseUrl: string;
 }
 
@@ -48,12 +62,19 @@ const defaultSTTOptions: STTOptions = {
   wordTimestamps: true,
   diarize: false,
   eouTimeoutMs: 100,
+  endpointing: true,
+  keywords: [],
+  format: true,
+  sentenceTimestamps: false,
+  redactPii: false,
+  redactPci: false,
   baseUrl: SMALLEST_STT_BASE_URL,
 };
 
 /** @public */
 export class STT extends stt.STT {
   #opts: STTOptions;
+  #streams = new Set<WeakRef<SpeechStream>>();
   label = 'smallestai.STT';
 
   constructor(opts: Partial<STTOptions> = {}) {
@@ -130,7 +151,9 @@ export class STT extends stt.STT {
     if (!this.capabilities.streaming) {
       throw new Error(`${this.#opts.model} does not support streaming; use recognize() instead`);
     }
-    return new SpeechStream(this, { ...this.#opts }, options?.connOptions);
+    const stream = new SpeechStream(this, { ...this.#opts }, options?.connOptions);
+    this.#streams.add(new WeakRef(stream));
+    return stream;
   }
 
   updateOptions(opts: Partial<Omit<STTOptions, 'apiKey' | 'baseUrl'>>) {
@@ -140,6 +163,15 @@ export class STT extends stt.STT {
       diarization: this.#opts.diarize,
       alignedTranscript: this.#opts.wordTimestamps ? 'word' : false,
     });
+
+    for (const ref of this.#streams) {
+      const stream = ref.deref();
+      if (stream) {
+        stream.updateOptions(opts);
+      } else {
+        this.#streams.delete(ref);
+      }
+    }
   }
 }
 
@@ -149,6 +181,8 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #sessionId = '';
   #speaking = false;
+  #reconnectEvent = new Future<void>();
+  #pendingInput?: Promise<IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>>;
   #connOptions: APIConnectOptions;
   label = 'smallestai.SpeechStream';
 
@@ -162,12 +196,31 @@ export class SpeechStream extends stt.SpeechStream {
     };
   }
 
+  updateOptions(opts: Partial<Omit<STTOptions, 'apiKey' | 'baseUrl'>>): void {
+    this.#opts = { ...this.#opts, ...opts };
+    if (!this.#reconnectEvent.done) this.#reconnectEvent.resolve();
+  }
+
   protected async run(): Promise<void> {
-    const ws = await this.#connectWS();
-    try {
-      await Promise.race([this.#sendAudio(ws), this.#receiveEvents(ws)]);
-    } finally {
-      ws.close();
+    while (!this.closed && !this.input.closed) {
+      this.#reconnectEvent = new Future<void>();
+      const ws = await this.#connectWS();
+      const sessionController = new AbortController();
+
+      try {
+        const result = await Promise.race([
+          Promise.all([
+            this.#sendAudio(ws, sessionController.signal),
+            this.#receiveEvents(ws, sessionController.signal),
+          ]).then(() => 'done' as const),
+          this.#reconnectEvent.await.then(() => 'reconnect' as const),
+          waitForAbort(this.abortSignal).then(() => 'abort' as const),
+        ]);
+        if (result !== 'reconnect') return;
+      } finally {
+        sessionController.abort();
+        ws.close();
+      }
     }
   }
 
@@ -183,6 +236,18 @@ export class SpeechStream extends stt.SpeechStream {
       word_timestamps: this.#opts.wordTimestamps,
       diarize: this.#opts.diarize,
       eou_timeout_ms: this.#opts.eouTimeoutMs,
+      endpointing: this.#opts.endpointing,
+      format: this.#opts.format,
+      sentence_timestamps: this.#opts.sentenceTimestamps,
+      redact_pii: this.#opts.redactPii,
+      redact_pci: this.#opts.redactPci,
+      ...(this.#opts.keywords.length
+        ? {
+            keywords: this.#opts.keywords.map(
+              ([keyword, intensifier]) => `${keyword}:${intensifier}`,
+            ),
+          }
+        : {}),
     });
 
     const ws = new WebSocket(url, {
@@ -215,11 +280,16 @@ export class SpeechStream extends stt.SpeechStream {
     return ws;
   }
 
-  async #sendAudio(ws: WebSocket): Promise<void> {
+  async #sendAudio(ws: WebSocket, abortSignal: AbortSignal): Promise<void> {
     const samplesPerChunk = Math.floor(this.#opts.sampleRate / 20);
     const audioStream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS, samplesPerChunk);
 
-    for await (const data of this.input) {
+    while (!abortSignal.aborted) {
+      this.#pendingInput ??= this.input.next();
+      const result = await Promise.race([this.#pendingInput, waitForAbort(abortSignal)]);
+      if (result === undefined || result.done) break;
+      this.#pendingInput = undefined;
+      const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {
         for (const frame of audioStream.flush()) {
           ws.send(frame.data);
@@ -232,27 +302,28 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
-    ws.send(CLOSE_STREAM_MESSAGE);
+    if (!abortSignal.aborted) ws.send(CLOSE_STREAM_MESSAGE);
   }
 
-  async #receiveEvents(ws: WebSocket): Promise<void> {
-    const messages = new AsyncQueue<RawData>();
-    ws.on('message', (data) => messages.push(data));
-    ws.on('error', (error) => messages.throw(error));
-    ws.on('close', () => messages.close());
+  async #receiveEvents(ws: WebSocket, abortSignal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const onMessage = (raw: RawData) => {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(raw.toString());
+        } catch {
+          this.#logger.warn({ raw: raw.toString() }, 'failed to parse SmallestAI STT message');
+          return;
+        }
 
-    for await (const raw of messages) {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(raw.toString());
-      } catch {
-        this.#logger.warn({ raw: raw.toString() }, 'failed to parse SmallestAI STT message');
-        continue;
-      }
-
-      this.#processStreamEvent(data);
-      if (data.is_last === true) return;
-    }
+        this.#processStreamEvent(data);
+        if (data.is_last === true) resolve();
+      };
+      ws.on('message', onMessage);
+      ws.once('error', reject);
+      ws.once('close', () => resolve());
+      abortSignal.addEventListener('abort', () => resolve(), { once: true });
+    });
   }
 
   #processStreamEvent(data: Record<string, unknown>) {
@@ -300,9 +371,22 @@ function transcriptToSpeechData(
   startTimeOffset: number,
   diarize: boolean,
 ): [stt.SpeechData, ...stt.SpeechData[]] {
-  const rawWords = wordsFrom(data.words);
+  const rawWords = recordsFrom(data.words);
+  const rawUtterances = recordsFrom(data.utterances);
+  const redactedEntities = Array.isArray(data.redacted_entities)
+    ? data.redacted_entities.filter((entity): entity is string => typeof entity === 'string')
+    : [];
   const speakerId = diarize ? mostFrequentSpeaker(rawWords) : null;
   const detectedLanguage = stringValue(data.language) || language;
+  const metadata: Record<string, unknown> = {};
+  if (rawUtterances.length) {
+    metadata.utterances = rawUtterances.map((utterance) => ({
+      ...utterance,
+      start: numberValue(utterance.start) + startTimeOffset,
+      end: numberValue(utterance.end) + startTimeOffset,
+    }));
+  }
+  if (redactedEntities.length) metadata.redacted_entities = redactedEntities;
 
   return [
     {
@@ -323,6 +407,7 @@ function transcriptToSpeechData(
           )
         : undefined,
       speakerId,
+      metadata: Object.keys(metadata).length ? metadata : undefined,
     },
   ];
 }
@@ -331,7 +416,8 @@ function batchTranscriptionToSpeechEvent(
   language: string,
   data: Record<string, unknown>,
 ): stt.SpeechEvent {
-  const rawWords = wordsFrom(data.words);
+  const rawWords = recordsFrom(data.words);
+  const rawUtterances = recordsFrom(data.utterances);
   const detectedLanguage = stringValue(data.language) || language;
   return {
     type: stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -353,6 +439,7 @@ function batchTranscriptionToSpeechEvent(
               }),
             )
           : undefined,
+        metadata: rawUtterances.length ? { utterances: rawUtterances } : undefined,
       },
     ],
   };
@@ -364,7 +451,7 @@ function appendSearchParams(url: URL, params: Record<string, unknown>) {
   }
 }
 
-function wordsFrom(value: unknown): Record<string, unknown>[] {
+function recordsFrom(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value.filter((item) => typeof item === 'object' && item !== null)
     : [];
@@ -418,39 +505,4 @@ function createWav(frame: AudioFrame): Buffer {
 
   const pcm = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
   return Buffer.concat([header, pcm]);
-}
-
-class AsyncQueue<T> implements AsyncIterable<T> {
-  #items: T[] = [];
-  #resolve: (() => void) | undefined;
-  #closed = false;
-  #error: unknown;
-
-  push(item: T) {
-    this.#items.push(item);
-    this.#resolve?.();
-  }
-
-  throw(error: unknown) {
-    this.#error = error;
-    this.close();
-  }
-
-  close() {
-    this.#closed = true;
-    this.#resolve?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<T> {
-    while (!this.#closed || this.#items.length > 0) {
-      if (this.#items.length === 0) {
-        await new Promise<void>((resolve) => {
-          this.#resolve = resolve;
-        });
-      }
-      if (this.#error) throw this.#error;
-      const item = this.#items.shift();
-      if (item !== undefined) yield item;
-    }
-  }
 }
