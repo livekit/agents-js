@@ -67,7 +67,7 @@ export default async function entry(ctx: JobContext) {
 | Option                  | Type           | Default                    | Description                                                                                                |
 | ----------------------- | -------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `authProvider`          | `AuthProvider` | `LiveKitCloudAuthProvider` | Authentication backend. Defaults to LiveKit Cloud. See [the alternative](#alternative-krisp-license-auth). |
-| `noiseSuppressionLevel` | `number`       | `100`                      | Noise reduction intensity (0-100).                                                                         |
+| `noiseSuppressionLevel` | `number`       | `75`                       | Noise reduction intensity (0-100).                                                                         |
 
 Input frames of any size and sample rate are buffered and adapted automatically.
 
