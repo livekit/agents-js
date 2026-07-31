@@ -101,6 +101,8 @@ export interface RealtimeSessionOptions {
    * Disable the model's server-side turn detection for this session so the client drives
    * turn-taking. Honored only by plugins reporting `canDisableTurnDetection`; the model itself
    * is left unchanged and stays reusable.
+   *
+   * @defaultValue false
    */
   turnDetectionDisabled?: boolean;
 }
