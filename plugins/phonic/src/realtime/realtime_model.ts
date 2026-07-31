@@ -55,6 +55,8 @@ export interface RealtimeModelOptions {
   noInputEndConversationSec?: number;
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   configsForTools?: PhonicToolConfig[];
+  /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
+  forbidSpeechAfterToolCall?: string[];
   onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
@@ -178,6 +180,12 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       configsForTools?: PhonicToolConfig[];
       /**
+       * @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead.
+       * When set, each listed tool is merged into `configsForTools` as
+       * `forbid_speech_after_tool_call: true` (an explicit `configsForTools` entry wins).
+       */
+      forbidSpeechAfterToolCall?: string[];
+      /**
        * Called with the Phonic conversation ID once the conversation is created
        */
       onConversationCreated?: (conversationId: string) => void;
@@ -241,11 +249,19 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputEndConversationSec: options.noInputEndConversationSec,
       additionalParams: options.additionalParams,
       configsForTools: options.configsForTools,
+      forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
     };
+
+    if (options.forbidSpeechAfterToolCall) {
+      log().warn(
+        '`forbidSpeechAfterToolCall` is deprecated and will be removed in a future release; ' +
+          'set `forbid_speech_after_tool_call` per tool via `configsForTools` instead.',
+      );
+    }
   }
 
   /**
@@ -427,6 +443,16 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildToolDefinitions(tools: llm.ToolContext): Phonic.InlineWebSocketTool[] {
     this.configsForTools = new Map((this.options.configsForTools ?? []).map((c) => [c.name, c]));
+    // Deprecated: fold forbidSpeechAfterToolCall (list of tool names) into the per-tool configs;
+    // an explicit configsForTools entry for the same tool wins.
+    for (const name of this.options.forbidSpeechAfterToolCall ?? []) {
+      const cfg = this.configsForTools.get(name);
+      if (cfg === undefined) {
+        this.configsForTools.set(name, { name, forbid_speech_after_tool_call: true });
+      } else if (cfg.forbid_speech_after_tool_call === undefined) {
+        this.configsForTools.set(name, { ...cfg, forbid_speech_after_tool_call: true });
+      }
+    }
     // TODO: support provider tools in the Phonic schema.
     return tools
       .flatten()

@@ -109,6 +109,8 @@ new phonic.realtime.RealtimeModel({
 
 The plugin always sends tool calls with `wait_for_speech_before_tool_call` on and `allow_tool_chaining` off; these are not configurable per tool.
 
+> **Deprecated:** the top-level `forbidSpeechAfterToolCall: string[]` option still works but is deprecated — it now folds each listed tool into `configsForTools` as `forbid_speech_after_tool_call: true` (an explicit `configsForTools` entry wins) and logs a warning. Prefer `configsForTools`.
+
 If you already have an agent set up on the Phonic platform, you can use the `phonicAgent` option to specify the agent name. As a note, configuration options you set in the LiveKit Agents SDK will override the agent settings set on the Phonic platform. This means the system prompt you have set on the Phonic platform will be ignored in favor of the `instructions` field set on the LiveKit `voice.Agent`. Likewise, options explicitly set in the `RealtimeModel` constructor will override the Phonic agent's settings. 
 
 If you have Webhook tools set up on the Phonic platform, you can use `phonicTools` to make them available to your agent. Only [Phonic Webhook tools](https://docs.phonic.co/docs/using-tools/tools_overview#webhook-tools) are supported with LiveKit Agents.
