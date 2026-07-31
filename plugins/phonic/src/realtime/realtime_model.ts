@@ -54,10 +54,22 @@ export interface RealtimeModelOptions {
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
-  forbidSpeechAfterToolCall?: string[];
+  configsForTools?: PhonicToolConfig[];
   onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
+}
+
+/**
+ * Per-tool behavior overrides for `configsForTools` (see README). `name` is required; every other
+ * field is optional and falls back to the plugin default when omitted. Keys are snake_case to match
+ * Phonic's wire format (direct passthrough).
+ */
+export interface PhonicToolConfig {
+  name: string;
+  require_speech_before_tool_call?: boolean;
+  forbid_speech_after_tool_call?: boolean;
+  forbid_tool_call_after_speech?: boolean;
 }
 
 export class RealtimeModel extends llm.RealtimeModel {
@@ -161,18 +173,10 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
       /**
-       * Names of tools after which Phonic should NOT auto-generate a spoken reply.
-       *
-       * Use for tools that always hand off / trigger an agent switch (e.g. advancing
-       * a task in a `TaskGroup`). After such a tool, the outgoing agent would otherwise
-       * speak a reply that the handoff's session reset immediately cancels, producing a
-       * race / double-speak. Forbidding speech lets only the incoming agent speak.
-       *
-       * Only list tools that ALWAYS hand off — a listed tool that returns without
-       * handing off will leave the agent silent (no reply is generated). Tools not
-       * listed keep the default behavior (a reply is generated after the tool output).
+       * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
+       * fields fall back to the plugin defaults. See the README for the available fields.
        */
-      forbidSpeechAfterToolCall?: string[];
+      configsForTools?: PhonicToolConfig[];
       /**
        * Called with the Phonic conversation ID once the conversation is created
        */
@@ -236,7 +240,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
       additionalParams: options.additionalParams,
-      forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
+      configsForTools: options.configsForTools,
       onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
@@ -289,7 +293,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private closedFuture = new Future<void, never>();
   private connectTask: Promise<void>;
   private toolDefinitions: Phonic.InlineWebSocketTool[] = [];
-  private forbidSpeechAfterToolCall = new Set<string>();
+  private configsForTools = new Map<string, PhonicToolConfig>();
   private pendingToolCallIds = new Set<string>();
   private readyToStart = new Future<void>();
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
@@ -369,7 +373,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (item.name && this.forbidSpeechAfterToolCall.has(item.name)) {
+        if (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call) {
           forbidSpeech = true;
         }
       }
@@ -422,32 +426,34 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private buildToolDefinitions(tools: llm.ToolContext): Phonic.InlineWebSocketTool[] {
-    this.forbidSpeechAfterToolCall = new Set(this.options.forbidSpeechAfterToolCall ?? []);
+    this.configsForTools = new Map((this.options.configsForTools ?? []).map((c) => [c.name, c]));
     // TODO: support provider tools in the Phonic schema.
     return tools
       .flatten()
       .filter(llm.isFunctionTool)
-      .map((t) => ({
-        type: 'custom_websocket',
-        tool_schema: {
-          type: 'function',
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
-            strict: true,
+      .map((t) => {
+        const cfg = this.configsForTools.get(t.name);
+        return {
+          type: 'custom_websocket',
+          tool_schema: {
+            type: 'function',
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: llm.toJsonSchema(t.parameters) as Phonic.OpenAiFunctionParameters,
+              strict: true,
+            },
           },
-        },
-        tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
-        // Tool chaining and tool calls during speech are not supported at this time
-        // for ease of implementation within the RealtimeSession generations framework
-        wait_for_speech_before_tool_call: true,
-        allow_tool_chaining: false,
-        // When true, Phonic does not auto-generate a spoken reply after this tool's
-        // output. Used for tools that always hand off so the outgoing agent doesn't
-        // speak a reply that the handoff's session reset would cancel.
-        forbid_speech_after_tool_call: this.forbidSpeechAfterToolCall.has(t.name),
-      }));
+          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          // fixed, not configurable: the plugin does not support tool chaining or tool calls
+          // during agent speech within the RealtimeSession generations framework
+          wait_for_speech_before_tool_call: true,
+          allow_tool_chaining: false,
+          require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
+          forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
+          forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
+        };
+      });
   }
 
   override async _updateSession(
