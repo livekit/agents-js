@@ -20,6 +20,7 @@ import {
   normalizeMarkup,
   splitAllMarkup,
   splitMarkup,
+  supportedNonverbals,
 } from './_provider_format.js';
 
 // Inworld-flavored turn: free-form expression + sound + break
@@ -122,6 +123,112 @@ describe('convertMarkup: expr -> Cartesia (discrete emotions, breaks, spell; no 
   it('unwraps an unknown prosody label', () => {
     const text = '<expr type="prosody" label="whisper">keep it secret</expr>';
     expect(convertMarkup('cartesia', text)).toBe('keep it secret');
+  });
+});
+
+describe('Fish Audio dialect', () => {
+  it('registers LLM instructions', () => {
+    const instructions = llmInstructions('fishaudio');
+    expect(instructions).toBeDefined();
+    for (const emotion of [
+      'regretful',
+      'hopeful',
+      'happy',
+      'excited',
+      'curious',
+      'surprised',
+      'sad',
+      'empathetic',
+      'sarcastic',
+    ]) {
+      expect(instructions).toContain(emotion);
+    }
+    expect(instructions).toContain('<expr type="sound" label="laughing"/>');
+    expect(instructions).toContain('clear throat');
+    expect(instructions).toContain('<expr type="prosody" label="emphasis">');
+  });
+
+  it('converts expr markers to Fish brackets', () => {
+    const raw =
+      '<expr type="expression" label="excited"/> We won! ' +
+      '<expr type="sound" label="laughing"/> <expr type="break" label="500ms"/> ' +
+      'That was <expr type="prosody" label="emphasis">really</expr> close. ' +
+      '<expr type="break" label="2s"/>';
+    expect(convertMarkup('fishaudio', raw)).toBe(
+      '[very excited] We won! [laughing] [break] ' +
+        'That was [emphasis] really close. [long-break]',
+    );
+  });
+
+  it('intensifies expressions exactly once', () => {
+    expect(convertMarkup('fishaudio', '<expr type="expression" label="sad"/>')).toBe('[very sad]');
+    expect(convertMarkup('fishaudio', '<expression value="very sad"/>')).toBe('[very sad]');
+  });
+
+  it('converts sound aliases', () => {
+    expect(convertMarkup('fishaudio', '<expr type="sound" label="laugh"/>')).toBe('[laughing]');
+  });
+
+  it('splitAllMarkup strips expr markers', () => {
+    const raw =
+      '<expr type="expression" label="empathetic"/> That sounds ' +
+      '<expr type="prosody" label="emphasis">really</expr> hard. ' +
+      '<expr type="sound" label="clear throat"/>';
+    const [clean, tags] = splitAllMarkup(raw);
+    expect(clean.trim()).toBe('That sounds really hard.');
+    const types = tags.map((tag) => [tag.type, tag.value]);
+    expect(types).toContainEqual(['expression', 'empathetic']);
+    expect(types).toContainEqual(['prosody', 'emphasis']);
+    expect(types).toContainEqual(['sound', 'clear throat']);
+  });
+
+  it('never leaks hallucinated native XML markup', () => {
+    const raw = '<expression value="happy"/> Hey there <emphasis>friend</emphasis>';
+    const [clean] = splitAllMarkup(raw);
+    expect(clean).not.toContain('<');
+    expect(clean).toContain('Hey');
+    expect(clean).toContain('there');
+    expect(clean).toContain('friend');
+    expect(convertMarkup('fishaudio', raw)).toBe('[very happy] Hey there [emphasis] friend');
+  });
+
+  it('filters sounds and examples with steering', () => {
+    let instructions = llmInstructions('fishaudio', { nonverbalSounds: {} });
+    expect(instructions).toBeDefined();
+    expect(instructions).not.toContain('laughing');
+    expect(instructions).not.toContain('clear throat');
+    expect(instructions).toContain('Examples:');
+
+    instructions = llmInstructions('fishaudio', { nonverbalSounds: { laughing: true } });
+    expect(instructions).toBeDefined();
+    expect(instructions).toContain('laughing');
+    expect(instructions).not.toContain('clear throat');
+  });
+
+  it('reports supported nonverbals', () => {
+    expect(supportedNonverbals('fishaudio')).toEqual({
+      laughing: ['laughing', 'chuckling'],
+      reflexSounds: ['clear throat'],
+    });
+  });
+
+  it('includes disfluent examples only when enabled', () => {
+    const on = llmInstructions('fishaudio', { disfluencies: true });
+    const off = llmInstructions('fishaudio', { disfluencies: false });
+    const defaultInstructions = llmInstructions('fishaudio');
+    expect(on).toContain('Um, uh');
+    expect(defaultInstructions).toContain('Um, uh');
+    expect(off).not.toContain('Um, uh');
+    expect(off).not.toContain(', um,');
+  });
+
+  it('normalizes unclosed tags', () => {
+    expect(normalizeMarkup('fishaudio', '<expr type="sound" label="laughing"> hi')).toBe(
+      '<expr type="sound" label="laughing"/> hi',
+    );
+    expect(normalizeMarkup('fishaudio', '<expression value="happy"> hi')).toBe(
+      '<expression value="happy"/> hi',
+    );
   });
 });
 

@@ -19,6 +19,8 @@ export {
   AgentSession,
   type AgentSessionOptions,
   type AgentSessionUsage,
+  type NonverbalOptions,
+  type SpeechSteeringOptions,
   type VoiceOptions,
 } from './agent_session.js';
 export * from './avatar/index.js';

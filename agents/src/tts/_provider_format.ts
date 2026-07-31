@@ -16,11 +16,12 @@
  * - Inworld: https://docs.inworld.ai/tts/best-practices/prompting-for-tts-2
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
  * - xAI: https://docs.x.ai/developers/model-capabilities/audio/voice
+ * - Fish Audio: https://docs.fish.audio/developer-guide/core-features/emotions
  */
 import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
 import { Instructions } from '../llm/chat_context.js';
 import { SentenceTokenizer } from '../tokenize/basic/index.js';
-import type { ExpressiveOptions } from '../voice/agent_session.js';
+import type { ExpressiveOptions, SpeechSteeringOptions } from '../voice/agent_session.js';
 import { convertExpressionTags, extractAndStrip } from './markup_utils.js';
 
 /**
@@ -114,6 +115,41 @@ function xaiBreakToBracket(_match: string, raw: string): string {
     secs = 0.0;
   }
   return secs >= 1.0 ? '[long-pause]' : '[pause]';
+}
+
+// Fish Audio (s2 family) speech markers, from the Fish docs.
+const FISHAUDIO_EMOTIONS = [
+  'regretful',
+  'hopeful',
+  'happy',
+  'excited',
+  'curious',
+  'surprised',
+  'sad',
+  'empathetic',
+  'sarcastic',
+];
+const FISHAUDIO_SOUNDS = ['laughing', 'chuckling', 'clear throat'];
+const FISHAUDIO_TAGS = ['expression', 'sound', 'break', 'emphasis'];
+
+const FISHAUDIO_EXPRESSION_RE = /<expression\s+value="([^"]*)"(?:\s*\/>|>(?:.*?)<\/expression>)/g;
+const FISHAUDIO_BREAK_RE = /<break\s+time="([^"]*)"\s*\/?>/g;
+const FISHAUDIO_EMPHASIS_RE = /<emphasis(?:\s[^>]*)?>([^<]*)<\/emphasis\s*>/gi;
+
+function fishAudioExpressionToBracket(_match: string, raw: string): string {
+  let value = raw.trim();
+  if (value && !value.toLowerCase().startsWith('very ')) {
+    value = `very ${value}`;
+  }
+  return `[${value}]`;
+}
+
+function fishAudioBreakToBracket(_match: string, raw: string): string {
+  const value = raw.trim().toLowerCase();
+  const secs = value.endsWith('ms')
+    ? parseFloat(value.slice(0, -2)) / 1000
+    : parseFloat(value.replace(/s+$/, ''));
+  return !Number.isNaN(secs) && secs >= 1.0 ? '[long-break]' : '[break]';
 }
 
 // --- LiveKit expression markers (expr) ---
@@ -218,6 +254,119 @@ Examples:
   <expr type="prosody" label="build-intensity">This is going to be so good</expr> — <expr type="prosody" label="loud">I can't wait!</expr> <expr type="sound" label="chuckle"/>
   <expr type="prosody" label="soft">Hey.</expr> <expr type="sound" label="sigh"/> <expr type="prosody" label="lower-pitch">I know it's been a rough week.</expr> I'm right here.
   <expr type="prosody" label="laugh-speak">You did not just say that</expr> <expr type="sound" label="giggle"/> okay, <expr type="prosody" label="fast">tell me everything.</expr>`;
+
+const FISHAUDIO_EXAMPLES = [
+  `<expr type="expression" label="excited"/> That's hilarious! <expr type="sound" label="laughing"/> <expr type="expression" label="happy"/> You always lighten the mood.`,
+  `<expr type="expression" label="empathetic"/> <expr type="sound" label="clear throat"/> That sounds like a <expr type="prosody" label="emphasis">really</expr> difficult experience.`,
+  `<expr type="expression" label="sad"/> Oh, my goodness <expr type="sound" label="clear throat"/> <expr type="break" label="2s"/> that's a real shame.`,
+  `<expr type="expression" label="happy"/> You're all set for <expr type="break" label="500ms"/> Thursday the <expr type="prosody" label="emphasis">ninth</expr>. <expr type="expression" label="curious"/> Is there anything else I can help you with?`,
+];
+
+const FISHAUDIO_DISFLUENT_EXAMPLES = [
+  `<expr type="expression" label="curious"/> Um, uh... really? <expr type="expression" label="sad"/> Well, I'm really sorry to hear that.`,
+  `<expr type="expression" label="regretful"/> I really wish I'd, um, called sooner. <expr type="expression" label="hopeful"/> But I'm here now if, if you want to talk.`,
+  `<expr type="expression" label="surprised"/> What?! No way! I, I'm flabbergasted! <expr type="expression" label="sarcastic"/> Fair play, I guess.`,
+];
+
+function soundExamples(examples: string[], allowed: string[], vocabulary: string[]): string[] {
+  const removed = vocabulary.filter((sound) => !allowed.includes(sound));
+  return examples.filter(
+    (example) => !removed.some((sound) => example.includes(`label="${sound}"`)),
+  );
+}
+
+function fishAudioExprLlmInstructions(sounds: string[], disfluencies = true): string {
+  const sections = [
+    `Emotion - sets how a sentence sounds. Self-closing; place at the START of a sentence.
+   <expr type="expression" label="EMOTION"/>
+   Labels are a fixed vocabulary, NOT free-form descriptions: ${FISHAUDIO_EMOTIONS.join(', ')}.
+   Give every sentence its own emotion marker — repeat the same label to carry a feeling across sentences, or switch labels when the feeling shifts.`,
+  ];
+  if (sounds.length > 0) {
+    sections.push(`Sounds - a non-verbal sound between sentences. Self-closing.
+   <expr type="sound" label="${sounds[0]}"/>
+   Labels are a fixed vocabulary: ${sounds.join(', ')}.
+   Use non-verbal sounds sparingly, and never the same one twice in a row — reach for one only where it genuinely fits. An enabled sound gets over-used otherwise.`);
+  }
+  sections.push(`Pauses - insert silence when appropriate. Self-closing.
+   <expr type="break" label="500ms"/> or <expr type="break" label="2s"/>.
+   NEVER place a break next to a period, question mark, exclamation point, or ellipsis — sentence punctuation already pauses, and a break beside it double-pauses. Most replies need no break markers at all; reserve them for a deliberate mid-sentence beat before a key detail (a date, a name, a number).`);
+  sections.push(`Emphasis - stresses exactly the ONE word it wraps.
+   Are you <expr type="prosody" label="emphasis">sure</expr> you want to do this?
+   Wrap a single word, never a phrase. "emphasis" is the only prosody label for this voice — there are no other wrapping style markers. Never nest it, and always close it with </expr>.`);
+
+  const pool = [...FISHAUDIO_EXAMPLES, ...(disfluencies ? FISHAUDIO_DISFLUENT_EXAMPLES : [])];
+  const examples = soundExamples(pool, sounds, FISHAUDIO_SOUNDS);
+  const parts = [
+    EXPR_PREAMBLE,
+    sections.map((section, index) => `${index + 1}. ${section}`).join('\n\n'),
+    'Write for the EAR, not the page: no em or en dashes anywhere in spoken text — use a comma or a period for a short beat, or a break marker for a real pause. Avoid semicolons, mid-sentence colons, and parenthetical asides; rewrite them as separate sentences or commas.',
+    'When the conversation is in another language, still write every marker label in English — labels are a fixed vocabulary, never translated.',
+  ];
+  if (examples.length > 0) {
+    parts.push(`Examples:\n${examples.map((example) => `  ${example}`).join('\n')}`);
+  }
+  return parts.join('\n\n');
+}
+
+const FISHAUDIO_NONVERBAL_LABELS: Record<string, string[]> = {
+  laughing: ['laughing', 'chuckling'],
+  breathing: [],
+  sighing: [],
+  crying: [],
+  vocalizing: [],
+  mouthSounds: [],
+  reflexSounds: ['clear throat'],
+};
+
+function allowedFishAudioSounds(steering?: SpeechSteeringOptions): string[] {
+  const flags = steering?.nonverbalSounds;
+  if (flags === undefined) {
+    return FISHAUDIO_SOUNDS;
+  }
+  const removed = new Set(
+    Object.entries(FISHAUDIO_NONVERBAL_LABELS)
+      .filter(([field]) => !flags[field as keyof typeof flags])
+      .flatMap(([, labels]) => labels),
+  );
+  return FISHAUDIO_SOUNDS.filter((sound) => !removed.has(sound));
+}
+
+/** Return non-verbal steering fields and the Fish labels each one governs. */
+export function supportedNonverbals(provider: string): Record<string, string[]> {
+  if (provider !== 'fishaudio') {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(FISHAUDIO_NONVERBAL_LABELS).filter(([, labels]) => labels.length > 0),
+  );
+}
+
+/** Render Fish-specific delivery guidelines from explicit steering fields. */
+export function steeringInstructions(provider: string, steering: SpeechSteeringOptions): string {
+  if (provider !== 'fishaudio') {
+    return '';
+  }
+  const lines: string[] = [];
+  if (steering.nonverbalSounds !== undefined && allowedFishAudioSounds(steering).length > 0) {
+    lines.push(
+      'Non-verbal sounds: use one only where the moment genuinely earns it. Most turns have none; never repeat the same sound twice in a row.',
+    );
+  }
+  if (steering.disfluencies !== undefined) {
+    lines.push(
+      steering.disfluencies
+        ? 'Sprinkle in natural fillers (um, uh) and openers (oh, well, so), zero to two per turn, never mechanical.'
+        : 'No fillers (um, uh). Sound composed and fluent.',
+    );
+  }
+  if (steering.pace !== undefined && steering.pace !== 'normal') {
+    lines.push(`Keep a ${steering.pace} overall speaking pace.`);
+  }
+  return lines.length > 0
+    ? `Delivery guidelines:\n${lines.map((line) => `- ${line}`).join('\n')}`
+    : '';
+}
 
 const EXPR_LLM_INSTRUCTIONS: Record<string, string> = {
   cartesia: CARTESIA_EXPR_LLM_INSTRUCTIONS,
@@ -614,6 +763,11 @@ const EXPR_UNCLOSED_CARTESIA_RE =
 // expr sound labels that differ from xAI's native cue names
 const XAI_SOUND_ALIASES: Record<string, string> = { breathe: 'breath' };
 
+const FISHAUDIO_SOUND_ALIASES: Record<string, string> = {
+  laugh: 'laughing',
+  chuckle: 'chuckling',
+};
+
 // Cartesia prosody labels -> native point controls (coarse steps of the numeric ratios)
 const CARTESIA_PROSODY: Record<string, string> = {
   slow: '<speed ratio="0.85"/>',
@@ -765,6 +919,9 @@ function convertExpr(provider: string, text: string): string {
       // wrapping form of the point controls: apply before the span
       return (CARTESIA_PROSODY[label] ?? '') + inner;
     }
+    if (provider === 'fishaudio') {
+      return label === 'emphasis' ? `<emphasis>${inner}</emphasis>` : inner;
+    }
     return inner;
   });
 
@@ -777,7 +934,7 @@ function convertExpr(provider: string, text: string): string {
         // Cartesia's discrete emotion vocabulary (instructions list it)
         return `<emotion value="${label}"/>`;
       }
-      if (provider === 'inworld') {
+      if (provider === 'inworld' || provider === 'fishaudio') {
         return `<expression value="${label}"/>`;
       }
       return ''; // xAI has no free-form delivery descriptions
@@ -788,6 +945,9 @@ function convertExpr(provider: string, text: string): string {
       }
       if (provider === 'xai') {
         label = XAI_SOUND_ALIASES[label.toLowerCase()] ?? label;
+      }
+      if (provider === 'fishaudio') {
+        label = FISHAUDIO_SOUND_ALIASES[label.toLowerCase()] ?? label;
       }
       return `<sound value="${label}"/>`;
     }
@@ -816,7 +976,16 @@ function convertExpr(provider: string, text: string): string {
  * {@link convertMarkup} lowers the markers to native syntax. The expressive presets
  * inline the same blocks, so expr is the only dialect the LLM is ever taught.
  */
-export function llmInstructions(provider: string): string | undefined {
+export function llmInstructions(
+  provider: string,
+  steering?: SpeechSteeringOptions,
+): string | undefined {
+  if (provider === 'fishaudio') {
+    return fishAudioExprLlmInstructions(
+      allowedFishAudioSounds(steering),
+      steering?.disfluencies ?? true,
+    );
+  }
   return EXPR_LLM_INSTRUCTIONS[provider];
 }
 
@@ -827,6 +996,9 @@ const PROVIDER_MARKUP: Record<string, [string[], boolean]> = {
   // every tag the LLM is taught is XML (expr markers; native sounds/pauses become
   // [..] only for the TTS in convertMarkup), so the transcript has no brackets to strip
   xai: [XAI_TAGS, false],
+  // Fish's native dialect is square brackets, produced only for the TTS. These
+  // names catch hallucinated XML-native markup in transcripts.
+  fishaudio: [FISHAUDIO_TAGS, false],
 };
 
 /**
@@ -961,6 +1133,7 @@ export class TranscriptMarkupStripper {
 const SELF_CLOSING_TAGS: Record<string, string[]> = {
   cartesia: ['emotion', 'speed', 'volume', 'break'],
   inworld: ['expression', 'sound', 'break'],
+  fishaudio: ['expression', 'sound', 'break'],
 };
 
 /**
@@ -1000,6 +1173,14 @@ export function convertMarkup(provider: string, text: string): string {
   if (provider === 'xai') {
     // xAI has no <break>; map it to its native [pause]/[long-pause]
     text = text.replace(XAI_BREAK_RE, xaiBreakToBracket);
+  }
+  if (provider === 'fishaudio') {
+    text = text.replace(FISHAUDIO_EXPRESSION_RE, fishAudioExpressionToBracket);
+    text = convertExpressionTags(text);
+    text = text.replace(FISHAUDIO_BREAK_RE, fishAudioBreakToBracket);
+    text = text.replace(FISHAUDIO_EMPHASIS_RE, (_match, inner: string) => {
+      return `[emphasis] ${inner.trim()}`;
+    });
   }
   // <break> is otherwise passed through unchanged: Inworld accepts it as native SSML.
   return text;
