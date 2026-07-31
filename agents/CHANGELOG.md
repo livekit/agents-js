@@ -1,5 +1,59 @@
 # @livekit/agents
 
+## 1.6.1
+
+### Patch Changes
+
+- Add cloud agent id and deployment to telemetry resource attributes (`lk.cloud_agent_id` / `lk.deployment_id`) when running on LiveKit Cloud. - [#2137](https://github.com/livekit/agents-js/pull/2137) ([@jmcclanahan](https://github.com/jmcclanahan))
+
+- Let the inference gateway mint avatar worker tokens instead of signing them locally. - [#2152](https://github.com/livekit/agents-js/pull/2152) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): defer interim transcript interruptions to local VAD when configured - [#2159](https://github.com/livekit/agents-js/pull/2159) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Deprecate direct dev mode in favor of `lk agent dev`. - [#2194](https://github.com/livekit/agents-js/pull/2194) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix(voice): stop an interrupted reply from muting the session forever - [#2127](https://github.com/livekit/agents-js/pull/2127) ([@toubatbrian](https://github.com/toubatbrian))
+
+  A reply interrupted before its audio started playing could leave its pipeline reply task
+  parked in the post-interrupt `waitForPlayout()`, which races only the reply's own abort
+  signal — a signal nothing on the ordinary interrupt path ever fires. The speech scheduling
+  loop waits on that reply's generation, so `_currentSpeech` stayed pinned on the interrupted
+  handle and every later turn was queued but never authorized: the agent went silent for the
+  rest of the session. On the evidence so far this needs an audio sink whose playback-finished
+  event the pipeline does not produce itself — remote avatar outputs (`DataStreamAudioOutput`
+  and the avatar plugins built on it) and user-supplied `AudioOutput`s; a plain room output
+  settled both of the affected waits on its own across six live runs.
+
+  `SpeechHandle` now arms a 5s watchdog when a speech is interrupted (a port of python's
+  `INTERRUPTION_TIMEOUT`): if the speech has not finished by then, its tasks are cancelled —
+  firing exactly the abort signal those waits are already watching — and the handle is marked
+  done, releasing the scheduler.
+
+  Fixes #2065.
+
+- Send turn finalization messages when flushing streaming STT with no buffered audio. - [#2172](https://github.com/livekit/agents-js/pull/2172) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve concrete STT language hints when later transcripts report non-specific language codes. - [#2149](https://github.com/livekit/agents-js/pull/2149) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- fix realtime user turns appearing after the reply they prompted, by placing the user message at the time its turn began rather than at the time the provider delivered the transcript - [#2165](https://github.com/livekit/agents-js/pull/2165) ([@toubatbrian](https://github.com/toubatbrian))
+
+- Report speech onset immediately when an inference STT provider detects it server-side. - [#2182](https://github.com/livekit/agents-js/pull/2182) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- stamp a tool call's `createdAt` when its execution begins rather than when it was parsed off the model stream, so it no longer sorts ahead of the assistant message that requested it - [#2171](https://github.com/livekit/agents-js/pull/2171) ([@u9g](https://github.com/u9g))
+
+- Avoid emitting `playbackStarted` again when room audio resumes mid-segment. - [#2184](https://github.com/livekit/agents-js/pull/2184) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Report word-aligned transcripts only when the inference STT model and every fallback are verified - [#2181](https://github.com/livekit/agents-js/pull/2181) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  to provide word timings.
+
+- Handle list-shaped content parts in streamed LLM deltas when stripping thinking tokens. - [#2188](https://github.com/livekit/agents-js/pull/2188) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Type Cartesia turn-detection parameters in inference STT model options. - [#2173](https://github.com/livekit/agents-js/pull/2173) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- chore(deps): update @livekit/rtc-node to 0.13.33 - [#2191](https://github.com/livekit/agents-js/pull/2191) ([@theomonnom](https://github.com/theomonnom))
+
+  Picks up livekit-ffi 0.12.73 and a fix for the dual package hazard (livekit/node-sdks#700, livekit/node-sdks#698).
+
 ## 1.6.0
 
 ### Minor Changes
