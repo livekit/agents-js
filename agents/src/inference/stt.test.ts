@@ -547,14 +547,18 @@ describe('STT agent_context forwarding', () => {
     expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'forwarded after transition');
   });
 
-  it('stops forwarding after changing from a supported to an unsupported model', () => {
+  it('clears carryover context and stops forwarding after changing to an unsupported model', () => {
     const stt = makeAssemblyStt();
     stt._pushConversationItem(assistantItemEvent('last supported context'));
-
-    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
-    stt._pushConversationItem(assistantItemEvent('ignored after transition'));
-
     expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'last supported context');
+
+    // switching to a model that can't accept agent_context must drop the stale value, or the
+    // next connection would ship it as settings.extra to a model that rejects it
+    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt._pushConversationItem(assistantItemEvent('ignored after transition'));
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
   });
 });
 

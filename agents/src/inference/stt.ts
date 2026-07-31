@@ -606,6 +606,25 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         chatContext: supportsChatContext(this.opts.model),
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
+
+      // Drop a carryover context the new model can't accept. `updateOptions` merges
+      // `modelOptions` and never removes keys, and `connectWs` serializes the whole baseline
+      // as `settings.extra`, so a stale `agent_context` would otherwise be sent to a model
+      // that rejects it (only the U3 Pro family accepts it). Propagate the removal to live
+      // streams via `agent_context: undefined`, which is dropped from the wire payload.
+      if (
+        !supportsChatContext(this.opts.model) &&
+        this.opts.modelOptions &&
+        'agent_context' in (this.opts.modelOptions as Record<string, unknown>)
+      ) {
+        const cleared = { ...(this.opts.modelOptions as Record<string, unknown>) };
+        delete cleared.agent_context;
+        this.opts.modelOptions = cleared as STTOptions<TModel>;
+        nextOpts.modelOptions = {
+          ...(nextOpts.modelOptions as Record<string, unknown> | undefined),
+          agent_context: undefined,
+        } as STTOptions<TModel>;
+      }
     }
 
     if (nextOpts.modelOptions) {
