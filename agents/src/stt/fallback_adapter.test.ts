@@ -177,6 +177,27 @@ describe('FallbackAdapter', () => {
     expect(child.listenerCount('capabilities_changed')).toBe(0);
   });
 
+  it('re-aggregates dynamic child alignedTranscript on capability change', () => {
+    // A child's updateOptions({ model }) can flip alignedTranscript at runtime and emit
+    // capabilities_changed. The adapter must re-read it, or it keeps advertising word timings
+    // (which adaptive interruption relies on) that its children no longer provide.
+    class DynamicAlignmentSTT extends FakeSTT {
+      setAlignment(aligned: 'word' | false): void {
+        this.updateCapabilities({ alignedTranscript: aligned });
+      }
+    }
+
+    const child = new DynamicAlignmentSTT();
+    const adapter = new FallbackAdapter({ sttInstances: [child] });
+    expect(adapter.capabilities.alignedTranscript).toBe(false);
+
+    child.setAlignment('word');
+    expect(adapter.capabilities.alignedTranscript).toBe('word');
+
+    child.setAlignment(false);
+    expect(adapter.capabilities.alignedTranscript).toBe(false);
+  });
+
   it('_recognize falls through to the next instance on error', async () => {
     const primary = new FakeSTT({
       label: 'primary',

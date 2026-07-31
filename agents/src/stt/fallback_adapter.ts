@@ -215,8 +215,19 @@ export class FallbackAdapter extends STT {
     // SpeechStream.mainTask emits that on this STT instance naturally.
     for (const s of this.sttInstances) {
       const metricsForwarder = (metrics: STTMetrics) => this.emit('metrics_collected', metrics);
+      // Re-aggregate every capability a child can change at runtime, mirroring the
+      // constructor's aggregation. A child's `updateOptions({ model })` now recomputes
+      // `alignedTranscript`/`keyterms`/`chatContext` and emits `capabilities_changed`, so
+      // re-reading only `chatContext` here would leave the adapter advertising word timings
+      // (or keyterms) its children no longer provide.
       const capabilitiesForwarder = () => {
         this.updateCapabilities({
+          interimResults: this.sttInstances.every((stt) => stt.capabilities.interimResults),
+          diarization: this.sttInstances.every((stt) => !!stt.capabilities.diarization),
+          alignedTranscript: this.sttInstances.every((stt) => !!stt.capabilities.alignedTranscript)
+            ? this.sttInstances[0]!.capabilities.alignedTranscript ?? false
+            : false,
+          keyterms: this.sttInstances.some((stt) => !!stt.capabilities.keyterms),
           chatContext: this.sttInstances.some((stt) => !!stt.capabilities.chatContext),
         });
       };
