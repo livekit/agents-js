@@ -1,11 +1,29 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type Anthropic from '@anthropic-ai/sdk';
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import Anthropic from '@anthropic-ai/sdk';
 import { llm } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { LLM } from './llm.js';
+
+const { anthropicConstructor } = vi.hoisted(() => ({
+  anthropicConstructor: vi.fn<(opts?: { maxRetries?: number }) => void>(),
+}));
+
+vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
+  const { default: AnthropicClient } = await importOriginal<{ default: typeof Anthropic }>();
+
+  return {
+    default: class extends AnthropicClient {
+      constructor(opts: ConstructorParameters<typeof AnthropicClient>[0]) {
+        super(opts);
+        anthropicConstructor(opts);
+      }
+    },
+  };
+});
 
 function messageStartEvent(): Anthropic.MessageStreamEvent {
   return {
@@ -55,6 +73,16 @@ async function collectTextFromEvents(
 }
 
 describe('Anthropic LLM', () => {
+  it('disables Anthropic SDK retries by default', () => {
+    const callCount = anthropicConstructor.mock.calls.length;
+
+    new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
+
+    expect(anthropicConstructor.mock.calls[callCount]?.[0]).toEqual(
+      expect.objectContaining({ maxRetries: 0 }),
+    );
+  });
+
   it('correctly maps ChatContext to Anthropic system and messages arrays', () => {
     const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
 
