@@ -560,6 +560,34 @@ describe('STT agent_context forwarding', () => {
     stt._pushConversationItem(assistantItemEvent('ignored after transition'));
     expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
   });
+
+  it('drops every U3-Pro-only extra when changing to an unsupported model', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: {
+        agent_context: 'ctx',
+        previous_context_n_turns: 3,
+        voice_focus: 'near-field',
+        voice_focus_threshold: 0.5,
+        mode: 'balanced',
+        // a non-U3-only extra must be preserved across the switch
+        format_turns: true,
+      },
+    });
+
+    stt.updateOptions({ model: 'assemblyai/universal-streaming' });
+
+    for (const key of [
+      'agent_context',
+      'previous_context_n_turns',
+      'voice_focus',
+      'voice_focus_threshold',
+      'mode',
+    ]) {
+      expect(stt['opts'].modelOptions).not.toHaveProperty(key);
+    }
+    // unrelated extras stay put
+    expect(stt['opts'].modelOptions).toHaveProperty('format_turns', true);
+  });
 });
 
 describe('STT aligned transcript capability', () => {

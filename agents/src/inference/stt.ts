@@ -293,6 +293,18 @@ const ASSEMBLYAI_CARRYOVER_MODELS = [
 
 const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
 
+// AssemblyAIOptions extras only the U3 Pro family accepts (see AssemblyAIOptions). They are
+// dropped from `modelOptions` when switching to a model that rejects them, so `connectWs` /
+// `session.update` don't ship them to a non-U3-Pro model. Mirrors U3_PRO_ONLY_PARAMS in
+// plugins/assemblyai/src/stt.ts.
+const ASSEMBLYAI_U3_PRO_ONLY_EXTRAS = [
+  'agent_context',
+  'previous_context_n_turns',
+  'voice_focus',
+  'voice_focus_threshold',
+  'mode',
+] as const;
+
 function supportsChatContext(model: string | undefined): boolean {
   return model === ASSEMBLYAI_CARRYOVER_MODELS[0] || model === ASSEMBLYAI_CARRYOVER_MODELS[1];
 }
@@ -607,23 +619,24 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
 
-      // Drop a carryover context the new model can't accept. `updateOptions` merges
-      // `modelOptions` and never removes keys, and `connectWs` serializes the whole baseline
-      // as `settings.extra`, so a stale `agent_context` would otherwise be sent to a model
-      // that rejects it (only the U3 Pro family accepts it). Propagate the removal to live
-      // streams via `agent_context: undefined`, which is dropped from the wire payload.
-      if (
-        !supportsChatContext(this.opts.model) &&
-        this.opts.modelOptions &&
-        'agent_context' in (this.opts.modelOptions as Record<string, unknown>)
-      ) {
-        const cleared = { ...(this.opts.modelOptions as Record<string, unknown>) };
-        delete cleared.agent_context;
-        this.opts.modelOptions = cleared as STTOptions<TModel>;
-        nextOpts.modelOptions = {
-          ...(nextOpts.modelOptions as Record<string, unknown> | undefined),
-          agent_context: undefined,
-        } as STTOptions<TModel>;
+      // Drop U3-Pro-only extras the new model can't accept. `updateOptions` merges `modelOptions`
+      // and never removes keys, and `connectWs` serializes the whole baseline as `settings.extra`,
+      // so stale U3-Pro-only fields (agent_context, previous_context_n_turns, voice_focus,
+      // voice_focus_threshold, mode) would otherwise be sent to a model that rejects them.
+      // Propagate the removal to live streams via `<key>: undefined`, dropped from the wire payload.
+      if (!supportsChatContext(this.opts.model) && this.opts.modelOptions) {
+        const current = this.opts.modelOptions as Record<string, unknown>;
+        const stale = ASSEMBLYAI_U3_PRO_ONLY_EXTRAS.filter((key) => key in current);
+        if (stale.length > 0) {
+          const cleared = { ...current };
+          const forwarded = { ...(nextOpts.modelOptions as Record<string, unknown> | undefined) };
+          for (const key of stale) {
+            delete cleared[key];
+            forwarded[key] = undefined;
+          }
+          this.opts.modelOptions = cleared as STTOptions<TModel>;
+          nextOpts.modelOptions = forwarded as STTOptions<TModel>;
+        }
       }
     }
 
