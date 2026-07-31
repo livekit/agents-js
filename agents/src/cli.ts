@@ -31,6 +31,14 @@ const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
 
+  if (!args.production && !args.room && !args.cliAddr) {
+    logger.warn(
+      'dev mode is deprecated and will be removed in a future release; ' +
+        'use `lk agent dev` instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup)',
+    );
+  }
+
   // though `production` is defined in ServerOptions, it will always be overridden by CLI.
   const { production: _, ...opts } = args.opts; // eslint-disable-line @typescript-eslint/no-unused-vars
   const serverOptions = new ServerOptions({ ...opts, production: args.production });
@@ -176,7 +184,11 @@ export const runApp = (opts: ServerOptions) => {
 
   program
     .command('dev')
-    .description('Start the worker in development mode')
+    .description(
+      'Start the worker in development mode\n\n' +
+        'Deprecated: use lk agent dev instead ' +
+        '(https://docs.livekit.io/reference/developer-tools/livekit-cli/#setup).',
+    )
     .addOption(logLevelOption('debug'))
     .addOption(
       // Set by `lk agent dev`: address of the CLI's dev channel the agent reports
