@@ -76,13 +76,23 @@ const round4 = (value: number): number => Math.round(value * 1e4) / 1e4;
  */
 export type ThresholdOverride = number | Record<string, number> | undefined;
 
+/** Turn-detector thresholds are probabilities: 0..1. */
+export function checkedEotThreshold(threshold: number): number {
+  console.assert(threshold >= 0);
+  console.assert(threshold <= 1);
+  return threshold;
+}
+
 function normalizeOverrides(overrides: ThresholdOverride): ThresholdOverride {
-  if (overrides === undefined || typeof overrides !== 'object') {
+  if (overrides === undefined) {
     return overrides;
+  }
+  if (typeof overrides !== 'object') {
+    return checkedEotThreshold(overrides);
   }
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(overrides)) {
-    out[normalizeLanguage(k)] = Number(v);
+    out[normalizeLanguage(k)] = checkedEotThreshold(Number(v));
   }
   return out;
 }

@@ -49,6 +49,27 @@ export interface AudioConfig {
   probability?: number;
 }
 
+/**
+ * Volume is a gain multiplier. It must be positive: the playback path feeds it
+ * to `Math.log10`, which is `-Infinity` at 0 and `NaN` below it.
+ */
+function checkedVolume(volume: number): number {
+  console.assert(volume > 0);
+  return volume;
+}
+
+/** Selection weights are non-negative; a zero weight is skipped. */
+function checkedProbability(probability: number): number {
+  console.assert(probability >= 0);
+  return probability;
+}
+
+/** Caller requirements for the ranged {@link AudioConfig} fields. */
+function checkAudioConfigRanges(config: { volume?: number; probability?: number }): void {
+  if (config.volume !== undefined) checkedVolume(config.volume);
+  if (config.probability !== undefined) checkedProbability(config.probability);
+}
+
 export interface BackgroundAudioPlayerOptions {
   /**
    * Ambient sound to play continuously in the background.
@@ -177,6 +198,9 @@ export class BackgroundAudioPlayer {
    * Return undefined if no sound is selected (when sum of probabilities < 1.0).
    */
   private selectSoundFromList(sounds: AudioConfig[]): AudioConfig | undefined {
+    for (const sound of sounds) {
+      checkAudioConfigRanges(sound);
+    }
     const totalProbability = sounds.reduce((sum, sound) => sum + (sound.probability ?? 1.0), 0);
 
     if (totalProbability <= 0) {
@@ -235,6 +259,7 @@ export class BackgroundAudioPlayer {
     }
 
     if (typeof source === 'object' && 'source' in source) {
+      checkAudioConfigRanges(source);
       return {
         source: this.normalizeBuiltinAudio(source.source),
         volume: source.volume ?? 1.0,

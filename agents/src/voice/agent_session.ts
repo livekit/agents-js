@@ -197,6 +197,43 @@ export interface InternalSessionOptions<UserData> extends AgentSessionOptions<Us
   ttsTextTransforms: readonly TextTransform[] | null;
 }
 
+/** Timeouts and durations are never negative. */
+function checkedDuration(value: number): number {
+  console.assert(value >= 0);
+  return value;
+}
+
+/** Step counts are non-negative integers. */
+function checkedCount(value: number): number {
+  console.assert(Number.isInteger(value));
+  console.assert(value >= 0);
+  return value;
+}
+
+/**
+ * Caller requirements for the ranged {@link AgentSessionOptions} fields.
+ *
+ * Fields are spelled out rather than reusing the option type: freerange does
+ * not analyze mapped types.
+ */
+function checkAgentSessionOptionRanges(opts: {
+  maxToolSteps?: number;
+  userAwayTimeout?: number | null;
+  aecWarmupDuration?: number | null;
+  ttsReadIdleTimeout?: number;
+  forwardAudioIdleTimeout?: number;
+}): void {
+  if (opts.maxToolSteps !== undefined) checkedCount(opts.maxToolSteps);
+  if (opts.userAwayTimeout !== undefined && opts.userAwayTimeout !== null) {
+    checkedDuration(opts.userAwayTimeout);
+  }
+  if (opts.aecWarmupDuration !== undefined && opts.aecWarmupDuration !== null) {
+    checkedDuration(opts.aecWarmupDuration);
+  }
+  if (opts.ttsReadIdleTimeout !== undefined) checkedDuration(opts.ttsReadIdleTimeout);
+  if (opts.forwardAudioIdleTimeout !== undefined) checkedDuration(opts.forwardAudioIdleTimeout);
+}
+
 export const defaultAgentSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
@@ -509,6 +546,8 @@ export class AgentSession<
 
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
+
+    checkAgentSessionOptionRanges(options);
 
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);

@@ -35,6 +35,41 @@ export interface VADOptions {
   deactivationThreshold: number;
 }
 
+/** Sigmoid thresholds are probabilities: positive, at most 1. */
+function checkedThreshold(value: number): number {
+  console.assert(value > 0);
+  console.assert(value <= 1);
+  return value;
+}
+
+/** Durations are measured in milliseconds and never negative. */
+function checkedDurationMs(value: number): number {
+  console.assert(value >= 0);
+  return value;
+}
+
+/**
+ * Caller requirements for every ranged `VADOptions` field the user may pass.
+ *
+ * Fields are spelled out rather than taking `Partial<VADOptions>`: freerange
+ * does not analyze mapped types.
+ */
+function checkVADOptionRanges(opts: {
+  activationThreshold?: number;
+  deactivationThreshold?: number;
+  minSpeechDuration?: number;
+  minSilenceDuration?: number;
+  prefixPaddingDuration?: number;
+  maxBufferedSpeech?: number;
+}): void {
+  if (opts.activationThreshold !== undefined) checkedThreshold(opts.activationThreshold);
+  if (opts.deactivationThreshold !== undefined) checkedThreshold(opts.deactivationThreshold);
+  if (opts.minSpeechDuration !== undefined) checkedDurationMs(opts.minSpeechDuration);
+  if (opts.minSilenceDuration !== undefined) checkedDurationMs(opts.minSilenceDuration);
+  if (opts.prefixPaddingDuration !== undefined) checkedDurationMs(opts.prefixPaddingDuration);
+  if (opts.maxBufferedSpeech !== undefined) checkedDurationMs(opts.maxBufferedSpeech);
+}
+
 const defaultVADOptions: VADOptions = {
   minSpeechDuration: 50,
   // 250ms (= MIN_SILENCE_DURATION_MS + 50) so the default satisfies the audio
@@ -64,6 +99,7 @@ export class VAD extends BaseVAD {
     if (opts.deactivationThreshold !== undefined && opts.deactivationThreshold <= 0) {
       throw new Error('deactivationThreshold must be greater than 0');
     }
+    checkVADOptionRanges(opts);
     this._model = model;
     const activation = opts.activationThreshold ?? defaultVADOptions.activationThreshold;
     this._opts = {
@@ -88,6 +124,7 @@ export class VAD extends BaseVAD {
 
   /** Update one or more knobs at runtime, propagating to live streams. */
   updateOptions(opts: Partial<VADOptions>): void {
+    checkVADOptionRanges(opts);
     this._opts = { ...this._opts, ...opts };
     for (const ref of this.#streams) {
       const stream = ref.deref();
