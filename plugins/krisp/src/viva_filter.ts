@@ -58,7 +58,7 @@ export interface KrispVivaFilterOptions {
    * otherwise it falls back to LiveKit Cloud auth ({@link LiveKitCloudAuthProvider}).
    */
   authProvider: AuthProvider;
-  /** Noise suppression strength, 0..=100 where 100 is maximum suppression. Default 100. */
+  /** Noise suppression strength, 0..=100 where 100 is maximum suppression. Default 75. */
   noiseSuppressionLevel: number;
 }
 
