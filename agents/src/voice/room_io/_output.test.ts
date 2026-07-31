@@ -220,6 +220,25 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     expect(output.audioSource.captureFrame).toHaveBeenCalledTimes(1);
     expect(output.pushedDuration).toBeGreaterThan(0);
   });
+
+  it('emits playbackStarted once across pause and resume', async () => {
+    const output = makeOutput({ paused: false });
+    const audioFrame = frame();
+
+    output.resume();
+    for (let i = 0; i < 3; i++) {
+      await output.captureFrame(audioFrame);
+    }
+    expect(output.onPlaybackStarted).toHaveBeenCalledTimes(1);
+
+    output.pause();
+    output.resume();
+    for (let i = 0; i < 3; i++) {
+      await output.captureFrame(audioFrame);
+    }
+
+    expect(output.onPlaybackStarted).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('ParticipantAudioOutput publishTrack', () => {
