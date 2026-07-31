@@ -426,6 +426,82 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT aligned transcript capability', () => {
+  it('agrees with the Cartesia Ink-2 plugin capability', () => {
+    const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
+
+    expect(gatewayStt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('keeps word alignment for models that send words', () => {
+    expect(makeStt({ model: 'cartesia/ink-whisper' }).capabilities.alignedTranscript).toBe('word');
+    expect(makeStt({ model: 'deepgram/nova-3' }).capabilities.alignedTranscript).toBe('word');
+    expect(
+      makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
+    ).toBe('word');
+    expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
+    expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('recomputes alignment when the model changes', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.alignedTranscript).toBe('word');
+
+    stt.updateOptions({ model: 'cartesia/ink-2' });
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('does not claim alignment for unknown models', () => {
+    expect(makeStt({ model: 'new-provider/new-turn-model' }).capabilities.alignedTranscript).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ['cartesia/ink-whisper', 'word'],
+    ['cartesia/ink-2', false],
+    ['new-provider/new-turn-model', false],
+  ] as const)('constrains alignment based on fallback model %s', (fallback, expected) => {
+    const stt = makeStt({ model: 'deepgram/nova-3', fallback });
+
+    expect(stt.capabilities.alignedTranscript).toBe(expected);
+  });
+
+  it('still accounts for fallback alignment when the primary model changes', () => {
+    const stt = makeStt({
+      model: 'cartesia/ink-2',
+      fallback: 'new-provider/new-turn-model',
+    });
+
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('surfaces the gateway Ink-2 payload without word alignment', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](
+      {
+        transcript: 'are you open on sunday',
+        confidence: 1,
+        start: 0,
+        duration: 12.5,
+        words: [],
+        language: 'en',
+      },
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    const final = events.find((event) => event.type === SpeechEventType.FINAL_TRANSCRIPT) as {
+      alternatives: Array<{ startTime: number; endTime: number; words: unknown[] }>;
+    };
+    expect(final.alternatives[0]?.words).toEqual([]);
+    expect(final.alternatives[0]?.startTime).toBe(0);
+    expect(final.alternatives[0]?.endTime).toBe(12.5);
+  });
+});
+
 describe('STT session keyterms', () => {
   it('updateOptions does not bake session keyterms into the user baseline', () => {
     const stt = makeStt({ model: 'deepgram/nova-3' });

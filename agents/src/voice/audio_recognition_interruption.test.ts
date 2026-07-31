@@ -108,6 +108,30 @@ describe('AudioRecognition interruption buffering', () => {
     expect(recognition.shouldHoldSttEvent(finalTranscript(2, 3))).toBe(false);
   });
 
+  it('cannot gate a gateway Ink-2 transcript with a zero start timestamp', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_005_000,
+      inputStarted: 1_000_000,
+    });
+
+    expect(recognition.shouldHoldSttEvent(finalTranscript(0, 12.5))).toBe(false);
+  });
+
+  it('uses the gateway billing span after a reconnect offset', () => {
+    const recognition = createRecognitionInternals({
+      ignoreUntil: 1_010_000,
+      agentStarted: 1_004_000,
+      inputStarted: 1_000_000,
+    });
+    const transcript = finalTranscript(4.5, 17);
+
+    expect(recognition.shouldHoldSttEvent(transcript)).toBe(true);
+    expect(transcript.alternatives![0]!.endTime - transcript.alternatives![0]!.startTime).toBe(
+      12.5,
+    );
+  });
+
   it('does not hold timestamps after the ignore cutoff', () => {
     const recognition = createRecognitionInternals({
       ignoreUntil: 1_010_000,
