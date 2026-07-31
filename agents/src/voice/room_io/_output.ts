@@ -381,6 +381,7 @@ export class ParticipantAudioOutput extends AudioOutput {
   private pushedDuration: number = 0;
   private startedFuture: Future<void> = new Future();
   private interruptedFuture: Future<void> = new Future();
+  // playbackStarted fires once per segment; a mid-segment pause/resume does not re-arm this.
   private firstFrameEmitted: boolean = false;
   /** Gate held closed while the output is paused; frame forwarding awaits it. */
   private playbackEnabledFuture: Future<void> = new Future();
@@ -410,7 +411,6 @@ export class ParticipantAudioOutput extends AudioOutput {
     if (!this.playbackEnabledFuture.done) {
       this.playbackEnabledFuture.resolve();
     }
-    this.firstFrameEmitted = false;
     super.resume();
   }
 
