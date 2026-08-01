@@ -1041,6 +1041,12 @@ importers:
       '@livekit/agents':
         specifier: workspace:*
         version: link:../../agents
+      '@livekit/agents-plugin-anthropic':
+        specifier: workspace:*
+        version: link:../anthropic
+      '@livekit/agents-plugin-openai':
+        specifier: workspace:*
+        version: link:../openai
       '@livekit/agents-plugins-test':
         specifier: workspace:*
         version: link:../test
