@@ -1340,15 +1340,17 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // this.interrupt() is going to raise when allow_interruptions is False,
-    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
-      this.logger.error(
-        'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
-        error,
-      );
+      // This is only out of sync when the server owns turn taking. With client-side turn
+      // taking, uninterruptible speech is expected even though server VAD reports user speech.
+      if (this.rtTurnDetectionEnabled) {
+        this.logger.error(
+          'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
+          error,
+        );
+      }
     }
   }
 

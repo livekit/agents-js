@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIError, Future, Task, llm, stream } from '@livekit/agents';
+import { APIError, Future, Task, llm, log, stream } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
@@ -88,6 +88,42 @@ describe('RealtimeModel turn detection disabling', () => {
 
     expect(model.capabilities.turnDetection).toBe(false);
     expect(model.capabilities.canDisableTurnDetection).toBe(false);
+  });
+
+  it('reports create_response=false as client-side turn taking', () => {
+    const manualReply = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad', create_response: false },
+    });
+    expect(manualReply.capabilities.turnDetection).toBe(false);
+
+    const autoReply = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad' },
+    });
+    expect(autoReply.capabilities.turnDetection).toBe(true);
+    expect(new RealtimeModel({ apiKey: 'test-key' }).capabilities.turnDetection).toBe(true);
+  });
+
+  it('warns when create_response=false still lets the server interrupt', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad', create_response: false },
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pass interrupt_response=false'));
+
+    warn.mockClear();
+    new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: {
+        type: 'server_vad',
+        create_response: false,
+        interrupt_response: false,
+      },
+    });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('creates a session with server turn detection disabled', () => {
@@ -385,6 +421,52 @@ describe('RealtimeSession fatal error handling', () => {
     });
 
     expect(errors).toHaveLength(0);
+  });
+
+  it('ignores empty input buffer commits with server VAD', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad' },
+    });
+    const session = model.session() as unknown as ErrorSessionInternals;
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_empty_commit',
+      error: {
+        type: 'invalid_request_error',
+        code: 'input_audio_buffer_commit_empty',
+        message: 'Error committing input audio buffer: buffer too small.',
+        param: '',
+        event_id: 'evt_empty_commit',
+      },
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('reports empty input buffer commits without server VAD', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key', turnDetection: null });
+    const session = model.session() as unknown as ErrorSessionInternals;
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_empty_commit',
+      error: {
+        type: 'invalid_request_error',
+        code: 'input_audio_buffer_commit_empty',
+        message: 'Error committing input audio buffer: buffer too small.',
+        param: '',
+        event_id: 'evt_empty_commit',
+      },
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
   });
 
   it('raises non-retryable APIError on fatal response.done failures', () => {

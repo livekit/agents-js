@@ -203,10 +203,26 @@ export class RealtimeModel extends llm.RealtimeModel {
   ) {
     const modalities = (options.modalities ||
       DEFAULT_REALTIME_MODEL_OPTIONS.modalities) as Modality[];
+    const resolvedTurnDetection =
+      options.turnDetection === undefined
+        ? DEFAULT_REALTIME_MODEL_OPTIONS.turnDetection
+        : options.turnDetection;
+    if (
+      resolvedTurnDetection !== null &&
+      resolvedTurnDetection.create_response === false &&
+      resolvedTurnDetection.interrupt_response !== false
+    ) {
+      log().warn(
+        'create_response=false hands turn taking to the client, but the server still ' +
+          'cancels its response on user speech, pass interrupt_response=false as well',
+      );
+    }
 
     super({
       messageTruncation: true,
-      turnDetection: options.turnDetection !== null,
+      // create_response=false leaves the reply to the client: client-side turn taking
+      turnDetection:
+        resolvedTurnDetection !== null && resolvedTurnDetection.create_response !== false,
       canDisableTurnDetection: options.turnDetection === undefined,
       userTranscription: options.inputAudioTranscription !== null,
       autoToolReplyGeneration: false,
@@ -253,6 +269,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       isAzure,
       model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
       modalities,
+      turnDetection: resolvedTurnDetection,
     };
   }
 
@@ -2034,6 +2051,14 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleError(event: api_proto.ErrorEvent): void {
     if (event.error.message.startsWith('Cancellation failed')) {
+      return;
+    }
+    if (
+      event.error.code === 'input_audio_buffer_commit_empty' &&
+      this._options.turnDetection !== undefined &&
+      this._options.turnDetection !== null
+    ) {
+      // Server VAD commits each segment itself, so ours can land on an emptied buffer.
       return;
     }
     this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
