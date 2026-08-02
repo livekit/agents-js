@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
+import type {
+  InterruptionSentinel,
+  OverlappingSpeechEvent,
+} from '../inference/interruption/types.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
 import type { VADStream } from '../vad.js';
 import { VAD as BaseVAD } from '../vad.js';
@@ -86,6 +89,8 @@ type ActivityInternals = {
   _currentSpeech?: SpeechHandle;
   interruptionDetected: boolean;
   realtimeSession?: { clearAudio: ReturnType<typeof vi.fn> };
+  pausedSpeech?: { handle: SpeechHandle; agentState: 'speaking'; timeout: number };
+  createSpeechTask: ReturnType<typeof vi.fn>;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onBackchannelConfirmed: () => void;
 };
@@ -138,7 +143,7 @@ describe('realtime adaptive interruption', () => {
     expect(activity.interruptionDetector).toBeUndefined();
   });
 
-  it('does not commit backchannels while agent speech is live', async () => {
+  it('commits an unjudged overlap over a paused speech', async () => {
     vi.stubEnv('LIVEKIT_API_KEY', 'k');
     vi.stubEnv('LIVEKIT_API_SECRET', 's');
 
@@ -146,8 +151,25 @@ describe('realtime adaptive interruption', () => {
     activity._schedulingPaused = false;
     activity._currentSpeech = SpeechHandle.create({ allowInterruptions: true });
     activity.interruptionDetected = false;
+    activity.pausedSpeech = {
+      handle: activity._currentSpeech,
+      agentState: 'speaking',
+      timeout: 2000,
+    };
+    activity.createSpeechTask = vi.fn(() => ({}));
 
-    expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(false);
+    expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
+  });
+
+  it('drops a confirmed backchannel while agent speech is live', async () => {
+    vi.stubEnv('LIVEKIT_API_KEY', 'k');
+    vi.stubEnv('LIVEKIT_API_SECRET', 's');
+
+    const activity = makeActivity(realtimeBargeInSession()) as unknown as ActivityInternals;
+    activity._schedulingPaused = false;
+    activity._currentSpeech = SpeechHandle.create({ allowInterruptions: true });
+
+    expect(await activity.onEndOfTurn(endOfTurnInfo({ backchannelOverAgent: true }))).toBe(false);
   });
 
   it('drops confirmed backchannels after agent speech finishes', async () => {
@@ -203,6 +225,11 @@ type RecognitionInternals = {
   onOverlapSpeechEvent: (ev: OverlappingSpeechEvent) => void;
 };
 
+type RecognitionStreamInternals = AudioRecognition & {
+  overlapOpen: boolean;
+  trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+};
+
 function recognitionForOverlap(options: { speaking?: boolean } = {}): RecognitionInternals {
   const recognition = Object.create(AudioRecognition.prototype) as RecognitionInternals;
   Object.assign(recognition, {
@@ -233,6 +260,43 @@ function overlapEvent(options: {
     probability: options.isInterruption ? 1 : 0,
     numRequests: 0,
   };
+}
+
+function recognitionWithInterruptionStream(): {
+  recognition: RecognitionStreamInternals;
+  sent: InterruptionSentinel[];
+} {
+  const recognition = Object.create(AudioRecognition.prototype) as RecognitionStreamInternals;
+  const sent: InterruptionSentinel[] = [];
+  Object.assign(recognition, {
+    isInterruptionEnabled: true,
+    isAgentSpeaking: false,
+    agentSpeechStartedAt: undefined,
+    endpointing: {
+      overlapping: false,
+      onStartOfAgentSpeech: vi.fn(),
+      onEndOfAgentSpeech: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+    },
+    backchannelBoundary: undefined,
+    backchannelBoundaryTimer: undefined,
+    backchannelBoundaryCallback: undefined,
+    ignoreUserTranscriptUntil: undefined,
+    overlapInCurrentTurn: false,
+    overlapOpen: false,
+    turnBackchannelOverAgent: false,
+    transcriptBuffer: [],
+    hooks: {
+      onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
+    },
+    logger: { trace: vi.fn() },
+    trySendInterruptionSentinel: vi.fn(async (item: InterruptionSentinel) => {
+      sent.push(item);
+      return true;
+    }),
+  });
+  return { recognition, sent };
 }
 
 describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
@@ -276,5 +340,76 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
     expect(recognition.turnBackchannelOverAgent).toBe(false);
     expect(recognition.hooks.onInterruption).toHaveBeenCalledOnce();
     expect(recognition.hooks.onBackchannelConfirmed).not.toHaveBeenCalled();
+  });
+
+  it('keeps overlap inference alive while agent speech is paused', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    sent.length = 0;
+
+    await recognition.onEndOfAgentSpeech(Date.now(), { paused: true });
+
+    expect(sent).toEqual([]);
+  });
+
+  it('lets user speech ending close an overlap while agent speech is paused', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    await recognition.onEndOfAgentSpeech(Date.now(), { paused: true });
+    sent.length = 0;
+
+    await recognition.onEndOfOverlapSpeech(Date.now());
+
+    expect(sent.map((item) => item.type)).toEqual(['overlap-speech-ended']);
+    expect(sent[0]).toMatchObject({ agentEnded: false });
+  });
+
+  it('does not restart the detector when paused speech resumes', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    await recognition.onEndOfAgentSpeech(Date.now(), { paused: true });
+    sent.length = 0;
+
+    await recognition.onStartOfAgentSpeech(Date.now(), { resumed: true });
+
+    expect(sent).toEqual([]);
+  });
+
+  it('does not close an overlap again after a verdict resolves it', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    recognition.onOverlapSpeechEvent(overlapEvent({ isInterruption: true, agentEnded: false }));
+    sent.length = 0;
+
+    await recognition.onEndOfOverlapSpeech(Date.now());
+
+    expect(sent).toEqual([]);
+  });
+
+  it('tears down inference when interrupted paused speech ends', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    await recognition.onEndOfAgentSpeech(Date.now(), { paused: true });
+    sent.length = 0;
+
+    await recognition.onEndOfAgentSpeech(Date.now());
+
+    expect(sent.map((item) => item.type)).toEqual(['agent-speech-ended']);
+  });
+
+  it('still tears down inference at the real end of agent speech', async () => {
+    const { recognition, sent } = recognitionWithInterruptionStream();
+    await recognition.onStartOfAgentSpeech(Date.now());
+    await recognition.onStartOfOverlapSpeech(0, Date.now());
+    sent.length = 0;
+
+    await recognition.onEndOfAgentSpeech(Date.now());
+
+    expect(sent.map((item) => item.type)).toContain('agent-speech-ended');
   });
 });
