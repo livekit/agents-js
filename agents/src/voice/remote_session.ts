@@ -624,6 +624,7 @@ function protoSerializeOptions(opts: {
   };
   maxToolSteps?: number;
   userAwayTimeout?: number | null;
+  transcriptionTimeout?: number | null;
   useTtsAlignedTranscript?: boolean;
 }): Record<string, string> {
   return {
@@ -631,6 +632,7 @@ function protoSerializeOptions(opts: {
     interruption: JSON.stringify(opts.turnHandling?.interruption ?? {}),
     max_tool_steps: String(opts.maxToolSteps ?? 0),
     user_away_timeout: String(opts.userAwayTimeout ?? ''),
+    transcription_timeout: String(opts.transcriptionTimeout ?? ''),
     preemptive_generation: JSON.stringify(opts.turnHandling?.preemptiveGeneration ?? {}),
     use_tts_aligned_transcript: String(opts.useTtsAlignedTranscript ?? false),
   };
@@ -1129,6 +1131,7 @@ export class SessionHost {
           turnHandling: this.session!.sessionOptions.turnHandling,
           maxToolSteps: this.session!.sessionOptions.maxToolSteps,
           userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
           useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),

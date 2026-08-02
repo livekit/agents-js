@@ -22,6 +22,7 @@ import { defaultUserTurnLimitOptions } from './user_turn_limit.js';
 const defaultSessionOptions = {
   maxToolSteps: 3,
   userAwayTimeout: 15.0,
+  transcriptionTimeout: null,
   aecWarmupDuration: 3000,
   ttsReadIdleTimeout: 10_000,
   forwardAudioIdleTimeout: 10_000,

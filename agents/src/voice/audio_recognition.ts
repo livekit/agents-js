@@ -149,6 +149,7 @@ export interface RecognitionHooks {
   onEndOfSpeech: (ev: VADEvent) => void;
   onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
+  onTranscriptionTimeout: (speechDuration: number, turnStart: number) => void;
   onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
   onEotPrediction: (ev: EotPredictionEvent) => void;
   onAgentBackchannelOpportunity: (ev: _AgentBackchannelOpportunityEvent) => void;
@@ -268,6 +269,8 @@ export interface AudioRecognitionOptions {
   getLinkedParticipant?: () => ParticipantLike | undefined;
   /** Predicate used to substitute silence for STT while still forwarding real audio elsewhere. */
   shouldDiscardAudioForStt?: (frame: AudioFrame) => boolean;
+  /** User transcription timeout in milliseconds. `null` or `undefined` disables it. */
+  transcriptionTimeout?: number | null;
 }
 
 /**
@@ -333,6 +336,10 @@ export class AudioRecognition {
   private userTurnCommitted = false;
   private speaking = false;
   private vadSpeechStarted = false;
+  private transcriptionTimeout?: number;
+  private transcriptionTimeoutTimer?: ReturnType<typeof setTimeout>;
+  private turnSpeechDuration = 0;
+  private turnTranscriptReceived = false;
   private sampleRate?: number;
 
   private userTurnSpan?: Span;
@@ -413,6 +420,7 @@ export class AudioRecognition {
     this.sttModel = opts.sttModel;
     this.sttProvider = opts.sttProvider;
     this.getLinkedParticipant = opts.getLinkedParticipant;
+    this.transcriptionTimeout = opts.transcriptionTimeout ?? undefined;
 
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.interruptionDetection = opts.interruptionDetection;
@@ -1068,6 +1076,11 @@ export class AudioRecognition {
       return;
     }
 
+    // Interim and preflight transcripts may never be followed by a final transcript.
+    if (ev.type === SpeechEventType.FINAL_TRANSCRIPT && ev.alternatives?.[0]?.text) {
+      this.markTurnTranscribed();
+    }
+
     // handle interruption detection
     // - hold the event until the ignore_user_transcript_until expires
     // - release only relevant events
@@ -1694,6 +1707,7 @@ export class AudioRecognition {
             this.turnDetectorPredictionFut = undefined;
             this.turnDetectorFlushed = true;
           }
+          this.resetTranscriptionTimeout();
         }
 
         this.turnBackchannelOverAgent = false;
@@ -1866,6 +1880,7 @@ export class AudioRecognition {
               otelContext.with(ctx, () => this.hooks.onStartOfSpeech(ev));
             }
             this.speaking = true;
+            this.cancelTranscriptionTimeout();
 
             // Audio EOT: tear down any in-flight inference for the now-stale
             // prior window and re-arm so the next silence tick starts fresh.
@@ -1917,6 +1932,7 @@ export class AudioRecognition {
             break;
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
+            const vadSpeechStarted = this.vadSpeechStarted;
             {
               const endTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
               const span = this.ensureUserTurnSpan();
@@ -1934,6 +1950,14 @@ export class AudioRecognition {
             this.vadSpeechStarted = false;
             this.speaking = false;
             this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+
+            // A committed turn clears vadSpeechStarted before its late VAD EOS arrives.
+            if (this.sttPipeline !== undefined && vadSpeechStarted) {
+              this.armTranscriptionTimeout(
+                ev.speechDuration,
+                ev.silenceDuration + ev.inferenceDuration,
+              );
+            }
 
             // Audio EOT: the silence tick owns request-starting, not
             // END_OF_SPEECH. EOS consumes the already-armed future (if any)
@@ -2137,6 +2161,7 @@ export class AudioRecognition {
     this.speaking = false;
     this.userTurnCommitted = false;
     this.userTurnTracker = { words: 0, transcript: '' };
+    this.resetTranscriptionTimeout();
     // New turn → allow the next window's prediction to emit.
     this.lastEmittedEotPrediction = undefined;
 
@@ -2239,6 +2264,7 @@ export class AudioRecognition {
 
   async close() {
     this.closed = true;
+    this.cancelTranscriptionTimeout();
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
@@ -2276,6 +2302,46 @@ export class AudioRecognition {
     // A speech segment may never produce a transcript or committed turn. End
     // its span after all recognition tasks stop so it is still exported.
     this._endUserTurnSpan();
+  }
+
+  private cancelTranscriptionTimeout(): void {
+    if (this.transcriptionTimeoutTimer !== undefined) {
+      clearTimeout(this.transcriptionTimeoutTimer);
+      this.transcriptionTimeoutTimer = undefined;
+    }
+  }
+
+  private resetTranscriptionTimeout(): void {
+    this.cancelTranscriptionTimeout();
+    this.turnSpeechDuration = 0;
+    this.turnTranscriptReceived = false;
+  }
+
+  private markTurnTranscribed(): void {
+    this.turnTranscriptReceived = true;
+    this.cancelTranscriptionTimeout();
+  }
+
+  private armTranscriptionTimeout(speechDuration: number, elapsedDelay: number): void {
+    if (this.transcriptionTimeout === undefined || this.turnTranscriptReceived) {
+      return;
+    }
+
+    this.turnSpeechDuration += speechDuration;
+    this.cancelTranscriptionTimeout();
+    const remainingTimeout = Math.max(0, this.transcriptionTimeout - elapsedDelay);
+    this.transcriptionTimeoutTimer = setTimeout(
+      () => this.onTranscriptionTimeout(),
+      remainingTimeout,
+    );
+  }
+
+  private onTranscriptionTimeout(): void {
+    this.transcriptionTimeoutTimer = undefined;
+    if (this.userTurnStart === undefined || this.turnTranscriptReceived) {
+      return;
+    }
+    this.hooks.onTranscriptionTimeout(this.turnSpeechDuration, this.userTurnStart);
   }
 
   private _endUserTurnSpan(info?: {
