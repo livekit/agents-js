@@ -259,6 +259,7 @@ export class RoomIO {
     }
 
     this.participantAvailableFuture.resolve(participant);
+    this.agentSession._onRoomIOParticipantLinked(participant);
   };
 
   private onParticipantDisconnected = (participant: RemoteParticipant) => {

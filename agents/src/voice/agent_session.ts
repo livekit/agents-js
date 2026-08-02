@@ -4,7 +4,12 @@
 import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import {
+  type AudioFrame,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+} from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
@@ -120,6 +125,9 @@ import type {
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
+
+const SIP_RULE_ID_ATTR = 'sip.ruleID';
+const DEFAULT_AEC_WARMUP_DURATION = 3000;
 
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
@@ -292,7 +300,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
    * interruptions from audio activity are suppressed. Set to `null` to disable.
-   * @defaultValue 3000
+   * Defaults to 3000, or `null` for outbound SIP calls.
    */
   aecWarmupDuration?: number | null;
 
@@ -418,6 +426,7 @@ export class AgentSession<
   private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
+  private readonly _aecWarmupDurationExplicit: boolean;
 
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
@@ -511,6 +520,7 @@ export class AgentSession<
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
+    this._aecWarmupDurationExplicit = options.aecWarmupDuration !== undefined;
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
@@ -1666,6 +1676,23 @@ export class AgentSession<
 
     this._aecWarmupRemaining = 0;
     if (this._aecWarmupTimer !== null) {
+      clearTimeout(this._aecWarmupTimer);
+      this._aecWarmupTimer = null;
+    }
+  }
+
+  /** @internal */
+  _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    if (this._aecWarmupDurationExplicit) {
+      return;
+    }
+
+    const isOutboundSip =
+      participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
+    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+
+    if (isOutboundSip && this._aecWarmupTimer !== null) {
       clearTimeout(this._aecWarmupTimer);
       this._aecWarmupTimer = null;
     }
