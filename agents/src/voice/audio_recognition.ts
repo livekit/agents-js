@@ -380,6 +380,8 @@ export class AudioRecognition {
   private interruptionDetected?: boolean;
   private overlapInCurrentTurn = false;
   private turnBackchannelOverAgent = false;
+  // An overlap is open right now, awaiting a verdict; several can occur within one turn.
+  private overlapOpen = false;
   private interruptionStreamChannel?: StreamChannel<InterruptionSentinel | AudioFrame>;
   private closed = false;
 
@@ -530,6 +532,16 @@ export class AudioRecognition {
   /** @internal */
   get inputStartedAt() {
     return this.sttPipeline?.inputStartedAt;
+  }
+
+  /** @internal */
+  get endOfTurnTask(): Task<void> | undefined {
+    return this.bounceEOUTask;
+  }
+
+  /** @internal */
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   /** @internal */
@@ -690,6 +702,7 @@ export class AudioRecognition {
   async disableInterruptionDetection(): Promise<void> {
     this.isInterruptionEnabled = false;
     this.interruptionDetection = undefined;
+    this.overlapOpen = false;
     await this.interruptionTask?.cancelAndWait();
     this.interruptionTask = undefined;
     await this.interruptionStreamChannel?.close();
@@ -727,7 +740,7 @@ export class AudioRecognition {
     this.backchannelBoundaryCallback = undefined;
   }
 
-  async onStartOfAgentSpeech(startedAt: number) {
+  async onStartOfAgentSpeech(startedAt: number, options?: { resumed?: boolean }) {
     this.isAgentSpeaking = true;
     this.agentSpeechStartedAt = startedAt;
     this.endpointing.onStartOfAgentSpeech(startedAt);
@@ -742,10 +755,13 @@ export class AudioRecognition {
       );
     }
 
-    return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+    // A resume re-enters the same agent turn; restarting would discard the open overlap.
+    if (!options?.resumed) {
+      return this.trySendInterruptionSentinel(InterruptionStreamSentinel.agentSpeechStarted());
+    }
   }
 
-  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number) {
+  async onEndOfAgentSpeech(ignoreUserTranscriptUntil: number, options?: { paused?: boolean }) {
     this.cancelBackchannelBoundary();
 
     const now = Date.now();
@@ -777,21 +793,28 @@ export class AudioRecognition {
     // flight are not buffered.
     this.isAgentSpeaking = false;
 
-    const inputOpen = await this.trySendInterruptionSentinel(
-      InterruptionStreamSentinel.agentSpeechEnded(),
-    );
-    if (!inputOpen) {
-      return;
+    if (!options?.paused) {
+      const inputOpen = await this.trySendInterruptionSentinel(
+        InterruptionStreamSentinel.agentSpeechEnded(),
+      );
+      if (!inputOpen) {
+        return;
+      }
     }
 
     if (wasAgentSpeaking) {
       // Notify overlap end after the agent-speech-ended sentinel resets the inference stream
       // so it does not emit a synthetic `isInterruption: false` event following a real
       // interruption.
-      if (priorIgnoreUserTranscriptUntil === undefined) {
+      if (!options?.paused && priorIgnoreUserTranscriptUntil === undefined) {
         this.onEndOfOverlapSpeech(Date.now(), undefined, true);
       }
       await this.flushHeldTranscripts(endCooldown);
+    }
+
+    if (!options?.paused) {
+      // The sentinel sent above resets the detector stream, dropping any open overlap.
+      this.overlapOpen = false;
     }
   }
 
@@ -803,6 +826,7 @@ export class AudioRecognition {
       }
       this.turnBackchannelOverAgent = false;
       this.overlapInCurrentTurn = true;
+      this.overlapOpen = true;
       this.trySendInterruptionSentinel(
         InterruptionStreamSentinel.overlapSpeechStarted(
           speechDuration,
@@ -815,9 +839,12 @@ export class AudioRecognition {
 
   /** End interruption inference when overlap speech ends. */
   async onEndOfOverlapSpeech(endedAt: number, userSpeakingSpan?: Span, agentEnded = false) {
-    if (!this.isInterruptionEnabled) {
+    // The overlap ends once, on the first of a verdict, the user stopping, the agent stopping,
+    // or teardown, so a call can arrive with it already closed.
+    if (!this.isInterruptionEnabled || !this.overlapOpen) {
       return;
     }
+    this.overlapOpen = false;
     if (
       this.overlapInCurrentTurn &&
       this.interruptionDetected !== true &&
@@ -1331,6 +1358,9 @@ export class AudioRecognition {
   }
 
   private onOverlapSpeechEvent(ev: OverlappingSpeechEvent) {
+    // Every verdict is terminal for its overlap, including one the cooldown then ignores.
+    this.overlapOpen = false;
+
     if (this.backchannelBoundaryActive && !ev.isInterruption) {
       this.logger.trace(
         'ignoring backchannel event during backchannel boundary cooldown, falling back to vad',
@@ -2244,6 +2274,7 @@ export class AudioRecognition {
 
   async close() {
     this.closed = true;
+    this.overlapOpen = false;
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
