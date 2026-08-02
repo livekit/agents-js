@@ -89,6 +89,10 @@ export class LLM extends llm.LLM {
     }
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list({ limit: 1 }, { signal });
+  }
+
   /**
    * Converts a framework ChatContext into Anthropic's message format.
    *
