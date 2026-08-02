@@ -13,6 +13,7 @@ import type { SimulationContext } from '../simulation.js';
 import { Future, IdleTimeoutError, shortuuid, waitUntilTimeout } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import type { InferenceExecutor } from './inference_executor.js';
+import { finalizeJobShutdown } from './job_proc_shutdown.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
@@ -199,19 +200,15 @@ const startJob = (
       logger.error({ error }, 'error in ctx._onSessionEnd');
     }
 
-    await room.disconnect();
-    logger.debug('disconnected from room');
-
-    const shutdownTasks = [];
-    for (const callback of ctx.shutdownCallbacks) {
-      shutdownTasks.push(callback());
-    }
-    await ThrowsPromise.all(shutdownTasks).catch((error) =>
-      logger.error({ error }, 'error while shutting down the job'),
-    );
-
-    safeSend({ case: 'done', value: undefined });
-    joinFuture.resolve();
+    await finalizeJobShutdown({
+      room,
+      shutdownCallbacks: ctx.shutdownCallbacks,
+      logger,
+      onDone: () => {
+        safeSend({ case: 'done', value: undefined });
+        joinFuture.resolve();
+      },
+    });
   })();
 
   return { ctx, task };
