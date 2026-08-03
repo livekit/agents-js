@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ChatContext,
   type RealtimeCapabilities,
@@ -94,16 +94,29 @@ function speechStarted(
   activity: AgentActivity,
   allowInterruptions: boolean,
 ): { handle: SpeechHandle; interrupt: ReturnType<typeof vi.fn> } {
-  const internals = activity as unknown as ActivityInternals;
   const handle = SpeechHandle.create({ allowInterruptions });
+  const { interrupt } = speechStartedWith(activity, handle);
+  return { handle, interrupt };
+}
+
+function speechStartedWith(
+  activity: AgentActivity,
+  handle: SpeechHandle,
+): { interrupt: ReturnType<typeof vi.fn> } {
+  const internals = activity as unknown as ActivityInternals;
   const interrupt = vi.fn();
   internals._currentSpeech = handle;
   internals.realtimeSession = { interrupt };
   activity.onInputSpeechStarted({});
-  return { handle, interrupt };
+  return { interrupt };
 }
 
 describe('realtime input speech interruption', () => {
+  // log() returns a process-wide singleton, so spies survive across tests unless restored.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('warns when interruptions are disabled with server turn detection', () => {
     const warn = vi.spyOn(logModule.log(), 'warn').mockImplementation(() => undefined);
 
@@ -132,6 +145,19 @@ describe('realtime input speech interruption', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it('reports uninterruptible speech when input speech starts with server turn detection', () => {
+    const error = vi.spyOn(logModule.log(), 'error').mockImplementation(() => undefined);
+    const result = activity(true);
+
+    const { handle } = speechStarted(result, false);
+
+    expect(handle.interrupted).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('current speech is not interruptable'),
+      expect.any(Error),
+    );
+  });
+
   it('interrupts interruptible speech when input speech starts', () => {
     const result = activity(true);
 
@@ -139,5 +165,23 @@ describe('realtime input speech interruption', () => {
 
     expect(handle.interrupted).toBe(true);
     expect(interrupt).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces unexpected interrupt failures with client-side turn taking', () => {
+    const error = vi.spyOn(logModule.log(), 'error').mockImplementation(() => undefined);
+    const result = activity(false, false);
+
+    const handle = SpeechHandle.create({ allowInterruptions: true });
+    const unexpected = new TypeError('unexpected failure while interrupting');
+    vi.spyOn(handle, 'interrupt').mockImplementation(() => {
+      throw unexpected;
+    });
+
+    speechStartedWith(result, handle);
+
+    expect(error).toHaveBeenCalledWith(
+      { error: unexpected },
+      expect.stringContaining('failed to interrupt'),
+    );
   });
 });
