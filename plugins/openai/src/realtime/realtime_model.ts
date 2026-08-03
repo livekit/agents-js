@@ -2055,7 +2055,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     if (
       event.error.code === 'input_audio_buffer_commit_empty' &&
-      this._options.turnDetection !== undefined &&
       this._options.turnDetection !== null
     ) {
       // Server VAD commits each segment itself, so ours can land on an emptied buffer.

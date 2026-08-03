@@ -447,6 +447,36 @@ describe('RealtimeSession fatal error handling', () => {
     expect(errors).toHaveLength(0);
   });
 
+  it('reports empty input buffer commits when the session disables turn detection', () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      turnDetection: { type: 'server_vad' },
+    });
+    // The framework nulls the session's turn detection when it owns turn taking, so the
+    // server no longer commits segments itself and an empty commit is a real error.
+    const session = model.session({
+      turnDetectionDisabled: true,
+    }) as unknown as ErrorSessionInternals;
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error) => errors.push(error));
+
+    session.handleError({
+      type: 'error',
+      event_id: 'evt_empty_commit',
+      error: {
+        type: 'invalid_request_error',
+        code: 'input_audio_buffer_commit_empty',
+        message: 'Error committing input audio buffer: buffer too small.',
+        param: '',
+        event_id: 'evt_empty_commit',
+      },
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(true);
+  });
+
   it('reports empty input buffer commits without server VAD', () => {
     stubTaskRuntime();
     const model = new RealtimeModel({ apiKey: 'test-key', turnDetection: null });
