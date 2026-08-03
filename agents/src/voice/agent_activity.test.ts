@@ -469,7 +469,7 @@ describe('AgentActivity - mainTask', () => {
         debug: vi.fn(),
       },
       audioRecognition: {
-        onEndOfAgentSpeech: vi.fn(),
+        onEndOfAgentSpeech: vi.fn(async () => {}),
       },
       agentSession: {
         sessionOptions: {
@@ -549,7 +549,7 @@ function falseInterruptionActivity(endOfTurnTask?: Task<void>): FalseInterruptio
       endOfTurnTask,
       isClosed: false,
       onStartOfAgentSpeech: vi.fn(),
-      onEndOfAgentSpeech: vi.fn(),
+      onEndOfAgentSpeech: vi.fn(async () => {}),
     },
     agentSession: {
       agentState: 'speaking',
@@ -609,27 +609,34 @@ class ServerTurnRealtimeModel extends RealtimeModel {
   async close(): Promise<void> {}
 }
 
-function endOfTurnActivity(llm: unknown): AgentActivity & {
-  cancelFalseInterruptionTimer: ReturnType<typeof vi.fn>;
-} {
-  const activity = Object.create(AgentActivity.prototype);
+type EndOfTurnActivity = FalseInterruptionActivity & {
+  onEndOfTurn: (info: EndOfTurnInfo) => Promise<boolean>;
+  cancelPreemptiveGeneration: ReturnType<typeof vi.fn>;
+  createSpeechTask: ReturnType<typeof vi.fn>;
+};
+
+/**
+ * Builds an activity that can run `onEndOfTurn` on top of a live false-interruption pause, so
+ * the "keeps the resume armed" tests can drive the real `cancelFalseInterruptionTimer` and the
+ * real timer to expiry instead of asserting on a stub.
+ */
+function endOfTurnActivity(llm: unknown): EndOfTurnActivity {
+  const activity = falseInterruptionActivity() as unknown as EndOfTurnActivity;
+  Object.assign(activity.agentSession, {
+    amd: undefined,
+    llm,
+    stt: undefined,
+    _textOnly: false,
+    turnDetection: 'vad',
+  });
+  Object.assign(activity.agentSession.sessionOptions.turnHandling.interruption, { minWords: 0 });
   Object.assign(activity, {
     agent: { llm: undefined, stt: undefined, turnHandling: { turnDetection: 'vad' } },
-    agentSession: {
-      amd: undefined,
-      llm,
-      stt: undefined,
-      _textOnly: false,
-      turnDetection: 'vad',
-      sessionOptions: { turnHandling: { interruption: { minWords: 0 } } },
-    },
     _schedulingPaused: false,
     newTurnsBlocked: false,
-    _currentSpeech: undefined,
     _userTurnCompletedTask: undefined,
     isInterruptionDetectionEnabled: false,
     cancelPreemptiveGeneration: vi.fn(),
-    cancelFalseInterruptionTimer: vi.fn(),
     createSpeechTask: vi.fn(() => ({})),
   });
   return activity;
@@ -685,20 +692,84 @@ describe('AgentActivity - false interruption resume', () => {
     expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
   });
 
+  it('does not resume when the turn decision is cancelled', async () => {
+    const decision = new Future<void>();
+    // Mirrors the real bounce body, which observes the abort and returns normally
+    // instead of rejecting (audio_recognition.ts onEndOfTurn task).
+    const task = Task.from(async (controller) => {
+      await decision.await;
+      if (controller.signal.aborted) return;
+    });
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.falseInterruptionPending).toBe(true);
+
+    task.cancel();
+    decision.resolve();
+    await task.result;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
+    // Python's _on_turn_settled returns without touching _paused_speech on a cancelled
+    // decision; the teardown that cancelled it owns the release.
+    expect(activity.pausedSpeech).toBeDefined();
+    expect(activity.falseInterruptionPending).toBe(false);
+  });
+
+  it('resumes when the turn decision fails', async () => {
+    const decision = new Future<void>();
+    const task = Task.from(async () => decision.await);
+    const activity = falseInterruptionActivity(task);
+
+    activity.startFalseInterruptionTimer(300);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.falseInterruptionPending).toBe(true);
+
+    decision.reject(new Error('turn decision failed'));
+    await task.result.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // An errored decision is a completed one in Python (add_done_callback fires and
+    // cancelled() is False), so the pause must still be released.
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
   it('keeps the resume armed when the reply is skipped', async () => {
     const activity = endOfTurnActivity(undefined);
+    activity.startFalseInterruptionTimer(300);
 
     expect(await activity.onEndOfTurn(endOfTurnInfo({ skipReply: true }))).toBe(true);
 
-    expect(activity.cancelFalseInterruptionTimer).not.toHaveBeenCalled();
+    // The timer must survive the turn and still release the pause, not merely go uncancelled.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
   });
 
   it('keeps the resume armed when the realtime server owns turn detection', async () => {
     const activity = endOfTurnActivity(new ServerTurnRealtimeModel());
+    activity.startFalseInterruptionTimer(300);
 
     expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
 
-    expect(activity.cancelFalseInterruptionTimer).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).toHaveBeenCalledOnce();
+    expect(activity.pausedSpeech).toBeUndefined();
+  });
+
+  it('cancels the resume when a replying turn will interrupt the pause', async () => {
+    const activity = endOfTurnActivity(undefined);
+    activity.startFalseInterruptionTimer(300);
+
+    expect(await activity.onEndOfTurn(endOfTurnInfo())).toBe(true);
+
+    // Counterpart to the two tests above: proves they are not passing because the fixture
+    // can never cancel.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
   });
 
   it('does not end agent speech when handing a paused speech to another activity', async () => {
@@ -727,7 +798,7 @@ describe('AgentActivity - false interruption resume', () => {
 describe('AgentActivity - speech completion', () => {
   it('ends audio recognition speech when pipeline completion moves session out of speaking', () => {
     const audioRecognition = {
-      onEndOfAgentSpeech: vi.fn(),
+      onEndOfAgentSpeech: vi.fn(async () => {}),
     };
     const fakeActivity = {
       speechQueue: {
