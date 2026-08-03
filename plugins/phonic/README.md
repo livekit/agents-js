@@ -87,13 +87,10 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `websocketTimeoutSec` | `number` | Seconds of inactivity before the Phonic websocket is closed |
 | `intelligenceLevel` | `'standard'` \| `'high'` | LLM intelligence level |
 | `isWelcomeMessageInterruptible` | `boolean` | When false, the welcome message cannot be interrupted |
-| `backgroundNoise` | `'office'` \| `'call-center'` \| `'coffee-shop'` \| `null` | Background noise type mixed into the conversation |
-| `backgroundNoiseLevel` | `number` | Level of the background noise |
 | `vadPrebufferDurationMs` | `number` | Voice-activity-detection prebuffer duration (ms) |
 | `vadMinSpeechDurationMs` | `number` | Minimum speech duration for VAD (ms) |
 | `vadMinSilenceDurationMs` | `number` | Minimum silence duration for VAD (ms) |
 | `vadThreshold` | `number` | Voice-activity-detection threshold |
-| `pushToTalk` | `boolean` | When true, the agent only listens between `unmute`/`mute` messages |
 | `enableAssistantBackchannel` | `boolean` | When true, the assistant backchannels (e.g. "mm-hmm") while the user speaks |
 | `assistantBackchannelAggressiveness` | `number` | How aggressively the assistant backchannels (needs `enableAssistantBackchannel`) |
 | `pronunciationDictionary` | `{ word, pronunciation }[]` | Pronunciation entries; words must be unique |

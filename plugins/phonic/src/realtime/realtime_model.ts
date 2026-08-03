@@ -56,13 +56,10 @@ export interface RealtimeModelOptions {
   websocketTimeoutSec?: number;
   intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
   isWelcomeMessageInterruptible?: boolean;
-  backgroundNoise?: Phonic.ConfigOptions['background_noise'];
-  backgroundNoiseLevel?: number;
   vadPrebufferDurationMs?: number;
   vadMinSpeechDurationMs?: number;
   vadMinSilenceDurationMs?: number;
   vadThreshold?: number;
-  pushToTalk?: boolean;
   enableAssistantBackchannel?: boolean;
   assistantBackchannelAggressiveness?: number;
   pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
@@ -201,14 +198,6 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       isWelcomeMessageInterruptible?: boolean;
       /**
-       * Background noise type to mix into the conversation, or `null` for no noise
-       */
-      backgroundNoise?: Phonic.ConfigOptions['background_noise'];
-      /**
-       * Level of the background noise mixed into the conversation
-       */
-      backgroundNoiseLevel?: number;
-      /**
        * Voice-activity-detection prebuffer duration, in milliseconds
        */
       vadPrebufferDurationMs?: number;
@@ -224,10 +213,6 @@ export class RealtimeModel extends llm.RealtimeModel {
        * Voice-activity-detection threshold
        */
       vadThreshold?: number;
-      /**
-       * When true, the agent only listens between `unmute`/`mute` messages
-       */
-      pushToTalk?: boolean;
       /**
        * When true, the assistant produces backchannel responses (e.g. "mm-hmm") while the user speaks
        */
@@ -340,13 +325,10 @@ export class RealtimeModel extends llm.RealtimeModel {
       websocketTimeoutSec: options.websocketTimeoutSec,
       intelligenceLevel: options.intelligenceLevel,
       isWelcomeMessageInterruptible: options.isWelcomeMessageInterruptible,
-      backgroundNoise: options.backgroundNoise,
-      backgroundNoiseLevel: options.backgroundNoiseLevel,
       vadPrebufferDurationMs: options.vadPrebufferDurationMs,
       vadMinSpeechDurationMs: options.vadMinSpeechDurationMs,
       vadMinSilenceDurationMs: options.vadMinSilenceDurationMs,
       vadThreshold: options.vadThreshold,
-      pushToTalk: options.pushToTalk,
       enableAssistantBackchannel: options.enableAssistantBackchannel,
       assistantBackchannelAggressiveness: options.assistantBackchannelAggressiveness,
       pronunciationDictionary: options.pronunciationDictionary,
@@ -1112,13 +1094,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       websocket_timeout_sec: this.options.websocketTimeoutSec,
       intelligence_level: this.options.intelligenceLevel,
       is_welcome_message_interruptible: this.options.isWelcomeMessageInterruptible,
-      background_noise: this.options.backgroundNoise,
-      background_noise_level: this.options.backgroundNoiseLevel,
       vad_prebuffer_duration_ms: this.options.vadPrebufferDurationMs,
       vad_min_speech_duration_ms: this.options.vadMinSpeechDurationMs,
       vad_min_silence_duration_ms: this.options.vadMinSilenceDurationMs,
       vad_threshold: this.options.vadThreshold,
-      push_to_talk: this.options.pushToTalk,
       enable_assistant_backchannel: this.options.enableAssistantBackchannel,
       assistant_backchannel_aggressiveness: this.options.assistantBackchannelAggressiveness,
       pronunciation_dictionary: this.options.pronunciationDictionary,
