@@ -108,6 +108,31 @@ describe('Anthropic LLM', () => {
     );
   });
 
+  it('leaves an injected client and its retry policy untouched', () => {
+    const client = {
+      baseURL: 'https://api.anthropic.test',
+      maxRetries: 7,
+    } as unknown as Anthropic;
+    const callCount = anthropicConstructor.mock.calls.length;
+
+    const anthropicLlm = new LLM({ client, model: 'claude-3-5-sonnet-20241022' });
+
+    // The caller owns the client: no SDK client is constructed on its behalf.
+    expect(anthropicConstructor.mock.calls).toHaveLength(callCount);
+    expect(anthropicLlm.provider).toBe('api.anthropic.test');
+    expect(client.maxRetries).toBe(7);
+  });
+
+  it('forwards an explicit maxRetries to the Anthropic SDK', () => {
+    const callCount = anthropicConstructor.mock.calls.length;
+
+    new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022', maxRetries: 2 });
+
+    expect(anthropicConstructor.mock.calls[callCount]?.[0]).toEqual(
+      expect.objectContaining({ maxRetries: 2 }),
+    );
+  });
+
   it('correctly maps ChatContext to Anthropic system and messages arrays', () => {
     const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
 
