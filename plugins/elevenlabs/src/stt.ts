@@ -88,6 +88,8 @@ interface ElevenLabsWord {
   start?: number;
   end?: number;
   speaker_id?: string | null;
+  type?: string;
+  logprob?: number;
 }
 
 interface ElevenLabsBatchResponse {
@@ -158,8 +160,24 @@ function asWords(value: unknown): ElevenLabsWord[] {
       start: asNumber(record.start),
       end: asNumber(record.end),
       speaker_id: asString(record.speaker_id) ?? null,
+      type: asString(record.type),
+      logprob: asNumber(record.logprob),
     };
   });
+}
+
+function speechConfidence(words?: ElevenLabsWord[]): number {
+  if (!words) return 0;
+
+  const logprobs = words.flatMap((word) =>
+    word.type === 'word' && word.logprob !== undefined ? [word.logprob] : [],
+  );
+  if (logprobs.length === 0) return 0;
+
+  return Math.min(
+    1,
+    Math.max(0, Math.exp(logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length)),
+  );
 }
 
 function parseBatchResponse(value: unknown): ElevenLabsBatchResponse {
@@ -428,7 +446,7 @@ export class STT extends stt.STT {
           speakerId,
           startTime,
           endTime,
-          confidence: 0,
+          confidence: speechConfidence(words),
           words: words?.map((word) =>
             createTimedString({
               text: word.text ?? '',
@@ -798,7 +816,7 @@ export class SpeechStream extends stt.SpeechStream {
       text,
       startTime: startTime + this.startTimeOffset,
       endTime: endTime + this.startTimeOffset,
-      confidence: 0,
+      confidence: speechConfidence(words),
     };
     if (words.length > 0) {
       speechData.words = words.map((word) =>

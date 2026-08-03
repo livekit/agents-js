@@ -261,6 +261,11 @@ export class LLM extends llm.LLM {
     return 'livekit';
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    this.client.apiKey = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    await this.client.models.list({ signal });
+  }
+
   static fromModelString(modelString: string): LLM {
     return new LLM({ model: modelString });
   }

@@ -9,7 +9,7 @@ import { log } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
-import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
+import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
 import {
   type ToolChoice,
@@ -65,6 +65,9 @@ export type LLMCallbacks = {
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {
+  #prewarmTask?: Task<void>;
+  #closed = false;
+
   constructor() {
     super();
   }
@@ -120,14 +123,45 @@ export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCal
   }): LLMStream;
 
   /**
-   * Pre-warm connection to the LLM service
+   * Pre-warm connection to the LLM service.
+   *
+   * Establishes DNS resolution and the TLS connection to the provider before the first inference
+   * request, reducing time-to-first-token on the initial reply. Non-blocking (fire-and-forget) and
+   * idempotent; calls made after {@link aclose} are ignored. Providers enable it by overriding
+   * {@link _prewarmImpl}.
    */
   prewarm(): void {
-    // Default implementation - subclasses can override
+    if (this.#closed || this._prewarmImpl === LLM.prototype._prewarmImpl) {
+      return;
+    }
+
+    if (this.#prewarmTask) {
+      return;
+    }
+
+    this.#prewarmTask = Task.from(async (controller) => {
+      try {
+        await this._prewarmImpl(controller.signal);
+      } catch {
+        // Prewarm is best-effort and must not affect session startup.
+      }
+    });
   }
 
+  /**
+   * Performs a provider-specific, token-free request that initializes DNS, TLS, authentication,
+   * and keep-alive state.
+   *
+   * @remarks Exceptions are swallowed by {@link prewarm}. Implementations must honor `signal` so
+   * {@link aclose} can cancel and await in-flight work.
+   */
+  protected async _prewarmImpl(_signal: AbortSignal): Promise<void> {}
+
   async aclose(): Promise<void> {
-    // Default implementation - subclasses can override
+    this.#closed = true;
+    if (this.#prewarmTask) {
+      await this.#prewarmTask.cancelAndWait();
+    }
   }
 }
 

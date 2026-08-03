@@ -25,6 +25,31 @@ vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
   };
 });
 
+describe('Anthropic LLM prewarm', () => {
+  it('lists one model with the prewarm cancellation signal', async () => {
+    let prewarmSignal: AbortSignal | undefined;
+    const modelsList = vi.fn(
+      async (_params: { limit: number }, options: { signal?: AbortSignal }) => {
+        prewarmSignal = options.signal;
+      },
+    );
+    const client = {
+      baseURL: 'https://api.anthropic.test',
+      models: { list: modelsList },
+    } as unknown as Anthropic;
+    const llm = new LLM({ model: 'claude-sonnet-4-6', client });
+
+    llm.prewarm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(modelsList).toHaveBeenCalledWith({ limit: 1 }, { signal: expect.any(AbortSignal) });
+    expect(prewarmSignal?.aborted).toBe(false);
+
+    await llm.aclose();
+    expect(prewarmSignal?.aborted).toBe(true);
+  });
+});
+
 function messageStartEvent(): Anthropic.MessageStreamEvent {
   return {
     type: 'message_start',

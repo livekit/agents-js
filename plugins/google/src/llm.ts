@@ -108,6 +108,11 @@ export class LLM extends llm.LLM {
     return 'Gemini';
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    // Also fetches auth tokens ahead of time on Vertex AI.
+    await this.#client.models.list({ config: { pageSize: 1, abortSignal: signal } });
+  }
+
   /**
    * Create a new instance of Google GenAI LLM.
    *
