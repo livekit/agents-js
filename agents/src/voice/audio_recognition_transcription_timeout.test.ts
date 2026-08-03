@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatContext } from '../llm/chat_context.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { Task } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import {
   AudioRecognition,
@@ -12,7 +13,7 @@ import {
 } from './audio_recognition.js';
 
 type RecognitionInternals = {
-  sttPipeline?: object;
+  sttPipeline?: { close?: () => Promise<void> };
   vadSpeechStarted: boolean;
   isInterruptionEnabled: boolean;
   isAgentSpeaking: boolean;
@@ -21,6 +22,7 @@ type RecognitionInternals = {
   turnSpeechDuration: number;
   turnTranscriptReceived: boolean;
   userTurnStart?: number;
+  vadTask?: Task<void>;
   onSTTEvent: (event: SpeechEvent) => Promise<void>;
   createVadTask: (vad: VAD, signal: AbortSignal) => Promise<void>;
   armTranscriptionTimeout: (speechDuration: number, elapsedDelay: number) => void;
@@ -295,5 +297,47 @@ describe('AudioRecognition transcription timeout', () => {
 
     expect(hooks.onTranscriptionTimeout).toHaveBeenNthCalledWith(1, 1000, 9000);
     expect(hooks.onTranscriptionTimeout).toHaveBeenNthCalledWith(2, 2000, 9000);
+  });
+
+  it('does not re-arm for a buffered end-of-speech delivered during close', async () => {
+    // `close()` only aborts the VAD consumer partway through its teardown, so an
+    // END_OF_SPEECH buffered before the abort is still processed while
+    // `sttPipeline` is set — python cancels the timeout at the very end of
+    // `_aclose()` for exactly this reason.
+    let releaseEndOfSpeech!: () => void;
+    const endOfSpeechGate = new Promise<void>((resolve) => {
+      releaseEndOfSpeech = resolve;
+    });
+    const stream = {
+      updateInputStream() {},
+      detachInputStream() {},
+      close() {},
+      async *[Symbol.asyncIterator]() {
+        yield vadEvent(VADEventType.START_OF_SPEECH);
+        await endOfSpeechGate;
+        // A silence duration at or beyond the timeout collapses the remaining
+        // delay to 0, so the callback lands on the very next macrotask.
+        yield vadEvent(VADEventType.END_OF_SPEECH, { silenceDuration: 2000 });
+      },
+    };
+    const vad = { stream: () => stream } as unknown as VAD;
+
+    const { hooks, recognition, internals } = createRecognition({ transcriptionTimeout: 2000 });
+    internals.sttPipeline = {
+      // `close()` awaits this before it aborts the VAD task and before it clears
+      // `sttPipeline`, which is precisely the window the buffered event lands in.
+      close: async () => {
+        releaseEndOfSpeech();
+        await vi.advanceTimersByTimeAsync(0);
+      },
+    };
+    internals.vadTask = Task.from(({ signal }) => internals.createVadTask(vad, signal));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(internals.userTurnStart).toBeDefined();
+
+    await recognition.close();
+
+    expect(hooks.onTranscriptionTimeout).not.toHaveBeenCalled();
+    expect(internals.transcriptionTimeoutTimer).toBeUndefined();
   });
 });

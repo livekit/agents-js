@@ -2,4 +2,4 @@
 '@livekit/agents': minor
 ---
 
-Add an optional user transcription timeout event for VAD speech that produces no final transcript.
+Add an optional `transcriptionTimeout` session option and a `user_transcription_timeout` event, emitted for VAD speech that produces no final transcript.

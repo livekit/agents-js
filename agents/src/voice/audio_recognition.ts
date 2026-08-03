@@ -2264,7 +2264,6 @@ export class AudioRecognition {
 
   async close() {
     this.closed = true;
-    this.cancelTranscriptionTimeout();
     this.detachInputAudioStream();
     this.silenceAudioWriter.releaseLock();
     await this.commitUserTurnTask?.cancelAndWait();
@@ -2298,6 +2297,9 @@ export class AudioRecognition {
 
     await this.interruptionStreamChannel?.close();
     this.cancelBackchannelBoundary();
+    // Cancel last, after the VAD consumer is torn down: a buffered
+    // END_OF_SPEECH processed earlier in close() can otherwise re-arm the timer.
+    this.cancelTranscriptionTimeout();
 
     // A speech segment may never produce a transcript or committed turn. End
     // its span after all recognition tasks stop so it is still exported.
@@ -2323,6 +2325,10 @@ export class AudioRecognition {
   }
 
   private armTranscriptionTimeout(speechDuration: number, elapsedDelay: number): void {
+    if (this.closed) {
+      return;
+    }
+
     if (this.transcriptionTimeout === undefined || this.turnTranscriptReceived) {
       return;
     }
