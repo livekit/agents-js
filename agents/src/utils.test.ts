@@ -970,5 +970,129 @@ world
       await task.result;
       expect(task.cancelled).toBe(true);
     });
+
+    it('stays true for an ignored abort, so a body that returns anyway still reads cancelled', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // Deliberate semantics, not an accident: the EOU bounce observes the abort and returns
+      // normally, and Python treats that as cancelled. Reporting it as a plain completion
+      // would reinstate the resume-on-a-torn-down-decision bug.
+      const task = Task.from(async (controller) => {
+        await gate;
+        void controller.signal.aborted;
+        return;
+      });
+
+      task.cancel();
+      release();
+      await task.result;
+
+      expect(task.cancelled).toBe(true);
+      // ...and it is stable once settled.
+      task.cancel();
+      expect(task.cancelled).toBe(true);
+    });
+
+    it('does not retroactively mark a completed task cancelled when aborted later', async () => {
+      const task = Task.from(async () => {});
+      await task.result;
+      expect(task.cancelled).toBe(false);
+
+      task.cancel();
+
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('keeps the disposition stable when cancelled between settling and its done callback', async () => {
+      // Models the real callsite: runEOUDetection unconditionally cancels the previous bounce
+      // (audio_recognition.ts), which can land after that task settled but before the queued
+      // done callback that reads its disposition runs.
+      const task = Task.from(async () => {});
+      await task.result;
+
+      let observed: boolean | undefined;
+      task.addDoneCallback(() => {
+        observed = task.cancelled;
+      });
+      task.cancel();
+      await delay(0);
+
+      expect(observed).toBe(false);
+    });
+
+    it('is false when an aborted task fails for an unrelated reason', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const task = Task.from(async () => {
+        await gate;
+        throw new Error('unrelated failure');
+      });
+
+      task.cancel();
+      release();
+      await task.result.catch(() => undefined);
+
+      // asyncio reports exceptional completion, not cancellation, when a task swallows the
+      // cancellation and raises something else.
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is true when an aborted task rejects with an AbortError', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const task = Task.from(async () => {
+        await gate;
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        throw error;
+      });
+
+      task.cancel();
+      release();
+      await task.result.catch(() => undefined);
+
+      expect(task.cancelled).toBe(true);
+    });
+
+    it('does not reclassify a completed task when a shared controller is aborted later', async () => {
+      const controller = new AbortController();
+      const first = Task.from(async () => {}, controller);
+      const second = Task.from(async () => {}, controller);
+      await first.result;
+      await second.result;
+
+      // Cancelling a sibling that shares the controller must not rewrite a disposition that
+      // was already decided.
+      second.cancel();
+
+      expect(first.cancelled).toBe(false);
+      expect(second.cancelled).toBe(false);
+    });
+
+    it('reports siblings still running under a shared controller as cancelled', async () => {
+      // Documented limitation rather than a defect: a shared controller broadcasts the abort
+      // to every task holding it, which is the whole point of the shared-controller contract,
+      // so `cancelled` means "a cancellation was in effect when this task settled".
+      const controller = new AbortController();
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const first = Task.from(async () => gate, controller);
+      const second = Task.from(async () => gate, controller);
+
+      second.cancel();
+      release();
+      await first.result;
+      await second.result;
+
+      expect(first.cancelled).toBe(true);
+    });
   });
 });
