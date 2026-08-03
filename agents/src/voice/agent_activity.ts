@@ -1340,15 +1340,29 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // this.interrupt() is going to raise when allow_interruptions is False,
-    // llm.InputSpeechStartedEvent is only fired by the server when the turn_detection is enabled.
     try {
       this.interrupt();
     } catch (error) {
-      this.logger.error(
-        'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
-        error,
-      );
+      // SpeechHandle.interrupt() reports an uninterruptible handle with a plain Error, so
+      // the message is the only discriminator available; a dedicated error subclass would
+      // make this robust. Anything else is a genuine failure and must not be hidden by the
+      // rtTurnDetectionEnabled gate below. Rethrowing is not an option: realtime plugins
+      // emit input_speech_started from call sites that do not all guard against a throwing
+      // listener, so an escaping error would abort unrelated session handling.
+      const uninterruptible =
+        error instanceof Error &&
+        error.message === 'This generation handle does not allow interruptions';
+
+      if (!uninterruptible) {
+        this.logger.error({ error }, 'RealtimeAPI input_speech_started, failed to interrupt');
+      } else if (this.rtTurnDetectionEnabled) {
+        // This is only out of sync when the server owns turn taking. With client-side turn
+        // taking, uninterruptible speech is expected even though server VAD reports user speech.
+        this.logger.error(
+          'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
+          error,
+        );
+      }
     }
   }
 
