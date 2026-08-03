@@ -151,7 +151,24 @@ import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
 export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
 
-function transcriptsEquivalent(first: string, second: string | undefined): boolean {
+/**
+ * Whether two transcripts of the same utterance differ only in formatting (casing,
+ * punctuation, whitespace), so a preemptive generation started from `first` may still be
+ * reused once the finalized transcript is `second`.
+ *
+ * The CJK/Thai alternation emulates Python's `split_words(..., split_character=True)`, which
+ * splits those scripts per character; the JS tokenizer does not expose that option. The shared
+ * regex carries the `g` flag, which is safe here only because `String.prototype.match` resets
+ * `lastIndex` before iterating — switching to `.exec()` or `.test()` would silently break it.
+ *
+ * `toLowerCase()` is a weaker fold than Python's `casefold()`: pairs differing only by ß/ss,
+ * final sigma, or a ligature are treated as non-equivalent, so the generation is regenerated
+ * rather than reused. This errs toward extra work, never toward reusing a generation for a
+ * genuinely different utterance.
+ *
+ * @internal Exported for testing only; `agent_activity.ts` is not part of the public API surface.
+ */
+export function transcriptsEquivalent(first: string, second: string | undefined): boolean {
   if (first === second) return true;
   if (second === undefined) return false;
 
