@@ -53,6 +53,24 @@ export interface RealtimeModelOptions {
   noInputPokeSec?: number;
   noInputPokeText?: string;
   noInputEndConversationSec?: number;
+  websocketTimeoutSec?: number;
+  intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
+  isWelcomeMessageInterruptible?: boolean;
+  backgroundNoise?: Phonic.ConfigOptions['background_noise'];
+  backgroundNoiseLevel?: number;
+  vadPrebufferDurationMs?: number;
+  vadMinSpeechDurationMs?: number;
+  vadMinSilenceDurationMs?: number;
+  vadThreshold?: number;
+  pushToTalk?: boolean;
+  enableAssistantBackchannel?: boolean;
+  assistantBackchannelAggressiveness?: number;
+  pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
+  templateVariables?: Phonic.ConfigOptions['template_variables'];
+  enableRedaction?: boolean;
+  mcpServers?: string[];
+  observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
+  configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
@@ -171,6 +189,78 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       noInputEndConversationSec?: number;
       /**
+       * Seconds of inactivity before the Phonic websocket is closed
+       */
+      websocketTimeoutSec?: number;
+      /**
+       * LLM intelligence level, `standard` or `high`
+       */
+      intelligenceLevel?: Phonic.ConfigOptions['intelligence_level'];
+      /**
+       * When false, the welcome message cannot be interrupted by the user
+       */
+      isWelcomeMessageInterruptible?: boolean;
+      /**
+       * Background noise type to mix into the conversation, or `null` for no noise
+       */
+      backgroundNoise?: Phonic.ConfigOptions['background_noise'];
+      /**
+       * Level of the background noise mixed into the conversation
+       */
+      backgroundNoiseLevel?: number;
+      /**
+       * Voice-activity-detection prebuffer duration, in milliseconds
+       */
+      vadPrebufferDurationMs?: number;
+      /**
+       * Minimum speech duration for VAD, in milliseconds
+       */
+      vadMinSpeechDurationMs?: number;
+      /**
+       * Minimum silence duration for VAD, in milliseconds
+       */
+      vadMinSilenceDurationMs?: number;
+      /**
+       * Voice-activity-detection threshold
+       */
+      vadThreshold?: number;
+      /**
+       * When true, the agent only listens between `unmute`/`mute` messages
+       */
+      pushToTalk?: boolean;
+      /**
+       * When true, the assistant produces backchannel responses (e.g. "mm-hmm") while the user speaks
+       */
+      enableAssistantBackchannel?: boolean;
+      /**
+       * How aggressively the assistant backchannels. Only applies when `enableAssistantBackchannel` is true
+       */
+      assistantBackchannelAggressiveness?: number;
+      /**
+       * List of `{ word, pronunciation }` entries; words must be unique
+       */
+      pronunciationDictionary?: Phonic.ConfigOptions['pronunciation_dictionary'];
+      /**
+       * Variables substituted into the system prompt and welcome message
+       */
+      templateVariables?: Phonic.ConfigOptions['template_variables'];
+      /**
+       * When true, PII/PHI is redacted from transcripts and bleeped from audio after the conversation ends
+       */
+      enableRedaction?: boolean;
+      /**
+       * Names of pre-configured MCP servers to make available to the assistant. Names must be unique
+       */
+      mcpServers?: string[];
+      /**
+       * Observability integrations to forward traces to (currently `braintrust`)
+       */
+      observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
+      /**
+       * Endpoint the agent calls to fetch per-conversation configuration. Pass `null` to disable
+       */
+      configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
+      /**
        * Additional runtime parameters forwarded to Phonic
        */
       additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
@@ -247,6 +337,24 @@ export class RealtimeModel extends llm.RealtimeModel {
       noInputPokeSec: options.noInputPokeSec,
       noInputPokeText: options.noInputPokeText,
       noInputEndConversationSec: options.noInputEndConversationSec,
+      websocketTimeoutSec: options.websocketTimeoutSec,
+      intelligenceLevel: options.intelligenceLevel,
+      isWelcomeMessageInterruptible: options.isWelcomeMessageInterruptible,
+      backgroundNoise: options.backgroundNoise,
+      backgroundNoiseLevel: options.backgroundNoiseLevel,
+      vadPrebufferDurationMs: options.vadPrebufferDurationMs,
+      vadMinSpeechDurationMs: options.vadMinSpeechDurationMs,
+      vadMinSilenceDurationMs: options.vadMinSilenceDurationMs,
+      vadThreshold: options.vadThreshold,
+      pushToTalk: options.pushToTalk,
+      enableAssistantBackchannel: options.enableAssistantBackchannel,
+      assistantBackchannelAggressiveness: options.assistantBackchannelAggressiveness,
+      pronunciationDictionary: options.pronunciationDictionary,
+      templateVariables: options.templateVariables,
+      enableRedaction: options.enableRedaction,
+      mcpServers: options.mcpServers,
+      observabilityIntegrations: options.observabilityIntegrations,
+      configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
@@ -1001,6 +1109,24 @@ export class RealtimeSession extends llm.RealtimeSession {
       no_input_poke_sec: this.options.noInputPokeSec,
       no_input_poke_text: this.options.noInputPokeText,
       no_input_end_conversation_sec: this.options.noInputEndConversationSec,
+      websocket_timeout_sec: this.options.websocketTimeoutSec,
+      intelligence_level: this.options.intelligenceLevel,
+      is_welcome_message_interruptible: this.options.isWelcomeMessageInterruptible,
+      background_noise: this.options.backgroundNoise,
+      background_noise_level: this.options.backgroundNoiseLevel,
+      vad_prebuffer_duration_ms: this.options.vadPrebufferDurationMs,
+      vad_min_speech_duration_ms: this.options.vadMinSpeechDurationMs,
+      vad_min_silence_duration_ms: this.options.vadMinSilenceDurationMs,
+      vad_threshold: this.options.vadThreshold,
+      push_to_talk: this.options.pushToTalk,
+      enable_assistant_backchannel: this.options.enableAssistantBackchannel,
+      assistant_backchannel_aggressiveness: this.options.assistantBackchannelAggressiveness,
+      pronunciation_dictionary: this.options.pronunciationDictionary,
+      template_variables: this.options.templateVariables,
+      enable_redaction: this.options.enableRedaction,
+      mcp_servers: this.options.mcpServers,
+      observability_integrations: this.options.observabilityIntegrations,
+      configuration_endpoint: this.options.configurationEndpoint,
       additional_params: this.options.additionalParams,
       stream_ahead_of_real_time: true,
     };
