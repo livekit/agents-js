@@ -161,10 +161,16 @@ export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
  * regex carries the `g` flag, which is safe here only because `String.prototype.match` resets
  * `lastIndex` before iterating — switching to `.exec()` or `.test()` would silently break it.
  *
- * `toLowerCase()` is a weaker fold than Python's `casefold()`: pairs differing only by ß/ss,
- * final sigma, or a ligature are treated as non-equivalent, so the generation is regenerated
- * rather than reused. This errs toward extra work, never toward reusing a generation for a
- * genuinely different utterance.
+ * Full-width CJK punctuation (e.g. `。`) is not stripped by either implementation. This is a
+ * shared upstream limitation, not a JS-only defect — do not "fix" it on the JS side alone.
+ *
+ * `toLowerCase()` is a weaker fold than Python's `casefold()`. Do not replace it with
+ * `casefold()` or add Unicode NFKC normalization: differential execution over 18 inputs found
+ * 15 agree and 3 diverge (`STRASSE`/`straße`, `ΟΔΟΣ`/`οδοσ`, `ﬁle`/`file`), and in every
+ * divergent case JS regenerates where Python reuses — never the reverse. The asymmetry is
+ * therefore conservative in the safe direction: JS may do redundant work, but it never reuses a
+ * generation that Python would have invalidated. NFKC would over-normalize full-width forms and
+ * introduce exactly the unsafe asymmetry that does not currently exist.
  *
  * @internal Exported for testing only; `agent_activity.ts` is not part of the public API surface.
  */
