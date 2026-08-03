@@ -410,6 +410,10 @@ describe('AudioRecognition realtime adaptive backchannel verdicts', () => {
 
     await recognition.onEndOfAgentSpeech(Date.now());
 
-    expect(sent.map((item) => item.type)).toContain('agent-speech-ended');
+    // The synthetic overlap end must follow the sentinel, while the overlap is still open.
+    // Clearing `overlapOpen` any earlier makes onEndOfOverlapSpeech bail and silently drops
+    // this event, so assert the exact sequence rather than just containment.
+    expect(sent.map((item) => item.type)).toEqual(['agent-speech-ended', 'overlap-speech-ended']);
+    expect(sent[1]).toMatchObject({ agentEnded: true });
   });
 });
