@@ -798,6 +798,9 @@ export class AudioRecognition {
         InterruptionStreamSentinel.agentSpeechEnded(),
       );
       if (!inputOpen) {
+        // Python has no early return here and always reaches the clear below. The stream the
+        // overlap belonged to is gone, so clear before bailing rather than leaking the flag.
+        this.overlapOpen = false;
         return;
       }
     }

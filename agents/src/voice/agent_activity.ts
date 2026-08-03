@@ -1932,6 +1932,15 @@ export class AgentActivity implements RecognitionHooks {
 
     // A replying turn interrupts the paused speech, so cancel the resume that would race it.
     // The reply task returns before that for these two cases, so leave the resume armed.
+    //
+    // Known divergence from Python, which tests the resolved `_rt_turn_detection_enabled`
+    // rather than the raw capability. That flag is additionally false for a model whose
+    // capabilities report `can_disable_turn_detection` when the user configured client-side
+    // turn taking. `RealtimeCapabilities` has no `canDisableTurnDetection` field here, so for
+    // a realtime model that advertises server turn detection but is running client-side turn
+    // taking, this leaves the resume armed where Python cancels it — reinstating the
+    // resume-races-the-reply bug for that configuration. Resolving it needs the new capability
+    // plus a resolved getter used at both this site and the barge-in gate above.
     if (
       !info.skipReply &&
       !(this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection)
@@ -4649,13 +4658,14 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       this.falseInterruptionPending = false;
-      if (this.audioRecognition?.isClosed) {
+      if (settled.cancelled || this.audioRecognition?.isClosed) {
+        // Torn down instead of decided; closing releases the pause itself.
         return;
       }
 
-      void settled.result.then(resumeFalseInterruption).catch(() => {
-        // A cancelled decision was torn down rather than decided; closing releases the pause.
-      });
+      // A decision that failed is still a decision: resume as if it had completed, otherwise
+      // nothing is left armed and the paused speech stays paused forever.
+      resumeFalseInterruption();
     };
 
     this.falseInterruptionTimer = setTimeout(() => {
@@ -4696,7 +4706,11 @@ export class AgentActivity implements RecognitionHooks {
     // The pause withheld end-of-agent-speech for a resume. Interrupting ends the turn instead;
     // audio stopped when it was paused, so no playout is left to wait for.
     if (interrupt && this.audioRecognition) {
-      void this.audioRecognition.onEndOfAgentSpeech(Date.now());
+      void this.audioRecognition
+        .onEndOfAgentSpeech(Date.now())
+        .catch((error) =>
+          this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
+        );
     }
 
     if (

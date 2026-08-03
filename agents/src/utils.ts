@@ -627,6 +627,20 @@ export class Task<T> {
     return this.resultFuture.done;
   }
 
+  /**
+   * Whether the task finished after being cancelled, the equivalent of asyncio's
+   * `Task.cancelled()`. A cancelled task body usually observes the abort signal and returns
+   * normally rather than rejecting, so the result alone cannot distinguish a torn-down task
+   * from a decided one.
+   *
+   * False while a cancelled task is still winding down, matching asyncio. A task that was
+   * aborted and then failed for an unrelated reason still reports cancelled, since the abort
+   * is the more meaningful cause.
+   */
+  get cancelled(): boolean {
+    return this.controller.signal.aborted && this.done;
+  }
+
   addDoneCallback(callback: () => void) {
     if (this.done) {
       queueMicrotask(callback);

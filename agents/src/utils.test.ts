@@ -933,4 +933,42 @@ world
       expect(outputFrames).toEqual([]);
     });
   });
+
+  describe('Task.cancelled', () => {
+    it('is false for a task that completes normally', async () => {
+      const task = Task.from(async () => {});
+      await task.result;
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is false for a task that rejects without being cancelled', async () => {
+      const task = Task.from(async () => {
+        throw new Error('boom');
+      });
+      await task.result.catch(() => undefined);
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is true once a cancelled task that returns normally has finished', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // Mirrors the codebase convention of observing the signal and returning rather
+      // than rejecting.
+      const task = Task.from(async (controller) => {
+        await gate;
+        if (controller.signal.aborted) return;
+        throw new Error('should not reach here');
+      });
+
+      task.cancel();
+      // Still running, so not yet cancelled — matching asyncio's Task.cancelled().
+      expect(task.cancelled).toBe(false);
+
+      release();
+      await task.result;
+      expect(task.cancelled).toBe(true);
+    });
+  });
 });
