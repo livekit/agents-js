@@ -26,6 +26,23 @@ beforeAll(() => {
   initializeLogger({ pretty: true, level: 'info' });
 });
 
+// Every session event the host forwards to a remote consumer. Asserting the set
+// rather than its size says which events are forwarded, and pairs register with
+// close: an `on` added without its `off` leaks a handler across reconnects and
+// only shows up as a mismatch between these two.
+const FORWARDED_EVENTS = new Set([
+  'agent_state_changed',
+  'conversation_item_added',
+  'debug_message',
+  'eot_prediction',
+  'error',
+  'function_tools_executed',
+  'metrics_collected',
+  'overlapping_speech',
+  'user_input_transcribed',
+  'user_state_changed',
+]);
+
 function frame(msg: pb.AgentSessionMessage): Buffer {
   const data = msg.toBinary();
   const header = Buffer.allocUnsafe(4);
@@ -242,6 +259,32 @@ function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
   host.connect(client);
   return [client, host];
 }
+
+describe('SessionHost event forwarding', () => {
+  it('registers every forwarded event', () => {
+    const on = vi.fn();
+    const session = { on, off: vi.fn() } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.registerSession(session);
+
+    const subscribed = new Set(on.mock.calls.map(([event]) => event));
+    expect(subscribed).toEqual(FORWARDED_EVENTS);
+  });
+
+  it('unregisters every forwarded event on close', async () => {
+    const off = vi.fn();
+    const session = { on: vi.fn(), off } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.registerSession(session);
+    await host.start();
+    await host.close();
+
+    const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
+    expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
 
 describe('RemoteSession RPCs', () => {
   it('fetches framework info', async () => {
