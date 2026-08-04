@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
@@ -14,6 +14,44 @@ beforeAll(() => {
 
 type CapturedHeaders = Record<string, string>;
 type CompletionChunk = Record<string, unknown>;
+
+describe('inference.LLM prewarm', () => {
+  it('refreshes the access token before listing models and forwards cancellation', async () => {
+    const llm = new LLM({
+      model: 'openai/gpt-4o-mini',
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    const internal = llm as unknown as {
+      client: {
+        apiKey: string;
+        models: {
+          list: (options: { signal?: AbortSignal }) => Promise<void>;
+        };
+      };
+    };
+    let apiKeyAtList = '';
+    let prewarmSignal: AbortSignal | undefined;
+    const modelsList = vi.fn(async (options: { signal?: AbortSignal }) => {
+      apiKeyAtList = internal.client.apiKey;
+      prewarmSignal = options.signal;
+    });
+    internal.client.models.list = modelsList;
+
+    llm.prewarm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(modelsList).toHaveBeenCalledTimes(1);
+    expect(apiKeyAtList).not.toBe('placeholder');
+    expect(apiKeyAtList.split('.')).toHaveLength(3);
+    expect(prewarmSignal).toBeInstanceOf(AbortSignal);
+    expect(prewarmSignal?.aborted).toBe(false);
+
+    await llm.aclose();
+    expect(prewarmSignal?.aborted).toBe(true);
+  });
+});
 
 /**
  * Build an LLM, stub its OpenAI client's chat.completions.create, start a chat

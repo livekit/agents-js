@@ -36,7 +36,7 @@ import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
-import { AgentActivity, onEnterStorage } from './agent_activity.js';
+import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
 import type { EndOfTurnInfo, PreemptiveGenerationInfo } from './audio_recognition.js';
 import { AgentSessionEventTypes, type UserInputTranscribedEvent } from './events.js';
 import { ToolExecutionOutput } from './generation.js';
@@ -1789,5 +1789,153 @@ describe('AgentActivity - realtime user turn timing', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('AgentActivity - transcriptsEquivalent', () => {
+  it.each([
+    // Formatting-only differences must not invalidate the preemptive generation
+    // (Python: test_formatting_only_final_reuses_preemptive_generation).
+    {
+      name: 'casing, spacing and trailing punctuation',
+      first: 'BOOK   A ROOM',
+      second: 'book a room.',
+      expected: true,
+    },
+    // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
+    { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },
+    // Guard clause: there is no finalized transcript to compare against.
+    {
+      name: 'an undefined finalized transcript',
+      first: 'book a room',
+      second: undefined,
+      expected: false,
+    },
+    // Both sides tokenize to nothing, so there is nothing to call equivalent.
+    { name: 'transcripts that tokenize to no words', first: '...', second: '', expected: false },
+    // The CJK/Thai alternation splits those scripts per character, so whitespace between
+    // them is irrelevant — this is what emulates Python's `split_character=True`.
+    {
+      name: 'CJK characters split by whitespace',
+      first: '你好world',
+      second: '你 好 world',
+      expected: true,
+    },
+    {
+      name: 'Thai characters split by whitespace',
+      first: 'สวัสดี ครับ',
+      second: 'สวัสดีครับ',
+      expected: true,
+    },
+    // Documented divergence: Python's `casefold()` maps ß -> ss and returns true here, while
+    // JS `toLowerCase()` does not. Erring conservative (regenerate rather than reuse) is the
+    // safe direction: extra work, never a generation reused for a different utterance.
+    {
+      name: 'a fold JS toLowerCase() does not perform (Python casefold() returns true)',
+      first: 'STRASSE',
+      second: 'straße',
+      expected: false,
+    },
+  ])('returns $expected for $name', ({ first, second, expected }) => {
+    expect(transcriptsEquivalent(first, second)).toBe(expected);
+  });
+});
+
+/**
+ * The pipeline task retains the speculative ChatMessage built at preflight time, so when the
+ * preemptive generation is reused that message — not the finalized one — is what lands in
+ * conversation history. It must therefore be reconciled with the finalized transcript and any
+ * onUserTurnCompleted edits before the speech is scheduled (agent_activity.ts:2510-2517).
+ */
+describe('AgentActivity - preemptive generation reconciliation', () => {
+  function buildReuseActivity(
+    onUserTurnCompleted: (chatCtx: ChatContext, message: ChatMessage) => void,
+  ) {
+    const emptyToolCtx = ToolContext.empty();
+    const speculativeMessage = ChatMessage.create({
+      role: 'user',
+      content: 'BOOK   A ROOM',
+      transcriptConfidence: 0.4,
+    });
+    const speechHandle = SpeechHandle.create();
+    const scheduleSpeech = vi.fn();
+    const generateReply = vi.fn();
+
+    const fakeActivity = {
+      _preemptiveGenerationCount: 1,
+      _currentSpeech: undefined as SpeechHandle | undefined,
+      schedulingPaused: false,
+      newTurnsBlocked: false,
+      llm: new FakePreemptiveLLM(),
+      tools: emptyToolCtx,
+      toolChoice: null,
+      agent: {
+        chatCtx: new ChatContext(),
+        onUserTurnCompleted: async (chatCtx: ChatContext, message: ChatMessage) => {
+          onUserTurnCompleted(chatCtx, message);
+        },
+      },
+      agentSession: { emit: vi.fn() },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+      _preemptiveGeneration: {
+        speechHandle,
+        userMessage: speculativeMessage,
+        info: { newTranscript: 'BOOK   A ROOM', transcriptConfidence: 0.4 },
+        chatCtx: new ChatContext(),
+        tools: emptyToolCtx,
+        toolChoice: null,
+        createdAt: Date.now(),
+      },
+      scheduleSpeech,
+      generateReply,
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const userTurnCompleted = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .userTurnCompleted as (this: unknown, info: unknown) => Promise<void>;
+
+    return {
+      fakeActivity,
+      speculativeMessage,
+      speechHandle,
+      scheduleSpeech,
+      generateReply,
+      // A formatting-only finalized transcript, so the reuse guard passes.
+      completeTurn: () =>
+        userTurnCompleted.call(fakeActivity, {
+          newTranscript: 'book a room.',
+          transcriptConfidence: 0.9,
+          skipReply: false,
+        }),
+    };
+  }
+
+  it('reconciles the retained speculative message with the finalized transcript', async () => {
+    const harness = buildReuseActivity(() => {});
+
+    await harness.completeTurn();
+
+    // Reused, not regenerated.
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.fakeActivity._preemptiveGeneration).toBeUndefined();
+
+    // The message committed to history is the speculative one, carrying the finalized values.
+    expect(harness.speculativeMessage.content).toEqual(['book a room.']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.9);
+  });
+
+  it('keeps onUserTurnCompleted edits on the retained speculative message', async () => {
+    const harness = buildReuseActivity((_chatCtx, message) => {
+      message.content = ['book a room!'];
+      message.transcriptConfidence = 0.42;
+    });
+
+    await harness.completeTurn();
+
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.speculativeMessage.content).toEqual(['book a room!']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.42);
   });
 });
