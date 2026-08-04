@@ -28,34 +28,40 @@ jobs:
               issue_number: context.issue.number,
               per_page: 100,
             });
-            const comment = comments.find(
+            const changesetComment = comments.find(
               ({ user }) => user?.login === 'changeset-bot[bot]',
             );
-            core.setOutput('comment-id', comment?.id ?? '');
-            if (!comment) {
+            const reportComment = comments.find(
+              ({ user, body }) =>
+                user?.login === 'github-actions[bot]' &&
+                body?.includes('<!-- changeset-version-bump -->'),
+            );
+            core.setOutput('changeset-comment-id', changesetComment?.id ?? '');
+            core.setOutput('report-comment-id', reportComment?.id ?? '');
+            if (!changesetComment) {
               core.notice('Changesets Bot has not commented yet; waiting for the next pull request event.');
             }
       # Install the trusted base revision before checking out the PR. This workflow has a
       # write token, so it must not install or execute dependencies supplied by the PR.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
       - name: Setup node
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
       - name: Install trusted dependencies
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check out pull request
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -64,7 +70,7 @@ jobs:
           git checkout --detach FETCH_HEAD
           git checkout "$BASE_SHA" -- .changeset/config.json
       - name: Calculate version bump
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -72,17 +78,30 @@ jobs:
             echo '{"releases":[]}' > changeset-status.json
           fi
       - name: Comment on pull request
-        if: steps.changeset-comment.outputs.comment-id != ''
+        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           STATUS_FILE: changeset-status.json
-          COMMENT_ID: ${{ steps.changeset-comment.outputs.comment-id }}
+          COMMENT_ID: ${{ steps.changeset-comment.outputs.report-comment-id }}
         with:
           script: |
             const fs = require('node:fs');
             const marker = '<!-- changeset-version-bump -->';
             const { releases } = JSON.parse(fs.readFileSync(process.env.STATUS_FILE, 'utf8'));
             const rank = { patch: 1, minor: 2, major: 3 };
+            const escape = (value) => String(value).replace(
+              /[&<>"'|]/g,
+              (character) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+                '|': '&#124;',
+              })[character],
+            );
+            const code = (value) => `<code>${escape(value)}</code>`;
+            const typeLabel = (type) => Object.hasOwn(rank, type) ? type : 'unknown';
 
             let body;
             if (releases.length === 0) {
@@ -95,12 +114,12 @@ jobs:
               const rows = releases
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map(({ name, type, oldVersion, newVersion }) =>
-                  `| \`${name}\` | **${type}** | \`${oldVersion}\` → \`${newVersion}\` |`,
+                  `| ${code(name)} | **${typeLabel(type)}** | ${code(oldVersion)} → ${code(newVersion)} |`,
                 )
                 .join('\n');
               const core = releases.find(({ name }) => name === '@livekit/agents');
               const coreBump = core
-                ? `> **Core package:** \`@livekit/agents\` **${core.type}** bump, \`${core.oldVersion}\` → \`${core.newVersion}\``
+                ? `> **Core package:** <code>@livekit/agents</code> **${typeLabel(core.type)}** bump, ${code(core.oldVersion)} → ${code(core.newVersion)}`
                 : '> **Core package:** `@livekit/agents` is not affected.';
               body = [
                 marker,
@@ -114,8 +133,16 @@ jobs:
               ].join('\n');
             }
 
-            await github.rest.issues.updateComment({
-              ...context.repo,
-              comment_id: Number(process.env.COMMENT_ID),
-              body,
-            });
+            if (process.env.COMMENT_ID) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: Number(process.env.COMMENT_ID),
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
