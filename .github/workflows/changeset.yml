@@ -13,13 +13,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   calculate:
     name: Calculate version bump
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       status: ${{ steps.status.outputs.status }}
     steps:
@@ -37,30 +37,35 @@ jobs:
           cache: pnpm
       - name: Install trusted dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Check out pull request
+      - name: Prepare pull request worktree
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           git fetch origin "pull/${PR_NUMBER}/head"
-          git checkout --detach FETCH_HEAD
-          git checkout "$BASE_SHA" -- .changeset/config.json
+          git worktree add --detach pr FETCH_HEAD
+          git -C pr checkout "$BASE_SHA" -- .changeset/config.json
       - name: Calculate version bump
         id: status
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if ! ./node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json; then
-            echo '{"releases":[]}' > changeset-status.json
+          if (cd pr && ../node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json) 2>changeset-error.log; then
+            :
+          elif grep -Fq 'Some packages have been changed but no changesets were found.' changeset-error.log; then
+            cat changeset-error.log >&2
+            echo '{"releases":[]}' > pr/changeset-status.json
+          else
+            cat changeset-error.log >&2
+            exit 1
           fi
-          echo "status=$(base64 < changeset-status.json | tr -d '\n')" >> "$GITHUB_OUTPUT"
+          echo "status=$(base64 < pr/changeset-status.json | tr -d '\n')" >> "$GITHUB_OUTPUT"
 
   report:
     name: Report version bump
     needs: calculate
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       pull-requests: write
     steps:
       - name: Comment on pull request
@@ -72,7 +77,6 @@ jobs:
             const marker = '<!-- changeset-version-bump -->';
             const { releases } = JSON.parse(Buffer.from(process.env.STATUS, 'base64').toString());
             const rank = { patch: 1, minor: 2, major: 3 };
-            const versionedReleases = releases.filter(({ type }) => Object.hasOwn(rank, type));
             const escape = (value) => String(value).replace(
               /[&<>"'|]/g,
               (character) => ({
@@ -86,10 +90,14 @@ jobs:
             );
             const code = (value) => `<code>${escape(value)}</code>`;
 
-            let body;
-            if (versionedReleases.length === 0) {
-              body = `${marker}\n> [!WARNING]\n> **No version bump detected.** This PR does not include a changeset that releases a package.`;
-            } else {
+            const renderReport = (allReleases) => {
+              const versionedReleases = allReleases.filter(
+                ({ type }) => Object.hasOwn(rank, type),
+              );
+              if (versionedReleases.length === 0) {
+                return `${marker}\n> [!WARNING]\n> **No version bump detected.** This PR does not include a changeset that releases a package.`;
+              }
+
               const level = versionedReleases.reduce(
                 (highest, release) => rank[release.type] > rank[highest] ? release.type : highest,
                 'patch',
@@ -104,7 +112,7 @@ jobs:
               const coreBump = coreRelease
                 ? `> **Core package:** <code>@livekit/agents</code> **${coreRelease.type}** bump, ${code(coreRelease.oldVersion)} → ${code(coreRelease.newVersion)}`
                 : '> **Core package:** `@livekit/agents` is not affected.';
-              body = [
+              return [
                 marker,
                 '> [!WARNING]',
                 `> **${level.toUpperCase()} version bump detected.** Review the bump level and resulting versions before merging.`,
@@ -114,12 +122,12 @@ jobs:
                 '| --- | --- | --- |',
                 rows,
               ].join('\n');
-            }
+            };
+            const body = renderReport(releases);
 
-            let comments;
             let reportComment;
             for (let attempt = 0; attempt < 6; attempt++) {
-              comments = await github.paginate(github.rest.issues.listComments, {
+              const comments = await github.paginate(github.rest.issues.listComments, {
                 ...context.repo,
                 issue_number: context.issue.number,
                 per_page: 100,
@@ -132,7 +140,9 @@ jobs:
                 ({ user }) => user?.login === 'changeset-bot[bot]',
               );
               if (reportComment || changesetComment) break;
-              await new Promise((resolve) => setTimeout(resolve, 5_000));
+              if (attempt < 5) {
+                await new Promise((resolve) => setTimeout(resolve, 5_000));
+              }
             }
 
             if (reportComment) {
