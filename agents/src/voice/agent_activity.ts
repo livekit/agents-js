@@ -151,6 +151,50 @@ import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
 export const onEnterStorage = new AsyncLocalStorage<OnEnterData>();
 
+/**
+ * Whether two transcripts of the same utterance differ only in formatting (casing,
+ * punctuation, whitespace), so a preemptive generation started from `first` may still be
+ * reused once the finalized transcript is `second`.
+ *
+ * The CJK/Thai alternation emulates Python's `split_words(..., split_character=True)`, which
+ * splits those scripts per character; the JS tokenizer does not expose that option. The shared
+ * regex carries the `g` flag, which is safe here only because `String.prototype.match` resets
+ * `lastIndex` before iterating — switching to `.exec()` or `.test()` would silently break it.
+ *
+ * Full-width CJK punctuation (e.g. `。`) is not stripped by either implementation. This is a
+ * shared upstream limitation, not a JS-only defect — do not "fix" it on the JS side alone.
+ *
+ * `toLowerCase()` is a weaker fold than Python's `casefold()`. Do not replace it with
+ * `casefold()` or add Unicode NFKC normalization: differential execution over 18 inputs found
+ * 15 agree and 3 diverge (`STRASSE`/`straße`, `ΟΔΟΣ`/`οδοσ`, `ﬁle`/`file`), and in every
+ * divergent case JS regenerates where Python reuses — never the reverse. The asymmetry is
+ * therefore conservative in the safe direction: JS may do redundant work, but it never reuses a
+ * generation that Python would have invalidated. NFKC would over-normalize full-width forms and
+ * introduce exactly the unsafe asymmetry that does not currently exist.
+ *
+ * @internal Exported for testing only; `agent_activity.ts` is not part of the public API surface.
+ */
+export function transcriptsEquivalent(first: string, second: string | undefined): boolean {
+  if (first === second) return true;
+  if (second === undefined) return false;
+
+  const characterOrWord =
+    /[\u0e00-\u0e7f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]|[^\u0e00-\u0e7f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]+/gu;
+  const words = (text: string) =>
+    splitWords(text, true)
+      .flatMap(([word]) => word.match(characterOrWord) ?? [])
+      .filter(Boolean)
+      .map((word) => word.toLowerCase());
+
+  const firstWords = words(first);
+  const secondWords = words(second);
+  return (
+    firstWords.length > 0 &&
+    firstWords.length === secondWords.length &&
+    firstWords.every((word, index) => word === secondWords[index])
+  );
+}
+
 interface OnEnterData {
   session: AgentSession;
   agent: Agent;
@@ -2480,17 +2524,17 @@ export class AgentActivity implements RecognitionHooks {
       // make sure the onUserTurnCompleted didn't change some request parameters
       // otherwise invalidate the preemptive generation
       if (
-        preemptive.info.newTranscript === userMessage?.rawTextContent &&
+        transcriptsEquivalent(preemptive.info.newTranscript, userMessage?.rawTextContent) &&
         preemptive.chatCtx.isEquivalent(chatCtx) &&
         preemptive.tools.equals(this.tools) &&
         isSameToolChoice(preemptive.toolChoice, this.toolChoice)
       ) {
         speechHandle = preemptive.speechHandle;
-        // The preemptive userMessage was created without metrics.
-        // Copy the metrics and transcriptConfidence from the new userMessage
-        // to the preemptive message BEFORE scheduling (so the pipeline inserts
-        // the message with metrics already set).
-        if (preemptive.userMessage && userMessage) {
+        // The pipeline task retains the ChatMessage created for preemptive generation.
+        // Reconcile it with the finalized message before scheduling so conversation
+        // history keeps the final transcript and onUserTurnCompleted edits.
+        if (userMessage) {
+          preemptive.userMessage.content = [...userMessage.content];
           preemptive.userMessage.metrics = userMetricsReport;
           preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
         }
@@ -2503,7 +2547,7 @@ export class AgentActivity implements RecognitionHooks {
         );
       } else {
         this.logger.warn(
-          'preemptive generation enabled but chat context or tools have changed after `onUserTurnCompleted`',
+          'preemptive generation invalidated after `onUserTurnCompleted` because the transcript, chat context, tools, or tool choice changed',
         );
         preemptive.speechHandle._cancel();
       }
