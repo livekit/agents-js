@@ -33,6 +33,7 @@ import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
 import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
+  type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
@@ -61,6 +62,7 @@ export type TextInputCallback = (session: AgentSession, ev: TextInputEvent) => v
 
 /** @experimental */
 export type RemoteSessionEventTypes =
+  | 'agent_false_interruption'
   | 'agent_state_changed'
   | 'user_state_changed'
   | 'conversation_item_added'
@@ -75,6 +77,7 @@ export type RemoteSessionEventTypes =
 
 /** @experimental */
 export type RemoteSessionCallbacks = {
+  agent_false_interruption: (ev: pb.AgentSessionEvent_AgentFalseInterruption) => void;
   agent_state_changed: (ev: pb.AgentSessionEvent_AgentStateChanged) => void;
   user_state_changed: (ev: pb.AgentSessionEvent_UserStateChanged) => void;
   conversation_item_added: (ev: pb.AgentSessionEvent_ConversationItemAdded) => void;
@@ -670,6 +673,7 @@ export class SessionHost {
       session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
       session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       session.on(AgentSessionEventTypes.Error, this.onHostError);
       session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
@@ -696,6 +700,10 @@ export class SessionHost {
       this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
       this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
       this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+      this.session.off(
+        AgentSessionEventTypes.AgentFalseInterruption,
+        this.onAgentFalseInterruption,
+      );
       this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
       this.session.off(AgentSessionEventTypes.Error, this.onHostError);
       this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
@@ -850,6 +858,16 @@ export class SessionHost {
       value.overlapStartedAt = msToTimestamp(event.overlapStartedAt);
     }
     this.emitEvent({ case: 'overlappingSpeech', value });
+  };
+
+  private onAgentFalseInterruption = (event: AgentFalseInterruptionEvent): void => {
+    this.emitEvent(
+      {
+        case: 'agentFalseInterruption',
+        value: new pb.AgentSessionEvent_AgentFalseInterruption({ resumed: event.resumed }),
+      },
+      event.createdAt,
+    );
   };
 
   private onMetricsCollected = (event: MetricsCollectedEvent): void => {
@@ -1281,6 +1299,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'overlappingSpeech':
         this.emit('overlapping_speech', ev.value);
+        break;
+      case 'agentFalseInterruption':
+        this.emit('agent_false_interruption', ev.value);
         break;
       case 'amdPrediction':
         this.emit('amd_prediction', ev.value);
