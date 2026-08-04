@@ -18,21 +18,44 @@ jobs:
     name: Report version bump
     runs-on: ubuntu-latest
     steps:
+      - name: Find Changesets Bot comment
+        id: changeset-comment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const comment = comments.find(
+              ({ user }) => user?.login === 'changeset-bot[bot]',
+            );
+            core.setOutput('comment-id', comment?.id ?? '');
+            if (!comment) {
+              core.notice('Changesets Bot has not commented yet; waiting for the next pull request event.');
+            }
       # Install the trusted base revision before checking out the PR. This workflow has a
       # write token, so it must not install or execute dependencies supplied by the PR.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        if: steps.changeset-comment.outputs.comment-id != ''
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        if: steps.changeset-comment.outputs.comment-id != ''
       - name: Setup node
+        if: steps.changeset-comment.outputs.comment-id != ''
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
       - name: Install trusted dependencies
+        if: steps.changeset-comment.outputs.comment-id != ''
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check out pull request
+        if: steps.changeset-comment.outputs.comment-id != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -41,13 +64,19 @@ jobs:
           git checkout --detach FETCH_HEAD
           git checkout "$BASE_SHA" -- .changeset/config.json
       - name: Calculate version bump
+        if: steps.changeset-comment.outputs.comment-id != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: ./node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json
+        run: |
+          if ! ./node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json; then
+            echo '{"releases":[]}' > changeset-status.json
+          fi
       - name: Comment on pull request
+        if: steps.changeset-comment.outputs.comment-id != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           STATUS_FILE: changeset-status.json
+          COMMENT_ID: ${{ steps.changeset-comment.outputs.comment-id }}
         with:
           script: |
             const fs = require('node:fs');
@@ -85,20 +114,8 @@ jobs:
               ].join('\n');
             }
 
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
+            await github.rest.issues.updateComment({
+              ...context.repo,
+              comment_id: Number(process.env.COMMENT_ID),
+              body,
             });
-            const existing = comments.find(
-              (comment) => comment.user.type === 'Bot' && comment.body?.includes(marker),
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
