@@ -128,7 +128,194 @@ export function zodSchemaToJsonSchema(
     }) as JSONSchema7;
   }
 
-  return strict ? (toStrictJsonSchema(result) as JSONSchema7) : result;
+  if (!strict) {
+    return result;
+  }
+
+  const strictSchema = toStrictJsonSchema(result) as JSONSchema7;
+  applyNullSentinelForDefaults(strictSchema);
+  return strictSchema;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Descends only through positions that hold subschemas, so a user-declared property named
+ * `default` (or `items`, `not`, ...) is never treated as a schema keyword.
+ *
+ * `unionAllowsNull` marks a variant whose enclosing union already advertises a null branch;
+ * such a variant drops `default` without widening, since the sibling branch is the sentinel.
+ */
+function applyNullSentinelForDefaults(jsonSchema: unknown, unionAllowsNull: boolean = false): void {
+  if (!isPlainObject(jsonSchema)) {
+    return;
+  }
+
+  for (const mapKey of ['$defs', 'definitions', 'properties'] as const) {
+    const subschemas = jsonSchema[mapKey];
+    if (isPlainObject(subschemas)) {
+      for (const subschema of Object.values(subschemas)) {
+        applyNullSentinelForDefaults(subschema);
+      }
+    }
+  }
+
+  for (const key of ['items', 'prefixItems', 'additionalProperties', 'not'] as const) {
+    const subschema = jsonSchema[key];
+    if (Array.isArray(subschema)) {
+      for (const item of subschema) {
+        applyNullSentinelForDefaults(item);
+      }
+    } else {
+      applyNullSentinelForDefaults(subschema);
+    }
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const variants = jsonSchema[unionKey];
+    if (!Array.isArray(variants)) {
+      continue;
+    }
+    const hasNullVariant =
+      unionKey !== 'allOf' &&
+      variants.some((variant) => isPlainObject(variant) && variant.type === 'null');
+    for (const variant of variants) {
+      applyNullSentinelForDefaults(variant, hasNullVariant);
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(jsonSchema, 'default')) {
+    return;
+  }
+
+  delete jsonSchema.default;
+  if (!unionAllowsNull) {
+    addNullSentinel(jsonSchema);
+  }
+}
+
+function addNullSentinel(jsonSchema: Record<string, unknown>): void {
+  const typ = jsonSchema.type;
+  if (typ === 'null' || (Array.isArray(typ) && typ.includes('null'))) {
+    return;
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const variants = jsonSchema[unionKey];
+    if (Array.isArray(variants)) {
+      if (!variants.some((variant) => isPlainObject(variant) && variant.type === 'null')) {
+        variants.push({ type: 'null' });
+      }
+      return;
+    }
+  }
+
+  const hasValueConstraint = 'const' in jsonSchema || 'enum' in jsonSchema;
+  if (typeof typ === 'string' && !hasValueConstraint) {
+    jsonSchema.type = [typ, 'null'];
+    return;
+  }
+  if (Array.isArray(typ) && !hasValueConstraint) {
+    jsonSchema.type = [...typ, 'null'];
+    return;
+  }
+
+  const inner = { ...jsonSchema };
+  if (Object.keys(inner).length === 0) {
+    return;
+  }
+
+  for (const key of Object.keys(jsonSchema)) {
+    delete jsonSchema[key];
+  }
+
+  if ('$ref' in inner && Object.keys(inner).length > 1) {
+    Object.assign(jsonSchema, inner);
+    const ref = jsonSchema.$ref;
+    delete jsonSchema.$ref;
+    jsonSchema.anyOf = [{ $ref: ref }, { type: 'null' }];
+  } else {
+    jsonSchema.anyOf = [inner, { type: 'null' }];
+  }
+}
+
+function resolveRef(root: Record<string, unknown>, ref: string): unknown {
+  if (!ref.startsWith('#/')) {
+    throw new Error(`Unexpected $ref format ${ref}; does not start with #/`);
+  }
+
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce<unknown>((current, part) => {
+      if (!isPlainObject(current)) {
+        throw new Error(`Encountered non-object while resolving ${ref}`);
+      }
+      const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+      return current[key];
+    }, root);
+}
+
+export function jsonSchemaAllowsNull(
+  schema: Record<string, unknown>,
+  root: Record<string, unknown>,
+  seenRefs: Set<string> = new Set(),
+): boolean {
+  const ref = schema.$ref;
+  if (typeof ref === 'string') {
+    if (seenRefs.has(ref)) {
+      return false;
+    }
+    const resolved = resolveRef(root, ref);
+    if (
+      isPlainObject(resolved) &&
+      !jsonSchemaAllowsNull(resolved, root, new Set([...seenRefs, ref]))
+    ) {
+      return false;
+    }
+  }
+
+  const typ = schema.type;
+  if (typeof typ === 'string' && typ !== 'null') {
+    return false;
+  }
+  if (Array.isArray(typ) && !typ.includes('null')) {
+    return false;
+  }
+
+  if ('const' in schema && schema.const !== null) {
+    return false;
+  }
+  const enumValues = schema.enum;
+  if (Array.isArray(enumValues) && !enumValues.includes(null)) {
+    return false;
+  }
+
+  const allOf = schema.allOf;
+  if (
+    Array.isArray(allOf) &&
+    !allOf.every(
+      (variant) => !isPlainObject(variant) || jsonSchemaAllowsNull(variant, root, seenRefs),
+    )
+  ) {
+    return false;
+  }
+
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const variants = schema[unionKey];
+    if (
+      Array.isArray(variants) &&
+      !variants.some(
+        (variant) => isPlainObject(variant) && jsonSchemaAllowsNull(variant, root, seenRefs),
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**

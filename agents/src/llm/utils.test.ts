@@ -406,6 +406,123 @@ describe('executeToolCall', () => {
     expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
     expect(JSON.parse(toolCall.args)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
   });
+
+  it('should use defaults for null non-nullable arguments', async () => {
+    const count = tool({
+      name: 'count',
+      description: 'count',
+      parameters: z.object({ arg1: z.string(), count: z.number().default(5) }),
+      execute: async ({ count }) => count,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-1',
+        name: 'count',
+        args: '{"arg1":"test","count":null}',
+      }),
+      new ToolContext([count]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(5);
+  });
+
+  it('should use defaults for nested null sentinels across schema shapes', async () => {
+    const setPrefs = tool({
+      name: 'setPrefs',
+      description: 'set preferences',
+      parameters: z.object({
+        prefs: z.object({ color: z.string().default('red'), note: z.string().nullable() }),
+        children: z.record(z.string(), z.object({ x: z.number().default(1) })),
+        pair: z.tuple([z.string(), z.object({ x: z.number().default(1) })]),
+      }),
+      execute: async ({ prefs, children, pair }) => ({ prefs, children, pair }),
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-2',
+        name: 'setPrefs',
+        args: JSON.stringify({
+          prefs: { color: null, note: null },
+          children: { k: { x: null } },
+          pair: ['k', { x: null }],
+        }),
+      }),
+      new ToolContext([setPrefs]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({
+      prefs: { color: 'red', note: null },
+      children: { k: { x: 1 } },
+      pair: ['k', { x: 1 }],
+    });
+  });
+
+  it('should reject null for required arguments without defaults', async () => {
+    const required = tool({
+      name: 'required',
+      description: 'required',
+      parameters: z.object({ arg1: z.string() }),
+      execute: async ({ arg1 }) => arg1,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-required-1',
+        name: 'required',
+        args: '{"arg1":null}',
+      }),
+      new ToolContext([required]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/Arguments parsing failed/);
+  });
+
+  it('should preserve a genuine null for a nullable defaulted argument', async () => {
+    const maybe = tool({
+      name: 'maybe',
+      description: 'maybe',
+      parameters: z.object({ n: z.number().nullable().default(3) }),
+      execute: async ({ n }) => n,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-nullable-1',
+        name: 'maybe',
+        args: '{"n":null}',
+      }),
+      new ToolContext([maybe]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(null);
+  });
+
+  it('should accept an argument named "default"', async () => {
+    const configure = tool({
+      name: 'configure',
+      description: 'configure',
+      parameters: z.object({ default: z.string(), retries: z.number().default(2) }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-name-1',
+        name: 'configure',
+        args: '{"default":"eco","retries":null}',
+      }),
+      new ToolContext([configure]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ default: 'eco', retries: 2 });
+  });
 });
 
 describe('computeChatCtxDiff', () => {
