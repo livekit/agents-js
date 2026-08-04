@@ -9,59 +9,35 @@ on:
     branches: [next, main, 0.x]
     types: [opened, reopened, synchronize]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  version-bump:
-    name: Report version bump
+  calculate:
+    name: Calculate version bump
     runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.status.outputs.status }}
     steps:
-      - name: Find Changesets Bot comment
-        id: changeset-comment
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        with:
-          script: |
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              ...context.repo,
-              issue_number: context.issue.number,
-              per_page: 100,
-            });
-            const changesetComment = comments.find(
-              ({ user }) => user?.login === 'changeset-bot[bot]',
-            );
-            const reportComment = comments.find(
-              ({ user, body }) =>
-                user?.login === 'github-actions[bot]' &&
-                body?.includes('<!-- changeset-version-bump -->'),
-            );
-            core.setOutput('changeset-comment-id', changesetComment?.id ?? '');
-            core.setOutput('report-comment-id', reportComment?.id ?? '');
-            if (!changesetComment) {
-              core.notice('Changesets Bot has not commented yet; waiting for the next pull request event.');
-            }
-      # Install the trusted base revision before checking out the PR. This workflow has a
-      # write token, so it must not install or execute dependencies supplied by the PR.
+      # Install dependencies from the trusted base before inspecting the pull request.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
       - name: Setup node
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
       - name: Install trusted dependencies
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check out pull request
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -70,25 +46,33 @@ jobs:
           git checkout --detach FETCH_HEAD
           git checkout "$BASE_SHA" -- .changeset/config.json
       - name: Calculate version bump
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
+        id: status
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if ! ./node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json; then
             echo '{"releases":[]}' > changeset-status.json
           fi
+          echo "status=$(base64 < changeset-status.json | tr -d '\n')" >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Report version bump
+    needs: calculate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
       - name: Comment on pull request
-        if: steps.changeset-comment.outputs.changeset-comment-id != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
-          STATUS_FILE: changeset-status.json
-          COMMENT_ID: ${{ steps.changeset-comment.outputs.report-comment-id }}
+          STATUS: ${{ needs.calculate.outputs.status }}
         with:
           script: |
-            const fs = require('node:fs');
             const marker = '<!-- changeset-version-bump -->';
-            const { releases } = JSON.parse(fs.readFileSync(process.env.STATUS_FILE, 'utf8'));
+            const { releases } = JSON.parse(Buffer.from(process.env.STATUS, 'base64').toString());
             const rank = { patch: 1, minor: 2, major: 3 };
+            const versionedReleases = releases.filter(({ type }) => Object.hasOwn(rank, type));
             const escape = (value) => String(value).replace(
               /[&<>"'|]/g,
               (character) => ({
@@ -101,25 +85,24 @@ jobs:
               })[character],
             );
             const code = (value) => `<code>${escape(value)}</code>`;
-            const typeLabel = (type) => Object.hasOwn(rank, type) ? type : 'unknown';
 
             let body;
-            if (releases.length === 0) {
+            if (versionedReleases.length === 0) {
               body = `${marker}\n> [!WARNING]\n> **No version bump detected.** This PR does not include a changeset that releases a package.`;
             } else {
-              const level = releases.reduce(
+              const level = versionedReleases.reduce(
                 (highest, release) => rank[release.type] > rank[highest] ? release.type : highest,
                 'patch',
               );
-              const rows = releases
+              const rows = versionedReleases
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map(({ name, type, oldVersion, newVersion }) =>
-                  `| ${code(name)} | **${typeLabel(type)}** | ${code(oldVersion)} → ${code(newVersion)} |`,
+                  `| ${code(name)} | **${type}** | ${code(oldVersion)} → ${code(newVersion)} |`,
                 )
                 .join('\n');
-              const core = releases.find(({ name }) => name === '@livekit/agents');
-              const coreBump = core
-                ? `> **Core package:** <code>@livekit/agents</code> **${typeLabel(core.type)}** bump, ${code(core.oldVersion)} → ${code(core.newVersion)}`
+              const coreRelease = versionedReleases.find(({ name }) => name === '@livekit/agents');
+              const coreBump = coreRelease
+                ? `> **Core package:** <code>@livekit/agents</code> **${coreRelease.type}** bump, ${code(coreRelease.oldVersion)} → ${code(coreRelease.newVersion)}`
                 : '> **Core package:** `@livekit/agents` is not affected.';
               body = [
                 marker,
@@ -133,10 +116,29 @@ jobs:
               ].join('\n');
             }
 
-            if (process.env.COMMENT_ID) {
+            let comments;
+            let reportComment;
+            for (let attempt = 0; attempt < 6; attempt++) {
+              comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              });
+              reportComment = comments.find(
+                ({ user, body }) =>
+                  user?.login === 'github-actions[bot]' && body?.includes(marker),
+              );
+              const changesetComment = comments.find(
+                ({ user }) => user?.login === 'changeset-bot[bot]',
+              );
+              if (reportComment || changesetComment) break;
+              await new Promise((resolve) => setTimeout(resolve, 5_000));
+            }
+
+            if (reportComment) {
               await github.rest.issues.updateComment({
                 ...context.repo,
-                comment_id: Number(process.env.COMMENT_ID),
+                comment_id: reportComment.id,
                 body,
               });
             } else {
