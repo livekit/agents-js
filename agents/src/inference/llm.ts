@@ -516,14 +516,18 @@ export class LLMStream extends llm.LLMStream {
         for (const choice of chunk.choices) {
           const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
-            retryable = false;
+            // only generation makes a retry duplicate what the caller already saw;
+            // provider metadata (a gateway deployment stamp, a thought signature)
+            // is not output
+            if (chatChunk.delta?.content || chatChunk.delta?.toolCalls?.length) {
+              retryable = false;
+            }
             this.queue.put(chatChunk);
           }
         }
 
         if (chunk.usage) {
           const usage = chunk.usage;
-          retryable = false;
           this.queue.put({
             id: chunk.id,
             usage: {
