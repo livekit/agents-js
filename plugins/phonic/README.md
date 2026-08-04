@@ -84,6 +84,22 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `noInputPokeSec` | `number` | Seconds of silence before sending poke message |
 | `noInputPokeText` | `string` | Poke message text (ignored when `generateNoInputPokeText` is true) |
 | `noInputEndConversationSec` | `number` | Seconds of silence before ending conversation |
+| `websocketTimeoutSec` | `number` | Seconds of inactivity before the Phonic websocket is closed |
+| `intelligenceLevel` | `'standard'` \| `'high'` | LLM intelligence level |
+| `isWelcomeMessageInterruptible` | `boolean` | When false, the welcome message cannot be interrupted |
+| `vadPrebufferDurationMs` | `number` | Voice-activity-detection prebuffer duration (ms) |
+| `vadMinSpeechDurationMs` | `number` | Minimum speech duration for VAD (ms) |
+| `vadMinSilenceDurationMs` | `number` | Minimum silence duration for VAD (ms) |
+| `vadThreshold` | `number` | Voice-activity-detection threshold |
+| `enableAssistantBackchannel` | `boolean` | When true, the assistant backchannels (e.g. "mm-hmm") while the user speaks |
+| `assistantBackchannelAggressiveness` | `number` | How aggressively the assistant backchannels (needs `enableAssistantBackchannel`) |
+| `pronunciationDictionary` | `{ word, pronunciation }[]` | Pronunciation entries; words must be unique |
+| `templateVariables` | `Record<string, string>` | Variables substituted into the system prompt and welcome message |
+| `enableRedaction` | `boolean` | Redact PII/PHI from transcripts and bleep it from audio after the conversation |
+| `mcpServers` | `string[]` | Names of pre-configured MCP servers to make available (must be unique) |
+| `observabilityIntegrations` | `'braintrust'[]` | Observability integrations to forward traces to |
+| `configurationEndpoint` | `{ url, headers?, timeout_ms? }` \| `null` | Endpoint the agent calls to fetch per-conversation configuration |
+| `additionalParams` | `Record<string, unknown>` | Additional runtime parameters forwarded to Phonic |
 | `configsForTools` | `PhonicToolConfig[]` | Per-tool behavior overrides (see [Per-tool configuration](#per-tool-configuration)) |
 | `onConversationCreated` | `(conversationId: string) => void` | Callback invoked with the Phonic conversation ID when the conversation is created |
 
