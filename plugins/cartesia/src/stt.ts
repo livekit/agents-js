@@ -143,6 +143,14 @@ export type STTOptions = {
   baseUrl: string;
   audioChunkDurationMS: number;
   language: string;
+  /**
+   * Key terms to improve recall of specific words and phrases (up to 100 terms
+   * totaling 1200 characters).
+   *
+   * Turn-detecting models (e.g. `ink-2`) only — passing this with `ink-whisper`
+   * throws.
+   */
+  keyterm?: string[];
 };
 
 const defaultSTTOptions = {
@@ -164,6 +172,7 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
     audioChunkDurationMS: override.audioChunkDurationMS ?? base.audioChunkDurationMS,
     language:
       override.language !== undefined ? normalizeLanguage(override.language) : base.language,
+    keyterm: override.keyterm ?? base.keyterm,
   };
 }
 
@@ -174,6 +183,49 @@ function mergeSTTOptions(base: STTOptions, override: Partial<STTOptions>): STTOp
  */
 function resolveSTTModel(language: string): STTModel {
   return getBaseLanguage(language) === 'en' ? 'ink-2' : 'ink-whisper';
+}
+
+function isWhisperModel(model: string): boolean {
+  return model.startsWith('ink-whisper');
+}
+
+/**
+ * Keyterm prompting is only offered by the turn-detecting models (e.g. `ink-2`);
+ * `ink-whisper` does not accept it. Mirrors the Python plugin, which raises on
+ * the same combination rather than silently dropping the terms.
+ */
+function validateKeyterm(model: string, keyterm: string[] | undefined) {
+  if (keyterm?.length && isWhisperModel(model)) {
+    throw new Error(
+      `The 'keyterm' parameter is only supported by turn-detecting models (e.g. ink-2); model '${model}' does not support it.`,
+    );
+  }
+}
+
+/**
+ * Build the `/stt/turns/websocket` URL for a set of options.
+ *
+ * The Cartesia endpoint only accepts model, sample_rate, encoding and keyterm —
+ * there is no `language` query param. Language selection is expressed through
+ * the model (ink-2 for English, ink-whisper otherwise), so `language` is used
+ * only to tag emitted transcripts.
+ *
+ * @internal
+ */
+export function buildSTTWebsocketUrl(opts: STTOptions): string {
+  const params = new URLSearchParams({
+    model: opts.model,
+    sample_rate: opts.sampleRate.toString(),
+    encoding: AUDIO_ENCODING,
+  });
+
+  // keyterm repeats, one query param per term
+  for (const term of opts.keyterm ?? []) {
+    params.append('keyterm', term);
+  }
+
+  const wsBase = opts.baseUrl.replace(/^http/, 'ws');
+  return `${wsBase}/stt/turns/websocket?${params.toString()}`;
 }
 
 /**
@@ -224,6 +276,8 @@ export class STT extends stt.STT {
     if (opts.model === undefined) {
       this.#opts.model = resolveSTTModel(this.#opts.language);
     }
+
+    validateKeyterm(this.#opts.model, this.#opts.keyterm);
   }
 
   override get label(): string {
@@ -247,14 +301,18 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    this.#opts = mergeSTTOptions(this.#opts, opts);
+    const nextOpts = mergeSTTOptions(this.#opts, opts);
 
     // Keep the model in sync with a newly set language (e.g. switching to a
     // non-English language must move off the English-only ink-2), unless the
     // caller pinned a model in the same call. Mirrors the constructor.
     if (opts.language !== undefined && opts.model === undefined) {
-      this.#opts.model = resolveSTTModel(this.#opts.language);
+      nextOpts.model = resolveSTTModel(nextOpts.language);
     }
+
+    // Validate before committing so a rejected update leaves the STT usable.
+    validateKeyterm(nextOpts.model, nextOpts.keyterm);
+    this.#opts = nextOpts;
   }
 }
 
@@ -632,18 +690,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #getCartesiaUrl(): string {
-    // The Cartesia /stt/turns/websocket endpoint only accepts model, sample_rate
-    // and encoding — there is no `language` query param. Language selection is
-    // expressed through the model (ink-2 for English, ink-whisper otherwise),
-    // so #opts.language is used only to tag emitted transcripts.
-    const params = new URLSearchParams({
-      model: this.#opts.model,
-      sample_rate: this.#opts.sampleRate.toString(),
-      encoding: AUDIO_ENCODING,
-    });
-
-    const wsBase = this.#opts.baseUrl.replace(/^http/, 'ws');
-    return `${wsBase}/stt/turns/websocket?${params.toString()}`;
+    return buildSTTWebsocketUrl(this.#opts);
   }
 
   override close() {
