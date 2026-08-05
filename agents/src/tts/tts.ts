@@ -104,6 +104,10 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
     return this.#capabilities;
   }
 
+  protected updateCapabilities(caps: Partial<TTSCapabilities>): void {
+    this.#capabilities = { ...this.#capabilities, ...caps };
+  }
+
   /** Returns the sample rate of audio frames returned by this TTS */
   get sampleRate(): number {
     return this.#sampleRate;
