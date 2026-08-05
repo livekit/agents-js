@@ -101,14 +101,16 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
   }
 
+  override setAttached(attached: boolean): void {
+    this.attached = attached;
+  }
+
   override onAttached(): void {
     this.logger.debug({ participant: this.participantIdentity }, 'input stream attached');
-    this.attached = true;
   }
 
   override onDetached(): void {
     this.logger.debug({ participant: this.participantIdentity }, 'input stream detached');
-    this.attached = false;
   }
 
   private onTrackUnpublished = (
