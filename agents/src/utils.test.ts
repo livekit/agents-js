@@ -13,6 +13,7 @@ import {
   dedent,
   delay,
   isPending,
+  readStream,
   resampleStream,
   toStream,
 } from '../src/utils.js';
@@ -933,4 +934,92 @@ world
       expect(outputFrames).toEqual([]);
     });
   });
+});
+
+describe('readStream abort-promise retention (issue #2046)', () => {
+  // Regression: the old implementation hoisted `waitForAbort(signal)` outside the
+  // read loop, so every `ThrowsPromise.race([reader.read(), abortPromise])` attached
+  // a new reaction to that single long-lived promise. The reactions - and the read
+  // results (stream chunks) they transitively held - accumulated until the signal
+  // aborted, pinning every AudioFrame ever read on audio streams.
+  it('delivers all chunks and keeps at most one abort listener', async () => {
+    const controller = new AbortController();
+    let enqueueCtl!: ReadableStreamDefaultController<number>;
+    const stream = new ReadableStream<number>({
+      start(c) {
+        enqueueCtl = c;
+      },
+    });
+    const iterator = readStream(stream, controller.signal)[Symbol.asyncIterator]();
+
+    const CHUNKS = 50;
+    const received: number[] = [];
+    for (let i = 0; i < CHUNKS; i++) {
+      enqueueCtl.enqueue(i);
+      const { value } = await iterator.next();
+      received.push(value as number);
+    }
+    expect(received).toEqual(Array.from({ length: CHUNKS }, (_, i) => i));
+
+    // The signal should never accumulate listeners as chunks flow.
+    const listenerCount = (controller.signal as unknown as NodeJS.EventEmitter).listenerCount?.(
+      'abort',
+    );
+    if (listenerCount !== undefined) {
+      expect(listenerCount).toBeLessThanOrEqual(1);
+    }
+
+    controller.abort();
+    const end = await iterator.next();
+    expect(end.done).toBe(true);
+  });
+
+  it('abort interrupts a pending read', async () => {
+    const controller = new AbortController();
+    const stream = new ReadableStream<number>({ start() {} }); // never produces
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const v of readStream(stream, controller.signal)) {
+        received.push(v);
+      }
+    })();
+    await delay(10);
+    controller.abort();
+    await consume; // returns instead of hanging
+    expect(received).toEqual([]);
+  });
+
+  // Only meaningful under `node --expose-gc`; the listener-count check above cannot
+  // catch the reaction leak (the old code also held a single listener - the retention
+  // lived in the promise reaction chain, not the listener list).
+  it.skipIf(typeof globalThis.gc !== 'function')(
+    'consumed chunks become collectable while the stream stays open',
+    async () => {
+      const controller = new AbortController();
+      let enqueueCtl!: ReadableStreamDefaultController<{ payload: Uint8Array }>;
+      const stream = new ReadableStream<{ payload: Uint8Array }>({
+        start(c) {
+          enqueueCtl = c;
+        },
+      });
+      const iterator = readStream(stream, controller.signal)[Symbol.asyncIterator]();
+
+      const refs: WeakRef<object>[] = [];
+      for (let i = 0; i < 20; i++) {
+        const chunk = { payload: new Uint8Array(1024) };
+        refs.push(new WeakRef(chunk));
+        enqueueCtl.enqueue(chunk);
+        await iterator.next();
+      }
+
+      globalThis.gc!();
+      await delay(0);
+      globalThis.gc!();
+      const alive = refs.filter((r) => r.deref() !== undefined).length;
+      // With the hoisted abort promise every chunk stayed reachable (alive === 20).
+      expect(alive).toBeLessThanOrEqual(1);
+
+      controller.abort();
+    },
+  );
 });
