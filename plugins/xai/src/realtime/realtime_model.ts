@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { realtime } from '@livekit/agents-plugin-openai';
 
-const { RealtimeModel: OpenAIRealtimeModel } = realtime;
+const { RealtimeModel: OpenAIRealtimeModel, RealtimeSession: OpenAIRealtimeSession } = realtime;
 type OpenAIRealtimeModelOptions = ConstructorParameters<typeof OpenAIRealtimeModel>[0];
 
 const XAI_BASE_URL = 'wss://api.x.ai/v1';
@@ -46,5 +46,46 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });
+  }
+
+  override session(): realtime.RealtimeSession {
+    return new RealtimeSession(this);
+  }
+}
+
+class RealtimeSession extends OpenAIRealtimeSession {
+  override sendEvent(command: realtime.ClientEvent): void {
+    if (command.type === 'session.update') {
+      moveXaiSessionFields(command);
+    }
+
+    super.sendEvent(command);
+  }
+}
+
+function moveXaiSessionFields(event: realtime.SessionUpdateEvent): void {
+  const { audio } = event.session;
+  if (!audio) return;
+
+  const { output } = audio;
+  if (output && Object.prototype.hasOwnProperty.call(output, 'voice')) {
+    event.session.voice = output.voice;
+    delete output.voice;
+  }
+
+  const { input } = audio;
+  if (input && Object.prototype.hasOwnProperty.call(input, 'turn_detection')) {
+    event.session.turn_detection = input.turn_detection;
+    delete input.turn_detection;
+  }
+
+  if (output && Object.keys(output).length === 0) {
+    delete audio.output;
+  }
+  if (input && Object.keys(input).length === 0) {
+    delete audio.input;
+  }
+  if (Object.keys(audio).length === 0) {
+    delete event.session.audio;
   }
 }
