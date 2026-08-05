@@ -354,6 +354,8 @@ export class AgentActivity implements RecognitionHooks {
   // for false interruption handling
   private pausedSpeech?: PausedSpeechInfo;
   private falseInterruptionTimer?: NodeJS.Timeout;
+  // The timeout elapsed while a turn decision was still open; the resume waits on it.
+  private falseInterruptionPending = false;
   private cancelSpeechPauseTask?: Promise<void>;
   private userTurnExceededLocked = false;
   private userTurnExceededTask?: Task<void>;
@@ -1076,6 +1078,9 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (hasTurnDetection) {
+      if (this.turnDetectionMode === 'manual' || turnDetection === 'manual') {
+        this.cancelFalseInterruptionTimer();
+      }
       this.turnDetectionMode = turnDetection ?? undefined;
       this.isDefaultInterruptionByAudioActivityEnabled =
         this.turnDetectionMode !== 'manual' && this.turnDetectionMode !== 'realtime_llm';
@@ -1452,11 +1457,8 @@ export class AgentActivity implements RecognitionHooks {
     }
     this.interruptionDetected = false;
 
-    if (this.falseInterruptionTimer) {
-      // cancel the timer when user starts speaking but leave the paused state unchanged
-      clearTimeout(this.falseInterruptionTimer);
-      this.falseInterruptionTimer = undefined;
-    }
+    // Cancel the timer when user starts speaking but leave the paused state unchanged.
+    this.cancelFalseInterruptionTimer();
 
     if (
       this.agentSession.agentState !== 'speaking' &&
@@ -1561,10 +1563,7 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this._currentSpeech.allowInterruptions
     ) {
-      if (this.falseInterruptionTimer) {
-        clearTimeout(this.falseInterruptionTimer);
-        this.falseInterruptionTimer = undefined;
-      }
+      this.cancelFalseInterruptionTimer();
 
       if (this.pauseEnabled()) {
         const timeout =
@@ -1591,6 +1590,7 @@ export class AgentActivity implements RecognitionHooks {
           if (this.audioRecognition) {
             this.audioRecognition.onEndOfAgentSpeech(
               options?.ignoreUserTranscriptUntil ?? Date.now(),
+              { paused: true },
             );
           }
           if (this.isInterruptionDetectionEnabled) {
@@ -1614,7 +1614,9 @@ export class AgentActivity implements RecognitionHooks {
       ignoreUserTranscriptUntil: ev.overlapStartedAt || ev.detectedAt,
     });
     if (this.audioRecognition) {
-      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt);
+      this.audioRecognition.onEndOfAgentSpeech(ev.overlapStartedAt || ev.detectedAt, {
+        paused: this.pausedSpeech !== undefined,
+      });
     }
   }
 
@@ -1968,14 +1970,30 @@ export class AgentActivity implements RecognitionHooks {
       this.llm instanceof RealtimeModel &&
       !this.llm.capabilities.turnDetection &&
       this.isInterruptionDetectionEnabled &&
-      (info.backchannelOverAgent ||
-        (!this.interruptionDetected &&
-          this._currentSpeech !== undefined &&
-          !this._currentSpeech.interrupted))
+      info.backchannelOverAgent
     ) {
+      this.logger.debug('skipping user input, realtime backchannel detected');
       this.cancelPreemptiveGeneration();
       this.realtimeSession?.clearAudio();
       return false;
+    }
+
+    // A replying turn interrupts the paused speech, so cancel the resume that would race it.
+    // The reply task returns before that for these two cases, so leave the resume armed.
+    //
+    // Known divergence from Python, which tests the resolved `_rt_turn_detection_enabled`
+    // rather than the raw capability. That flag is additionally false for a model whose
+    // capabilities report `can_disable_turn_detection` when the user configured client-side
+    // turn taking. `RealtimeCapabilities` has no `canDisableTurnDetection` field here, so for
+    // a realtime model that advertises server turn detection but is running client-side turn
+    // taking, this leaves the resume armed where Python cancels it — reinstating the
+    // resume-races-the-reply bug for that configuration. Resolving it needs the new capability
+    // plus a resolved getter used at both this site and the barge-in gate above.
+    if (
+      !info.skipReply &&
+      !(this.llm instanceof RealtimeModel && this.llm.capabilities.turnDetection)
+    ) {
+      this.cancelFalseInterruptionTimer();
     }
 
     const oldTask = this._userTurnCompletedTask;
@@ -2120,6 +2138,14 @@ export class AgentActivity implements RecognitionHooks {
         // Bare handles have no owner task that can settle the generation future.
         if (speechHandle.interrupted && speechHandle._tasks.length > 0) {
           await ThrowsPromise.race([generation, abortFuture.await]);
+        }
+        if (this.pausedSpeech?.handle === speechHandle) {
+          this.pausedSpeech = undefined;
+          this.cancelFalseInterruptionTimer();
+          const audioOutput = this.agentSession.output.audio;
+          if (audioOutput?.canPause) {
+            audioOutput.resume();
+          }
         }
         this._currentSpeech = undefined;
       }
@@ -4620,12 +4646,18 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
-  private startFalseInterruptionTimer(timeout: number): void {
+  private cancelFalseInterruptionTimer(): void {
     if (this.falseInterruptionTimer !== undefined) {
       clearTimeout(this.falseInterruptionTimer);
+      this.falseInterruptionTimer = undefined;
     }
+    this.falseInterruptionPending = false;
+  }
 
-    this.falseInterruptionTimer = setTimeout(() => {
+  private startFalseInterruptionTimer(timeout: number): void {
+    this.cancelFalseInterruptionTimer();
+
+    const resumeFalseInterruption = () => {
       if (
         !this.pausedSpeech ||
         (this._currentSpeech && this._currentSpeech !== this.pausedSpeech.handle)
@@ -4648,7 +4680,7 @@ export class AgentActivity implements RecognitionHooks {
           otelContext: this.pausedSpeech.handle._agentTurnContext,
         });
         if (this.audioRecognition && this.pausedSpeech.agentState === 'speaking') {
-          this.audioRecognition.onStartOfAgentSpeech(Date.now());
+          this.audioRecognition.onStartOfAgentSpeech(Date.now(), { resumed: true });
         }
         if (this.isInterruptionDetectionEnabled) {
           this.disableVadInterruptionSoon();
@@ -4665,6 +4697,43 @@ export class AgentActivity implements RecognitionHooks {
 
       this.pausedSpeech = undefined;
       this.falseInterruptionTimer = undefined;
+    };
+
+    const onTurnSettled = (settled: Task<void>): void => {
+      if (!this.falseInterruptionPending) {
+        return;
+      }
+
+      const current = this.audioRecognition?.endOfTurnTask;
+      if (current && current !== settled && !current.done) {
+        current.addDoneCallback(() => onTurnSettled(current));
+        return;
+      }
+
+      this.falseInterruptionPending = false;
+      if (settled.cancelled || this.audioRecognition?.isClosed) {
+        // Torn down instead of decided; closing releases the pause itself.
+        return;
+      }
+
+      // A decision that failed is still a decision: resume as if it had completed, otherwise
+      // nothing is left armed and the paused speech stays paused forever.
+      resumeFalseInterruption();
+    };
+
+    this.falseInterruptionTimer = setTimeout(() => {
+      this.falseInterruptionTimer = undefined;
+
+      // An open turn decision owns the paused speech. It either commits and interrupts it or
+      // drops it, and only then is the interruption known to be false.
+      const endOfTurnTask = this.audioRecognition?.endOfTurnTask;
+      if (endOfTurnTask && !endOfTurnTask.done) {
+        this.falseInterruptionPending = true;
+        endOfTurnTask.addDoneCallback(() => onTurnSettled(endOfTurnTask));
+        return;
+      }
+
+      resumeFalseInterruption();
     }, timeout);
   }
 
@@ -4681,13 +4750,20 @@ export class AgentActivity implements RecognitionHooks {
       this.cancelSpeechPauseTask = undefined;
     }
 
-    if (this.falseInterruptionTimer !== undefined) {
-      clearTimeout(this.falseInterruptionTimer);
-      this.falseInterruptionTimer = undefined;
-    }
+    this.cancelFalseInterruptionTimer();
 
     if (!this.pausedSpeech) {
       return;
+    }
+
+    // The pause withheld end-of-agent-speech for a resume. Interrupting ends the turn instead;
+    // audio stopped when it was paused, so no playout is left to wait for.
+    if (interrupt && this.audioRecognition) {
+      void this.audioRecognition
+        .onEndOfAgentSpeech(Date.now())
+        .catch((error) =>
+          this.logger.warn({ error }, 'failed to report end of agent speech on pause cancel'),
+        );
     }
 
     if (
