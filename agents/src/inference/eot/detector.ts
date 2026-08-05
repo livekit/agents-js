@@ -44,6 +44,13 @@ export interface TurnDetectorOptions {
   apiSecret?: string;
   /** Sample rate (Hz). Defaults to 16000. */
   sampleRate?: number;
+  /**
+   * Whether a `v1` detector may degrade to the local `v1-mini` model when the
+   * gateway fails. `false` keeps it cloud-only, so the mini weights (~138 MB,
+   * resident for the process lifetime) are never loaded and turns commit on
+   * the endpointing delay instead.
+   */
+  localFallback?: boolean;
   connOptions?: APIConnectOptions;
   /**
    * Inference executor that runs the local `turn-detector-v1-mini` model in the
@@ -59,6 +66,7 @@ export class TurnDetector extends BaseStreamingTurnDetector {
   protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
+  protected _localFallback: boolean;
 
   constructor(opts: TurnDetectorOptions = {}) {
     // auto = caller didn't pin a version; missing cloud creds warn-and-
@@ -118,6 +126,13 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     super(detectorOpts);
     this._model = resolvedModel;
     this._cloudOpts = cloudOpts;
+    this._localFallback = opts.localFallback ?? true;
+    if (!this._localFallback && resolvedModel === 'turn-detector-v1-mini') {
+      log().warn(
+        { model: resolvedModel },
+        'localFallback=false has no effect on the local model, which runs locally by design',
+      );
+    }
     this._warnThresholdOverride();
     // Default to the current job's shared inference executor. `getJobContext`
     // throws outside a job (tests, standalone) — degrade to `undefined`
@@ -208,6 +223,7 @@ export class TurnDetector extends BaseStreamingTurnDetector {
       opts: this._opts,
       cloudOpts,
       model: this._model,
+      localFallback: this._localFallback,
       executor: this._executor,
     });
     this._streams.add(stream);
@@ -220,6 +236,7 @@ export interface TurnDetectorStreamImplArgs {
   opts: BaseStreamingTurnDetectorOptions;
   cloudOpts: CloudTransportOptions | undefined;
   model: TurnDetectorModel;
+  localFallback?: boolean;
   /** Shared inference executor for the `turn-detector-v1-mini` (local) model
    * (undefined degrades to a positive-default prediction). */
   executor?: InferenceExecutor;
@@ -239,7 +256,9 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   protected _model: TurnDetectorModel;
   protected _cloudOpts: CloudTransportOptions | undefined;
   protected _executor: InferenceExecutor | undefined;
+  protected _localFallback: boolean;
   protected _isFallback = false;
+  protected _isDegraded = false;
   protected _warnedCloudFailure = false;
   protected _warnedLocalFailure = false;
   private _detLogger = log();
@@ -258,6 +277,7 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     this._model = args.model;
     this._cloudOpts = args.cloudOpts;
     this._executor = args.executor;
+    this._localFallback = args.localFallback ?? true;
   }
 
   /** This stream's *current* model name (flips to `'turn-detector-v1-mini'`
@@ -269,6 +289,11 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
 
   get isFallback(): boolean {
     return this._isFallback;
+  }
+
+  /** True once the cloud transport is gone with no local model to replace it. */
+  get isDegraded(): boolean {
+    return this._isDegraded;
   }
 
   /** @internal Test-visible. */
@@ -287,7 +312,12 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
   /** @internal Test-visible: same logic as the path taken when `_run` catches
    * a cloud transport error. Tests call this directly to verify the warning
    * dedupe across multiple invocations on the same stream. */
-  _fallBackToLocal(reason: Error): void {
+  _fallbackToLocal(reason: Error): boolean {
+    if (!this._localFallback) {
+      this._emitDefaultForInflight();
+      return false;
+    }
+
     if (!this._warnedCloudFailure) {
       this._detLogger.warn(
         { reason: reason.message },
@@ -313,6 +343,22 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
     this._transport.attach(this);
     this._model = 'turn-detector-v1-mini';
     this._isFallback = true;
+    return true;
+  }
+
+  protected _degrade(reason: Error): void {
+    this._detLogger.warn(
+      { reason: reason.message },
+      'cloud turn detector failed; local fallback is disabled, so turn detection is off for ' +
+        'the rest of this stream and turns commit on the endpointing delay',
+    );
+    this._isDegraded = true;
+    try {
+      this._transport.detach();
+    } catch {
+      // ignore detach errors while terminating the failed transport
+    }
+    this._discardAudioInput();
   }
 
   /** @internal Test-visible: same logic as the path taken when `_run` sees a
@@ -366,8 +412,11 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
         }
         const e = err instanceof Error ? err : new Error(String(err));
         if (this._model === 'turn-detector-v1') {
-          this._fallBackToLocal(e);
-          continue;
+          if (this._fallbackToLocal(e)) {
+            continue;
+          }
+          this._degrade(e);
+          return;
         }
         this._onLocalFailure(e);
         return;
@@ -377,13 +426,9 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
 
   protected override _onPredictTimeout(): void {
     if (this._model === 'turn-detector-v1') {
-      // Signal the swap BEFORE mutating model/transport state. The
-      // race in `_raceWithSwap` is rejected with `SwapAbortError`
-      // immediately, so the main loop exits through the
-      // SwapAbortError branch and never consults `_model` for a
-      // classification that would race with the assignment below.
-      this._signalSwap();
-      this._fallBackToLocal(new Error('predict_end_of_turn'));
+      if (this._fallbackToLocal(new Error('predict_end_of_turn'))) {
+        this._signalSwap();
+      }
     }
   }
 }
