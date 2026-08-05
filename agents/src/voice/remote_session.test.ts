@@ -31,6 +31,7 @@ beforeAll(() => {
 // close: an `on` added without its `off` leaks a handler across reconnects and
 // only shows up as a mismatch between these two.
 const FORWARDED_EVENTS = new Set([
+  'agent_false_interruption',
   'agent_state_changed',
   'conversation_item_added',
   'debug_message',
