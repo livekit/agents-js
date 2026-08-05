@@ -3951,9 +3951,14 @@ export class AgentActivity implements RecognitionHooks {
       const chatCtx = realtimeSession.chatCtx.copy();
       chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
 
-      this.agentSession._toolItemsAdded(
-        functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[],
-      );
+      // Also commit the outputs to the agent's own chat context. The FunctionCall items were
+      // added by onToolExecutionStarted, so without this the agent ctx keeps dangling calls with
+      // no results — breaking history summarization (which distills tool results) and agent
+      // handoff merges. `agentSession.history` is updated separately by `_toolItemsAdded`.
+      const toolCallOutputs =
+        functionToolsExecutedEvent.functionCallOutputs as FunctionCallOutput[];
+      this.agent._chatCtx.insert(toolCallOutputs);
+      this.agentSession._toolItemsAdded(toolCallOutputs);
 
       // If the realtime model auto-generates the tool reply, install a
       // placeholder so the active RunResult waits for that reply.
