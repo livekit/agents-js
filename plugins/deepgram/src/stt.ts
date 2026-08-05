@@ -166,7 +166,11 @@ export class STT extends stt.STT {
       );
     }
 
-    return prerecordedTranscriptionToSpeechEvent(this.#opts.language, await resp.json());
+    return prerecordedTranscriptionToSpeechEvent(
+      this.#opts.language,
+      await resp.json(),
+      this.#opts.punctuate || this.#opts.smartFormat,
+    );
   }
 
   updateOptions(opts: Partial<STTOptions>) {
@@ -497,6 +501,7 @@ export class SpeechStream extends stt.SpeechStream {
                   this.#opts.language!,
                   json,
                   this.startTimeOffset,
+                  this.#opts.punctuate || this.#opts.smartFormat,
                 );
 
                 // If, for some reason, we didn't get a SpeechStarted event but we got
@@ -625,17 +630,29 @@ function createWav(frame: AudioFrame): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
+/**
+ * Return the word form matching the transcript requested from Deepgram.
+ *
+ * Both punctuate and smart_format produce a formatted transcript. When either is enabled,
+ * Deepgram provides punctuated_word alongside word. Fall back to word when it is absent or empty.
+ */
+function wordText(word: { [id: string]: any }, usePunctuatedWord: boolean): string {
+  const raw = word['word'] ?? '';
+  return usePunctuatedWord ? word['punctuated_word'] || raw : raw;
+}
+
 const liveTranscriptionToSpeechData = (
   language: STTLanguages | string,
   data: { [id: string]: any },
   startTimeOffset: number = 0,
+  usePunctuatedWord: boolean = true,
 ): stt.SpeechData[] => {
   const alts: any[] = data['channel']['alternatives'];
 
   return alts.map((alt) => {
     const wordsData: any[] = alt['words'] ?? [];
     const detectedLanguage =
-      language === 'multi' ? alt['languages']?.[0] ?? language : alt['language'] ?? language;
+      language === 'multi' ? (alt['languages']?.[0] ?? language) : (alt['language'] ?? language);
 
     return {
       language: normalizeLanguage(detectedLanguage),
@@ -647,7 +664,7 @@ const liveTranscriptionToSpeechData = (
       text: alt['transcript'],
       words: wordsData.map((word) =>
         createTimedString({
-          text: word['word'] ?? '',
+          text: wordText(word, usePunctuatedWord),
           startTime: (word['start'] ?? 0) + startTimeOffset,
           endTime: (word['end'] ?? 0) + startTimeOffset,
           confidence: word['confidence'] ?? 0.0,
@@ -661,6 +678,7 @@ const liveTranscriptionToSpeechData = (
 function prerecordedTranscriptionToSpeechEvent(
   language: STTLanguages | string | undefined,
   data: { [id: string]: any },
+  usePunctuatedWord: boolean = true,
 ): stt.SpeechEvent {
   const channel = data['results']['channels'][0];
   const detectedLanguage = channel['detected_language'] ?? '';
@@ -675,7 +693,7 @@ function prerecordedTranscriptionToSpeechEvent(
       text: alt['transcript'],
       words: wordsData.map((word) =>
         createTimedString({
-          text: word['word'] ?? '',
+          text: wordText(word, usePunctuatedWord),
           startTime: word['start'] ?? 0,
           endTime: word['end'] ?? 0,
           confidence: word['confidence'] ?? 0.0,
