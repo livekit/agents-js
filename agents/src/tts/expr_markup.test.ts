@@ -87,9 +87,10 @@ describe('convertMarkup: expr -> Cartesia (discrete emotions, breaks, spell; no 
     const text =
       '<expr type="expression" label="excited"/> We won! ' +
       '<expr type="break" label="1s"/> <expr type="sound" label="laugh"/> Unbelievable.';
-    // expression -> <emotion>, break stays, sound is dropped (no Cartesia support)
+    // expression -> <emotion>, break stays, sound is dropped (no Cartesia support),
+    // without leaving the space it sat between behind as a doubled separator
     expect(convertMarkup('cartesia', text)).toBe(
-      '<emotion value="excited"/> We won! <break time="1s"/>  Unbelievable.',
+      '<emotion value="excited"/> We won! <break time="1s"/> Unbelievable.',
     );
   });
 
@@ -139,7 +140,7 @@ describe('convertMarkup: stray expr markers', () => {
 describe('transcript stripping (per-provider + provider-agnostic)', () => {
   it.each(['xai', 'inworld', 'cartesia'])('splitMarkup strips expr for %s', (provider) => {
     const [clean, tags] = splitMarkup(provider, JOKE);
-    expect(clean.trim()).toBe('Why did the burger go to the gym?  Because it wanted better buns!');
+    expect(clean.trim()).toBe('Why did the burger go to the gym? Because it wanted better buns!');
     expect(tags).toEqual([
       { type: 'expression', value: 'say playfully' },
       { type: 'break', value: '500ms' },
@@ -198,7 +199,7 @@ describe('transcript stripping (per-provider + provider-agnostic)', () => {
     // must keep the native Inworld tag on the generic strip path with its own type
     const text = '<expression value="speak calmly"/> Hi <expr type="break" label="1s"/> there.';
     const [clean, tags] = splitMarkup('inworld', text);
-    expect(clean).toBe(' Hi  there.');
+    expect(clean).toBe(' Hi there.');
     expect(tags).toContainEqual({ type: 'expression', value: 'speak calmly' });
     expect(tags).toContainEqual({ type: 'break', value: '1s' });
     // conversion must also leave the native tag for the provider pipeline, not eat it
@@ -221,6 +222,49 @@ describe('transcript stripping (per-provider + provider-agnostic)', () => {
     expect(out).toBe(' Hello world!');
     expect(stripper.tags[0]).toEqual({ type: 'expression', value: 'say playfully' });
     expect(stripper.tags).toContainEqual({ type: 'prosody', value: 'whisper' });
+  });
+
+  it('removed tags leave one space', () => {
+    expect(splitAllMarkup('Right. <expr type="sound" label="laugh"/> Anyway.')[0]).toBe(
+      'Right. Anyway.',
+    );
+    expect(splitAllMarkup('Right. <sound value="laugh"/> Anyway.')[0]).toBe('Right. Anyway.');
+    expect(splitAllMarkup('a <expr type="prosody" label="loud">b</expr> c')[0]).toBe('a b c');
+    expect(splitAllMarkup('Right.<expr type="sound" label="laugh"/> Anyway.')[0]).toBe(
+      'Right. Anyway.',
+    );
+    expect(splitAllMarkup('Right. <expr type="sound" label="laugh"/>Anyway.')[0]).toBe(
+      'Right. Anyway.',
+    );
+    expect(splitAllMarkup('a\n<expr type="sound" label="laugh"/>\nb')[0]).toBe('a\n\nb');
+  });
+
+  it('keeps trailing space for streaming text', () => {
+    expect(splitAllMarkup('Right. <expr type="sound" label="laugh"/>')[0]).toBe('Right. ');
+  });
+
+  it('TranscriptMarkupStripper deduplicates spaces across chunks', () => {
+    for (const chunks of [
+      ['Right. ', '<expr type="sound" label="laugh"/>', ' Anyway.'],
+      ['Right. ', '<expr type="sound" label="laugh"/> Anyway.'],
+      ['Right. ', '<sound value="laugh"/>', ' Anyway.'],
+    ]) {
+      const stripper = new TranscriptMarkupStripper();
+      const out = chunks.map((chunk) => stripper.push(chunk)).join('') + stripper.flush();
+      expect(out, JSON.stringify(chunks)).toBe('Right. Anyway.');
+    }
+  });
+
+  it('TranscriptMarkupStripper leaves untagged whitespace alone', () => {
+    let stripper = new TranscriptMarkupStripper();
+    let out = ['Right. ', ' Anyway.'].map((chunk) => stripper.push(chunk)).join('');
+    out += stripper.flush();
+    expect(out).toBe('Right.  Anyway.');
+
+    stripper = new TranscriptMarkupStripper();
+    out = ['<sound value="x"/>hello  ', '   world'].map((chunk) => stripper.push(chunk)).join('');
+    out += stripper.flush();
+    expect(out).toBe('hello     world');
   });
 
   it('expressionAttribute surfaces the expr expression label', () => {

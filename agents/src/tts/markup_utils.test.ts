@@ -49,6 +49,27 @@ describe('stripXmlTags', () => {
     const text = '<emotion value="happy"/> Hi';
     expect(stripXmlTags(text, [])).toBe(text);
   });
+
+  it('does not treat square brackets as XML markup', () => {
+    const text = 'Press [Enter] <emotion value="happy"/> to open [the docs](https://lk.io)';
+    expect(stripXmlTags(text, ['emotion'])).toBe('Press [Enter] to open [the docs](https://lk.io)');
+  });
+
+  it('leaves a single space after removal', () => {
+    expect(stripXmlTags('Right. <emotion value="sad"/> Anyway.', ['emotion'])).toBe(
+      'Right. Anyway.',
+    );
+    expect(stripXmlTags('Right.<emotion value="sad"/> Anyway.', ['emotion'])).toBe(
+      'Right. Anyway.',
+    );
+    expect(stripXmlTags('Right. <emotion value="sad"/>Anyway.', ['emotion'])).toBe(
+      'Right. Anyway.',
+    );
+    expect(stripXmlTags('Right. <emotion value="sad"/>', ['emotion'])).toBe('Right. ');
+    expect(stripXmlTags('a <spell>b</spell> c', ['spell'])).toBe('a b c');
+    expect(stripXmlTags('a </spell> b', ['spell'])).toBe('a b');
+    expect(stripXmlTags('a\n<emotion value="sad"/>\nb', ['emotion'])).toBe('a\n\nb');
+  });
 });
 
 describe('xAI dialect', () => {
