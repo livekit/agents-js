@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import { type ReadableStream, TransformStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
 import type { ToolContext } from '../llm/tool_context.js';
@@ -89,18 +89,37 @@ export interface AudioOutputCapabilities {
 
 export abstract class AudioInput {
   protected multiStream: MultiInputStream<AudioFrame> = new MultiInputStream<AudioFrame>();
+  private _attached = true;
+  private _gatedStream?: ReadableStream<AudioFrame>;
 
   get stream(): ReadableStream<AudioFrame> {
-    return this.multiStream.stream;
+    if (!this._gatedStream) {
+      // Drop frames while detached so setAudioEnabled(false) actually mutes
+      // the input path (matches Python ParticipantInputStream._attached).
+      this._gatedStream = this.multiStream.stream.pipeThrough(
+        new TransformStream<AudioFrame, AudioFrame>({
+          transform: (frame, controller) => {
+            if (this._attached) {
+              controller.enqueue(frame);
+            }
+          },
+        }),
+      );
+    }
+    return this._gatedStream;
   }
 
   async close(): Promise<void> {
     await this.multiStream.close();
   }
 
-  onAttached(): void {}
+  onAttached(): void {
+    this._attached = true;
+  }
 
-  onDetached(): void {}
+  onDetached(): void {
+    this._attached = false;
+  }
 }
 
 export abstract class AudioOutput extends EventEmitter {
@@ -338,8 +357,24 @@ export class AgentInput {
   }
 
   set audio(stream: AudioInput | null) {
+    if (stream === this._audioStream) {
+      return;
+    }
+
+    if (this._audioStream) {
+      this._audioStream.onDetached();
+    }
+
     this._audioStream = stream;
     this.audioChanged();
+
+    if (this._audioStream) {
+      if (this._audioEnabled) {
+        this._audioStream.onAttached();
+      } else {
+        this._audioStream.onDetached();
+      }
+    }
   }
 }
 

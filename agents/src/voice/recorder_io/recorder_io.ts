@@ -567,10 +567,12 @@ class RecorderAudioInput extends AudioInput {
   }
 
   onAttached(): void {
+    super.onAttached();
     this.source.onAttached();
   }
 
   onDetached(): void {
+    super.onDetached();
     this.source.onDetached();
   }
 }
