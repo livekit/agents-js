@@ -759,7 +759,10 @@ export class SpeechStream extends stt.SpeechStream {
         ws.on('message', (msg: RawData) => {
           try {
             const raw = msg.toString();
-            this.#logger.debug(`Sarvam STT raw WS message: ${raw.substring(0, 500)}`);
+            this.#logger.debug(
+              { 'lk.pii.raw_message': raw.substring(0, 500) },
+              'received Sarvam STT WebSocket message',
+            );
             const json = JSON.parse(raw);
             const msgType: string = json['type'] ?? '';
 
@@ -835,7 +838,13 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`Error processing Sarvam STT message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'Error processing Sarvam STT message',
+            );
             reject(err);
           }
         });

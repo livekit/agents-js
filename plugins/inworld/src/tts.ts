@@ -512,7 +512,13 @@ class ChunkedStream extends tts.ChunkedStream {
               throw new Error(data.error.message);
             }
           } catch (e) {
-            log().warn({ error: e, line }, 'Failed to parse Inworld chunk');
+            log().warn(
+              {
+                error: e,
+                'lk.pii.line': line,
+              },
+              'Failed to parse Inworld chunk',
+            );
           }
         }
       }

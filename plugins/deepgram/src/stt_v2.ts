@@ -314,7 +314,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#reconnectEvent.clear();
 
         const url = this.#getDeepgramUrl();
-        this.#logger.debug(`Connecting to Deepgram: ${url}`);
+        this.#logger.debug({ 'lk.pii.url': url }, 'connecting to Deepgram');
 
         this.#ws = new WebSocket(url, {
           headers: { Authorization: `Token ${this.#opts.apiKey}` },
@@ -506,7 +506,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         this.#onEndOfSpeech();
       }
     } else if (data.type === 'Error') {
-      this.#logger.warn('deepgram sent an error', { data });
+      this.#logger.warn({ 'lk.pii.data': data }, 'deepgram sent an error');
       const desc = (data.description as string) || 'unknown error from deepgram';
       throw new Error(`Deepgram API Error: ${desc}`);
     }

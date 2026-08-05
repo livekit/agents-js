@@ -635,7 +635,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           } else if (!isFlushDoneMessage(serverMsg) && !isErrorMessage(serverMsg)) {
             // flush_done is an ack with nothing to do; error frames without
             // done:true were already logged above.
-            this.#logger.warn({ message: serverMsg }, 'Unknown Cartesia message');
+            this.#logger.warn({ 'lk.pii.message': serverMsg }, 'Unknown Cartesia message');
           }
         }
 

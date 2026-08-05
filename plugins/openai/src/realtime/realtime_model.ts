@@ -1254,7 +1254,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
 
           if (lkOaiDebug) {
-            this.#logger.debug(this.loggableEvent(event), `(client) -> ${event.type}`);
+            this.#logger.debug(
+              {
+                eventType: event.type,
+                'lk.pii.event': this.loggableEvent(event),
+              },
+              'sent OpenAI Realtime client event',
+            );
           }
 
           this.emit('openai_client_event_queued', event);
@@ -1285,7 +1291,13 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       this.emit('openai_server_event_received', event);
       if (lkOaiDebug) {
-        this.#logger.debug(this.loggableEvent(event), `(server) <- ${event.type}`);
+        this.#logger.debug(
+          {
+            eventType: event.type,
+            'lk.pii.event': this.loggableEvent(event),
+          },
+          'received OpenAI Realtime server event',
+        );
       }
 
       try {
@@ -1369,7 +1381,13 @@ export class RealtimeSession extends llm.RealtimeSession {
           wsConn.close();
           return;
         }
-        this.#logger.error({ error, event }, 'Failed to handle OpenAI Realtime API event');
+        this.#logger.error(
+          {
+            error,
+            'lk.pii.event': event,
+          },
+          'Failed to handle OpenAI Realtime API event',
+        );
       }
     };
 

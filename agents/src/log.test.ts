@@ -39,4 +39,82 @@ describe('OTEL logging', () => {
       expect(messages).toContain('log from fresh logger');
     });
   });
+
+  it('exports sensitive content as a redactable attribute instead of log body text', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+
+    initPinoCloudExporter({
+      cloudHostname: 'example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+    enableOtelLogging();
+
+    log().info({ 'lk.pii.user_input': 'secret transcript' }, 'received user input');
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find((logObj) => {
+          return logObj.msg === 'received user input';
+        });
+      expect(record).toMatchObject({
+        msg: 'received user input',
+        'lk.pii.user_input': 'secret transcript',
+      });
+      expect(record?.msg).not.toContain('secret transcript');
+    });
+  });
+
+  it('keeps operational errors, reasons, framework URLs, and resource IDs in non-PII fields', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+
+    initPinoCloudExporter({
+      cloudHostname: 'example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+    enableOtelLogging();
+
+    log().error({ error: new Error('connection failed') }, 'provider failed');
+    log().warn({ reason: 'remote close' }, 'provider disconnected');
+    log().info({ baseUrl: 'wss://example.livekit.cloud' }, 'connecting to framework');
+    log().info({ avatarId: 'avatar-123' }, 'avatar session started');
+
+    await vi.waitFor(() => {
+      const records = emitSpy.mock.calls.map(([logObj]) => logObj);
+      const errorRecord = records.find((logObj) => logObj.msg === 'provider failed');
+      expect(errorRecord).toMatchObject({
+        msg: 'provider failed',
+        error: {
+          type: 'Error',
+          message: 'connection failed',
+        },
+      });
+      expect(errorRecord).not.toHaveProperty('lk.pii.error');
+
+      const reasonRecord = records.find((logObj) => logObj.msg === 'provider disconnected');
+      expect(reasonRecord).toMatchObject({
+        msg: 'provider disconnected',
+        reason: 'remote close',
+      });
+      expect(reasonRecord).not.toHaveProperty('lk.pii.reason');
+
+      const connectionRecord = records.find((logObj) => logObj.msg === 'connecting to framework');
+      expect(connectionRecord).toMatchObject({
+        msg: 'connecting to framework',
+        baseUrl: 'wss://example.livekit.cloud',
+      });
+      expect(connectionRecord).not.toHaveProperty('lk.pii.base_url');
+
+      const avatarRecord = records.find((logObj) => logObj.msg === 'avatar session started');
+      expect(avatarRecord).toMatchObject({
+        msg: 'avatar session started',
+        avatarId: 'avatar-123',
+      });
+      expect(avatarRecord).not.toHaveProperty('lk.pii.avatar_id');
+    });
+  });
 });

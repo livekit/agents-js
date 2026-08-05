@@ -731,6 +731,28 @@ function toRFC3339(valueMs: number | Date): string {
   return truncated.toISOString();
 }
 
+const SESSION_OPTION_KEY_ALIASES: Record<string, string> = {
+  keyterms: 'lk.pii.keyterms',
+};
+
+function serializeSessionOptions(options: SessionReport['options']): Record<string, unknown> {
+  const serialize = (value: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        SESSION_OPTION_KEY_ALIASES[key] ?? key,
+        nestedValue !== null &&
+        typeof nestedValue === 'object' &&
+        !Array.isArray(nestedValue) &&
+        (Object.getPrototypeOf(nestedValue) === Object.prototype ||
+          Object.getPrototypeOf(nestedValue) === null)
+          ? serialize(nestedValue as Record<string, unknown>)
+          : nestedValue,
+      ]),
+    );
+
+  return serialize(options as unknown as Record<string, unknown>);
+}
+
 /**
  * Upload session report to LiveKit Cloud observability.
  * @param options - Configuration with agentName, cloudHostname, and report
@@ -782,7 +804,7 @@ export async function uploadSessionReport(options: {
     timestampMs: report.startedAt || report.timestamp || 0,
     attributes: {
       ...commonAttrs,
-      'session.options': report.options || {},
+      'session.options': serializeSessionOptions(report.options),
       'session.report_timestamp': report.timestamp,
       agent_name: agentName,
       usage,

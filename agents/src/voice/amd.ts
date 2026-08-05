@@ -818,7 +818,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         isMachine: result.isMachine,
         speechDurationMs: result.speechDurationMs,
         delayMs: result.delayMs,
-        transcript: result.transcript,
+        'lk.pii.transcript': result.transcript,
       },
       'amd prediction',
     );
@@ -869,7 +869,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return false;
     }
     this._log.debug(
-      { category: this.verdictResult.category, transcript: info.newTranscript },
+      {
+        category: this.verdictResult.category,
+        'lk.pii.transcript': info.newTranscript,
+      },
       'skipping auto reply: AMD already returned a machine verdict',
     );
     return true;

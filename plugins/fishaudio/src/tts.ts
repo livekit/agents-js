@@ -643,7 +643,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
           if (!finished.done) finished.resolve();
         } else {
-          this.#logger.debug({ event }, 'unknown Fish Audio event');
+          this.#logger.debug({ 'lk.pii.event': event }, 'unknown Fish Audio event');
         }
       };
 

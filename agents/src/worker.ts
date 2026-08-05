@@ -644,7 +644,10 @@ export class AgentServer {
           wsData = `${wsData.slice(0, 128)}...(+${wsData.length - 128} more)`;
         }
         const type = typeof event.data;
-        this.#logger.warn({ type, ws_data: wsData }, `unexpected message type: ${type}`);
+        this.#logger.warn(
+          { type, 'lk.pii.ws_data': wsData },
+          'received unexpected worker message type',
+        );
         return;
       }
 
