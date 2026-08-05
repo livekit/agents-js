@@ -24,9 +24,27 @@ import type { STTEncoding, STTModels, VoiceFocus } from './models.js';
 
 // Speech models in the Universal-3 Pro family, which share the same parameter support.
 const U3_PRO_MODELS = ['u3-rt-pro', 'u3-rt-pro-beta-1', 'universal-3-5-pro'] as const;
+const MAX_AGENT_CONTEXT_CHARS = 1750;
+
+// Options only the Universal-3 Pro family accepts. Passing them to another model is rejected,
+// and any left over from a previous U3 Pro model are dropped when switching away.
+const U3_PRO_ONLY_PARAMS = [
+  'prompt',
+  'agentContext',
+  'previousContextNTurns',
+  'voiceFocus',
+  'voiceFocusThreshold',
+  'mode',
+] as const;
 
 function isU3ProModel(model: STTModels): boolean {
   return U3_PRO_MODELS.includes(model as (typeof U3_PRO_MODELS)[number]);
+}
+
+function validateAgentContext(agentContext: string | undefined): void {
+  if (agentContext !== undefined && agentContext.length > MAX_AGENT_CONTEXT_CHARS) {
+    throw new Error(`agentContext must be at most ${MAX_AGENT_CONTEXT_CHARS} characters`);
+  }
 }
 
 // AssemblyAI Universal-Streaming (v3) message envelope. All fields are optional
@@ -121,10 +139,9 @@ export interface STTOptions {
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
   /**
-   * When the model supports it, let an `AgentSession` push each assistant reply into
-   * `agentContext` so it is carried into the model's conversation context. Defaults to false;
-   * set true to enable. Prior user turns are carried automatically by the model regardless of
-   * this flag. Ignored on models without context support.
+   * @deprecated Use `new AgentSession({ sttContextOptions: { forwardChatContext: ... } })`
+   * instead. On the Universal-3 Pro family, assistant replies are carried into `agentContext` by
+   * default; pass `false` to opt out. On other models it is off.
    */
   agentContextCarryover?: boolean;
   baseUrl: string;
@@ -156,20 +173,27 @@ export class STT extends stt.STT {
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
-    // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
+    validateAgentContext(opts.agentContext);
+
+    // u3-rt-pro family — "u3-pro" is normalized below — supports native chat context.
     const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
-    if (opts.agentContextCarryover && !supportsCarryover) {
+    if (opts.agentContextCarryover !== undefined) {
       log().warn(
-        `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+        'agentContextCarryover is deprecated, use AgentSession({ sttContextOptions: { forwardChatContext: ... } }) instead',
       );
+      if (opts.agentContextCarryover && !supportsCarryover) {
+        log().warn(
+          `agentContextCarryover is enabled but model '${rawModel}' does not support it; ignoring`,
+        );
+      }
     }
     super({
       streaming: true,
       interimResults: true,
       alignedTranscript: 'word',
       keyterms: true,
-      chatContext: (opts.agentContextCarryover ?? false) && supportsCarryover,
+      chatContext: supportsCarryover && (opts.agentContextCarryover ?? true),
     });
 
     if (opts.speechModel === 'u3-pro') {
@@ -179,14 +203,7 @@ export class STT extends stt.STT {
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     if (!isU3ProModel(speechModel)) {
-      for (const param of [
-        'prompt',
-        'agentContext',
-        'previousContextNTurns',
-        'voiceFocus',
-        'voiceFocusThreshold',
-        'mode',
-      ] as const) {
+      for (const param of U3_PRO_ONLY_PARAMS) {
         if (opts[param] !== undefined) {
           throw new Error(
             `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
@@ -220,13 +237,55 @@ export class STT extends stt.STT {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
-    // session keyterms so a user update doesn't drop them)
+    validateAgentContext(opts.agentContext);
+
     const nextOpts = { ...opts };
+
+    // Mirror the constructor: normalize the deprecated alias before capability/validation checks.
+    if (nextOpts.speechModel === 'u3-pro') {
+      log().warn("'u3-pro' is deprecated, use 'universal-3-5-pro' instead.");
+      nextOpts.speechModel = 'universal-3-5-pro';
+    }
+
+    // Switching to a model that can't accept U3-Pro-only fields: reject any passed explicitly in
+    // this same call, mirroring the constructor's validation.
+    if (nextOpts.speechModel !== undefined && !isU3ProModel(nextOpts.speechModel)) {
+      for (const param of U3_PRO_ONLY_PARAMS) {
+        if (nextOpts[param] !== undefined) {
+          throw new Error(
+            `The '${param}' parameter is only supported with the ${U3_PRO_MODELS.join(', ')} models.`,
+          );
+        }
+      }
+    }
+
+    // session keyterms so a user update doesn't drop them)
     if (nextOpts.keytermsPrompt !== undefined) {
       this.#userKeyterms = [...nextOpts.keytermsPrompt];
       nextOpts.keytermsPrompt = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
     }
     this.#opts = { ...this.#opts, ...nextOpts };
+
+    // When the model changes, recompute chat-context support and drop any stale U3-Pro-only fields
+    // (e.g. the auto-populated agentContext) the new model can't accept. #connectWS and the stream's
+    // UpdateConfiguration serialize the whole baseline, so leaving them set would send parameters a
+    // non-U3-Pro model rejects and keep the session forwarding assistant replies. Mirrors the
+    // clearing logic in agents/src/inference/stt.ts updateOptions.
+    if (nextOpts.speechModel !== undefined) {
+      const supportsCarryover = isU3ProModel(this.#opts.speechModel);
+      this.updateCapabilities({
+        chatContext: supportsCarryover && (this.#opts.agentContextCarryover ?? true),
+      });
+      if (!supportsCarryover) {
+        for (const param of U3_PRO_ONLY_PARAMS) {
+          if (this.#opts[param] !== undefined) {
+            this.#opts[param] = undefined;
+            nextOpts[param] = undefined; // propagate the clearing to live streams
+          }
+        }
+      }
+    }
+
     for (const ref of this.#streams) {
       const stream = ref.deref();
       if (stream) {
@@ -259,9 +318,14 @@ export class STT extends stt.STT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) {
+      return;
+    }
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
-      this.updateOptions({ agentContext: chatItem.textContent });
+      this.updateOptions({
+        agentContext: chatItem.textContent.slice(-MAX_AGENT_CONTEXT_CHARS),
+      });
     }
   }
 
@@ -309,6 +373,8 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    validateAgentContext(opts.agentContext);
+
     this.#opts = { ...this.#opts, ...opts };
 
     const configMsg: Record<string, unknown> = { type: 'UpdateConfiguration' };

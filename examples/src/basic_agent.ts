@@ -89,7 +89,7 @@ export default defineAgent({
         },
       },
       // automatically detect keyterms and apply them to the STT per user turn
-      keytermsOptions: {
+      sttContextOptions: {
         keyterms: ['LiveKit'],
         keytermDetection: {
           enabled: true,

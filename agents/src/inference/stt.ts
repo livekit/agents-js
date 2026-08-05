@@ -7,6 +7,7 @@ import type { WebSocket } from 'ws';
 import { APIError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
+import { ChatMessage } from '../llm/index.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import {
@@ -19,6 +20,7 @@ import {
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type AudioBuffer, Event, Task, cancelAndWait, shortuuid, waitForAbort } from '../utils.js';
 import { type VAD, VADEventType, type VADStream } from '../vad.js';
+import type { ConversationItemAddedEvent } from '../voice/events.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type SttServerEvent,
@@ -132,8 +134,10 @@ export interface AssemblyAIOptions {
   keyterms_prompt?: string[];
   /** Enable speaker diarization. Default: false. */
   speaker_labels?: boolean;
-  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1500 chars. */
+  /** Context to bias recognition. Only supported with u3-rt-pro. Max 1750 chars. */
   agent_context?: string;
+  /** Prior turns carried as context; 0 disables carryover. Only supported with u3-rt-pro. */
+  previous_context_n_turns?: number;
   /** Isolate the primary voice. Only supported with u3-rt-pro. */
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
@@ -280,6 +284,29 @@ function keytermsExtraForModel(
   const rawUser = extraKwargs[key] ?? [];
   const existing = typeof rawUser === 'string' ? [rawUser] : Array.isArray(rawUser) ? rawUser : [];
   return { [key]: [...new Set([...existing, ...sessionKeyterms])] };
+}
+
+const ASSEMBLYAI_CARRYOVER_MODELS = [
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+] as const;
+
+const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
+
+// AssemblyAIOptions extras only the U3 Pro family accepts (see AssemblyAIOptions). They are
+// dropped from `modelOptions` when switching to a model that rejects them, so `connectWs` /
+// `session.update` don't ship them to a non-U3-Pro model. Mirrors U3_PRO_ONLY_PARAMS in
+// plugins/assemblyai/src/stt.ts.
+const ASSEMBLYAI_U3_PRO_ONLY_EXTRAS = [
+  'agent_context',
+  'previous_context_n_turns',
+  'voice_focus',
+  'voice_focus_threshold',
+  'mode',
+] as const;
+
+function supportsChatContext(model: string | undefined): boolean {
+  return model === ASSEMBLYAI_CARRYOVER_MODELS[0] || model === ASSEMBLYAI_CARRYOVER_MODELS[1];
 }
 
 // Models verified to carry word timings. Unknown models stay disabled until verified.
@@ -457,6 +484,21 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
+    // Parse language from model string if provided: "provider/model:language".
+    let nextModel = opts?.model;
+    let nextLanguage = opts?.language;
+    let hasLanguageConflict = false;
+    if (typeof nextModel === 'string') {
+      const [parsedModel, parsedLanguage] = parseSTTModelString(nextModel);
+      if (parsedLanguage !== undefined) {
+        hasLanguageConflict =
+          !!nextLanguage && !areLanguagesEquivalent(nextLanguage, parsedLanguage);
+        if (!hasLanguageConflict) {
+          nextLanguage = parsedLanguage as STTLanguages;
+        }
+        nextModel = parsedModel as TModel;
+      }
+    }
     const initialModel =
       typeof opts?.model === 'string' ? parseSTTModelString(opts.model)[0] : undefined;
     const normalizedFallback = opts?.fallback ? normalizeSTTFallback(opts.fallback) : undefined;
@@ -471,13 +513,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms:
-        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
-        undefined,
+        keytermsExtraForModel(typeof nextModel === 'string' ? nextModel : undefined) !== undefined,
+      chatContext: supportsChatContext(typeof nextModel === 'string' ? nextModel : undefined),
     });
 
     const {
-      model,
-      language,
       baseURL,
       encoding = DEFAULT_ENCODING,
       sampleRate = DEFAULT_SAMPLE_RATE,
@@ -499,22 +539,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
     }
 
-    // Parse language from model string if provided: "provider/model:language"
-    let nextModel = model;
-    let nextLanguage = language;
-    if (typeof nextModel === 'string') {
-      const [parsedModel, parsedLanguage] = parseSTTModelString(nextModel);
-      if (parsedLanguage !== undefined) {
-        if (nextLanguage && !areLanguagesEquivalent(nextLanguage, parsedLanguage)) {
-          this.#logger.warn(
-            '`language` is provided via both argument and model, using the one from the argument',
-            { language: nextLanguage, model: nextModel },
-          );
-        } else {
-          nextLanguage = parsedLanguage as STTLanguages;
-        }
-        nextModel = parsedModel as TModel;
-      }
+    if (hasLanguageConflict) {
+      this.#logger.warn(
+        '`language` is provided via both argument and model, using the one from the argument',
+        { language: nextLanguage, model: opts?.model },
+      );
     }
     this.vad = resolveVADForModel(nextModel, vad);
 
@@ -586,8 +615,29 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       ];
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        chatContext: supportsChatContext(this.opts.model),
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
+
+      // Drop U3-Pro-only extras the new model can't accept. `updateOptions` merges `modelOptions`
+      // and never removes keys, and `connectWs` serializes the whole baseline as `settings.extra`,
+      // so stale U3-Pro-only fields (agent_context, previous_context_n_turns, voice_focus,
+      // voice_focus_threshold, mode) would otherwise be sent to a model that rejects them.
+      // Propagate the removal to live streams via `<key>: undefined`, dropped from the wire payload.
+      if (!supportsChatContext(this.opts.model) && this.opts.modelOptions) {
+        const current = this.opts.modelOptions as Record<string, unknown>;
+        const stale = ASSEMBLYAI_U3_PRO_ONLY_EXTRAS.filter((key) => key in current);
+        if (stale.length > 0) {
+          const cleared = { ...current };
+          const forwarded = { ...(nextOpts.modelOptions as Record<string, unknown> | undefined) };
+          for (const key of stale) {
+            delete cleared[key];
+            forwarded[key] = undefined;
+          }
+          this.opts.modelOptions = cleared as STTOptions<TModel>;
+          nextOpts.modelOptions = forwarded as STTOptions<TModel>;
+        }
+      }
     }
 
     if (nextOpts.modelOptions) {
@@ -640,6 +690,25 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       } else {
         stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
       }
+    }
+  }
+
+  override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    if (!this.capabilities.chatContext) {
+      return;
+    }
+
+    const chatItem = ev.item;
+    if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
+      let text = chatItem.textContent;
+      if (text.length > ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS) {
+        this.#logger.debug(
+          { fromChars: text.length, toChars: ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS },
+          'truncating agent_context carryover',
+        );
+        text = text.slice(-ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS);
+      }
+      this.updateOptions({ modelOptions: { agent_context: text } as STTOptions<TModel> });
     }
   }
 
