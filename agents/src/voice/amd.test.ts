@@ -879,7 +879,7 @@ describe('AMD', () => {
     expect((amd as unknown as { maxEndpointingDelayMs: number }).maxEndpointingDelayMs).toBe(1_250);
   });
 
-  it('resets detection timer after track subscription', async () => {
+  it('arms detection timer only when listening starts', async () => {
     const room = new EventEmitter() as EventEmitter & {
       isConnected: boolean;
       remoteParticipants: Map<string, unknown>;
@@ -913,11 +913,179 @@ describe('AMD', () => {
     setTimeout(() => {
       participant.trackPublications.set(publication.sid, publication);
       room.emit(RoomEvent.TrackSubscribed, {}, publication, participant);
-    }, 30);
+    }, 80);
 
-    expect(await waitForPending(promise, 65)).toBe(false);
+    expect(await waitForPending(promise, 70)).toBe(false);
     await expect(promise).resolves.toMatchObject({ reason: 'detection_timeout' });
   }, 5_000);
+
+  it('settles when participant disconnects before publishing a track', async () => {
+    const room = new EventEmitter() as EventEmitter & {
+      isConnected: boolean;
+      remoteParticipants: Map<string, unknown>;
+    };
+    const participant = {
+      identity: 'callee',
+      kind: ParticipantKind.SIP,
+      trackPublications: new Map(),
+    };
+    room.isConnected = true;
+    room.remoteParticipants = new Map([[participant.identity, participant]]);
+
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      participantIdentity: participant.identity,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    room.remoteParticipants.delete(participant.identity);
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_missing',
+    });
+  });
+
+  it('settles when track publication times out', async () => {
+    vi.useFakeTimers();
+    try {
+      const room = new EventEmitter() as EventEmitter & {
+        isConnected: boolean;
+        remoteParticipants: Map<string, unknown>;
+      };
+      room.isConnected = true;
+      room.remoteParticipants = new Map();
+
+      const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+      session.llm = new StaticLLM(
+        JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }),
+      );
+      const amd = new AMD(asAgentSession(session), {
+        llm: session.llm,
+        participantIdentity: 'callee',
+        suppressCompatibilityWarning: true,
+      });
+
+      const promise = amd.execute();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(promise).resolves.toMatchObject({
+        category: AMDCategory.UNCERTAIN,
+        reason: 'participant_missing',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles when participant disappears after track subscription', async () => {
+    const room = new EventEmitter() as EventEmitter & {
+      isConnected: boolean;
+      remoteParticipants: Map<string, unknown>;
+    };
+    const publication = {
+      sid: 'track_sid',
+      kind: TrackKind.KIND_AUDIO,
+      subscribed: true,
+      track: {},
+    };
+    const participant = {
+      identity: 'callee',
+      kind: ParticipantKind.STANDARD,
+      trackPublications: new Map([[publication.sid, publication]]),
+    };
+    room.isConnected = true;
+    room.remoteParticipants = new Map();
+
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      participantIdentity: participant.identity,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    room.emit(RoomEvent.TrackSubscribed, {}, publication, participant);
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_missing',
+    });
+  });
+
+  it('settles when SIP answer wait fails', async () => {
+    const room = new EventEmitter() as EventEmitter & {
+      isConnected: boolean;
+      remoteParticipants: Map<string, unknown>;
+    };
+    const publication = {
+      sid: 'track_sid',
+      kind: TrackKind.KIND_AUDIO,
+      subscribed: true,
+      track: {},
+    };
+    const participant = {
+      identity: 'callee',
+      kind: ParticipantKind.SIP,
+      attributes: {},
+      trackPublications: new Map([[publication.sid, publication]]),
+    };
+    room.isConnected = true;
+    room.remoteParticipants = new Map([[participant.identity, participant]]);
+
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      participantIdentity: participant.identity,
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    room.emit(RoomEvent.TrackSubscribed, {}, publication, participant);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    room.remoteParticipants.delete(participant.identity);
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_missing',
+    });
+  });
+
+  it('can settle uncertain before listening starts', async () => {
+    const room = new EventEmitter() as EventEmitter & {
+      isConnected: boolean;
+      remoteParticipants: Map<string, unknown>;
+    };
+    room.isConnected = true;
+    room.remoteParticipants = new Map();
+
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN, reason: 'unused' }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      participantIdentity: 'callee',
+      suppressCompatibilityWarning: true,
+    });
+
+    const promise = amd.execute();
+    (
+      amd as unknown as {
+        settle: (category: AMDCategory, reason: string) => void;
+      }
+    ).settle(AMDCategory.UNCERTAIN, 'participant_missing');
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_missing',
+    });
+  });
 
   it('subtracts already-elapsed silence from the silence timer (onUserSpeechEnded)', async () => {
     const session = new MockSession();
