@@ -125,6 +125,7 @@ import {
   type _TextOut,
   _injectRunningToolCalls,
   _stripRunningToolCalls,
+  _timeToFirstSentence,
   applyInstructionsModality,
   forwardedTextFor,
   performAudioForwarding,
@@ -3190,6 +3191,13 @@ export class AgentActivity implements RecognitionHooks {
 
     if (llmGenData.ttft !== undefined) {
       assistantMetrics.llmNodeTtft = llmGenData.ttft; // already in seconds
+    }
+    if (llmGenData.tps !== undefined) {
+      assistantMetrics.llmNodeTps = llmGenData.tps;
+    }
+    const llmNodeTtfs = _timeToFirstSentence(llmGenData, firstTtsGenData);
+    if (llmNodeTtfs !== undefined) {
+      assistantMetrics.llmNodeTtfs = llmNodeTtfs;
     }
     if (firstTtsGenData?.ttfb !== undefined) {
       assistantMetrics.ttsNodeTtfb = firstTtsGenData.ttfb; // already in seconds

@@ -64,6 +64,8 @@ export class SimpleOTLPHttpLogExporter {
     'endOfTurnDelay',
     'onUserTurnCompletedDelay',
     'llmNodeTtft',
+    'llmNodeTps',
+    'llmNodeTtfs',
     'ttsNodeTtfb',
     'e2eLatency',
   ]);

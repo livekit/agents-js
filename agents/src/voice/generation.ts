@@ -142,7 +142,9 @@ export class _LLMGenerationData {
   generatedToolCalls: FunctionCall[];
   generatedExtra: Record<string, unknown> = {};
   id: string;
+  startedAt?: number;
   ttft?: number;
+  tps?: number;
 
   constructor(
     public readonly textStream: ReadableStream<string | FlushSentinel>,
@@ -166,6 +168,19 @@ export interface _TTSGenerationData {
   timedTextsFut: Future<ReadableStream<TimedString> | null, never>;
   /** Time to first byte (set when first audio frame is received) */
   ttfb?: number;
+  /** Time when the first text reached the TTS provider, if stamped by a LiveKit TTS stream. */
+  synthesisStartedAt?: number;
+}
+
+/** @internal */
+export function _timeToFirstSentence(
+  llmData: _LLMGenerationData,
+  ttsData?: _TTSGenerationData | null,
+): number | undefined {
+  if (llmData.startedAt === undefined || ttsData?.synthesisStartedAt === undefined) {
+    return undefined;
+  }
+  return ttsData.synthesisStartedAt - llmData.startedAt;
 }
 
 // TODO(brian): remove this class in favor of ToolOutput
@@ -576,7 +591,11 @@ export function performLLMInference(
       null;
     let llmStream: ReadableStream<string | ChatChunk | FlushSentinel> | null = null;
     const startTime = performance.now() / 1000; // Convert to seconds
+    data.startedAt = startTime;
     let firstTokenReceived = false;
+    let usage: ChatChunk['usage'];
+    let firstContentAt: number | undefined;
+    let lastContentAt = 0;
 
     try {
       llmStream = await node(chatCtx, toolCtx, modelSettings);
@@ -607,10 +626,18 @@ export function performLLMInference(
         if (isFlushSentinel(chunk)) {
           await textWriter.write(chunk);
         } else if (typeof chunk === 'string') {
-          data.generatedText += chunk;
-          await textWriter.write(chunk);
+          if (chunk) {
+            const now = performance.now() / 1000;
+            firstContentAt ??= now;
+            lastContentAt = now;
+            data.generatedText += chunk;
+            await textWriter.write(chunk);
+          }
           // TODO(shubhra): better way to check??
         } else {
+          if (chunk.usage !== undefined) {
+            usage = chunk.usage;
+          }
           if (chunk.delta === undefined) {
             continue;
           }
@@ -639,6 +666,9 @@ export function performLLMInference(
           }
 
           if (chunk.delta.content) {
+            const now = performance.now() / 1000;
+            firstContentAt ??= now;
+            lastContentAt = now;
             data.generatedText += chunk.delta.content;
             await textWriter.write(chunk.delta.content);
           }
@@ -675,6 +705,13 @@ export function performLLMInference(
       await llmStream?.cancel();
       await textWriter.close();
       await toolCallWriter.close();
+    }
+
+    if (!signal.aborted && usage !== undefined && firstContentAt !== undefined) {
+      const streamingWindow = lastContentAt - firstContentAt;
+      if (streamingWindow > 0) {
+        data.tps = usage.completionTokens / streamingWindow;
+      }
     }
   };
 
@@ -742,6 +779,7 @@ export function performTTSInference(
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
+    synthesisStartedAt: undefined,
   };
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
@@ -792,7 +830,10 @@ export function performTTSInference(
         if (!firstByteReceived) {
           firstByteReceived = true;
           const ttsStartedTime = frame.userdata[USERDATA_TTS_STARTED_TIME];
-          const anchor = typeof ttsStartedTime === 'number' ? ttsStartedTime : startTime;
+          if (typeof ttsStartedTime === 'number') {
+            genData.synthesisStartedAt = ttsStartedTime;
+          }
+          const anchor = genData.synthesisStartedAt ?? startTime;
           if (anchor !== undefined) {
             ttfb = performance.now() / 1000 - anchor;
             genData.ttfb = ttfb;
