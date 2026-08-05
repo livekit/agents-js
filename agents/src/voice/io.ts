@@ -338,8 +338,21 @@ export class AgentInput {
   }
 
   set audio(stream: AudioInput | null) {
+    if (stream === this._audioStream) {
+      return;
+    }
+
+    this._audioStream?.onDetached();
     this._audioStream = stream;
     this.audioChanged();
+
+    if (this._audioStream) {
+      if (this._audioEnabled) {
+        this._audioStream.onAttached();
+      } else {
+        this._audioStream.onDetached();
+      }
+    }
   }
 }
 
