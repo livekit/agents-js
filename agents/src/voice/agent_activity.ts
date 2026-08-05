@@ -118,6 +118,7 @@ import {
   createSessionUsageUpdatedEvent,
   createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
+  createUserTranscriptionTimeoutEvent,
 } from './events.js';
 import type { ToolExecutionOutput, ToolOutput, _TTSGenerationData } from './generation.js';
 import {
@@ -709,6 +710,7 @@ export class AgentActivity implements RecognitionHooks {
       sttProvider: this.getSttProvider(),
       getLinkedParticipant: () => this.agentSession._roomIO?.linkedParticipant,
       shouldDiscardAudioForStt: () => this.shouldDiscardInputAudio(),
+      transcriptionTimeout: this.agentSession.sessionOptions.transcriptionTimeout,
     });
 
     const sttPipeline = reuseResources?.sttPipeline;
@@ -1697,6 +1699,16 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.cancelSpeechPauseTask = this.cancelSpeechPause();
+  }
+
+  onTranscriptionTimeout(speechDuration: number, turnStart: number): void {
+    this.agentSession.emit(
+      AgentSessionEventTypes.UserTranscriptionTimeout,
+      createUserTranscriptionTimeoutEvent({
+        speechDuration,
+        vadSpeechStartedAt: turnStart,
+      }),
+    );
   }
 
   /** Forward audio EOT predictions up to the session so listeners (e.g.
