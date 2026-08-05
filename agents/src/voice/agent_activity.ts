@@ -2698,25 +2698,25 @@ export class AgentActivity implements RecognitionHooks {
         .catch(() => this.logger.debug('firstFrameFut cancelled before first frame'));
     }
 
-    const trNode = await this.agent.transcriptionNode(transcriptionInput, {});
-    let textOut: _TextOut | null = null;
-    if (trNode) {
-      const [textForwardTask, _textOut] = performTextForwarding(
-        trNode,
-        replyAbortController,
-        transcriptionOutput,
-      );
-      textOut = _textOut;
-      tasks.push(textForwardTask);
-    }
-
-    if (!audioOutput && textOut) {
-      textOut.firstTextFut.await
-        .then(() => onFirstFrame(null))
-        .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
-    }
-
     try {
+      const trNode = await this.agent.transcriptionNode(transcriptionInput, {});
+      let textOut: _TextOut | null = null;
+      if (trNode) {
+        const [textForwardTask, _textOut] = performTextForwarding(
+          trNode,
+          replyAbortController,
+          transcriptionOutput,
+        );
+        textOut = _textOut;
+        tasks.push(textForwardTask);
+      }
+
+      if (!audioOutput && textOut) {
+        textOut.firstTextFut.await
+          .then(() => onFirstFrame(null))
+          .catch(() => this.logger.debug('firstTextFut cancelled before first frame'));
+      }
+
       await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
       if (audioOutput) {
@@ -2765,6 +2765,13 @@ export class AgentActivity implements RecognitionHooks {
         }
         this.restoreInterruptionByAudioActivity();
       }
+    } catch (error) {
+      replyAbortController.abort();
+      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      if (audioOutput && audioOutput.pendingPlayoutSegments > 0) {
+        audioOutput.clearBuffer();
+      }
+      throw error;
     } finally {
       // In a finally so the listener is dropped even if an await above throws —
       // otherwise it would leak on the shared audioOutput.

@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { TTS } from '../tts/tts.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
-import { Agent } from './agent.js';
+import { Future } from '../utils.js';
+import { Agent, type ModelSettings } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import {
   AudioOutput,
@@ -16,6 +17,7 @@ import {
   createTimedString,
   isTimedString,
 } from './io.js';
+import { SpeechHandle } from './speech_handle.js';
 
 function frame(durationMs = 20, sampleRate = 24000): AudioFrame {
   const samples = Math.floor((sampleRate * durationMs) / 1000);
@@ -97,6 +99,55 @@ class ImmediateAudioOutput extends AudioOutput {
       this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
     }
   }
+}
+
+class CleanupTrackingAudioOutput extends AudioOutput {
+  readonly frameCaptured = new Future<void>();
+  clearBufferCalls = 0;
+
+  constructor() {
+    super(24000);
+  }
+
+  async captureFrame(audio: AudioFrame): Promise<void> {
+    await super.captureFrame(audio);
+    if (!this.frameCaptured.done) {
+      this.frameCaptured.resolve();
+    }
+  }
+
+  flush(): void {
+    super.flush();
+  }
+
+  clearBuffer(): void {
+    this.clearBufferCalls += 1;
+    if (this.pendingPlayoutSegments > 0) {
+      this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+    }
+  }
+}
+
+class ThrowingTranscriptionAgent extends AlignedAgent {
+  constructor(private readonly audioOutput: CleanupTrackingAudioOutput) {
+    super([createTimedString({ text: 'Aligned', startTime: 0, endTime: 0.2 })]);
+  }
+
+  async transcriptionNode(): Promise<never> {
+    await this.audioOutput.frameCaptured.await;
+    throw new Error('simulated transcription hook failure');
+  }
+}
+
+interface TtsTaskInvoker {
+  ttsTask(
+    speechHandle: SpeechHandle,
+    text: string | ReadableStream<string>,
+    addToChatCtx: boolean,
+    modelSettings: ModelSettings,
+    replyAbortController: AbortController,
+    audio?: ReadableStream<AudioFrame> | null,
+  ): Promise<void>;
 }
 
 class CollectingTextOutput extends TextOutput {
@@ -214,6 +265,34 @@ describe('AgentActivity session.say aligned transcript', () => {
       expect(agent.ttsCalls).toBe(0);
       expect(transcriptionOutput.chunks).toEqual(['Raw scripted greeting.']);
     } finally {
+      await session.close();
+    }
+  });
+
+  it('cleans up audio forwarding when a custom transcription node throws', async () => {
+    const session = new AgentSession();
+    const audioOutput = new CleanupTrackingAudioOutput();
+    session.output.audio = audioOutput;
+
+    await session.start({ agent: new ThrowingTranscriptionAgent(audioOutput) });
+    const replyAbortController = new AbortController();
+    try {
+      const speechHandle = SpeechHandle.create();
+      speechHandle._authorizeGeneration();
+      const activity = session._activity as unknown as TtsTaskInvoker;
+
+      await expect(
+        activity.ttsTask(speechHandle, 'Raw scripted greeting.', false, {}, replyAbortController),
+      ).rejects.toThrow('simulated transcription hook failure');
+      await vi.waitFor(() => expect(audioOutput.capturedPlayoutSegments).toBe(1));
+
+      expect(replyAbortController.signal.aborted).toBe(true);
+      expect(audioOutput.clearBufferCalls).toBe(1);
+      expect(audioOutput.pendingPlayoutSegments).toBe(0);
+      expect(audioOutput.listenerCount(AudioOutput.EVENT_PLAYBACK_STARTED)).toBe(0);
+    } finally {
+      replyAbortController.abort();
+      audioOutput.removeAllListeners();
       await session.close();
     }
   });
