@@ -95,9 +95,11 @@ function modelParams(opts: TTSOptions): Record<string, string | number | boolean
     if (opts.temperature !== undefined) params.temperature = opts.temperature;
     if (opts.top_p !== undefined) params.top_p = opts.top_p;
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+    if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
     if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
   } else if (opts.modelId === 'coda') {
     if (opts.max_tokens !== undefined) params.max_tokens = opts.max_tokens;
+    if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
     if (opts.timeScaleFactor !== undefined) params.timeScaleFactor = opts.timeScaleFactor;
   } else if (opts.modelId.includes('mist')) {
     if (opts.speedAlpha !== undefined) params.speedAlpha = opts.speedAlpha;
