@@ -7,11 +7,12 @@
   "license": "Apache-2.0",
   "repository": "git@github.com:livekit/agents-js.git",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/homepage/knowledge_base/products dist/homepage/prompts && cp src/homepage/knowledge_base/products/*.md dist/homepage/knowledge_base/products/ && cp src/homepage/prompts/*.md dist/homepage/prompts/",
     "clean": "rm -rf dist",
     "clean:build": "pnpm clean && pnpm build",
     "lint": "eslint -f unix \"src/**/*.ts\"",
-    "test": "vitest run",
+    "test": "vitest run --root .. examples/src --exclude=examples/src/homepage/tests/evals/**",
+    "test:evals": "vitest run --config src/homepage/vitest.evals.config.ts",
     "test:watch": "vitest",
     "baseten:cloud": "tsx --env-file=.env src/baseten_restaurant_agent.ts dev --log-level=debug"
   },

@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     include: ['**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/.git/**', 'examples/src/homepage/tests/evals/**'],
     // it is recommended to define a name when using inline configs
     name: 'nodejs',
     environment: 'node',

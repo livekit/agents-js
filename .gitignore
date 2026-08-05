@@ -197,6 +197,7 @@ examples/src/test_*.ts
 !.changeset/*.md
 !**/README.md
 !**/CHANGELOG.md
+!examples/src/homepage/**/*.md
 !CONTRIBUTING.md
 !CLAUDE.md
 !.CODE_OF_CONDUCT.md
