@@ -33,6 +33,27 @@ describe('toResponsesTools', () => {
     ]);
   });
 
+  it('does not mutate raw JSON schemas', () => {
+    const rawSchema = {
+      type: 'object' as const,
+      properties: { city: { type: 'string' as const } },
+      required: ['city'],
+    };
+    const originalSchema = { ...rawSchema };
+    const fn = llm.tool({
+      name: 'lookup_weather',
+      description: 'Look up weather',
+      parameters: rawSchema,
+      execute: async () => 'sunny',
+    });
+
+    const tools = toResponsesTools(new llm.ToolContext([fn]), true);
+
+    expect(tools?.[0]).toMatchObject({ type: 'function', parameters: rawSchema });
+    expect((tools?.[0] as { parameters?: unknown } | undefined)?.parameters).not.toBe(rawSchema);
+    expect(rawSchema).toEqual(originalSchema);
+  });
+
   it('serializes OpenAI provider tools', () => {
     const tools = toResponsesTools(
       new llm.ToolContext([
