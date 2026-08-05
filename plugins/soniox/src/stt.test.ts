@@ -351,6 +351,59 @@ describe('processMessage', () => {
     expect(sd.targetTexts).toBeUndefined();
     expect(sd.sourceTexts!.join('')).toBe(sd.text);
   });
+
+  it('reports recognition usage for silent frames', () => {
+    const events = runProcess([{ tokens: [], total_audio_proc_ms: 3000 }]);
+
+    expect(events.map((event) => event.type)).toEqual([stt.SpeechEventType.RECOGNITION_USAGE]);
+    expect(events[0]?.recognitionUsage?.audioDuration).toBeCloseTo(3);
+  });
+
+  it('reports recognition usage without an endpoint token after transcript events', () => {
+    const events = runProcess([
+      { tokens: [nonfinalToken('hola', 'es')], total_audio_proc_ms: 2500 },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.INTERIM_TRANSCRIPT,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(2.5);
+  });
+
+  it('reports recognition usage deltas and skips unchanged totals', () => {
+    const events = runProcess([
+      { tokens: [], total_audio_proc_ms: 3000 },
+      { tokens: [], total_audio_proc_ms: 3000 },
+      { tokens: [], total_audio_proc_ms: 5000 },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.RECOGNITION_USAGE,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    const durations = events.map((event) => event.recognitionUsage?.audioDuration);
+    expect(durations).toEqual([3, 2]);
+    expect(durations.reduce<number>((sum, duration) => sum + (duration ?? 0), 0)).toBeCloseTo(5);
+  });
+
+  it('still reports recognition usage on endpoint frames after transcript events', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('Hello world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 1500,
+      },
+    ]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      stt.SpeechEventType.START_OF_SPEECH,
+      stt.SpeechEventType.FINAL_TRANSCRIPT,
+      stt.SpeechEventType.END_OF_SPEECH,
+      stt.SpeechEventType.RECOGNITION_USAGE,
+    ]);
+    expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(1.5);
+  });
 });
 
 // ---------------------------------------------------------------------------
