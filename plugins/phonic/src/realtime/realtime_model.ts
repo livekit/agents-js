@@ -401,6 +401,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolDefinitions: Phonic.InlineWebSocketTool[] = [];
   private configsForTools = new Map<string, PhonicToolConfig>();
   private pendingToolCallIds = new Set<string>();
+  // Tool outputs observed during the session, keyed by call id. livekit core commits realtime
+  // function_call items to the agent chat context but not their function_call_output, so on a
+  // mid-session reset the outputs would be lost from the rebuilt history; we re-inject them in
+  // buildTurnHistory.
+  private observedToolOutputs = new Map<string, llm.FunctionCallOutput>();
   private readyToStart = new Future<void>();
   private pendingGenerateReplyFut?: Future<llm.GenerationCreatedEvent>;
   private generateReplyRequestId = 0;
@@ -472,6 +477,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const item = chatCtx.getById(itemId);
       if (item?.type === 'function_call_output' && this.pendingToolCallIds.has(item.callId)) {
         this.pendingToolCallIds.delete(item.callId);
+        this.observedToolOutputs.set(item.callId, item);
         this.#logger.info(`Sending tool call output for ${item.name} (call_id: ${item.callId})`);
         this.socket?.sendToolCallOutput({
           type: 'tool_call_output',
@@ -1113,9 +1119,24 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private buildTurnHistory(chatCtx: llm.ChatContext): string | undefined {
     const lines: string[] = [];
+    const presentOutputCallIds = new Set(
+      chatCtx.items
+        .filter((i): i is llm.FunctionCallOutput => i.type === 'function_call_output')
+        .map((i) => i.callId),
+    );
     for (const item of chatCtx.items) {
       const text = chatItemToText(item);
       if (text) lines.push(text);
+      // Re-inject the tool output right after its call: livekit core doesn't commit realtime
+      // function_call_output to the agent chat context, so it's absent from the reset history
+      // unless we add back the output we observed. Skip if the ctx already carries it.
+      if (item.type === 'function_call' && !presentOutputCallIds.has(item.callId)) {
+        const output = this.observedToolOutputs.get(item.callId);
+        if (output) {
+          const outputText = chatItemToText(output);
+          if (outputText) lines.push(outputText);
+        }
+      }
     }
     if (lines.length === 0) return undefined;
     return lines.join('\n');
