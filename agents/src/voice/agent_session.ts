@@ -1297,14 +1297,17 @@ export class AgentSession<
           }
         }
 
-        if (this.closing && newActivity === 'start') {
+        if (this.closing) {
           this.logger.warn(
-            { agentId: this.nextActivity?.agent.id },
-            'Session is closing, skipping start of next activity',
+            { agentId: this.nextActivity?.agent.id, transition: newActivity },
+            'Session is closing, skipping activity transition',
           );
           if (reusableResources) {
             await cleanupReusableResources(reusableResources, this.logger);
             reusableResources = undefined;
+          }
+          if (newActivity === 'resume') {
+            await this.nextActivity?.close();
           }
           this.nextActivity = undefined;
           this.activity = undefined;
@@ -1737,25 +1740,26 @@ export class AgentSession<
     this._onAecWarmupExpired();
     this.off(AgentSessionEventTypes.UserInputTranscribed, this._onUserInputTranscribed);
 
-    if (this.activity) {
+    const activity = this.activity;
+    if (activity) {
       if (!drain) {
         try {
-          await this.activity.interrupt({ force: true }).await;
+          await activity.interrupt({ force: true }).await;
         } catch (error) {
           this.logger.warn({ error }, 'Error interrupting activity');
         }
       }
 
-      await this.activity.drain();
+      await activity.drain();
       // wait any uninterruptible speech to finish
-      await this.activity.currentSpeech?.waitForPlayout();
+      await activity.currentSpeech?.waitForPlayout();
 
       if (reason !== CloseReason.ERROR) {
-        this.activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
+        activity.commitUserTurn({ audioDetached: true, throwIfNotReady: false });
       }
 
       try {
-        this.activity.detachAudioInput();
+        activity.detachAudioInput();
       } catch (error) {
         // Ignore detach errors during cleanup - source may not have been set
       }
@@ -1771,7 +1775,7 @@ export class AgentSession<
     this.output.audio = null;
     this.output.transcription = null;
 
-    await this.activity?.close();
+    await activity?.close();
     this.activity = undefined;
 
     const sessionToolsets = this._toolCtx.toolsets;
