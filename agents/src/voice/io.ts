@@ -113,13 +113,25 @@ export abstract class AudioInput {
     await this.multiStream.close();
   }
 
-  onAttached(): void {
-    this._attached = true;
+  /**
+   * Framework-owned attach-state transition. Subclasses that wrap another
+   * {@link AudioInput} should override this to forward state, but application
+   * code should not call it — use {@link AgentInput.setAudioEnabled} instead.
+   *
+   * Keep this separate from {@link onAttached}/{@link onDetached}: those are
+   * overridable lifecycle hooks and must not be the only place the mute gate
+   * flips, or subclasses that omit `super` would silently break mute.
+   * @internal
+   */
+  setAttached(attached: boolean): void {
+    this._attached = attached;
   }
 
-  onDetached(): void {
-    this._attached = false;
-  }
+  /** Lifecycle hook invoked after the mute gate attaches. */
+  onAttached(): void {}
+
+  /** Lifecycle hook invoked after the mute gate detaches. */
+  onDetached(): void {}
 }
 
 export abstract class AudioOutput extends EventEmitter {
@@ -341,11 +353,7 @@ export class AgentInput {
       return;
     }
 
-    if (enable) {
-      this._audioStream.onAttached();
-    } else {
-      this._audioStream.onDetached();
-    }
+    this.applyAudioAttachState(this._audioStream, enable);
   }
 
   get audioEnabled(): boolean {
@@ -362,18 +370,23 @@ export class AgentInput {
     }
 
     if (this._audioStream) {
-      this._audioStream.onDetached();
+      this.applyAudioAttachState(this._audioStream, false);
     }
 
     this._audioStream = stream;
     this.audioChanged();
 
     if (this._audioStream) {
-      if (this._audioEnabled) {
-        this._audioStream.onAttached();
-      } else {
-        this._audioStream.onDetached();
-      }
+      this.applyAudioAttachState(this._audioStream, this._audioEnabled);
+    }
+  }
+
+  private applyAudioAttachState(stream: AudioInput, attached: boolean): void {
+    stream.setAttached(attached);
+    if (attached) {
+      stream.onAttached();
+    } else {
+      stream.onDetached();
     }
   }
 }

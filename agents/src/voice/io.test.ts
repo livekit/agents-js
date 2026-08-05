@@ -25,6 +25,12 @@ function makeFrame(sample: number): AudioFrame {
   return new AudioFrame(new Int16Array([sample]), 16000, 1, 1);
 }
 
+class HookOnlyAudioInput extends FakeAudioInput {
+  // Intentionally omit super — mute must not depend on lifecycle hooks.
+  override onAttached(): void {}
+  override onDetached(): void {}
+}
+
 describe('AgentInput.setAudioEnabled', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
@@ -60,6 +66,34 @@ describe('AgentInput.setAudioEnabled', () => {
     await audio.push(makeFrame(3));
     await delay(50);
     expect(received).toEqual([1, 3]);
+
+    await audio.close();
+    await pump;
+  });
+
+  it('mutes even when onDetached overrides omit super', async () => {
+    const audio = new HookOnlyAudioInput();
+    const input = new AgentInput(() => {});
+    input.audio = audio;
+
+    const received: number[] = [];
+    const reader = audio.stream.getReader();
+    const pump = (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received.push(value.data[0]!);
+      }
+    })();
+
+    await audio.push(makeFrame(1));
+    await delay(50);
+    expect(received).toEqual([1]);
+
+    input.setAudioEnabled(false);
+    await audio.push(makeFrame(2));
+    await delay(50);
+    expect(received).toEqual([1]);
 
     await audio.close();
     await pump;
