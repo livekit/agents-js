@@ -2,9 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { SIPOutboundConfig } from '@livekit/protocol';
-import { type DisconnectReason, type ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
+import {
+  type AudioFrame,
+  type DisconnectReason,
+  type ParticipantKind,
+  Room,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import { AccessToken, RoomServiceClient, SipClient, type VideoGrant } from 'livekit-server-sdk';
+import { ReadableStream } from 'node:stream/web';
 import { z } from 'zod';
+import { audioFramesFromFile } from '../audio.js';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
 import { type JobContext, getJobContext } from '../job.js';
 import type {
@@ -28,12 +36,30 @@ import {
   BackgroundAudioPlayer,
   BuiltinAudioClip,
   type PlayHandle,
+  getBuiltinAudioPath,
+  isBuiltinAudioClip,
 } from '../voice/background_audio.js';
 import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
+import type { SpeechHandle } from '../voice/speech_handle.js';
 import type { InstructionParts } from './utils.js';
 
 export interface WarmTransferResult {
   humanAgentIdentity: string;
+}
+
+/**
+ * A deterministic notice spoken to the human agent when the caller hangs up before the transfer
+ * is completed.
+ */
+export interface CallerHangupNotice {
+  /** Exact text spoken to the human agent. */
+  text: string;
+  /**
+   * Optional prerecorded audio matching {@link text}. Accepts a file path, a
+   * {@link BuiltinAudioClip}, or an async iterable of audio frames. When omitted, the task attempts
+   * to synthesize {@link text} with the configured TTS model.
+   */
+  audio?: AudioSourceType;
 }
 
 export interface WarmTransferTaskOptions {
@@ -81,9 +107,17 @@ export interface WarmTransferTaskOptions {
   /** Audio played to the caller while they are on hold during the transfer. */
   holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
   /**
+   * Deterministic notice spoken to the human agent before their call is ended when the caller
+   * hangs up mid-transfer. If the notice cannot be scheduled, the error is logged and the task
+   * falls back to a generated reply using {@link callerHangupInstruction}, or the built-in
+   * instruction when none is provided.
+   */
+  callerHangupNotice?: CallerHangupNotice;
+  /**
    * Instructions used to generate the reply spoken to the human agent before their call is
    * ended when the caller hangs up mid-transfer (after the human agent answered but before
-   * the merge). Falls back to a built-in instruction when not provided.
+   * the merge). Used when no {@link callerHangupNotice} is configured, or when a configured notice
+   * cannot be played. Falls back to a built-in instruction when omitted.
    */
   callerHangupInstruction?: string | null;
   /**
@@ -115,8 +149,10 @@ type IoState = {
  * If the caller hangs up before the merge — including while the human agent's phone is
  * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
  * room is torn down (ending the SIP call), and the task completes with a {@link ToolError}.
- * A human agent who already answered is told the caller left (a reply generated from
- * {@link WarmTransferTaskOptions.callerHangupInstruction}) before their call is ended.
+ * A human agent who already answered is told the caller left using
+ * {@link WarmTransferTaskOptions.callerHangupNotice}, or a reply generated from
+ * {@link WarmTransferTaskOptions.callerHangupInstruction} when no deterministic notice is
+ * provided, before their call is ended.
  *
  * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
  */
@@ -130,6 +166,7 @@ export function createWarmTransferTask({
   ringingTimeout,
   roomName: rawRoomName,
   holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  callerHangupNotice,
   callerHangupInstruction,
   instructions,
   chatCtx,
@@ -147,6 +184,10 @@ export function createWarmTransferTask({
 
   if (rawRoomName !== undefined && rawRoomName.length === 0) {
     throw new Error('`roomName` must not be empty');
+  }
+
+  if (callerHangupNotice && callerHangupNotice.text.trim().length === 0) {
+    throw new Error('`callerHangupNotice.text` must not be empty');
   }
 
   // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
@@ -255,27 +296,6 @@ export function createWarmTransferTask({
     return false;
   };
 
-  // Announces the caller hangup to the human agent, then hangs up on them by
-  // shutting the session down (deleteRoomOnClose ends the SIP call).
-  const notifyHumanAgentOfHangup = async (session: AgentSession): Promise<void> => {
-    try {
-      session.interrupt();
-      const handle = session.generateReply({
-        instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
-        allowInterruptions: false,
-        // The transfer is already cancelled; the reply must speak, not call
-        // connect_to_caller/decline_transfer.
-        toolChoice: 'none',
-      });
-      // Cap the wait so teardown can't hang on a stuck playout.
-      await waitUntilAborted(handle.waitForPlayout(), AbortSignal.timeout(10_000));
-    } catch (error) {
-      logger.warn({ error }, 'failed to notify human agent of caller hangup');
-    } finally {
-      session.shutdown();
-    }
-  };
-
   const cancelForCallerHangup = (participantIdentity?: string): void => {
     if (task.done) return;
     logger.info(
@@ -292,7 +312,7 @@ export function createWarmTransferTask({
       transferAgentSession = null;
       humanAgentRoom = null;
       hangupNotifySession = session;
-      void notifyHumanAgentOfHangup(session);
+      void notifyHumanAgentOfHangup(session, callerHangupNotice, callerHangupInstruction);
     }
     setResult(new ToolError('caller hung up before the transfer completed'));
   };
@@ -696,6 +716,99 @@ export function resolveHumanAgentRoomName(callerRoomName: string, override?: str
   return override;
 }
 
+/**
+ * Start the caller-hangup speech using a deterministic notice when configured, otherwise preserve
+ * the generated-reply behavior. If the deterministic notice cannot be scheduled, fall back to a
+ * generated reply so the human agent is not disconnected without an explanation.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function startCallerHangupSpeech(
+  session: Pick<AgentSession, 'generateReply' | 'say'>,
+  callerHangupNotice: CallerHangupNotice | undefined,
+  callerHangupInstruction: string | null | undefined,
+  abortSignal: AbortSignal,
+): SpeechHandle {
+  if (callerHangupNotice) {
+    let audio: ReadableStream<AudioFrame> | undefined;
+    try {
+      audio = resolveNoticeAudio(callerHangupNotice.audio, abortSignal);
+      return session.say(callerHangupNotice.text, {
+        audio,
+        allowInterruptions: false,
+      });
+    } catch (error) {
+      if (audio) {
+        void audio.cancel(error).catch((cancelError) => {
+          log().warn({ error: cancelError }, 'failed to cancel caller hangup notice audio');
+        });
+      }
+      log().warn(
+        { error },
+        'failed to play deterministic caller hangup notice, falling back to generated reply',
+      );
+    }
+  }
+
+  return session.generateReply({
+    instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+    allowInterruptions: false,
+    // The transfer is already cancelled; the reply must speak, not call
+    // connect_to_caller/decline_transfer.
+    toolChoice: 'none',
+  });
+}
+
+/**
+ * Announce the caller hangup to the human agent, then end their call.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export async function notifyHumanAgentOfHangup(
+  session: Pick<AgentSession, 'interrupt' | 'say' | 'generateReply' | 'shutdown'>,
+  callerHangupNotice: CallerHangupNotice | undefined,
+  callerHangupInstruction: string | null | undefined,
+  timeoutMs = CALLER_HANGUP_NOTICE_TIMEOUT_MS,
+): Promise<void> {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  timeout.unref();
+  try {
+    session.interrupt();
+    const handle = startCallerHangupSpeech(
+      session,
+      callerHangupNotice,
+      callerHangupInstruction,
+      abortController.signal,
+    );
+    // Cap the wait so teardown can't hang on a stuck playout. The same signal stops file decoding.
+    await waitUntilAborted(handle.waitForPlayout(), abortController.signal);
+  } catch (error) {
+    log().warn({ error }, 'failed to notify human agent of caller hangup');
+  } finally {
+    clearTimeout(timeout);
+    abortController.abort();
+    session.shutdown();
+  }
+}
+
+function resolveNoticeAudio(
+  audio: AudioSourceType | undefined,
+  abortSignal: AbortSignal,
+): ReadableStream<AudioFrame> | undefined {
+  if (audio === undefined) {
+    return undefined;
+  }
+
+  const source = isBuiltinAudioClip(audio) ? getBuiltinAudioPath(audio) : audio;
+  if (typeof source === 'string') {
+    // Decode to 48 kHz mono: RoomIO expects mono, and rate mismatches are resampled downstream.
+    return audioFramesFromFile(source, { abortSignal });
+  }
+  return ReadableStream.from(source);
+}
+
+const CALLER_HANGUP_NOTICE_TIMEOUT_MS = 10_000;
 const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
 Briefly inform the human agent that the caller has left and that you are ending the call now.`;
 
