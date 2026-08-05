@@ -48,6 +48,7 @@
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/rtc-node": "catalog:"
   }
 }
