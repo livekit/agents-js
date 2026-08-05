@@ -14,6 +14,27 @@ export function convertExpressionTags(text: string): string {
 
 const VALUE_ATTR_RE = /\b[\w-]+\s*=\s*"([^"]*)"/;
 
+// Horizontal whitespace immediately before a tag. Every removal pattern captures it as
+// `pre` so dedupRemovalSpace can decide whether to keep it; newlines are excluded so
+// paragraph breaks are never touched.
+export const LEADING_WS = String.raw`(?<pre>[^\S\r\n]*)`;
+
+/** Replacement text for a stripped tag, minus the space its removal would double. */
+export function dedupRemovalSpace(
+  text: string,
+  matchEnd: number,
+  pre: string | undefined,
+  kept: string,
+): string {
+  if (kept) {
+    return (pre ?? '') + kept;
+  }
+  if (!pre) {
+    return '';
+  }
+  return /\s/.test(text.slice(matchEnd, matchEnd + 1)) ? '' : pre;
+}
+
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -55,13 +76,13 @@ export function extractAndStrip(
   const alternatives: string[] = [];
   if (xmlTags.length > 0) {
     const tagPattern = xmlTags.map(escapeRegExp).join('|');
-    // <tag .../> or <tag ...> optionally followed by inner</tag>
+    // Leading space is part of the match so removing a tag can't double the separator.
     alternatives.push(
-      `<(?<tag>${tagPattern})\\b(?<attrs>[^>]*?)\\s*\\/?\\s*>` +
-        `(?:(?<inner>.*?)<\\/\\k<tag>\\s*>)?`,
+      LEADING_WS +
+        `(?:<(?<tag>${tagPattern})\\b(?<attrs>[^>]*?)\\s*\\/?\\s*>` +
+        `(?:(?<inner>.*?)<\\/\\k<tag>\\s*>)?` +
+        `|<\\/(?:${tagPattern})\\s*>)`,
     );
-    // lone closing tag: </tag>
-    alternatives.push(`<\\/(?:${tagPattern})\\s*>`);
   }
   if (brackets) {
     alternatives.push(String.raw`\[(?<bracket>[^\]]+)\]`);
@@ -69,6 +90,7 @@ export function extractAndStrip(
 
   const pattern = new RegExp(alternatives.join('|'), 'gs');
   const tags: Array<[string, string]> = [];
+  let clean = text;
 
   const repl = (match: string, ...args: unknown[]): string => {
     const groups = args[args.length - 1] as Record<string, string | undefined>;
@@ -86,7 +108,7 @@ export function extractAndStrip(
       tags.push([tag, value]);
       offsetsOut?.push(offset);
       // wrapping tags keep their inner content; self-closing/lone tags vanish
-      return inner !== undefined ? inner : '';
+      return dedupRemovalSpace(clean, offset + match.length, groups.pre, inner ?? '');
     }
 
     const bracket = groups.bracket;
@@ -96,14 +118,13 @@ export function extractAndStrip(
       return '';
     }
 
-    return ''; // lone closing tag
+    return dedupRemovalSpace(clean, offset + match.length, groups.pre, ''); // lone closing tag
   };
 
   // iterate to a fixed point so nested wrapping tags are fully removed: a single pass
   // strips only the outer tag (e.g. <excited><loud>hi</loud></excited> -> keeps the
   // inner <loud>hi</loud>), so repeat until the text stops changing. Each pass removes
   // at least the matched delimiters, so this always terminates.
-  let clean = text;
   let prev: string | undefined = undefined;
   while (clean !== prev) {
     prev = clean;

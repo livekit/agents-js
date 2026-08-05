@@ -21,7 +21,12 @@ import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
 import { Instructions } from '../llm/chat_context.js';
 import { SentenceTokenizer } from '../tokenize/basic/index.js';
 import type { ExpressiveOptions } from '../voice/agent_session.js';
-import { convertExpressionTags, extractAndStrip } from './markup_utils.js';
+import {
+  LEADING_WS,
+  convertExpressionTags,
+  dedupRemovalSpace,
+  extractAndStrip,
+} from './markup_utils.js';
 
 /**
  * An expressive markup tag stripped from a transcript, surfaced for the frontend.
@@ -597,13 +602,18 @@ export function sentenceTokenizer(
 }
 
 const EXPR_ATTR_RE = /([\w-]+)\s*=\s*"([^"]*)"/g;
-// any <expr ...> or <expr .../> tag (open or self-closing; attrs in group 1)
-const EXPR_OPEN_RE = /<expr\b([^>]*?)\/?\s*>/g;
-const EXPR_CLOSE_RE = /<\/expr\s*>/g;
+// Every marker captures the space before it so removing it can't double a separator.
+const EXPR_OPEN_RE = new RegExp(LEADING_WS + String.raw`<expr\b(?<attrs>[^>]*?)\/?\s*>`, 'g');
+const EXPR_CLOSE_RE = new RegExp(LEADING_WS + String.raw`<\/expr\s*>`, 'g');
 // self-closing markers only (the trailing / is required)
-const EXPR_SELF_RE = /<expr\b([^>]*?)\/\s*>/g;
+const EXPR_SELF_RE = new RegExp(LEADING_WS + String.raw`<expr\b(?<attrs>[^>]*?)\/\s*>`, 'g');
 // a wrapping marker (prosody/spell) and its span; non-greedy, instructed not to nest
-const EXPR_WRAP_RE = /<expr\b(?=[^>]*type="(?:prosody|spell)")([^>]*?)>([\s\S]*?)<\/expr\s*>/g;
+const EXPR_WRAP_RE = new RegExp(
+  LEADING_WS +
+    String.raw`<expr\b(?=[^>]*type="(?:prosody|spell)")(?<attrs>[^>]*?)>` +
+    String.raw`(?<inner>[\s\S]*?)<\/expr\s*>`,
+  'g',
+);
 // a non-wrapping type the LLM forgot to self-close (normalizeMarkup fixes these).
 // For Cartesia, prosody is a self-closing point control, so it's included there; for
 // xAI prosody legitimately wraps, so it must stay an opening tag.
@@ -630,9 +640,12 @@ function exprAttrs(attrs: string): Record<string, string> {
   return out;
 }
 
-// any expr delimiter — an open/self-closing marker (attrs in group 1) or a close tag —
+// Any expr delimiter — an open/self-closing marker or a close tag —
 // in a single alternation so splitExpr can strip both in one pass with exact offsets
-const EXPR_TAG_RE = /<expr\b([^>]*?)\/?\s*>|<\/expr\s*>/g;
+const EXPR_TAG_RE = new RegExp(
+  LEADING_WS + String.raw`(?:<expr\b(?<attrs>[^>]*?)\/?\s*>|<\/expr\s*>)`,
+  'g',
+);
 
 /** A span splitExpr removed: its position in the *clean* text and its original length. */
 interface ExprRemoval {
@@ -668,19 +681,21 @@ function splitExpr(text: string): {
   const removals: ExprRemoval[] = [];
   let shift = 0;
 
-  const clean = text.replace(
-    EXPR_TAG_RE,
-    (m: string, attrsStr: string | undefined, offset: number) => {
-      if (attrsStr !== undefined) {
-        const attrs = exprAttrs(attrsStr);
-        tags.push({ type: attrs.type ?? '', value: attrs.label ?? '' });
-        positions.push(offset);
-      }
-      removals.push({ cleanIdx: offset - shift, len: m.length });
-      shift += m.length;
-      return '';
-    },
-  );
+  const clean = text.replace(EXPR_TAG_RE, (m: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
+    const attrsStr = groups.attrs;
+    const replacement = dedupRemovalSpace(text, offset + m.length, groups.pre, '');
+    if (attrsStr !== undefined) {
+      const attrs = exprAttrs(attrsStr);
+      tags.push({ type: attrs.type ?? '', value: attrs.label ?? '' });
+      positions.push(offset + (groups.pre?.length ?? 0));
+    }
+    const removedLen = m.length - replacement.length;
+    removals.push({ cleanIdx: offset - shift + replacement.length, len: removedLen });
+    shift += removedLen;
+    return replacement;
+  });
   return { clean, tags, positions, removals };
 }
 
@@ -742,69 +757,83 @@ function convertExpr(provider: string, text: string): string {
     return text;
   }
 
-  text = text.replace(EXPR_WRAP_RE, (_m, attrsStr: string, inner: string) => {
+  text = text.replace(EXPR_WRAP_RE, (m: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
+    const attrsStr = groups.attrs ?? '';
+    const inner = groups.inner ?? '';
     const attrs = exprAttrs(attrsStr);
     const markerType = attrs.type ?? '';
     const label = (attrs.label ?? '').trim().toLowerCase();
+    let kept: string;
     if (markerType === 'spell') {
-      return provider === 'cartesia' ? `<spell>${inner}</spell>` : inner;
-    }
-    // prosody: native wrapping tags exist only for xAI
-    if (provider === 'xai') {
+      kept = provider === 'cartesia' ? `<spell>${inner}</spell>` : inner;
+    } else if (provider === 'xai') {
+      // prosody: native wrapping tags exist only for xAI
       const native = label.replace(/ /g, '-');
       if (XAI_WRAPPING.includes(native)) {
-        return `<${native}>${inner}</${native}>`;
+        kept = `<${native}>${inner}</${native}>`;
+      } else {
+        kept = inner;
       }
-      return inner;
-    }
-    if (provider === 'inworld') {
+    } else if (provider === 'inworld') {
       // not advertised for Inworld; salvage a stray one as a delivery hint
-      return `<expression value="${label}"/>${inner}`;
-    }
-    if (provider === 'cartesia') {
+      kept = `<expression value="${label}"/>${inner}`;
+    } else if (provider === 'cartesia') {
       // wrapping form of the point controls: apply before the span
-      return (CARTESIA_PROSODY[label] ?? '') + inner;
+      kept = (CARTESIA_PROSODY[label] ?? '') + inner;
+    } else {
+      kept = inner;
     }
-    return inner;
+    return dedupRemovalSpace(text, offset + m.length, groups.pre, kept);
   });
 
-  text = text.replace(EXPR_SELF_RE, (_m, attrsStr: string) => {
+  text = text.replace(EXPR_SELF_RE, (m: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
+    const attrsStr = groups.attrs ?? '';
     const attrs = exprAttrs(attrsStr);
     const markerType = attrs.type ?? '';
     let label = attrs.label ?? '';
+    let kept = '';
     if (markerType === 'expression') {
       if (provider === 'cartesia') {
         // Cartesia's discrete emotion vocabulary (instructions list it)
-        return `<emotion value="${label}"/>`;
+        kept = `<emotion value="${label}"/>`;
+      } else if (provider === 'inworld') {
+        kept = `<expression value="${label}"/>`;
       }
-      if (provider === 'inworld') {
-        return `<expression value="${label}"/>`;
-      }
-      return ''; // xAI has no free-form delivery descriptions
-    }
-    if (markerType === 'sound') {
+      // xAI has no free-form delivery descriptions
+    } else if (markerType === 'sound') {
       if (provider === 'cartesia') {
-        return ''; // no non-verbal sound support
+        kept = ''; // no non-verbal sound support
+      } else {
+        if (provider === 'xai') {
+          label = XAI_SOUND_ALIASES[label.toLowerCase()] ?? label;
+        }
+        kept = `<sound value="${label}"/>`;
       }
-      if (provider === 'xai') {
-        label = XAI_SOUND_ALIASES[label.toLowerCase()] ?? label;
-      }
-      return `<sound value="${label}"/>`;
-    }
-    if (markerType === 'break') {
-      return `<break time="${label}"/>`;
-    }
-    if (markerType === 'prosody' && provider === 'cartesia') {
+    } else if (markerType === 'break') {
+      kept = `<break time="${label}"/>`;
+    } else if (markerType === 'prosody' && provider === 'cartesia') {
       // Cartesia prosody is a self-closing point control (speed/volume)
-      return CARTESIA_PROSODY[label.trim().toLowerCase()] ?? '';
+      kept = CARTESIA_PROSODY[label.trim().toLowerCase()] ?? '';
     }
-    return '';
+    return dedupRemovalSpace(text, offset + m.length, groups.pre, kept);
   });
 
   // a stray unpaired expr tag (e.g. a prosody wrapper split across stream chunks)
   // must never reach the TTS as literal text — drop the delimiters, keep the words
-  text = text.replace(EXPR_OPEN_RE, '');
-  text = text.replace(EXPR_CLOSE_RE, '');
+  text = text.replace(EXPR_OPEN_RE, (m: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
+    return dedupRemovalSpace(text, offset + m.length, groups.pre, '');
+  });
+  text = text.replace(EXPR_CLOSE_RE, (m: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>;
+    const offset = args[args.length - 3] as number;
+    return dedupRemovalSpace(text, offset + m.length, groups.pre, '');
+  });
   return text;
 }
 
@@ -910,6 +939,21 @@ export function expressionAttribute(tags: ExpressiveTag[]): Record<string, strin
 export class TranscriptMarkupStripper {
   private buf = '';
   private _tags: ExpressiveTag[] = [];
+  private seamAfterStrip = false;
+
+  private consume(text: string, final: boolean): string {
+    if (this.seamAfterStrip && /^[ \t]/.test(text)) {
+      text = text.slice(0, 1) + text.slice(1).replace(/^[ \t]+/, '');
+    }
+
+    const [clean, tags] = splitAllMarkup(text);
+    this._tags.push(...tags);
+
+    const held = final ? '' : clean.match(/[ \t]+$/)?.[0] ?? '';
+    this.buf = held;
+    this.seamAfterStrip = tags.length > 0 && held.length > 0 && text.trimEnd().endsWith('>');
+    return held ? clean.slice(0, -held.length) : clean;
+  }
 
   private hasOpenTag(): boolean {
     // hold a tag-shaped trailing "<" (partial XML tag) so "3 < 5" isn't stalled, and
@@ -930,10 +974,7 @@ export class TranscriptMarkupStripper {
     if (this.hasOpenTag()) {
       return '';
     }
-    const [clean, tags] = splitAllMarkup(this.buf);
-    this.buf = '';
-    this._tags.push(...tags);
-    return clean;
+    return this.consume(this.buf, false);
   }
 
   /** Drain any buffered text at segment end; return the remaining clean text. */
@@ -941,10 +982,7 @@ export class TranscriptMarkupStripper {
     if (!this.buf) {
       return '';
     }
-    const [clean, tags] = splitAllMarkup(this.buf);
-    this.buf = '';
-    this._tags.push(...tags);
-    return clean;
+    return this.consume(this.buf, true);
   }
 
   /** The markup tags stripped so far, in document order. */
