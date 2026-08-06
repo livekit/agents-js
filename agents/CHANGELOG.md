@@ -1,5 +1,27 @@
 # @livekit/agents
 
+## 1.6.2
+
+### Patch Changes
+
+- Forward agent false interruption events through remote sessions. - [#2214](https://github.com/livekit/agents-js/pull/2214) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Apply tool defaults when models return null sentinels for defaulted schema fields. - [#2150](https://github.com/livekit/agents-js/pull/2150) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Keep audio input mute independent of overridable attach hooks - [#2232](https://github.com/livekit/agents-js/pull/2232) ([@toubatbrian](https://github.com/toubatbrian))
+
+  `AgentInput` now flips mute via `AudioInput.setAttached()` before calling `onAttached`/`onDetached`, and `ParticipantAudioInputStream` gates on that state. Subclasses that override lifecycle hooks without `super` no longer silently break hold mute.
+
+- Prewarm LLM provider connections before the first inference request. - [#2106](https://github.com/livekit/agents-js/pull/2106) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Stop forwarding participant audio while agent input is disabled. - [#2222](https://github.com/livekit/agents-js/pull/2222) ([@dtran26](https://github.com/dtran26))
+
+- Disable the default AEC warmup for outbound SIP calls while preserving explicit settings. - [#2202](https://github.com/livekit/agents-js/pull/2202) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Commit realtime tool call outputs to the agent chat context. Previously the realtime path only sent them to the provider and to `session.history`, leaving `agent.chatCtx` with function calls that had no matching outputs — which broke action-aware history summarization and agent handoff merges. - [#2230](https://github.com/livekit/agents-js/pull/2230) ([@tinalenguyen](https://github.com/tinalenguyen))
+
+- Reuse preemptive generations when final transcripts differ only in formatting. - [#2209](https://github.com/livekit/agents-js/pull/2209) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.6.1
 
 ### Patch Changes
