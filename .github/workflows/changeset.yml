@@ -1,0 +1,160 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Changeset
+
+on:
+  pull_request_target:
+    branches: [next, main, 0.x]
+    types: [opened, reopened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  calculate:
+    name: Calculate version bump
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      status: ${{ steps.status.outputs.status }}
+    steps:
+      # Install dependencies from the trusted base before inspecting the pull request.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install trusted dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Prepare pull request worktree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch origin "pull/${PR_NUMBER}/head"
+          git worktree add --detach pr FETCH_HEAD
+          git -C pr checkout "$BASE_SHA" -- .changeset/config.json
+      - name: Calculate version bump
+        id: status
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if (cd pr && ../node_modules/.bin/changeset status --since="$BASE_SHA" --output=changeset-status.json) 2>changeset-error.log; then
+            :
+          elif grep -Fq 'Some packages have been changed but no changesets were found.' changeset-error.log; then
+            cat changeset-error.log >&2
+            echo '{"releases":[]}' > pr/changeset-status.json
+          else
+            cat changeset-error.log >&2
+            exit 1
+          fi
+          echo "status=$(base64 < pr/changeset-status.json | tr -d '\n')" >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Report version bump
+    needs: calculate
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on pull request
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          STATUS: ${{ needs.calculate.outputs.status }}
+        with:
+          script: |
+            const marker = '<!-- changeset-version-bump -->';
+            const { releases } = JSON.parse(Buffer.from(process.env.STATUS, 'base64').toString());
+            const rank = { patch: 1, minor: 2, major: 3 };
+            const escape = (value) => String(value).replace(
+              /[&<>"'|]/g,
+              (character) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+                '|': '&#124;',
+              })[character],
+            );
+            const code = (value) => `<code>${escape(value)}</code>`;
+
+            const renderReport = (allReleases) => {
+              const versionedReleases = allReleases.filter(
+                ({ type }) => Object.hasOwn(rank, type),
+              );
+              if (versionedReleases.length === 0) {
+                return `${marker}\n> [!WARNING]\n> **No version bump detected.** This PR does not include a changeset that releases a package.`;
+              }
+
+              const level = versionedReleases.reduce(
+                (highest, release) => rank[release.type] > rank[highest] ? release.type : highest,
+                'patch',
+              );
+              const rows = versionedReleases
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(({ name, type, oldVersion, newVersion }) =>
+                  `| ${code(name)} | **${type}** | ${code(oldVersion)} → ${code(newVersion)} |`,
+                )
+                .join('\n');
+              const coreRelease = versionedReleases.find(({ name }) => name === '@livekit/agents');
+              const coreBump = coreRelease
+                ? `> **Core package:** <code>@livekit/agents</code> **${coreRelease.type}** bump, ${code(coreRelease.oldVersion)} → ${code(coreRelease.newVersion)}`
+                : '> **Core package:** `@livekit/agents` is not affected.';
+              return [
+                marker,
+                '> [!WARNING]',
+                `> **${level.toUpperCase()} version bump detected.** Review the bump level and resulting versions before merging.`,
+                coreBump,
+                '',
+                '| Package | Level | Version bump |',
+                '| --- | --- | --- |',
+                rows,
+              ].join('\n');
+            };
+            const body = renderReport(releases);
+
+            let reportComment;
+            for (let attempt = 0; attempt < 6; attempt++) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              });
+              reportComment = comments.find(
+                ({ user, body }) =>
+                  user?.login === 'github-actions[bot]' && body?.includes(marker),
+              );
+              const changesetComment = comments.find(
+                ({ user }) => user?.login === 'changeset-bot[bot]',
+              );
+              if (reportComment || changesetComment) break;
+              if (attempt < 5) {
+                await new Promise((resolve) => setTimeout(resolve, 5_000));
+              }
+            }
+
+            if (reportComment) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: reportComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
