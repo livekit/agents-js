@@ -342,6 +342,7 @@ export abstract class SupervisedProc {
   private async getFullMemoryInfo(
     pid: number,
   ): Promise<Partial<Record<'pss' | 'uss' | 'footprint', number>>> {
+    // Prefer footprints that do not double-count shared pages; RSS is sampled separately as fallback.
     if (process.platform === 'linux') {
       let smaps: string;
       try {
