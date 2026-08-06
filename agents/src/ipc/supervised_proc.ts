@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { ChildProcess } from 'node:child_process';
+import { type ChildProcess, execFile } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import pidusage from 'pidusage';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
@@ -12,6 +14,9 @@ import type { IPCMessage } from './message.js';
 const MEMORY_MONITOR_INTERVAL = 5000;
 const MEMORY_WARN_COOLDOWN = 120000;
 const MEMORY_WARN_RESET_DELTA_MB = 50;
+const execFileAsync = promisify(execFile);
+
+type MemoryMetric = 'pss' | 'uss' | 'footprint' | 'rss' | 'unknown';
 
 export interface ProcOpts {
   /** Timeout for process initialization in milliseconds. */
@@ -39,6 +44,7 @@ export abstract class SupervisedProc {
   proc?: ChildProcess;
   #pingInterval?: ReturnType<typeof setInterval>;
   #memoryMonitorInterval?: ReturnType<typeof setInterval>;
+  #memorySampleInProgress = false;
   #pongTimeout?: ReturnType<typeof setTimeout>;
   private memoryBaselineMB?: number;
   #lastMemoryWarnAt = 0;
@@ -121,32 +127,13 @@ export abstract class SupervisedProc {
       this.#join.resolve();
     }, this.#opts.pingTimeout);
 
-    this.#memoryMonitorInterval = setInterval(async () => {
-      const memoryMB = await this.getChildMemoryUsageMB();
-      if (memoryMB === 0) {
-        return;
-      }
-
-      this.memoryBaselineMB ??= memoryMB;
-
-      if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
-        this.#logger
-          .child(this.memoryLoggingFields(memoryMB))
-          .error(`${this.processKind} process exceeded memory limit, killing it`);
-        this.close();
-      } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
-        if (this.shouldEmitMemoryWarning(memoryMB)) {
-          const advisory = this.#opts.memoryLimitMB <= 0;
-          this.#logger
-            .child(this.memoryLoggingFields(memoryMB))
-            .warn(
-              `${this.processKind} process memory usage is above the warning threshold${
-                advisory ? ' (advisory only, the process will not be terminated)' : ''
-              }`,
-            );
-        }
-      }
-    }, MEMORY_MONITOR_INTERVAL);
+    this.#memoryMonitorInterval = setInterval(
+      () =>
+        void this.monitorMemory().catch((err) => {
+          this.#logger.child({ err }).warn('error in memory monitoring task');
+        }),
+      MEMORY_MONITOR_INTERVAL,
+    );
 
     const listener = (msg: IPCMessage) => {
       switch (msg.case) {
@@ -286,21 +273,127 @@ export abstract class SupervisedProc {
     this.proc.send({ case: 'startJobRequest', value: { runningJob: info } });
   }
 
-  private async getChildMemoryUsageMB(): Promise<number> {
-    const pid = this.proc?.pid;
-    if (!pid) {
-      return 0;
+  private async monitorMemory(): Promise<void> {
+    if (this.#memorySampleInProgress) {
+      return;
     }
+    this.#memorySampleInProgress = true;
+    try {
+      const [memoryMB, memoryMetric] = await this.sampleMemoryMB();
+      if (memoryMB === 0) {
+        return;
+      }
+
+      this.memoryBaselineMB ??= memoryMB;
+
+      if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
+        this.#logger
+          .child(this.memoryLoggingFields(memoryMB, memoryMetric))
+          .error(`${this.processKind} process exceeded memory limit, killing it`);
+        this.close();
+      } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
+        if (this.shouldEmitMemoryWarning(memoryMB)) {
+          const advisory = this.#opts.memoryLimitMB <= 0;
+          this.#logger
+            .child(this.memoryLoggingFields(memoryMB, memoryMetric))
+            .warn(
+              `${this.processKind} process memory usage is above the warning threshold${
+                advisory ? ' (advisory only, the process will not be terminated)' : ''
+              }`,
+            );
+        }
+      }
+    } finally {
+      this.#memorySampleInProgress = false;
+    }
+  }
+
+  private async sampleMemoryMB(
+    pid: number | undefined = this.proc?.pid,
+  ): Promise<[number, MemoryMetric]> {
+    if (!pid) {
+      return [0, 'unknown'];
+    }
+
+    try {
+      const memoryInfo = await this.getFullMemoryInfo(pid);
+      for (const metric of ['pss', 'uss', 'footprint'] as const) {
+        const memoryBytes = memoryInfo[metric];
+        if (memoryBytes) {
+          return [memoryBytes / (1024 * 1024), metric];
+        }
+      }
+    } catch {
+      // Extended memory metrics are not available on every host or process.
+    }
+
     try {
       const stats = await pidusage(pid);
-      return stats.memory / (1024 * 1024);
+      return [stats.memory / (1024 * 1024), 'rss'];
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ESRCH') {
-        return 0;
+        return [0, 'unknown'];
       }
       throw err;
     }
+  }
+
+  private async getFullMemoryInfo(
+    pid: number,
+  ): Promise<Partial<Record<'pss' | 'uss' | 'footprint', number>>> {
+    if (process.platform === 'linux') {
+      let smaps: string;
+      try {
+        smaps = await readFile(`/proc/${pid}/smaps_rollup`, 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw err;
+        }
+        smaps = await readFile(`/proc/${pid}/smaps`, 'utf8');
+      }
+      const valueKB = (name: string) =>
+        Array.from(smaps.matchAll(new RegExp(`^${name}:\\s+(\\d+) kB$`, 'gm'))).reduce(
+          (total, match) => total + Number(match[1]),
+          0,
+        );
+      return {
+        pss: valueKB('Pss') * 1024,
+        uss:
+          (valueKB('Private_Clean') + valueKB('Private_Dirty') + valueKB('Private_Hugetlb')) * 1024,
+      };
+    }
+
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileAsync('vmmap', ['-summary', String(pid)], {
+        timeout: MEMORY_MONITOR_INTERVAL,
+      });
+      const match = String(stdout).match(/^Physical footprint:\s+([\d.]+)([KMG])$/m);
+      if (!match) {
+        throw new Error('vmmap did not report a physical footprint');
+      }
+      const multiplier = match[2] === 'G' ? 1024 ** 3 : match[2] === 'M' ? 1024 ** 2 : 1024;
+      return { footprint: Number(match[1]) * multiplier };
+    }
+
+    if (process.platform === 'win32') {
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `(Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter 'IDProcess = ${pid}' ` +
+            `-ErrorAction Stop | Select-Object -First 1 -ExpandProperty WorkingSetPrivate)`,
+        ],
+        {
+          timeout: MEMORY_MONITOR_INTERVAL,
+        },
+      );
+      return { uss: Number(String(stdout).trim()) };
+    }
+
+    throw new Error(`full process memory information is unsupported on ${process.platform}`);
   }
 
   private get uptime(): number {
@@ -321,10 +414,14 @@ export abstract class SupervisedProc {
     return false;
   }
 
-  private memoryLoggingFields(memoryMB: number): Record<string, unknown> {
+  private memoryLoggingFields(
+    memoryMB: number,
+    memoryMetric: MemoryMetric,
+  ): Record<string, unknown> {
     const fields: Record<string, unknown> = {
       pid: this.proc?.pid,
       memoryUsageMB: Math.round(memoryMB * 10) / 10,
+      memoryMetric,
       memoryWarnMB: this.#opts.memoryWarnMB,
       memoryLimitMB: this.#opts.memoryLimitMB,
       uptime: this.uptime,
