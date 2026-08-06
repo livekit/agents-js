@@ -24,6 +24,8 @@ export interface LLMOptions {
   temperature?: number;
   /** Pre-configured Anthropic client instance. */
   client?: Anthropic;
+  /** Vendor client retries. Defaults to 0 because the framework owns retries. */
+  maxRetries?: number;
   /** Tool selection strategy. */
   toolChoice?: llm.ToolChoice;
   /** Whether to allow parallel tool calls. */
@@ -66,6 +68,7 @@ export class LLM extends llm.LLM {
       new Anthropic({
         baseURL: this.#opts.baseURL,
         apiKey: this.#opts.apiKey,
+        maxRetries: this.#opts.maxRetries ?? 0,
       });
   }
 
