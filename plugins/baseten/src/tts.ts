@@ -9,6 +9,12 @@ import {
   waitForAbort,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import {
+  QWEN3_NUM_CHANNELS,
+  QWEN3_SAMPLE_RATE,
+  Qwen3Backend,
+  Qwen3SynthesizeStream,
+} from './qwen3_tts.js';
 import type { BasetenTTSOptions } from './types.js';
 
 const defaultTTSOptions: Partial<BasetenTTSOptions> = {
@@ -21,7 +27,10 @@ const defaultTTSOptions: Partial<BasetenTTSOptions> = {
  * Baseten TTS implementation (streaming, 24kHz mono)
  */
 export class TTS extends tts.TTS {
-  private opts: BasetenTTSOptions;
+  private opts: BasetenTTSOptions = {};
+  private qwen3?: Qwen3Backend;
+  private qwen3Streams = new Set<Qwen3SynthesizeStream>();
+  private modelName: string;
   label = 'baseten.TTS';
   private abortController = new AbortController();
   constructor(opts: Partial<BasetenTTSOptions> = {}) {
@@ -30,7 +39,38 @@ export class TTS extends tts.TTS {
      * The Orpheus model generates audio chunks that are processed as they arrive,
      * which reduces latency and improves agent responsiveness.
      */
-    super(24000, 1, { streaming: false });
+    const model = opts.model ?? 'orpheus';
+    super(
+      model === 'qwen3-tts' ? QWEN3_SAMPLE_RATE : 24000,
+      model === 'qwen3-tts' ? QWEN3_NUM_CHANNELS : 1,
+      {
+        streaming: model === 'qwen3-tts',
+        alignedTranscript: model === 'qwen3-tts' && (opts.wordTimestamps ?? false),
+      },
+    );
+    this.modelName = model;
+
+    if (model === 'qwen3-tts') {
+      this.qwen3 = new Qwen3Backend({
+        apiKey: opts.apiKey,
+        modelEndpoint: opts.modelEndpoint,
+        modelId: opts.modelId,
+        chainId: opts.chainId,
+        voice: opts.voice ?? '',
+        taskType: opts.taskType,
+        language: opts.language === undefined ? 'Auto' : opts.language,
+        speed: opts.speed,
+        instructions: opts.instructions,
+        maxNewTokens: opts.maxNewTokens,
+        initialCodecChunkFrames: opts.initialCodecChunkFrames,
+        xVectorOnlyMode: opts.xVectorOnlyMode,
+        refAudio: opts.refAudio,
+        refText: opts.refText,
+        wordTimestamps: opts.wordTimestamps,
+        extraConfig: opts.extraConfig,
+      });
+      return;
+    }
 
     // Apply defaults and environment fallbacks.
     const apiKey = opts.apiKey ?? process.env.BASETEN_API_KEY;
@@ -52,10 +92,20 @@ export class TTS extends tts.TTS {
       ...opts,
       apiKey,
       modelEndpoint,
+      model,
     } as BasetenTTSOptions;
   }
 
   updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>) {
+    if (this.qwen3) {
+      this.qwen3.updateOptions({
+        voice: opts.voice,
+        language: opts.language,
+        instructions: opts.instructions,
+        maxNewTokens: opts.maxNewTokens,
+      });
+      return;
+    }
     this.opts = {
       ...this.opts,
       ...opts,
@@ -72,19 +122,41 @@ export class TTS extends tts.TTS {
     text: string,
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
-  ): ChunkedStream {
+  ): tts.ChunkedStream {
+    if (this.qwen3) {
+      return this.synthesizeWithStream(text, connOptions, abortSignal);
+    }
     const signal = abortSignal
       ? AbortSignal.any([abortSignal, this.abortController.signal])
       : this.abortController.signal;
     return new ChunkedStream(this, text, this.opts, connOptions, signal);
   }
 
-  stream(): tts.SynthesizeStream {
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    if (this.qwen3) {
+      const stream = new Qwen3SynthesizeStream(this, this.qwen3, options?.connOptions, () => {
+        this.qwen3Streams.delete(stream);
+      });
+      this.qwen3Streams.add(stream);
+      return stream;
+    }
     throw new Error('Streaming is not supported on Baseten TTS');
+  }
+
+  get model(): string {
+    return this.modelName;
+  }
+
+  get provider(): string {
+    return 'Baseten';
   }
 
   async close(): Promise<void> {
     this.abortController.abort();
+    for (const stream of this.qwen3Streams) stream.close();
+    this.qwen3Streams.clear();
+    await this.qwen3?.close();
+    await super.close();
   }
 }
 
@@ -135,7 +207,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       'Content-Type': 'application/json',
     };
 
-    const response = await fetch(modelEndpoint, {
+    const response = await fetch(modelEndpoint!, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
