@@ -2,17 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it } from 'vitest';
+import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
 import {
+  SpeechStream as InferenceSpeechStream,
   STT,
   type STTFallbackModel,
+  type STTModels,
   type XaiSTTModels,
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
+import { describeLiveKitInference } from './test_utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
@@ -29,6 +34,100 @@ function makeStt(overrides: Record<string, unknown> = {}) {
   };
   return new STT({ ...defaults, ...overrides });
 }
+
+function makeSpeechStream() {
+  const events: SpeechEvent[] = [];
+  const stream = Object.assign(Object.create(InferenceSpeechStream.prototype), {
+    queue: {
+      closed: false,
+      put: (event: SpeechEvent) => events.push(event),
+    },
+    speaking: false,
+    requestId: 'req-1',
+    speechDuration: 0,
+    _startTimeOffset: 0,
+    _pendingExtra: undefined,
+    opts: { language: 'en' },
+  }) as InferenceSpeechStream<STTModels>;
+  return { stream, events };
+}
+
+function transcript(transcript: string, isFinal = false) {
+  return {
+    type: isFinal ? ('final_transcript' as const) : ('interim_transcript' as const),
+    transcript,
+    language: 'en',
+    start: 0,
+    duration: isFinal ? 1 : 0,
+    confidence: 1,
+    words: [],
+  };
+}
+
+describe('Inference STT start of speech', () => {
+  it('reports onset immediately from a start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+    expect(stream._speaking).toBe(true);
+  });
+
+  it('does not report onset twice when a transcript follows', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    expect(events.splice(0).map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.INTERIM_TRANSCRIPT]);
+  });
+
+  it('ignores a duplicate start_of_speech message', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processStartOfSpeech']();
+
+    expect(events.map(({ type }) => type)).toEqual([SpeechEventType.START_OF_SPEECH]);
+  });
+
+  it('falls back to the first transcript for providers without onset', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript('are you'), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events.map(({ type }) => type)).toEqual([
+      SpeechEventType.START_OF_SPEECH,
+      SpeechEventType.INTERIM_TRANSCRIPT,
+    ]);
+  });
+
+  it('does not report onset from an empty interim alone', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript(''), SpeechEventType.INTERIM_TRANSCRIPT);
+
+    expect(events).toEqual([]);
+    expect(stream._speaking).toBe(false);
+  });
+
+  it('resets onset after the turn ends', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processStartOfSpeech']();
+    stream['processTranscript'](
+      transcript('are you open on sunday', true),
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+    expect(stream._speaking).toBe(false);
+
+    stream['processStartOfSpeech']();
+    expect(events.map(({ type }) => type)).toContain(SpeechEventType.START_OF_SPEECH);
+  });
+});
 
 describe('parseSTTModelString', () => {
   it('simple model without language', () => {
@@ -327,6 +426,126 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT aligned transcript capability', () => {
+  it('agrees with the Cartesia Ink-2 plugin capability', () => {
+    const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
+
+    expect(gatewayStt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('keeps word alignment for models that send words', () => {
+    expect(makeStt({ model: 'cartesia/ink-whisper' }).capabilities.alignedTranscript).toBe('word');
+    expect(makeStt({ model: 'deepgram/nova-3' }).capabilities.alignedTranscript).toBe('word');
+    expect(
+      makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
+    ).toBe('word');
+    expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
+    expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('recomputes alignment when the model changes', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.alignedTranscript).toBe('word');
+
+    stt.updateOptions({ model: 'cartesia/ink-2' });
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('does not claim alignment for unknown models', () => {
+    expect(makeStt({ model: 'new-provider/new-turn-model' }).capabilities.alignedTranscript).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ['cartesia/ink-whisper', 'word'],
+    ['cartesia/ink-2', false],
+    ['new-provider/new-turn-model', false],
+  ] as const)('constrains alignment based on fallback model %s', (fallback, expected) => {
+    const stt = makeStt({ model: 'deepgram/nova-3', fallback });
+
+    expect(stt.capabilities.alignedTranscript).toBe(expected);
+  });
+
+  it('still accounts for fallback alignment when the primary model changes', () => {
+    const stt = makeStt({
+      model: 'cartesia/ink-2',
+      fallback: 'new-provider/new-turn-model',
+    });
+
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+
+    expect(stt.capabilities.alignedTranscript).toBe(false);
+  });
+
+  it('surfaces the gateway Ink-2 payload without word alignment', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](
+      {
+        transcript: 'are you open on sunday',
+        confidence: 1,
+        start: 0,
+        duration: 12.5,
+        words: [],
+        language: 'en',
+      },
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    const final = events.find((event) => event.type === SpeechEventType.FINAL_TRANSCRIPT) as {
+      alternatives: Array<{ startTime: number; endTime: number; words: unknown[] }>;
+    };
+    expect(final.alternatives[0]?.words).toEqual([]);
+    expect(final.alternatives[0]?.startTime).toBe(0);
+    expect(final.alternatives[0]?.endTime).toBe(12.5);
+  });
+});
+
+describe('STT session keyterms', () => {
+  it('updateOptions does not bake session keyterms into the user baseline', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    // a later user option update must re-apply session terms to live streams...
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Niamh']);
+    // ...but must not pollute the STT's own user baseline with them
+    expect(stt['opts'].modelOptions ?? {}).not.toHaveProperty('keyterm');
+
+    stream.close();
+  });
+
+  it('session keyterm change after updateOptions drops stale terms', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3' });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Stale']);
+    stt.updateOptions({ modelOptions: { endpointing: 500 } as Record<string, unknown> });
+
+    // detector replaced the session terms: the old one must disappear downstream
+    stt._updateSessionKeyterms(['Fresh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Fresh']);
+
+    stream.close();
+  });
+
+  it('user keyterms from modelOptions are preserved across session updates', () => {
+    const stt = makeStt({ model: 'deepgram/nova-3', modelOptions: { keyterm: ['Acme'] } });
+    const stream = stt.stream();
+
+    stt._updateSessionKeyterms(['Niamh']);
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Niamh']);
+
+    stt._updateSessionKeyterms(['Other']);
+    // user term stays; only the session portion is swapped
+    expect(stream['opts'].modelOptions).toHaveProperty('keyterm', ['Acme', 'Other']);
+
+    stream.close();
+  });
+});
+
 describe('STT VAD handling for Speechmatics models', () => {
   class MockVAD extends VAD {
     label = 'mock';
@@ -381,4 +600,19 @@ describe('STT VAD handling for Speechmatics models', () => {
     stt.updateOptions({ model: 'speechmatics/enhanced' });
     expect(stt['vad']).toBeInstanceOf(InferenceVAD);
   });
+});
+
+describeLiveKitInference('LiveKit Inference STT integration', agents, async (harness) => {
+  for (const model of [
+    'deepgram/nova-3',
+    'cartesia/ink-whisper',
+    'assemblyai/universal-streaming',
+    'xai/stt-1',
+  ] as const) {
+    describe(model, async () => {
+      await harness.stt(new STT({ model }), new InferenceVAD(), {
+        nonStreaming: false,
+      });
+    });
+  }
 });

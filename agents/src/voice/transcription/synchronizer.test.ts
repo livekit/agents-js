@@ -5,7 +5,11 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
 import { AudioOutput, TextOutput } from '../io.js';
-import { SpeakingRateData, TranscriptionSynchronizer } from './synchronizer.js';
+import {
+  SpeakingRateData,
+  TranscriptionSynchronizer,
+  defaultTextSyncOptions,
+} from './synchronizer.js';
 
 describe('SpeakingRateData', () => {
   describe('constructor', () => {
@@ -229,6 +233,21 @@ class MockTextOutput extends TextOutput {
 
   flush(): void {}
 }
+
+describe('TranscriptionSynchronizer enabled behavior', () => {
+  it('directly forwards text when synchronization is disabled', async () => {
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream, {
+      ...defaultTextSyncOptions,
+      enabled: false,
+    });
+
+    await synchronizer.textOutput.captureText('hello');
+
+    expect(downstream.captured).toEqual(['hello']);
+    await synchronizer.close();
+  });
+});
 
 describe('TranscriptionSynchronizer attachment warnings', () => {
   const textDetachedWarning =

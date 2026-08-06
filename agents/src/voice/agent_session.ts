@@ -4,7 +4,12 @@
 import { type JsonObject, Struct } from '@bufbuild/protobuf';
 import { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import type { AudioFrame, Room } from '@livekit/rtc-node';
+import {
+  type AudioFrame,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+} from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Context, Span } from '@opentelemetry/api';
@@ -42,9 +47,11 @@ import type {
   ToolContextLike,
 } from '../llm/index.js';
 import { ToolContext, toToolContext } from '../llm/index.js';
+import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
+import { SimulationMode } from '../simulation.js';
 import type { STT } from '../stt/index.js';
 import type { STTError } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -54,6 +61,7 @@ import {
   DEFAULT_SESSION_CONNECT_OPTIONS,
   type ResolvedSessionConnectOptions,
   type SessionConnectOptions,
+  recordingEnabled,
 } from '../types.js';
 import { Event, Task, asError } from '../utils.js';
 import type { VAD } from '../vad.js';
@@ -92,12 +100,17 @@ import {
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
+import {
+  KeytermDetector,
+  type KeytermsOptions,
+  resolveKeytermsOptions,
+} from './keyterm_detection.js';
 import { RecorderIO } from './recorder_io/index.js';
 import { RoomSessionTransport, SessionHost } from './remote_session.js';
 import { RoomIO, type RoomInputOptions, type RoomOutputOptions } from './room_io/index.js';
 import type { UnknownUserData } from './run_context.js';
 import type { SpeechHandle } from './speech_handle.js';
-import { RunResult } from './testing/run_result.js';
+import { type RunOutputOptions, RunResult } from './testing/run_result.js';
 import {
   type AsyncToolOptions,
   type ToolHandlingOptions,
@@ -113,6 +126,9 @@ import type {
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
+const SIP_RULE_ID_ATTR = 'sip.ruleID';
+const DEFAULT_AEC_WARMUP_DURATION = 3000;
+
 export interface AgentSessionUsage {
   /** List of usage summaries, one per model/provider combination. */
   modelUsage: Array<Partial<ModelUsage>>;
@@ -121,12 +137,14 @@ export interface AgentSessionUsage {
 /**
  * Granular control over which recording features are active.
  *
- * All keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Pass to {@link AgentSession.start} as `record`:
+ * Recording keys default to `true` when omitted, so `{ logs: false }` means "record
+ * everything except logs". Redaction defaults to the project setting; `false` is ignored when
+ * redaction is enabled globally for the project. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
  * - `record: { audio: true, traces: false }` — granular
+ * - `record: { redaction: true }` — enable redaction for the session
  */
 export interface RecordingOptions {
   /** Record session audio. Defaults to `true`. */
@@ -137,6 +155,8 @@ export interface RecordingOptions {
   logs?: boolean;
   /** Upload the conversation transcript (chat history). Defaults to `true`. */
   transcript?: boolean;
+  /** Enable redaction. `false` does not disable project redaction. */
+  redaction?: boolean;
 }
 
 /** @internal Recording options with every category resolved to a boolean. */
@@ -147,6 +167,7 @@ const RECORDING_ALL_ON: ResolvedRecordingOptions = {
   traces: true,
   logs: true,
   transcript: true,
+  redaction: false,
 };
 
 const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
@@ -154,6 +175,7 @@ const RECORDING_ALL_OFF: ResolvedRecordingOptions = {
   traces: false,
   logs: false,
   transcript: false,
+  redaction: false,
 };
 
 const idleHoldStorage = new AsyncLocalStorage<boolean>();
@@ -278,7 +300,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
   /**
    * Duration in milliseconds for AEC (Acoustic Echo Cancellation) warmup, during which
    * interruptions from audio activity are suppressed. Set to `null` to disable.
-   * @defaultValue 3000
+   * Defaults to 3000, or `null` for outbound SIP calls.
    */
   aecWarmupDuration?: number | null;
 
@@ -303,6 +325,13 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * Configuration for turn handling.
    */
   turnHandling?: Partial<TurnHandlingOptions>;
+
+  /**
+   * Keyterm biasing for the STT. Holds static `keyterms` plus `keytermDetection`
+   * (LLM extraction). Applies to STTs that accept a term list; on others it warns
+   * and is ignored.
+   */
+  keytermsOptions?: KeytermsOptions;
 
   useTtsAlignedTranscript?: boolean;
 
@@ -335,6 +364,12 @@ export type AgentSessionUpdateOptions = {
    * - `TurnDetectionMode`: set the turn detection strategy to the provided value.
    */
   turnDetection?: TurnDetectionMode | null;
+
+  /**
+   * Replace the user-defined keyterms applied to the STT. Auto-detected keyterms
+   * are left untouched.
+   */
+  keyterms?: string[];
 };
 
 type ActivityTransitionOptions = {
@@ -343,6 +378,14 @@ type ActivityTransitionOptions = {
   blockedTasks?: Task<any>[];
   waitOnEnter?: boolean;
 };
+
+/** True when the surrounding job runs under a text simulation (the simulated
+ * user interacts over text streams only). */
+function resolveTextOnly(): boolean {
+  const jobCtx = getJobContext(false);
+  const simCtx = jobCtx?.simulationContext();
+  return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
+}
 
 export class AgentSession<
   UserData = UnknownUserData,
@@ -383,6 +426,7 @@ export class AgentSession<
   private idleReleased = new Event();
 
   private _aecWarmupTimer: NodeJS.Timeout | null = null;
+  private readonly _aecWarmupDurationExplicit: boolean;
 
   // Connection options for STT, LLM, and TTS
   private _connOptions: ResolvedSessionConnectOptions;
@@ -405,8 +449,16 @@ export class AgentSession<
    */
   _usingDefaultVad: boolean = false;
 
+  /** @internal True when the current job is a text simulation. */
+  get _textOnly(): boolean {
+    return resolveTextOnly();
+  }
+
   /** @internal */
   _usageCollector: ModelUsageCollector = new ModelUsageCollector();
+
+  /** @internal */
+  readonly _keytermDetector: KeytermDetector;
 
   /** @internal */
   _roomIO?: RoomIO;
@@ -441,12 +493,7 @@ export class AgentSession<
 
   /** @internal True when any recording category is enabled. */
   get _enableRecording(): boolean {
-    return (
-      this._recordingOptions.audio ||
-      this._recordingOptions.traces ||
-      this._recordingOptions.logs ||
-      this._recordingOptions.transcript
-    );
+    return recordingEnabled(this._recordingOptions);
   }
 
   /** @internal - Timestamp when the session started (milliseconds) */
@@ -473,6 +520,7 @@ export class AgentSession<
   constructor(options: AgentSessionOptions<UserData> = {}) {
     super();
 
+    this._aecWarmupDurationExplicit = options.aecWarmupDuration !== undefined;
     const { agentSessionOptions: opts, legacyVoiceOptions } =
       migrateLegacyOptions<UserData>(options);
 
@@ -523,6 +571,11 @@ export class AgentSession<
       this.llm = llm;
     }
 
+    // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
+    if (this.llm instanceof BaseLLM) {
+      this.llm.prewarm();
+    }
+
     if (typeof tts === 'string') {
       this.tts = InferenceTTS.fromModelString(tts);
     } else {
@@ -551,6 +604,13 @@ export class AgentSession<
     // This is the "global" chat context, it holds the entire conversation history
     this._chatCtx = ChatContext.empty();
     this.sessionOptions = resolvedSessionOptions;
+
+    const keytermsOptions = resolveKeytermsOptions(this.sessionOptions.keytermsOptions);
+    this._keytermDetector = new KeytermDetector({
+      staticKeyterms: keytermsOptions.keyterms,
+      options: keytermsOptions.keytermDetection,
+    });
+
     this.options = legacyVoiceOptions;
     this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
 
@@ -593,6 +653,11 @@ export class AgentSession<
 
   get history(): ChatContext {
     return this._chatCtx;
+  }
+
+  /** The effective keyterms (user-defined + auto-detected) currently applied to the STT. */
+  get keyterms(): string[] {
+    return this._keytermDetector.keyterms;
   }
 
   /** Connection options for STT, LLM, and TTS. */
@@ -659,6 +724,15 @@ export class AgentSession<
         this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
+      if (this._textOnly) {
+        // Under a text simulation the simulated user interacts over text
+        // streams only: no audio I/O. STT/TTS/VAD are dropped in the
+        // constructor.
+        this.logger.info('text simulation: disabling STT/TTS/VAD and audio I/O');
+        inputOptions = { ...inputOptions, audioEnabled: false };
+        outputOptions = { ...outputOptions, audioEnabled: false };
+      }
+
       // Check for existing input/output configuration and warn if needed
       if (this.input.audio && inputOptions?.audioEnabled !== false) {
         this.logger.warn(
@@ -668,7 +742,7 @@ export class AgentSession<
 
       if (this.output.audio && outputOptions?.audioEnabled !== false) {
         this.logger.warn(
-          'RoomIO audio output is enabled but output.audio is already set, ignoring..',
+          'RoomIO audio output is enabled; preserving and using the existing output.audio',
         );
       }
 
@@ -790,13 +864,16 @@ export class AgentSession<
       }
 
       this._recordingOptions = resolveRecordingOptions(record);
+      if (this._textOnly) {
+        this._recordingOptions.audio = false;
+      }
 
       // Only one AgentSession per job can be the primary (and therefore record).
       // Designate the primary before initRecording so a demoted secondary session
       // never configures cloud recording. Mirrors Python's start() ordering.
       if (ctx._primaryAgentSession === undefined || ctx._primaryAgentSession === this) {
         ctx._primaryAgentSession = this;
-      } else if (this._enableRecording) {
+      } else if (recordingEnabled(this._recordingOptions)) {
         if (recordIsGiven) {
           throw new Error(
             'Only one `AgentSession` can be the primary at a time. If you want to ignore primary designation, use `session.start({ record: false })`.',
@@ -846,7 +923,15 @@ export class AgentSession<
         }
       }
 
-      await this._updateActivity(agent);
+      await this._updateActivity(agent, { waitOnEnter: false });
+
+      // Watch onEnter so run() captures its output without awaiting long-lived
+      // onEnter flows that need a future user turn to complete.
+      const onEnterTask = this.activity?._onEnterTask;
+      const runState = this._globalRunState;
+      if (onEnterTask && runState && !runState.done()) {
+        runState._watchHandle(onEnterTask);
+      }
     };
 
     const oldTask = this.updateActivityTask;
@@ -993,6 +1078,10 @@ export class AgentSession<
   }
 
   updateOptions(options: AgentSessionUpdateOptions): void {
+    if (options.keyterms !== undefined) {
+      this._keytermDetector.setStaticKeyterms(options.keyterms);
+    }
+
     const endpointing = options.turnHandling?.endpointing;
     const turnDetection =
       options.turnHandling?.turnDetection !== undefined
@@ -1113,17 +1202,23 @@ export class AgentSession<
    * result.expect.noMoreEvents();
    * ```
    *
-   * @param options - Run options including user input and optional output type
+   * @param options - Run options including user input and optional output type.
+   *   When `outputType` is set and the turn ends without structured output, the
+   *   run re-prompts the model up to `outputOptions.maxRetries` times (default 2)
+   *   before rejecting with `UnexpectedModelBehavior`. Pass `outputOptions: null`
+   *   to disable retries entirely.
    * @returns A RunResult that resolves when the agent finishes responding
    */
   run<T = unknown>({
     userInput,
     inputModality,
     outputType,
+    outputOptions,
   }: {
     userInput: string;
     inputModality?: 'audio' | 'text';
     outputType?: z.ZodType<T>;
+    outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
     if (this._globalRunState && !this._globalRunState.done()) {
       throw new Error('nested runs are not supported');
@@ -1132,6 +1227,8 @@ export class AgentSession<
     const runState = new RunResult<T>({
       userInput,
       outputType,
+      outputOptions,
+      session: this,
     });
 
     this._globalRunState = runState;
@@ -1584,10 +1681,31 @@ export class AgentSession<
     }
   }
 
+  /** @internal */
+  _onRoomIOParticipantLinked(participant: RemoteParticipant): void {
+    if (this._aecWarmupDurationExplicit) {
+      return;
+    }
+
+    const isOutboundSip =
+      participant.info.kind === ParticipantKind.SIP && !participant.attributes[SIP_RULE_ID_ATTR];
+    this.sessionOptions.aecWarmupDuration = isOutboundSip ? null : DEFAULT_AEC_WARMUP_DURATION;
+    this._aecWarmupRemaining = this.sessionOptions.aecWarmupDuration ?? 0;
+
+    if (isOutboundSip && this._aecWarmupTimer !== null) {
+      clearTimeout(this._aecWarmupTimer);
+      this._aecWarmupTimer = null;
+    }
+  }
+
   private _onUserInputTranscribed(ev: UserInputTranscribedEvent): void {
-    if (this._userState === 'away' && ev.isFinal) {
-      this.logger.debug('User returned from away state due to speech input');
-      this._updateUserState('listening');
+    if (ev.isFinal && this._userState !== 'speaking') {
+      if (this._userState === 'away') {
+        this.logger.debug('User returned from away state due to speech input');
+        this._updateUserState('listening');
+      } else if (this._userState === 'listening' && this._agentState === 'listening') {
+        this._setUserAwayTimer();
+      }
     }
   }
 

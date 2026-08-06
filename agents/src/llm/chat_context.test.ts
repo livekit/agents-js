@@ -305,6 +305,56 @@ describe('ChatContext.toJSON', () => {
   });
 });
 
+describe('ChatMessage text content', () => {
+  const mixed =
+    '<expr type="expression" label="happy"/> Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    '<expr type="prosody" label="whisper">keep it secret</expr>';
+  const mixedClean =
+    ' Press [Enter] to see <b>bold</b>, ' +
+    'read [the docs](https://docs.livekit.io), then 1 < 2. <break time="1s"/> ' +
+    'keep it secret';
+
+  it('strips only expr markup from assistant textContent', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [mixed] });
+
+    expect(msg.textContent).toBe(mixedClean);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it.each(['user', 'system', 'developer'] as const)('keeps %s textContent raw', (role) => {
+    const msg = ChatMessage.create({ role, content: [mixed] });
+
+    expect(msg.textContent).toBe(mixed);
+    expect(msg.rawTextContent).toBe(mixed);
+  });
+
+  it('returns undefined without text content', () => {
+    const msg = ChatMessage.create({ role: 'assistant', content: [] });
+
+    expect(msg.textContent).toBeUndefined();
+    expect(msg.rawTextContent).toBeUndefined();
+  });
+
+  it('toJSON stripMarkup is expr-only and assistant-only', () => {
+    const chatCtx = new ChatContext();
+    chatCtx.addMessage({ role: 'user', content: [mixed] });
+    chatCtx.addMessage({ role: 'assistant', content: [mixed] });
+
+    const stripped = chatCtx.toJSON({ stripMarkup: true });
+    expect(stripped.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixedClean], role: 'assistant' }),
+    ]);
+
+    const raw = chatCtx.toJSON();
+    expect(raw.items).toEqual([
+      expect.objectContaining({ content: [mixed], role: 'user' }),
+      expect.objectContaining({ content: [mixed], role: 'assistant' }),
+    ]);
+  });
+});
+
 describe('ChatContext._summarize', () => {
   it('includes function calls in the summarization source and keeps chronological order', async () => {
     const ctx = new ChatContext();
@@ -1319,6 +1369,45 @@ extra`;
     });
     expect(instr.audio).toBe('null=null undefined=undefined');
     expect(instr.text).toBe('null=null undefined=undefined');
+  });
+
+  it('tpl renders each modality variant exactly once', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'Handle noisy voice input.', text: 'Handle typed input.' })}`;
+
+    expect(renderInstructions(instr, 'audio')).toBe(
+      'You are a helpful assistant.\n\nHandle noisy voice input.',
+    );
+    expect(renderInstructions(instr, 'text')).toBe(
+      'You are a helpful assistant.\n\nHandle typed input.',
+    );
+    expect(renderInstructions(instr, 'audio').split('You are a helpful assistant.')).toHaveLength(
+      2,
+    );
+  });
+
+  it('tpl without Instructions interpolations is an audio-only render', () => {
+    const instr = Instructions.tpl`Hello ${'Alex'}`;
+
+    expect(instr.toJSON()).toEqual({ type: 'instructions', audio: 'Hello Alex' });
+    expect(instr.audio).toBe('Hello Alex');
+    expect(instr.text).toBe('Hello Alex');
+    expect(renderInstructions(instr)).toBe('Hello Alex');
+    expect(renderInstructions(instr, 'audio')).toBe('Hello Alex');
+  });
+
+  it('tpl collapses identical modality variants', () => {
+    const instr = Instructions.tpl`${'You are a helpful assistant.'}
+
+${new Instructions({ audio: 'shared note', text: 'shared note' })}`;
+
+    expect(instr.toJSON()).toEqual({
+      type: 'instructions',
+      audio: 'You are a helpful assistant.\n\nshared note',
+    });
+    expect(renderInstructions(instr)).toBe('You are a helpful assistant.\n\nshared note');
+    expect(renderInstructions(instr, 'audio')).toBe('You are a helpful assistant.\n\nshared note');
   });
 
   it('serializes to a dict with both variants and round-trips through toJSON', () => {

@@ -14,7 +14,7 @@ import {
   TrackSource,
   isFrameProcessor,
 } from '@livekit/rtc-node';
-import type { ReadableStream } from 'node:stream/web';
+import { type ReadableStream, TransformStream } from 'node:stream/web';
 import { log } from '../../log.js';
 import { resampleStream } from '../../utils.js';
 import { AudioInput } from '../io.js';
@@ -28,6 +28,7 @@ export class ParticipantAudioInputStream extends AudioInput {
   private publication: RemoteTrackPublication | null = null;
   private participantIdentity: string | null = null;
   private currentInputId: string | null = null;
+  private attached = true;
   private logger = log();
 
   constructor({
@@ -100,6 +101,18 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
   }
 
+  override setAttached(attached: boolean): void {
+    this.attached = attached;
+  }
+
+  override onAttached(): void {
+    this.logger.debug({ participant: this.participantIdentity }, 'input stream attached');
+  }
+
+  override onDetached(): void {
+    this.logger.debug({ participant: this.participantIdentity }, 'input stream detached');
+  }
+
   private onTrackUnpublished = (
     publication: RemoteTrackPublication,
     participant: RemoteParticipant,
@@ -147,12 +160,19 @@ export class ParticipantAudioInputStream extends AudioInput {
     }
     this.closeStream();
     this.publication = publication;
-    this.currentInputId = this.multiStream.addInputStream(
-      resampleStream({
-        stream: this.createStream(track),
-        outputRate: this.sampleRate,
+    const attachedStream = resampleStream({
+      stream: this.createStream(track),
+      outputRate: this.sampleRate,
+    }).pipeThrough(
+      new TransformStream<AudioFrame, AudioFrame>({
+        transform: (frame, controller) => {
+          if (this.attached) {
+            controller.enqueue(frame);
+          }
+        },
       }),
     );
+    this.currentInputId = this.multiStream.addInputStream(attachedStream);
     return true;
   };
 

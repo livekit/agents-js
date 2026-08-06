@@ -59,10 +59,22 @@ export type SpeechmaticsModels = 'speechmatics/enhanced' | 'speechmatics/standar
 export type InworldSTTModels = 'inworld/inworld-stt-1';
 
 export interface CartesiaOptions {
-  /** Minimum volume threshold. Default: not specified. */
+  /** Minimum volume threshold. Ink Whisper only. Default: not specified. */
   min_volume?: number;
-  /** Maximum silence duration in seconds. Default: not specified. */
+  /** Maximum silence duration in seconds. Ink Whisper only. Default: not specified. */
   max_silence_duration_secs?: number;
+  // Turn-detection tuning for turn-detecting models such as Ink 2. The gateway validates
+  // these values against Cartesia's documented ranges.
+  /** Turn-start threshold (0.5-0.9). Default: 0.8. */
+  turn_start_threshold?: number;
+  /** Eager turn-end threshold (0.3-0.6). Default: 0.4. */
+  turn_eager_end_threshold?: number;
+  /** Turn-end threshold (0.05-0.5). Default: 0.2. */
+  turn_end_threshold?: number;
+  /** Turn-end timeout in milliseconds (640-11200). Default: 5600. */
+  turn_end_timeout_ms?: number;
+  /** Key terms, up to 100 terms totaling 1200 characters. */
+  keyterm?: string | string[];
 }
 
 export interface DeepgramOptions {
@@ -224,6 +236,85 @@ function diarizationEnabled(extraKwargs: Record<string, unknown> | undefined): b
   });
 }
 
+/**
+ * Return the provider's keyterm `extra` entry: user keyterms (from `extraKwargs`)
+ * merged with the framework `sessionKeyterms`.
+ *
+ * `undefined` if the model has no keyterm prompting, so
+ * `keytermsExtraForModel(model) !== undefined` is also the capability check.
+ */
+function keytermsExtraForModel(
+  model: string | undefined,
+  opts?: {
+    extraKwargs?: Record<string, unknown>;
+    sessionKeyterms?: string[];
+  },
+): Record<string, unknown> | undefined {
+  if (typeof model !== 'string' || !model) {
+    return undefined;
+  }
+
+  const extraKwargs = opts?.extraKwargs ?? {};
+  const sessionKeyterms = opts?.sessionKeyterms ?? [];
+
+  if (model.startsWith('speechmatics/')) {
+    // keep existing entries as-is (they may carry sounds_like etc.); append new session terms
+    const rawExisting = extraKwargs.additional_vocab;
+    const existing: Record<string, unknown>[] = Array.isArray(rawExisting) ? [...rawExisting] : [];
+    const seen = new Set(existing.map((v) => v.content));
+    const additions = sessionKeyterms.filter((term) => !seen.has(term));
+    return { additional_vocab: [...existing, ...additions.map((term) => ({ content: term }))] };
+  }
+
+  let key: string | undefined;
+  if (model.startsWith('deepgram/')) {
+    key = 'keyterm';
+  } else if (model.startsWith('assemblyai/')) {
+    key = 'keyterms_prompt';
+  }
+
+  if (key === undefined) {
+    return undefined;
+  }
+  // deepgram's keyterm may be a bare string; wrap it so it isn't splat char-by-char
+  const rawUser = extraKwargs[key] ?? [];
+  const existing = typeof rawUser === 'string' ? [rawUser] : Array.isArray(rawUser) ? rawUser : [];
+  return { [key]: [...new Set([...existing, ...sessionKeyterms])] };
+}
+
+// Models verified to carry word timings. Unknown models stay disabled until verified.
+const WORD_ALIGNED_MODELS = new Set([
+  'deepgram/nova-3',
+  'deepgram/nova-3-medical',
+  'deepgram/nova-2',
+  'deepgram/nova-2-medical',
+  'deepgram/nova-2-conversationalai',
+  'deepgram/nova-2-phonecall',
+  'deepgram/flux-general',
+  'deepgram/flux-general-en',
+  'deepgram/flux-general-multi',
+  'cartesia/ink-whisper',
+  'assemblyai/universal-streaming',
+  'assemblyai/universal-streaming-multilingual',
+  'assemblyai/u3-rt-pro',
+  'assemblyai/universal-3-5-pro',
+  'elevenlabs/scribe_v2_realtime',
+  'xai/stt-1',
+  'speechmatics/enhanced',
+  'speechmatics/standard',
+]);
+
+/**
+ * Word-level alignment, which adaptive interruption relies on to gatekeep transcripts.
+ *
+ * Returns false when the model sends no word timings, and for `auto`, where the provider is
+ * picked server-side per language and cannot be known here. Claiming alignment we do not have
+ * is the costlier error because it disables the fast VAD barge-in path.
+ */
+function alignedTranscriptForModel(model: string | undefined): 'word' | false {
+  return model && WORD_ALIGNED_MODELS.has(model) ? 'word' : false;
+}
+
 type _STTModels =
   | DeepgramModels
   | DeepgramFluxModels
@@ -336,6 +427,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
+  /** framework-managed; merged into modelOptions @internal */
+  _sessionKeyterms: string[] = [];
 
   /**
    * Resolves to the VAD instance for the current model, or `undefined` if the model
@@ -364,11 +457,22 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     vad?: VAD;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
+    const initialModel =
+      typeof opts?.model === 'string' ? parseSTTModelString(opts.model)[0] : undefined;
+    const normalizedFallback = opts?.fallback ? normalizeSTTFallback(opts.fallback) : undefined;
+    const alignmentModels = [
+      initialModel,
+      ...(normalizedFallback?.map(({ model }) => model) ?? []),
+    ];
+    const alignedTranscript = alignmentModels.every(alignedTranscriptForModel) ? 'word' : false;
     super({
       streaming: true,
       interimResults: true,
-      alignedTranscript: 'word',
+      alignedTranscript,
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
+      keyterms:
+        keytermsExtraForModel(typeof opts?.model === 'string' ? opts.model : undefined) !==
+        undefined,
     });
 
     const {
@@ -379,7 +483,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       sampleRate = DEFAULT_SAMPLE_RATE,
       apiKey,
       apiSecret,
-      fallback,
       connOptions,
       vad,
     } = opts || {};
@@ -413,7 +516,6 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         nextModel = parsedModel as TModel;
       }
     }
-    const normalizedFallback = fallback ? normalizeSTTFallback(fallback) : undefined;
     this.vad = resolveVADForModel(nextModel, vad);
 
     this.opts = {
@@ -478,16 +580,66 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     if (nextOpts.model !== undefined) {
       this.vad = resolveVADForModel(nextOpts.model, this.vad);
       this._vadPromise = undefined;
+      const alignmentModels = [
+        this.opts.model,
+        ...(this.opts.fallback?.map(({ model }) => model) ?? []),
+      ];
+      this.updateCapabilities({
+        keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
+        alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
+      });
     }
 
     if (nextOpts.modelOptions) {
       this.updateCapabilities({
         diarization: diarizationEnabled(this.opts.modelOptions as Record<string, unknown>),
       });
+      // re-apply the active session keyterms on top of the update sent to live streams,
+      // so a user extra update doesn't drop them. `this.opts.modelOptions` must stay a
+      // pure user baseline (no session terms baked in), or a later session-keyterm
+      // change could never remove previously applied terms.
+      const keytermExtra = keytermsExtraForModel(this.opts.model, {
+        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms: this._sessionKeyterms,
+      });
+      if (keytermExtra !== undefined) {
+        nextOpts.modelOptions = {
+          ...nextOpts.modelOptions,
+          ...keytermExtra,
+        } as STTOptions<TModel>;
+      }
     }
 
     for (const stream of this.streams) {
       stream.updateOptions(nextOpts);
+    }
+  }
+
+  override _updateSessionKeyterms(keyterms: string[]): void {
+    if (
+      keyterms.length === this._sessionKeyterms.length &&
+      keyterms.every((t, i) => t === this._sessionKeyterms[i])
+    ) {
+      return;
+    }
+    const keytermExtra = keytermsExtraForModel(this.opts.model, {
+      extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+      sessionKeyterms: keyterms,
+    });
+    if (keytermExtra === undefined) {
+      super._updateSessionKeyterms(keyterms); // warn-and-skip for unsupported models
+      return;
+    }
+
+    this._sessionKeyterms = [...keyterms];
+    // inference applies extra live via session.update; defer to END_OF_SPEECH since the
+    // gateway may reconnect upstream when the keyterms change
+    for (const stream of this.streams) {
+      if (stream._speaking) {
+        stream._pendingExtra = keytermExtra;
+      } else {
+        stream.updateOptions({ modelOptions: keytermExtra as STTOptions<TModel> });
+      }
     }
   }
 
@@ -513,7 +665,14 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       settings: {
         sample_rate: String(this.opts.sampleRate),
         encoding: this.opts.encoding,
-        extra: this.opts.modelOptions,
+        // the framework session keyterms into the user's extra_kwargs keyterm key)
+        extra: {
+          ...this.opts.modelOptions,
+          ...(keytermsExtraForModel(this.opts.model, {
+            extraKwargs: this.opts.modelOptions as Record<string, unknown>,
+            sessionKeyterms: this._sessionKeyterms,
+          }) ?? {}),
+        },
       },
     } as Record<string, unknown>;
 
@@ -562,6 +721,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private opts: InferenceSTTOptions<TModel>;
   private requestId = shortuuid('stt_request_');
   private speaking = false;
+  // keyterm extra set while the user is speaking; applied at END_OF_SPEECH (latest wins).
+  // inference applies live, but the gateway may reconnect upstream, so defer to a calm moment.
+  /** @internal */
+  _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
   private reconnectEvent = new Event();
   private stt: STT<TModel>;
@@ -585,6 +748,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     return 'inference.SpeechStream';
   }
 
+  /** @internal */
+  get _speaking(): boolean {
+    return this.speaking;
+  }
+
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
@@ -598,6 +766,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
       modelOptions: mergedModelOptions,
     };
+
+    if (opts.modelOptions !== undefined) {
+      this._pendingExtra = undefined;
+    }
 
     // When the WebSocket is live, send a mid-stream session.update so providers
     // that support it (e.g. AssemblyAI, Deepgram Flux) apply changes without
@@ -614,6 +786,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
         }
       }
+    }
+  }
+
+  private onEndOfSpeech(): void {
+    if (this._pendingExtra !== undefined) {
+      this.updateOptions({ modelOptions: this._pendingExtra as STTOptions<TModel> });
+      this._pendingExtra = undefined;
     }
   }
 
@@ -786,6 +965,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 finalReceived = true;
                 resourceCleanup();
                 break;
+              case 'start_of_speech':
+                this.processStartOfSpeech();
+                break;
               case 'interim_transcript':
                 this.processTranscript(event, SpeechEventType.INTERIM_TRANSCRIPT);
                 break;
@@ -867,6 +1049,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     }
   }
 
+  /** Onset reported by a provider that detects it server-side (e.g. Cartesia Ink-2).
+   *
+   * Without this the first transcript has to stand in for onset, which lands about
+   * 800ms late because it waits for a word to be decoded.
+   */
+  private processStartOfSpeech(): void {
+    if (this.queue.closed) return;
+    if (this.speaking) return;
+    this.speaking = true;
+    this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+  }
+
   private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
@@ -878,11 +1072,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     if (!text && eventType !== SpeechEventType.FINAL_TRANSCRIPT) return;
 
     try {
-      // We'll have a more accurate way of detecting when speech started when we have VAD
-      if (!this.speaking) {
-        this.speaking = true;
-        this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
-      }
+      this.processStartOfSpeech();
 
       // The gateway carries provider-specific data on the `extra` field
       // of the transcript message. We surface it on SpeechData.metadata.
@@ -935,6 +1125,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         if (this.speaking) {
           this.speaking = false;
           this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+          this.onEndOfSpeech();
         }
       } else {
         this.queue.put({

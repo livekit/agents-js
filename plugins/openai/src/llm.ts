@@ -79,6 +79,7 @@ export class LLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: this.#opts.baseURL,
+        maxRetries: 0,
         apiKey: this.#opts.apiKey,
       });
   }
@@ -98,6 +99,10 @@ export class LLM extends llm.LLM {
     } catch {
       return 'api.openai.com';
     }
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list({ signal });
   }
 
   /**
@@ -136,7 +141,7 @@ export class LLM extends llm.LLM {
     return new LLM({
       temperature: opts.temperature,
       user: opts.user,
-      client: new AzureOpenAI(opts),
+      client: new AzureOpenAI({ ...opts, maxRetries: 0 }),
     });
   }
 

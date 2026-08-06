@@ -26,8 +26,9 @@ import type { STTNode } from './io.js';
 
 function setupInMemoryTracing() {
   const exporter = new InMemorySpanExporter();
-  const provider = new NodeTracerProvider();
-  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  const provider = new NodeTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  });
   provider.register();
   setTracerProvider(provider);
   return { exporter };
@@ -104,6 +105,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -168,7 +170,7 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_turn and eou_detection spans');
     }
 
-    expect(eou.parentSpanId).toBe(userTurn.spanContext().spanId);
+    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     // creation-time attributes
     expect(userTurn.attributes['lk.participant_id']).toBe('p1');
@@ -199,6 +201,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -272,6 +275,7 @@ describe('AudioRecognition user_turn span', () => {
 
     const hooks: RecognitionHooks = {
       onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
       onEndOfSpeech: vi.fn(),
@@ -362,10 +366,73 @@ describe('AudioRecognition user_turn span', () => {
     if (!userTurn || !eou) {
       throw new Error('expected user_turn and eou_detection spans');
     }
-    expect(eou.parentSpanId).toBe(userTurn.spanContext().spanId);
+    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     expect(hooks.onStartOfSpeech).toHaveBeenCalled();
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
+  });
+
+  it('ends an uncommitted user_turn span when audio recognition closes', async () => {
+    const { exporter } = setupInMemoryTracing();
+
+    const hooks: RecognitionHooks = {
+      onInterruption: vi.fn(),
+      onBackchannelConfirmed: vi.fn(),
+      onStartOfSpeech: vi.fn(),
+      onVADInferenceDone: vi.fn(),
+      onEndOfSpeech: vi.fn(),
+      onInterimTranscript: vi.fn(),
+      onFinalTranscript: vi.fn(),
+      onPreemptiveGeneration: vi.fn(),
+      onEotPrediction: vi.fn(),
+      onAgentBackchannelOpportunity: vi.fn(),
+      retrieveChatCtx: () => ChatContext.empty(),
+      onEndOfTurn: vi.fn(async () => true),
+    };
+
+    const now = Date.now();
+    const vadEvents: VADEvent[] = [
+      {
+        type: VADEventType.START_OF_SPEECH,
+        samplesIndex: 0,
+        timestamp: now,
+        speechDuration: 100,
+        silenceDuration: 0,
+        frames: [],
+        probability: 0,
+        inferenceDuration: 0,
+        speaking: true,
+        rawAccumulatedSilence: 0,
+        rawAccumulatedSpeech: 0,
+      },
+    ];
+
+    const sttNode: STTNode = async () =>
+      new ReadableStream<SpeechEvent | string>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+    const ar = new AudioRecognition({
+      recognitionHooks: hooks,
+      stt: sttNode,
+      vad: new FakeVAD(vadEvents),
+      turnDetector: alwaysTrueTurnDetector,
+      turnDetectionMode: 'vad',
+      minEndpointingDelay: 0,
+      maxEndpointingDelay: 0,
+    });
+
+    await ar.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeUndefined();
+
+    await ar.close();
+
+    expect(spanByName(exporter.getFinishedSpans(), 'user_turn')).toBeTruthy();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
   });
 
   it('parents user_speaking under user_turn when an explicit speech context is provided', () => {
@@ -400,7 +467,7 @@ describe('AudioRecognition user_turn span', () => {
     if (!userSpeaking || !exportedUserTurn) {
       throw new Error('expected user_speaking and user_turn spans');
     }
-    expect(userSpeaking.parentSpanId).toBe(exportedUserTurn.spanContext().spanId);
+    expect(userSpeaking.parentSpanContext?.spanId).toBe(exportedUserTurn.spanContext().spanId);
     expect(userSpeaking.attributes['lk.participant_id']).toBe('p3');
   });
 
@@ -425,6 +492,6 @@ describe('AudioRecognition user_turn span', () => {
     if (!userSpeaking) {
       throw new Error('expected user_speaking span');
     }
-    expect(userSpeaking.parentSpanId).toBe(sessionSpan.spanContext().spanId);
+    expect(userSpeaking.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
   });
 });

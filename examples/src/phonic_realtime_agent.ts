@@ -33,6 +33,9 @@ export default defineAgent({
         voice: 'sabrina',
         audioSpeed: 1.2,
         minWordsToInterrupt: 3,
+        onConversationCreated: (conversationId) => {
+          console.log(`Phonic conversation id: ${conversationId}`);
+        },
       }),
     });
 

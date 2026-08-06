@@ -8,8 +8,14 @@ import { FunctionCall, ToolContext, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
+import { AgentTask } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
+import {
+  type _TextOut,
+  _waitForToolExecutionResult,
+  performTextForwarding,
+  performToolExecutions,
+} from './generation.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { ToolExecutor } from './tool_executor.js';
 
@@ -233,10 +239,90 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
 
     expect(aborted).toBe(true);
-    expect(toolOutput.output.length).toBe(1);
-    const out = toolOutput.output[0];
-    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(toolOutput.output).toHaveLength(0);
   }, 20_000);
+
+  it('keeps a settled tool result when abort is observed in the same tick', async () => {
+    const replyAbortController = new AbortController();
+    const settled = Promise.resolve('completed');
+    replyAbortController.abort();
+
+    await expect(
+      _waitForToolExecutionResult(settled, replyAbortController.signal),
+    ).resolves.toEqual({
+      result: 'completed',
+      isAborted: false,
+    });
+  });
+
+  it('keeps completed output while omitting interrupted regular tools and handoffs', async () => {
+    const replyAbortController = new AbortController();
+    const neverFinish = new Promise<void>(() => {});
+    let signalSlowStarted!: () => void;
+    const slowStarted = new Promise<void>((resolve) => {
+      signalSlowStarted = resolve;
+    });
+    let signalHandoffStarted!: () => void;
+    const handoffStarted = new Promise<void>((resolve) => {
+      signalHandoffStarted = resolve;
+    });
+    let signalCompleted!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      signalCompleted = resolve;
+    });
+
+    const immediate = tool({
+      name: 'immediate',
+      description: 'Completes before interruption.',
+      parameters: z.object({}),
+      execute: async () => 'completed',
+    });
+    const slow = tool({
+      name: 'slow',
+      description: 'Remains in flight during interruption.',
+      parameters: z.object({}),
+      execute: async () => {
+        signalSlowStarted();
+        await neverFinish;
+        return 'unreachable';
+      },
+    });
+    const handoff = tool({
+      name: 'handoff',
+      description: 'Returns a handoff only if allowed to finish.',
+      parameters: z.object({}),
+      execute: async () => {
+        signalHandoffStarted();
+        await neverFinish;
+        return new AgentTask({ instructions: 'Handle the transferred request.' });
+      },
+    });
+    const calls = [
+      FunctionCall.create({ callId: 'call_completed', name: immediate.name, args: '{}' }),
+      FunctionCall.create({ callId: 'call_slow', name: slow.name, args: '{}' }),
+      FunctionCall.create({ callId: 'call_handoff', name: handoff.name, args: '{}' }),
+    ];
+    const completedCallIds: string[] = [];
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as any,
+      speechHandle: { id: 'speech_mixed_abort', _itemAdded: () => {} } as any,
+      toolCtx: new ToolContext([immediate, slow, handoff]) as any,
+      toolCallStream: createFunctionCallStreamFromArray(calls),
+      controller: replyAbortController,
+      onToolExecutionCompleted: (output) => {
+        completedCallIds.push(output.toolCall.callId);
+        if (output.toolCall.callId === 'call_completed') signalCompleted();
+      },
+    });
+
+    await Promise.all([completed, slowStarted, handoffStarted]);
+    replyAbortController.abort();
+    await execTask.result;
+
+    expect(toolOutput.output.map((output) => output.toolCall.callId)).toEqual(['call_completed']);
+    expect(completedCallIds).toEqual(['call_completed']);
+  });
 
   it('resolves firstToolStartedFuture even when the only tool call is duplicate-rejected', async () => {
     const sharedExecutor = new ToolExecutor({ owningActivity: null });

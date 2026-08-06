@@ -1,0 +1,20 @@
+/**
+ * Config file for API Extractor.  For more info, please visit: https://api-extractor.com
+ */
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+
+  /**
+   * Optionally specifies another JSON config file that this file extends from.  This provides a way for
+   * standard settings to be shared across multiple projects.
+   *
+   * If the path starts with "./" or "../", the path is resolved relative to the folder of the file that contains
+   * the "extends" field.  Otherwise, the first path segment is interpreted as an NPM package name, and will be
+   * resolved using NodeJS require().
+   *
+   * SUPPORTED TOKENS: none
+   * DEFAULT VALUE: ""
+   */
+  "extends": "../../api-extractor-shared.json",
+  "mainEntryPointFilePath": "./dist/index.d.ts"
+}

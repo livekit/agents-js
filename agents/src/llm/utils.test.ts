@@ -15,13 +15,39 @@ import {
 } from './chat_context.js';
 import { ToolContext, tool } from './tool_context.js';
 import {
+  ThinkingTokenFilter,
   computeChatCtxDiff,
   executeToolCall,
   formatChatHistory,
   parseFunctionArguments,
   serializeImage,
+  stripThinkingTokens,
   validateChatContextStructure,
 } from './utils.js';
+
+const GEMMA_THINK_TAGS: [string, string] = ['<|channel>thought', '<channel|>'];
+
+function collectVisibleText(
+  chunks: Array<string | null | undefined>,
+  thinkTags?: [string, string],
+) {
+  const state = thinkTags ? new ThinkingTokenFilter(...thinkTags) : new ThinkingTokenFilter();
+  const visible: string[] = [];
+
+  for (const chunk of chunks) {
+    const content = stripThinkingTokens(chunk, state);
+    if (content !== undefined) {
+      visible.push(content);
+    }
+  }
+
+  const content = stripThinkingTokens(undefined, state, { final: true });
+  if (content !== undefined) {
+    visible.push(content);
+  }
+
+  return visible.join('');
+}
 
 function createChatMessage(
   id: string,
@@ -179,6 +205,162 @@ describe('parseFunctionArguments', () => {
   });
 });
 
+describe('stripThinkingTokens', () => {
+  it('preserves content without thinking tokens', () => {
+    expect(collectVisibleText([undefined, '', 'Hello from LiveKit'])).toBe('Hello from LiveKit');
+  });
+
+  it('strips complete Gemma reasoning block', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\nprivate reasoning\n<channel|>answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('strips empty Gemma reasoning block', () => {
+    expect(collectVisibleText(['<|channel>thought\n<channel|>answer'], GEMMA_THINK_TAGS)).toBe(
+      'answer',
+    );
+  });
+
+  it('strips Gemma reasoning across chunks', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\n', 'private reasoning', '<channel|>', 'answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('preserves answer after streamed Gemma closing marker', () => {
+    expect(
+      collectVisibleText(
+        ['<|channel>thought\n', 'private reasoning', '<channel|>answer'],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('strips multiple Gemma reasoning blocks', () => {
+    expect(
+      collectVisibleText(
+        [
+          '<|channel>thought\nfirst thought<channel|>first answer; ',
+          '<|channel>thought\nsecond thought<channel|>second answer',
+        ],
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('first answer; second answer');
+  });
+
+  it('handles Gemma markers split at arbitrary boundaries', () => {
+    expect(
+      collectVisibleText(
+        Array.from('<|channel>thought\nprivate reasoning<channel|>answer'),
+        GEMMA_THINK_TAGS,
+      ),
+    ).toBe('answer');
+  });
+
+  it('preserves visible text before Gemma reasoning', () => {
+    expect(
+      collectVisibleText(['Let me check that.\n\n<|channel>thought\n<channel|>'], GEMMA_THINK_TAGS),
+    ).toBe('Let me check that.\n\n');
+  });
+
+  it('preserves Gemma markers without model configuration', () => {
+    const content = '<|channel>thought\nprivate reasoning<channel|>answer';
+
+    expect(collectVisibleText([content])).toBe(content);
+  });
+
+  it('preserves existing think token behavior', () => {
+    expect(collectVisibleText(['<think>', 'private reasoning', '</think>answer'])).toBe('answer');
+  });
+
+  it('preserves incomplete marker at end of stream', () => {
+    expect(collectVisibleText(['literal <|chan'], GEMMA_THINK_TAGS)).toBe('literal <|chan');
+  });
+
+  it('drops unclosed reasoning at end of stream', () => {
+    expect(
+      collectVisibleText(['before<|channel>thought\nprivate reasoning'], GEMMA_THINK_TAGS),
+    ).toBe('before');
+  });
+
+  it('flattens list-shaped delta content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: 'Hallo' }], state)).toBe('Hallo');
+  });
+
+  it('flattens multiple and string parts', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [{ type: 'text', text: 'Hello ' }, 'from ', { type: 'text', text: 'LiveKit' }],
+        state,
+      ),
+    ).toBe('Hello from LiveKit');
+  });
+
+  it('strips thinking tokens inside list parts', () => {
+    const state = new ThinkingTokenFilter();
+    const visible: string[] = [];
+    for (const chunk of [
+      [{ type: 'text', text: '<think>private ' }],
+      [{ type: 'text', text: 'reasoning</think>answer' }],
+    ]) {
+      const content = stripThinkingTokens(chunk, state);
+      if (content !== undefined) {
+        visible.push(content);
+      }
+    }
+
+    const content = stripThinkingTokens(undefined, state, { final: true });
+    if (content !== undefined) {
+      visible.push(content);
+    }
+    expect(visible.join('')).toBe('answer');
+  });
+
+  it('ignores list parts without text', () => {
+    const state = new ThinkingTokenFilter();
+    expect(
+      stripThinkingTokens(
+        [
+          { type: 'image_url', image_url: { url: 'https://x' } },
+          { type: 'text', text: 'hi' },
+        ],
+        state,
+      ),
+    ).toBe('hi');
+  });
+
+  it('treats a list without any text part as no content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([], state)).toBeUndefined();
+    expect(
+      stripThinkingTokens([{ type: 'image_url', image_url: { url: 'https://x' } }], state),
+    ).toBeUndefined();
+  });
+
+  it('keeps an empty text part as empty content', () => {
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([{ type: 'text', text: '' }], state)).toBe('');
+  });
+
+  it('flattens object parts with a text property', () => {
+    class Part {
+      text = 'typed part';
+    }
+
+    const state = new ThinkingTokenFilter();
+    expect(stripThinkingTokens([new Part()], state)).toBe('typed part');
+  });
+});
+
 describe('executeToolCall', () => {
   it('should canonicalize repaired arguments before returning', async () => {
     const removeOrderItem = tool({
@@ -224,6 +406,123 @@ describe('executeToolCall', () => {
     expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
     expect(JSON.parse(toolCall.args)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
   });
+
+  it('should use defaults for null non-nullable arguments', async () => {
+    const count = tool({
+      name: 'count',
+      description: 'count',
+      parameters: z.object({ arg1: z.string(), count: z.number().default(5) }),
+      execute: async ({ count }) => count,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-1',
+        name: 'count',
+        args: '{"arg1":"test","count":null}',
+      }),
+      new ToolContext([count]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(5);
+  });
+
+  it('should use defaults for nested null sentinels across schema shapes', async () => {
+    const setPrefs = tool({
+      name: 'setPrefs',
+      description: 'set preferences',
+      parameters: z.object({
+        prefs: z.object({ color: z.string().default('red'), note: z.string().nullable() }),
+        children: z.record(z.string(), z.object({ x: z.number().default(1) })),
+        pair: z.tuple([z.string(), z.object({ x: z.number().default(1) })]),
+      }),
+      execute: async ({ prefs, children, pair }) => ({ prefs, children, pair }),
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-2',
+        name: 'setPrefs',
+        args: JSON.stringify({
+          prefs: { color: null, note: null },
+          children: { k: { x: null } },
+          pair: ['k', { x: null }],
+        }),
+      }),
+      new ToolContext([setPrefs]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({
+      prefs: { color: 'red', note: null },
+      children: { k: { x: 1 } },
+      pair: ['k', { x: 1 }],
+    });
+  });
+
+  it('should reject null for required arguments without defaults', async () => {
+    const required = tool({
+      name: 'required',
+      description: 'required',
+      parameters: z.object({ arg1: z.string() }),
+      execute: async ({ arg1 }) => arg1,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-required-1',
+        name: 'required',
+        args: '{"arg1":null}',
+      }),
+      new ToolContext([required]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/Arguments parsing failed/);
+  });
+
+  it('should preserve a genuine null for a nullable defaulted argument', async () => {
+    const maybe = tool({
+      name: 'maybe',
+      description: 'maybe',
+      parameters: z.object({ n: z.number().nullable().default(3) }),
+      execute: async ({ n }) => n,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-nullable-1',
+        name: 'maybe',
+        args: '{"n":null}',
+      }),
+      new ToolContext([maybe]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toBe(null);
+  });
+
+  it('should accept an argument named "default"', async () => {
+    const configure = tool({
+      name: 'configure',
+      description: 'configure',
+      parameters: z.object({ default: z.string(), retries: z.number().default(2) }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-default-name-1',
+        name: 'configure',
+        args: '{"default":"eco","retries":null}',
+      }),
+      new ToolContext([configure]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ default: 'eco', retries: 2 });
+  });
 });
 
 describe('computeChatCtxDiff', () => {
@@ -238,6 +537,43 @@ describe('computeChatCtxDiff', () => {
 
     expect(result.toRemove).toEqual([]);
     expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([]);
+  });
+
+  it('should update same-id messages when raw text content changes', () => {
+    const oldMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="happy"/>Hello',
+      'assistant',
+    );
+    const newMsg = createChatMessage(
+      '1',
+      '<expr type="expression" label="sad"/>Hello',
+      'assistant',
+    );
+
+    const result = computeChatCtxDiff(createChatContext([oldMsg]), createChatContext([newMsg]));
+
+    expect(oldMsg.textContent).toBe(newMsg.textContent);
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([[null, '1']]);
+  });
+
+  it('should include previous item id for same-id message updates', () => {
+    const msg1 = createChatMessage('1', 'Hello', 'user');
+    const oldMsg2 = createChatMessage('2', 'Hi there', 'assistant');
+    const newMsg2 = createChatMessage('2', 'Hi again', 'assistant');
+    const msg3 = createChatMessage('3', 'How are you?', 'user');
+
+    const result = computeChatCtxDiff(
+      createChatContext([msg1, oldMsg2, msg3]),
+      createChatContext([msg1, newMsg2, msg3]),
+    );
+
+    expect(result.toRemove).toEqual([]);
+    expect(result.toCreate).toEqual([]);
+    expect(result.toUpdate).toEqual([['1', '2']]);
   });
 
   it('should handle empty old context', () => {

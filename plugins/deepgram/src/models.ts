@@ -110,6 +110,7 @@ export type STTLanguages =
   | 'zh'
   | 'zh-CN'
   | 'zh-TW'
+  | 'zh-HK'
   | 'da'
   | 'nl'
   | 'de'

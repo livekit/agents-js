@@ -17,6 +17,21 @@ function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   return new AudioFrame(data, sampleRate, 1, samplesPerChannel);
 }
 
+async function recognizeWords(words?: Record<string, unknown>[]) {
+  const { server, baseURL } = await startHttpServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ text: 'hello', language_code: 'en', words }));
+  });
+
+  try {
+    return await new STT({ apiKey: 'test-key', baseURL }).recognize(makeFrame(), {
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+  } finally {
+    await closeHttpServer(server);
+  }
+}
+
 async function startHttpServer(handler: RequestListener) {
   const server = createServer(handler);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -135,6 +150,73 @@ describe('ElevenLabs STT integration', () => {
 });
 
 describe('ElevenLabs STT', () => {
+  it('calculates confidence from spoken-word logprobs', async () => {
+    const event = await recognizeWords([
+      { type: 'word', logprob: -0.01 },
+      { type: 'spacing', logprob: -2 },
+      { type: 'word', logprob: -0.05 },
+    ]);
+
+    expect(event.alternatives?.[0]?.confidence).toBeGreaterThan(0.9);
+    expect(event.alternatives?.[0]?.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it('flags low-quality transcription confidence', async () => {
+    const event = await recognizeWords([
+      { type: 'word', logprob: -2.5 },
+      { type: 'word', logprob: -3 },
+    ]);
+
+    expect(event.alternatives?.[0]?.confidence).toBeLessThan(0.2);
+  });
+
+  it('defaults confidence to zero without logprobs', async () => {
+    const withoutWords = await recognizeWords();
+    const withoutLogprobs = await recognizeWords([{ text: 'hi', start: 0.1, end: 0.4 }]);
+
+    expect(withoutWords.alternatives?.[0]?.confidence).toBe(0);
+    expect(withoutLogprobs.alternatives?.[0]?.confidence).toBe(0);
+  });
+
+  it('sets confidence on committed transcripts', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let connected = false;
+
+    wss.on('connection', (ws) => {
+      connected = true;
+      ws.on('message', () => {
+        ws.send(
+          JSON.stringify({
+            message_type: 'committed_transcript',
+            text: 'hello',
+            words: [{ text: 'hello', start: 0.1, end: 0.4, type: 'word', logprob: -0.02 }],
+          }),
+        );
+        ws.send(JSON.stringify({ message_type: 'committed_transcript', text: '' }));
+      });
+    });
+
+    try {
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v2_realtime',
+        serverVad: { vadSilenceThresholdSecs: 0.5 },
+      }).stream();
+      await waitUntil(() => connected);
+      stream.pushFrame(makeFrame());
+      stream.flush();
+      stream.endInput();
+
+      const events = await collectUntilEnd(stream);
+      stream.close();
+      const final = events.find((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+      expect(final?.alternatives?.[0]?.confidence).toBeGreaterThan(0.9);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('defaults to Scribe v1 batch recognition', () => {
     const stt = new STT({ apiKey: 'test-key' });
 
@@ -193,7 +275,7 @@ describe('ElevenLabs STT', () => {
         baseURL,
         languageCode: 'en',
         tagAudioEvents: false,
-        modelId: 'scribe_v2',
+        model: 'scribe_v2',
         keyterms: ['LiveKit', 'ElevenLabs'],
       });
 
@@ -262,7 +344,7 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
       stream.startTimeOffset = 1;
 
@@ -318,6 +400,59 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('commits the turn when no audio is left to send', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      // 50ms is exactly one repack chunk, so flush() returns no frames.
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 1);
+
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[1]?.audio_base_64).toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('commits after the buffered audio', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(480));
+      stream.flush();
+      await waitUntil(() => sent.length === 2);
+
+      expect(sent.map((message) => message.commit)).toEqual([false, true]);
+      expect(sent[0]?.audio_base_64).not.toBe('');
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let requestUrl = '';
@@ -341,7 +476,7 @@ describe('ElevenLabs STT', () => {
       const eleven = new STT({
         apiKey: 'test-key',
         baseURL,
-        modelId: 'scribe_v2_realtime',
+        model: 'scribe_v2_realtime',
         languageCode: 'en',
         includeTimestamps: true,
         serverVad: {
@@ -389,7 +524,7 @@ describe('ElevenLabs STT', () => {
     });
 
     try {
-      const eleven = new STT({ apiKey: 'test-key', baseURL, modelId: 'scribe_v2_realtime' });
+      const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
       const stream = eleven.stream();
 
       await waitUntil(() => urls.length === 1);

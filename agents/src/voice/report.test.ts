@@ -413,6 +413,7 @@ describe('createSessionReport recordingOptions', () => {
       traces: false,
       logs: false,
       transcript: false,
+      redaction: false,
     });
   });
 
@@ -422,6 +423,7 @@ describe('createSessionReport recordingOptions', () => {
       traces: false,
       logs: true,
       transcript: false,
+      redaction: true,
     };
     expect(makeReport(recordingOptions).recordingOptions).toEqual(recordingOptions);
   });

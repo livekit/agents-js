@@ -37,6 +37,24 @@ const swallowExpectedRejection = (reason: unknown) => {
 beforeAll(() => process.on('unhandledRejection', swallowExpectedRejection));
 afterAll(() => void process.off('unhandledRejection', swallowExpectedRejection));
 
+describe('STT options', () => {
+  it.each([0, 1, 2, 3])(
+    'accepts supported endpoint latency adjustment level %i',
+    (endpointLatencyAdjustmentLevel) => {
+      expect(() => new STT({ apiKey: 'test-key', endpointLatencyAdjustmentLevel })).not.toThrow();
+    },
+  );
+
+  it.each([-1, 4])(
+    'rejects unsupported endpoint latency adjustment level %i',
+    (endpointLatencyAdjustmentLevel) => {
+      expect(() => new STT({ apiKey: 'test-key', endpointLatencyAdjustmentLevel })).toThrow(
+        'endpointLatencyAdjustmentLevel must be between 0 and 3',
+      );
+    },
+  );
+});
+
 // ---------------------------------------------------------------------------
 // TokenAccumulator: language-segment coalescing
 // ---------------------------------------------------------------------------
@@ -351,6 +369,51 @@ async function startWebSocketServer(): Promise<{ wss: WebSocketServer; baseUrl: 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
+
+describe('SpeechStream config', () => {
+  it.each([undefined, 0, 2])(
+    'serializes endpoint latency adjustment level %s',
+    async (endpointLatencyAdjustmentLevel) => {
+      const { wss, baseUrl } = await startWebSocketServer();
+      const configPromise = new Promise<Record<string, unknown>>((resolve) => {
+        wss.on('connection', (ws) => {
+          ws.once('message', (data) => {
+            resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+            ws.send(JSON.stringify({ finished: true }));
+          });
+        });
+      });
+
+      try {
+        const soniox = new STT({
+          apiKey: 'test-key',
+          baseUrl,
+          endpointLatencyAdjustmentLevel,
+        });
+        const stream = soniox.stream({
+          connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+        });
+        const drain = (async () => {
+          for await (const _ of stream) {
+            /* discard events */
+          }
+        })();
+
+        const config = await configPromise;
+        if (endpointLatencyAdjustmentLevel === undefined) {
+          expect(config).not.toHaveProperty('endpoint_latency_adjustment_level');
+        } else {
+          expect(config.endpoint_latency_adjustment_level).toBe(endpointLatencyAdjustmentLevel);
+        }
+
+        stream.close();
+        await drain.catch(() => {});
+      } finally {
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+});
 
 describe('SpeechStream server errors', () => {
   it('surfaces a Soniox error frame as a non-retryable APIStatusError', async () => {

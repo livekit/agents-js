@@ -17,8 +17,13 @@ import {
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base';
-import { Resource } from '@opentelemetry/resources';
-import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
+import {
+  defaultResource,
+  detectResources,
+  envDetector,
+  resourceFromAttributes,
+} from '@opentelemetry/resources';
+import type { ReadableSpan, Span as SdkSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
@@ -28,9 +33,15 @@ import { isInstructions, renderInstructions } from '../llm/chat_context.js';
 import type { ChatContent, ChatItem, ChatRole } from '../llm/index.js';
 import { enableOtelLogging } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
+import {
+  ATTRIBUTE_REDACTION_ENABLED,
+  ATTRIBUTE_SIMULATION_ENABLED,
+  recordingEnabled,
+} from '../types.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
+import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -44,6 +55,9 @@ export interface StartSpanOptions {
   /** Optional start time for the span in milliseconds (Date.now() format) */
   startTime?: number;
 }
+
+/** @deprecated Use OpenTelemetry SDK 2.x's `SpanProcessor` type directly. */
+export type SpanProcessorLike = SpanProcessor;
 
 /**
  * A dynamic tracer that allows the tracer provider to be changed at runtime.
@@ -183,30 +197,155 @@ class MetadataSpanProcessor implements SpanProcessor {
   }
 }
 
+type SpanProcessorRegistrar = (spanProcessor: SpanProcessor) => void;
+
+/**
+ * Span processor that forwards to a list of processors that can grow after the owning provider
+ * is constructed.
+ *
+ * OpenTelemetry 2.x providers accept span processors only at construction time. Include one of
+ * these in the provider's `spanProcessors` and pass its {@link FanoutSpanProcessor.add | add}
+ * method as `registerSpanProcessor` so LiveKit Cloud tracing can attach its processors later.
+ */
+export class FanoutSpanProcessor implements SpanProcessor {
+  private readonly processors: SpanProcessor[] = [];
+
+  /** Adds a processor that receives all span events from this point on. */
+  add(processor: SpanProcessor): void {
+    this.processors.push(processor);
+  }
+
+  onStart(span: SdkSpan, parentContext: Context): void {
+    for (const processor of this.processors) {
+      processor.onStart(span, parentContext);
+    }
+  }
+
+  onEnding(span: SdkSpan): void {
+    for (const processor of this.processors) {
+      processor.onEnding?.(span);
+    }
+  }
+
+  onEnd(span: ReadableSpan): void {
+    for (const processor of this.processors) {
+      processor.onEnd(span);
+    }
+  }
+
+  async forceFlush(): Promise<void> {
+    await Promise.all(this.processors.map((processor) => processor.forceFlush()));
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all(this.processors.map((processor) => processor.shutdown()));
+  }
+}
+
+/** Connection details for building a span processor that exports to LiveKit Cloud. */
+export interface CloudSpanProcessorOptions {
+  /** OTLP/HTTP protobuf endpoint for LiveKit Cloud traces. */
+  url: string;
+  /** Request headers, including the authorization token, the exporter must send. */
+  headers: Record<string, string>;
+}
+
+interface CustomProviderConfig {
+  registerSpanProcessor: SpanProcessorRegistrar;
+  createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
+}
+
+const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
+
+/** Options for configuring a custom tracer provider. */
+export interface SetTracerProviderOptions {
+  /** Attributes to add to every span created by the provider. */
+  metadata?: Attributes;
+  /**
+   * Adds a span processor to the provider.
+   *
+   * OpenTelemetry 2.x providers no longer expose `addSpanProcessor`. Supply this callback when
+   * using a provider backed by a mutable or delegating span processor so LiveKit Cloud tracing can
+   * share the same provider as another observability backend.
+   */
+  registerSpanProcessor?: SpanProcessorRegistrar;
+  /**
+   * Builds the span processor that exports to LiveKit Cloud, called when cloud tracing starts.
+   *
+   * The built-in OpenTelemetry SDK 2.x cloud processor is used by default. Supply this callback
+   * only to override how that processor is constructed:
+   *
+   * ```typescript
+   * import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
+   * import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
+   *
+   * createCloudSpanProcessor: ({ url, headers }) =>
+   *   new BatchSpanProcessor(new OTLPTraceExporter({ url, headers }))
+   * ```
+   *
+   * The returned processor must use OpenTelemetry SDK 2.x.
+   */
+  createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
+}
+
 /**
  * Set the tracer provider for the livekit-agents framework.
  * This should be called before agent session start if using custom tracer providers.
  *
- * @param provider - The tracer provider to use (must be a NodeTracerProvider)
- * @param options - Optional configuration with metadata property to inject into all spans
+ * @param provider - The tracer provider to use
+ * @param options - Optional provider configuration
  *
- * @example
+ * @example OpenTelemetry SDK 2.x — share one provider between another backend and LiveKit Cloud.
+ * SDK 2.x providers accept span processors only at construction time, so the provider must be
+ * built around a processor whose targets can grow later ({@link FanoutSpanProcessor}). The
+ * built-in cloud exporter is SDK 2.x and is attached through the fanout automatically.
  * ```typescript
- * import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
- * import { setTracerProvider } from '@livekit/agents/telemetry';
+ * import { telemetry } from '@livekit/agents';
+ * import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
  *
- * const provider = new NodeTracerProvider();
- * setTracerProvider(provider, {
- *   metadata: { room_id: 'room123', job_id: 'job456' }
+ * const fanout = new telemetry.FanoutSpanProcessor();
+ * const provider = new NodeTracerProvider({
+ *   spanProcessors: [new BatchSpanProcessor(myBackendExporter), fanout],
+ * });
+ * provider.register();
+ * telemetry.setTracerProvider(provider, {
+ *   metadata: { room_id: 'room123', job_id: 'job456' },
+ *   registerSpanProcessor: (processor) => fanout.add(processor),
  * });
  * ```
  */
 export function setTracerProvider(
-  provider: NodeTracerProvider,
-  options?: { metadata?: Attributes },
+  provider: TracerProvider,
+  options?: SetTracerProviderOptions,
 ): void {
+  const registerSpanProcessor = options?.registerSpanProcessor;
+
   if (options?.metadata) {
-    provider.addSpanProcessor(new MetadataSpanProcessor(options.metadata));
+    if (registerSpanProcessor) {
+      registerSpanProcessor(new MetadataSpanProcessor(options.metadata));
+    } else {
+      console.warn(
+        'Unable to register LiveKit span metadata on the custom tracer provider. ' +
+          'Pass registerSpanProcessor to setTracerProvider when using OpenTelemetry 2.x.',
+      );
+    }
+  }
+
+  if (options?.createCloudSpanProcessor && !registerSpanProcessor) {
+    console.warn(
+      'Ignoring createCloudSpanProcessor because the custom tracer provider has no way to ' +
+        'register span processors. Pass registerSpanProcessor to setTracerProvider when using ' +
+        'OpenTelemetry 2.x.',
+    );
+  }
+
+  if (registerSpanProcessor) {
+    customProviderConfigs.set(provider, {
+      registerSpanProcessor,
+      createCloudSpanProcessor: options?.createCloudSpanProcessor,
+    });
+  } else {
+    customProviderConfigs.delete(provider);
   }
 
   tracer.setProvider(provider);
@@ -224,10 +363,19 @@ export async function setupCloudTracer(options: {
   roomId: string;
   jobId: string;
   cloudHostname: string;
+  agentName?: string;
   enableTraces?: boolean;
   enableLogs?: boolean;
+  metadata?: Attributes;
 }): Promise<void> {
-  const { roomId, jobId, cloudHostname, enableTraces = true, enableLogs = true } = options;
+  const {
+    roomId,
+    jobId,
+    cloudHostname,
+    agentName,
+    enableTraces = true,
+    enableLogs = true,
+  } = options;
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -249,47 +397,64 @@ export async function setupCloudTracer(options: {
       Authorization: `Bearer ${jwt}`,
     };
 
-    const metadata: Attributes = {
+    const baseMetadata: Attributes = {
       room_id: roomId,
       job_id: jobId,
     };
+    if (agentName) {
+      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
+      // only; the default dispatch has no agent name). Included in both the
+      // resource (traces) and the session metadata (spans + logs).
+      baseMetadata[ATTR_AGENT_NAME] = agentName;
+    }
 
-    const resource = new Resource({
-      [ATTR_SERVICE_NAME]: 'livekit-agents',
-      room_id: roomId,
-      job_id: jobId,
-    });
+    // cloud agent id and deployment provided by LiveKit Cloud via env vars.
+    // Included in both the resource and the session metadata like agentName;
+    // omitted when unset.
+    const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
+    if (cloudAgentId) {
+      baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+    }
+    const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
+    if (deploymentId) {
+      baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
+    }
+
+    const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
+
+    const resource = defaultResource()
+      .merge(detectResources({ detectors: [envDetector] }))
+      .merge(
+        resourceFromAttributes({
+          [ATTR_SERVICE_NAME]: 'livekit-agents',
+          ...baseMetadata,
+        }),
+      );
 
     if (enableTraces) {
-      // Configure OTLP exporter to send traces to LiveKit Cloud
-      const spanExporter = new OTLPTraceExporter({
+      const cloudExporterOptions: CloudSpanProcessorOptions = {
         url: `https://${cloudHostname}/observability/traces/otlp/v0`,
         headers,
-        compression: CompressionAlgorithm.GZIP,
-      });
+      };
 
       // If the user already configured a tracer provider (e.g. setTracerProvider in the job
       // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
       // both the user's backend and LiveKit Cloud.
       const currentProvider = tracer.getProvider();
       const existingProvider =
-        currentProvider instanceof ProxyTracerProvider
-          ? undefined
-          : (currentProvider as Partial<NodeTracerProvider>);
+        currentProvider instanceof ProxyTracerProvider ? undefined : currentProvider;
 
-      if (existingProvider && typeof existingProvider.addSpanProcessor === 'function') {
-        // The user's provider keeps its own Resource (incl. service.name): a provider has one
-        // Resource shared by all exporters, so applying `resource` here would also relabel the
-        // spans going to the user's own backend. room_id/job_id — the keys Cloud correlates on —
-        // still ride along as span attributes via MetadataSpanProcessor.
-        existingProvider.addSpanProcessor(new MetadataSpanProcessor(metadata));
-        existingProvider.addSpanProcessor(new BatchSpanProcessor(spanExporter));
-      } else {
+      if (!existingProvider) {
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
-            new MetadataSpanProcessor(metadata),
-            new BatchSpanProcessor(spanExporter),
+            new MetadataSpanProcessor(sessionMetadata),
+            new BatchSpanProcessor(
+              new OTLPTraceExporter({
+                ...cloudExporterOptions,
+                compression: CompressionAlgorithm.GZIP,
+              }),
+            ),
           ],
         });
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
@@ -297,6 +462,32 @@ export async function setupCloudTracer(options: {
         // so if the user already called NodeSDK.start(), these are safe no-ops.
         tracerProvider.register();
         setTracerProvider(tracerProvider);
+      } else {
+        const config = customProviderConfigs.get(existingProvider);
+
+        if (!config) {
+          console.warn(
+            'LiveKit Cloud tracing is disabled because the custom tracer provider cannot register ' +
+              'additional span processors. Pass registerSpanProcessor to setTracerProvider when ' +
+              'using OpenTelemetry 2.x.',
+          );
+        } else {
+          const cloudSpanProcessor = config.createCloudSpanProcessor
+            ? config.createCloudSpanProcessor(cloudExporterOptions)
+            : new BatchSpanProcessor(
+                new OTLPTraceExporter({
+                  ...cloudExporterOptions,
+                  compression: CompressionAlgorithm.GZIP,
+                }),
+              );
+
+          // The user's provider keeps its own Resource (incl. service.name): a provider has one
+          // Resource shared by all exporters, so applying `resource` here would also relabel
+          // the spans going to the user's own backend. room_id/job_id — the keys Cloud
+          // correlates on — still ride along as span attributes via MetadataSpanProcessor.
+          config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
+          config.registerSpanProcessor(cloudSpanProcessor);
+        }
       }
     }
 
@@ -306,6 +497,7 @@ export async function setupCloudTracer(options: {
         cloudHostname,
         roomId,
         jobId,
+        metadata: options.metadata,
       });
 
       enableOtelLogging();
@@ -401,7 +593,7 @@ interface ProtoChatItem {
 
 /**
  * Convert ChatItem to proto-compatible dictionary format.
- * TODO: Use actual agent_session proto types once @livekit/protocol v1.43.1+ is published
+ * TODO: Use actual agent_session proto types once livekit/protocol v1.43.1+ is published
  */
 function chatItemToProto(item: ChatItem): ProtoChatItem {
   const itemDict: ProtoChatItem = {};
@@ -547,8 +739,14 @@ export async function uploadSessionReport(options: {
   agentName: string;
   cloudHostname: string;
   report: SessionReport;
+  metadata?: Attributes;
 }): Promise<void> {
   const { agentName, cloudHostname, report } = options;
+  const metadata = options.metadata ?? {};
+
+  if (!recordingEnabled(report.recordingOptions)) {
+    return;
+  }
 
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
@@ -563,6 +761,7 @@ export async function uploadSessionReport(options: {
       room_id: report.roomId,
       job_id: report.jobId,
       room: report.room,
+      ...metadata,
     },
   });
 
@@ -573,6 +772,7 @@ export async function uploadSessionReport(options: {
     room_id: report.roomId,
     job_id: report.jobId,
     'logger.name': 'chat_history',
+    ...metadata,
   };
 
   const usage = report.modelUsage?.map(filterZeroValues) || null;
@@ -655,11 +855,14 @@ export async function uploadSessionReport(options: {
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
+    jobId: report.jobId,
     duration: BigInt(0), // TODO: Calculate actual duration from report
     startTime: {
       seconds: BigInt(Math.floor(audioStartTime / 1000)),
       nanos: Math.floor((audioStartTime % 1000) * 1e6),
     },
+    simulated: metadata[ATTRIBUTE_SIMULATION_ENABLED] === true,
+    redactionEnabled: metadata[ATTRIBUTE_REDACTION_ENABLED] === true,
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());

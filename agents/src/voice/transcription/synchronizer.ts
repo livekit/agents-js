@@ -587,8 +587,8 @@ export class TranscriptionSynchronizer {
   _audioAttached: boolean = true;
   /** @internal */
   _textAttached: boolean = true;
-  // warn once per enabled cycle when only one of audio/text is detached; reset when
-  // the synchronizer transitions back to enabled
+  // warn once per detach cycle when only one of audio/text is detached; reset when
+  // both outputs are reattached
   /** @internal */
   _warnedAsymmetricDetach: boolean = false;
 

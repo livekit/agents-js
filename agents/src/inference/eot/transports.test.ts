@@ -108,10 +108,11 @@ async function tick(): Promise<void> {
   await new Promise<void>((r) => setImmediate(r));
 }
 
-async function waitUntilConnected(transport: CloudTransport, ticks = 50): Promise<void> {
-  for (let i = 0; i < ticks; i++) {
+async function waitUntilConnected(transport: CloudTransport, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (transport.transportReady()) return;
-    await tick();
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   throw new Error('transport did not connect within timeout');
 }
@@ -137,14 +138,18 @@ function pcmFrame(samples = 320): AudioFrame {
 describe('CloudStreamRetry', () => {
   it('num retries resets after a successful connect', async () => {
     const { stream, transport } = makeStream({
-      connectScript: [new APIConnectionError({ message: 'transient' }), null],
+      connectScript: [
+        new APIConnectionError({ message: 'transient' }),
+        new APIConnectionError({ message: 'transient' }),
+        null,
+      ],
       maxRetry: 3,
-      retryIntervalMs: 0,
+      retryIntervalMs: 10,
     });
     try {
       await waitUntilConnected(transport);
-      // Two attempts: first raised (counter 0→1), second succeeded → reset to 0.
-      expect(transport.connectCalls).toBe(2);
+      // Three attempts: two failures increment the counter, then success resets it to 0.
+      expect(transport.connectCalls).toBe(3);
       expect(transport.numRetries).toBe(0);
     } finally {
       await stream.aclose();

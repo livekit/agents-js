@@ -3,10 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { STT } from './stt.js';
 
 const hasCartesiaApiKey = Boolean(process.env.CARTESIA_API_KEY);
+
+describe('Cartesia STT capabilities', () => {
+  it('reports no aligned transcript for Ink-2', () => {
+    const instance = new STT({ apiKey: 'test-key', model: 'ink-2' });
+
+    expect(instance.capabilities.alignedTranscript).toBe(false);
+  });
+});
 
 if (hasCartesiaApiKey) {
   describe('Cartesia STT', async () => {

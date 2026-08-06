@@ -30,6 +30,7 @@ import {
   MIN_SILENCE_DURATION_MS,
   type TurnDetectionEvent,
 } from '../inference/eot/base.js';
+import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
@@ -55,6 +56,7 @@ interface RecognitionInternals {
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
   lastSpeakingTime?: number;
+  lastLanguage?: LanguageCode;
   audioTranscript: string;
   audioInterimTranscript: string;
   audioPreflightTranscript: string;
@@ -68,6 +70,7 @@ interface RecognitionInternals {
   runEOUDetection: (chatCtx: ChatContext, trigger?: 'vad' | 'stt' | 'manual') => void;
   createVadTask: (vad: VAD | undefined, signal: AbortSignal) => Promise<void>;
   checkVadSilenceRequirement: (detector?: _TurnDetector | BaseStreamingTurnDetector) => void;
+  updateLastLanguage: (language: LanguageCode, transcript: string) => void;
   updateTurnDetector: (detector: _TurnDetector | BaseStreamingTurnDetector | undefined) => void;
   clearUserTurn: () => void;
 }
@@ -75,6 +78,7 @@ interface RecognitionInternals {
 function makeHooks(): RecognitionHooks {
   return {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -219,6 +223,35 @@ function endOfSpeech(): VADEvent {
 function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+describe('TestLanguageTracking', () => {
+  it('does not replace a concrete language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'ambiguous phrase');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('en'));
+  });
+
+  it('does not initialize language with a non-specific language', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = undefined;
+
+    internals.updateLastLanguage(asLanguageCode('multi'), 'we');
+
+    expect(internals.lastLanguage).toBeUndefined();
+  });
+
+  it('still updates concrete language after a long transcript', () => {
+    const { internals } = makeRecognition();
+    internals.lastLanguage = asLanguageCode('en');
+
+    internals.updateLastLanguage(asLanguageCode('fr'), 'bonjour');
+
+    expect(internals.lastLanguage).toBe(asLanguageCode('fr'));
+  });
+});
 
 /**
  * Drive `createVadTask` against a scripted VAD stream so VAD events flow

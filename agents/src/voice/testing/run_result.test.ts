@@ -4,12 +4,19 @@
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall } from '../../llm/chat_context.js';
-import { ToolContext, tool } from '../../llm/tool_context.js';
+import { type ChatContext, ChatMessage, FunctionCall } from '../../llm/chat_context.js';
+import { type ChatChunk, LLM, LLMStream } from '../../llm/llm.js';
+import {
+  type ToolChoice,
+  ToolContext,
+  type ToolContextLike,
+  tool,
+} from '../../llm/tool_context.js';
+import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { activeMockTools, withMockTools } from './run_result.js';
+import { RunResult, activeMockTools, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -20,6 +27,66 @@ class AgentA extends Agent {
 class AgentB extends Agent {
   constructor() {
     super({ instructions: 'b' });
+  }
+}
+
+class CapturingLLM extends LLM {
+  toolChoice?: ToolChoice;
+
+  constructor(private readonly toolCall: FunctionCall) {
+    super();
+  }
+
+  label(): string {
+    return 'capturing';
+  }
+
+  chat({
+    chatCtx,
+    toolCtx,
+    connOptions = DEFAULT_API_CONNECT_OPTIONS,
+    toolChoice,
+  }: Parameters<LLM['chat']>[0]): LLMStream {
+    this.toolChoice = toolChoice;
+    return new CapturingStream(this, {
+      chatCtx,
+      toolCtx,
+      connOptions,
+      toolCall: this.toolCall,
+    });
+  }
+}
+
+class CapturingStream extends LLMStream {
+  constructor(
+    llm: LLM,
+    {
+      chatCtx,
+      toolCtx,
+      connOptions,
+      toolCall,
+    }: {
+      chatCtx: ChatContext;
+      toolCtx?: ToolContextLike;
+      connOptions: APIConnectOptions;
+      toolCall: FunctionCall;
+    },
+  ) {
+    super(llm, { chatCtx, toolCtx, connOptions });
+    this.toolCall = toolCall;
+  }
+
+  private readonly toolCall: FunctionCall;
+
+  protected async run(): Promise<void> {
+    const chunk: ChatChunk = {
+      id: 'test',
+      delta: {
+        role: 'assistant',
+        toolCalls: [this.toolCall],
+      },
+    };
+    this.queue.put(chunk);
   }
 }
 
@@ -178,5 +245,53 @@ describe('withMockTools', () => {
     await task.result;
     expect(output.output[0]?.rawException?.message).toBe('test failure');
     expect(output.output[0]?.toolCallOutput?.isError).toBe(true);
+  });
+});
+
+describe('RunResult speech handle error propagation', () => {
+  it('rejects when the last SpeechHandle completed with an error', async () => {
+    const run = new RunResult();
+    const handle = SpeechHandle.create();
+    run._watchHandle(handle);
+
+    const error = new Error('update_chat_ctx failed unexpectedly');
+    handle._markDone(error);
+    run._markDoneIfNeeded(handle);
+
+    await expect(run.wait()).rejects.toThrow('update_chat_ctx failed unexpectedly');
+  });
+
+  it('resolves when the last SpeechHandle completed without an error', async () => {
+    const run = new RunResult();
+    const handle = SpeechHandle.create();
+    run._watchHandle(handle);
+
+    handle._markDone();
+    run._markDoneIfNeeded(handle);
+
+    await expect(run.wait()).resolves.toBe(run);
+  });
+});
+
+describe('MessageAssert judge', () => {
+  it('uses required tool choice', async () => {
+    const llmInstance = new CapturingLLM(
+      FunctionCall.create({
+        callId: 'call_1',
+        name: 'check_intent',
+        args: JSON.stringify({ success: true, reason: 'ok' }),
+      }),
+    );
+    const result = new RunResult();
+    result.events.push({
+      type: 'message',
+      item: ChatMessage.create({ role: 'assistant', content: 'Hello there' }),
+    });
+
+    await result.expect.at(0).isMessage({ role: 'assistant' }).judge(llmInstance, {
+      intent: 'greets the user',
+    });
+
+    expect(llmInstance.toolChoice).toBe('required');
   });
 });

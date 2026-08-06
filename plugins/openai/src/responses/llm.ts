@@ -74,6 +74,7 @@ class ResponsesHttpLLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: this.#opts.baseURL,
+        maxRetries: 0,
         apiKey: this.#opts.apiKey,
       });
   }

@@ -18,6 +18,7 @@ export {
   Toolset,
   toToolContext,
   type AgentHandoff,
+  type AnonFunctionTool,
   type DuplicateMode,
   type FunctionTool,
   type Tool,
@@ -72,6 +73,7 @@ export {
 } from './llm.js';
 
 export {
+  RealtimeError,
   RealtimeModel,
   RealtimeSession,
   type GenerationCreatedEvent,

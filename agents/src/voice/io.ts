@@ -98,8 +98,19 @@ export abstract class AudioInput {
     await this.multiStream.close();
   }
 
+  /**
+   * Framework-owned attach-state transition used by {@link AgentInput.setAudioEnabled}.
+   * Subclasses that gate frames (or wrap another {@link AudioInput}) should override
+   * this — not only {@link onAttached}/{@link onDetached} — so mute still works when
+   * lifecycle hooks omit `super`.
+   * @internal
+   */
+  setAttached(_attached: boolean): void {}
+
+  /** Lifecycle hook invoked after {@link setAttached}(true). */
   onAttached(): void {}
 
+  /** Lifecycle hook invoked after {@link setAttached}(false). */
   onDetached(): void {}
 }
 
@@ -216,6 +227,19 @@ export abstract class AudioOutput extends EventEmitter {
   }
 
   /**
+   * Forget the segment currently being captured, without treating it as a flush boundary.
+   *
+   * For an output whose open segment was abandoned rather than flushed — e.g. a capture threw and
+   * the segment has already been reported finished. Without this the output keeps believing a
+   * segment is open, so the next `captureFrame` silently joins a segment that no longer exists
+   * instead of counting a new one.
+   * @internal
+   */
+  abandonOpenSegment(): void {
+    this._capturing = false;
+  }
+
+  /**
    * Clear the buffer, stopping playback immediately
    */
   abstract clearBuffer(): void;
@@ -309,11 +333,7 @@ export class AgentInput {
       return;
     }
 
-    if (enable) {
-      this._audioStream.onAttached();
-    } else {
-      this._audioStream.onDetached();
-    }
+    this.applyAudioAttachState(this._audioStream, enable);
   }
 
   get audioEnabled(): boolean {
@@ -325,8 +345,29 @@ export class AgentInput {
   }
 
   set audio(stream: AudioInput | null) {
+    if (stream === this._audioStream) {
+      return;
+    }
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, false);
+    }
+
     this._audioStream = stream;
     this.audioChanged();
+
+    if (this._audioStream) {
+      this.applyAudioAttachState(this._audioStream, this._audioEnabled);
+    }
+  }
+
+  private applyAudioAttachState(stream: AudioInput, attached: boolean): void {
+    stream.setAttached(attached);
+    if (attached) {
+      stream.onAttached();
+    } else {
+      stream.onDetached();
+    }
   }
 }
 

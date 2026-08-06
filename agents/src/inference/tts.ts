@@ -64,6 +64,12 @@ export type RimeModels = 'rime/arcana' | 'rime/coda' | 'rime/mistv2' | 'rime/mis
 
 export type XaiTTSModels = 'xai/tts-1';
 
+export type FishAudioModels =
+  | 'fishaudio'
+  | 'fishaudio/s2.1-pro'
+  | 'fishaudio/s2.1-pro-free'
+  | 'fishaudio/s2-pro';
+
 export interface CartesiaOptions {
   emotion?: string;
   /** Maximum duration of audio in seconds. */
@@ -138,6 +144,36 @@ export interface InworldOptions {
 export interface XaiTTSOptions {
   /** Output bit rate in bits per second. */
   bit_rate?: 32000 | 64000 | 96000 | 128000 | 192000;
+  /** Speaking-rate multiplier. Default: 1.0. */
+  speed?: number;
+}
+
+/** See https://docs.fish.audio/api-reference/endpoint/websocket/tts-live */
+export interface FishAudioOptions {
+  /** Prosody speaking-rate multiplier, 1.0 is natural. */
+  speed?: number;
+  /** Prosody loudness adjustment in dB, 0 is natural. */
+  volume?: number;
+  /** Consistent output loudness; S2-Pro family only. */
+  normalize_loudness?: boolean;
+  /** Range 0-1, higher is more varied/expressive. */
+  temperature?: number;
+  /** Nucleus sampling probability mass, range 0-1. */
+  top_p?: number;
+  /** Normalize numbers/dates/abbreviations before synthesis. */
+  normalize?: boolean;
+  /** Streaming latency mode. */
+  latency?: 'normal' | 'balanced' | 'low';
+  /** Characters buffered before auto-synthesis, range 100-300. */
+  chunk_length?: number;
+  /** Max audio tokens per text chunk, default 1024. */
+  max_new_tokens?: number;
+  /** Min characters before splitting a new chunk, range 0-100. */
+  min_chunk_length?: number;
+  /** Use prior audio as context for consistency. */
+  condition_on_previous_chunks?: boolean;
+  /** Early-stopping threshold for batching, range 0-1. */
+  early_stop_threshold?: number;
 }
 
 type _TTSModels =
@@ -146,7 +182,8 @@ type _TTSModels =
   | ElevenlabsModels
   | RimeModels
   | InworldModels
-  | XaiTTSModels;
+  | XaiTTSModels
+  | FishAudioModels;
 
 export type TTSModels =
   | CartesiaModels
@@ -155,6 +192,7 @@ export type TTSModels =
   | RimeModels
   | InworldModels
   | XaiTTSModels
+  | FishAudioModels
   | AnyString;
 
 export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
@@ -171,7 +209,9 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
           ? InworldOptions
           : TModel extends XaiTTSModels
             ? XaiTTSOptions
-            : Record<string, unknown>;
+            : TModel extends FishAudioModels
+              ? FishAudioOptions
+              : Record<string, unknown>;
 
 /** Parse a model string into [model, voice]. Voice is undefined if not specified. */
 export function parseTTSModelString(model: string): [string, string | undefined] {

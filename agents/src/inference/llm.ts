@@ -4,6 +4,12 @@
 import OpenAI from 'openai';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
+import {
+  THINK_TAG_END,
+  THINK_TAG_START,
+  ThinkingTokenFilter,
+  stripThinkingTokens,
+} from '../llm/utils.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
@@ -132,6 +138,10 @@ const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
 
 const REASONING_EFFORT_TOOL_INCOMPATIBLE_PREFIXES = new Set(['gpt-5.2', 'gpt-5.4']);
 
+const MODEL_THINK_TAGS = new Map<string, [string, string]>([
+  ['google/gemma-4-31b-it', ['<|channel>thought', '<channel|>']],
+]);
+
 function dropUnsupportedParams(
   model: string,
   params: Record<string, unknown>,
@@ -232,6 +242,7 @@ export class LLM extends llm.LLM {
 
     this.client = new OpenAI({
       baseURL: this.opts.baseURL,
+      maxRetries: 0,
       // Non-empty placeholder; replaced with a fresh access token before each
       // request (see LLMStream.run). openai >= 6.36.0 rejects an empty apiKey.
       apiKey: 'placeholder',
@@ -248,6 +259,11 @@ export class LLM extends llm.LLM {
 
   get provider(): string {
     return 'livekit';
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    this.client.apiKey = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
+    await this.client.models.list({ signal });
   }
 
   static fromModelString(modelString: string): LLM {
@@ -411,16 +427,22 @@ export class LLMStream extends llm.LLMStream {
       // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
       const tools = this.toolCtx
         ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+            // zod v3 conversion embeds a `$schema` URI ("draft/2019-09") that some gateway
+            // deployments reject, silently ending the stream with no tool call. Python's
+            // pydantic schemas carry no `$schema` key, so strip it for parity. Destructure
+            // instead of `delete` so a caller-supplied raw JSON schema object isn't mutated.
+            const { $schema: _dropped, ...parameters } = llm.toJsonSchema(
+              func.parameters,
+              true,
+              this.strictToolSchema,
+            ) as unknown as Record<string, unknown>;
             const oaiParams = {
               type: 'function' as const,
               function: {
                 name,
                 description: func.description,
-                parameters: llm.toJsonSchema(
-                  func.parameters,
-                  true,
-                  this.strictToolSchema,
-                ) as unknown as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
+                parameters:
+                  parameters as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function']['parameters'],
               } as OpenAI.Chat.Completions.ChatCompletionFunctionTool['function'],
             };
 
@@ -487,13 +509,17 @@ export class LLMStream extends llm.LLMStream {
         return;
       }
 
+      const thinkingFilter = new ThinkingTokenFilter(
+        ...(MODEL_THINK_TAGS.get(this.model) ?? [THINK_TAG_START, THINK_TAG_END]),
+      );
+
       for await (const chunk of stream) {
         if (this.abortController.signal.aborted) {
           break;
         }
 
         for (const choice of chunk.choices) {
-          const chatChunk = this.parseChoice(chunk.id, choice);
+          const chatChunk = this.parseChoice(chunk.id, choice, thinkingFilter);
           if (chatChunk) {
             retryable = false;
             this.queue.put(chatChunk);
@@ -543,12 +569,17 @@ export class LLMStream extends llm.LLMStream {
   private parseChoice(
     id: string,
     choice: OpenAI.ChatCompletionChunk.Choice,
+    thinkingFilter: ThinkingTokenFilter,
   ): llm.ChatChunk | undefined {
     const delta = choice.delta;
 
     // https://github.com/livekit/agents/issues/688
     // the delta can be None when using Azure OpenAI (content filtering)
     if (delta === undefined) return undefined;
+
+    const content = stripThinkingTokens(delta.content, thinkingFilter, {
+      final: choice.finish_reason !== null && choice.finish_reason !== undefined,
+    });
 
     if (delta.tool_calls) {
       // check if we have functions to calls
@@ -629,7 +660,7 @@ export class LLMStream extends llm.LLMStream {
       ((delta as any).extra_content as Record<string, unknown> | undefined) ?? undefined;
 
     // Regular content message
-    if (!delta.content && !deltaExtra) {
+    if (!content && !deltaExtra) {
       return undefined;
     }
 
@@ -637,7 +668,7 @@ export class LLMStream extends llm.LLMStream {
       id,
       delta: {
         role: 'assistant',
-        content: delta.content || undefined,
+        content: content || undefined,
         extra: deltaExtra,
       },
     };

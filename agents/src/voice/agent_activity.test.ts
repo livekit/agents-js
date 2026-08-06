@@ -16,14 +16,24 @@
  */
 import { Heap } from 'heap-js';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentConfigUpdate, ChatContext } from '../llm/chat_context.js';
+import {
+  AgentConfigUpdate,
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
+import { type GenerationCreatedEvent, RealtimeError } from '../llm/realtime.js';
 import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import { log } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future, Task } from '../utils.js';
-import { _getActivityTaskInfo } from './agent.js';
-import { AgentActivity } from './agent_activity.js';
+import { AgentTask, _getActivityTaskInfo } from './agent.js';
+import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
 import type { PreemptiveGenerationInfo } from './audio_recognition.js';
-import type { AgentSessionEventTypes, UserInputTranscribedEvent } from './events.js';
+import { AgentSessionEventTypes, type UserInputTranscribedEvent } from './events.js';
+import { ToolExecutionOutput } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
 const agentMocks = vi.hoisted(() => ({
@@ -156,6 +166,58 @@ describe('AgentActivity - mainTask', () => {
     expect(capturedEvents[0]?.isFinal).toBe(false);
     expect(capturedEvents[0]?.itemId).toBe('item_123');
   });
+
+  it.each([
+    { hasLocalVad: false, shouldInterrupt: true },
+    { hasLocalVad: true, shouldInterrupt: false },
+  ])(
+    'interim transcript interrupts only without local VAD: $hasLocalVad',
+    ({ hasLocalVad, shouldInterrupt }) => {
+      const capturedEvents: UserInputTranscribedEvent[] = [];
+      const interruptByAudioActivity = vi.fn();
+      const activity = Object.assign(Object.create(AgentActivity.prototype), {
+        agent: { llm: undefined, vad: undefined, turnHandling: undefined },
+        agentSession: {
+          _textOnly: false,
+          llm: undefined,
+          vad: hasLocalVad ? {} : undefined,
+          turnDetection: undefined,
+          emit: (_type: AgentSessionEventTypes, ev: UserInputTranscribedEvent) => {
+            capturedEvents.push(ev);
+          },
+        },
+        interruptByAudioActivity,
+      });
+      const ev: SpeechEvent = {
+        type: SpeechEventType.INTERIM_TRANSCRIPT,
+        alternatives: [
+          {
+            text: 'hello',
+            language: 'en',
+            startTime: 0,
+            endTime: 0,
+            confidence: 1,
+          },
+        ],
+      };
+
+      (
+        AgentActivity.prototype.onInterimTranscript as (
+          this: unknown,
+          ev: SpeechEvent,
+          speaking: boolean | undefined,
+        ) => void
+      ).call(activity, ev, undefined);
+
+      expect(capturedEvents).toHaveLength(1);
+      expect(capturedEvents[0]?.transcript).toBe('hello');
+      if (shouldInterrupt) {
+        expect(interruptByAudioActivity).toHaveBeenCalledOnce();
+      } else {
+        expect(interruptByAudioActivity).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('should recover when speech handle is interrupted after authorization', async () => {
     const { fakeActivity, mainTask, speechQueue, q_updated } = buildMainTaskRunner();
@@ -582,6 +644,77 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
   });
 });
 
+describe('AgentActivity - onEnter ignored tools', () => {
+  const makeFn = (name: string, flags = ToolFlag.NONE) =>
+    tool({ name, description: `${name} tool`, flags, execute: async () => name });
+
+  function buildIgnoredToolsActivity() {
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    Object.assign(activity, {
+      agent: {},
+      agentSession: {},
+    });
+    return activity;
+  }
+
+  it('returns bare and toolset-nested IGNORE_ON_ENTER tools only inside this onEnter', () => {
+    const endCall = makeFn('end_call', ToolFlag.IGNORE_ON_ENTER);
+    const keep = makeFn('keep');
+    const bareIgnored = makeFn('bare_ignored', ToolFlag.IGNORE_ON_ENTER);
+    const bareKeep = makeFn('bare_keep');
+    const toolset = new Toolset({ id: 'ts', tools: [endCall, keep] });
+    const toolCtx = new ToolContext([toolset, bareIgnored, bareKeep]);
+    const activity = buildIgnoredToolsActivity();
+
+    expect(activity._onEnterIgnoredTools(toolCtx)).toEqual([]);
+
+    onEnterStorage.run({ session: activity.agentSession, agent: activity.agent }, () => {
+      expect(
+        activity
+          ._onEnterIgnoredTools(toolCtx)
+          .map((t) => t.id)
+          .sort(),
+      ).toEqual(['bare_ignored', 'end_call']);
+    });
+
+    onEnterStorage.run({ session: activity.agentSession, agent: {} as never }, () => {
+      expect(activity._onEnterIgnoredTools(toolCtx)).toEqual([]);
+    });
+  });
+
+  it('hides ignored bare and toolset tools while preserving normal tools for nested replies', async () => {
+    const endCall = makeFn('end_call', ToolFlag.IGNORE_ON_ENTER);
+    const keep = makeFn('keep');
+    const bareIgnored = makeFn('bare_ignored', ToolFlag.IGNORE_ON_ENTER);
+    const toolset = new Toolset({ id: 'ts', tools: [endCall, keep] });
+    const activity = buildIgnoredToolsActivity();
+
+    await onEnterStorage.run(
+      { session: activity.agentSession, agent: activity.agent },
+      async () => {
+        const greetingTools = new ToolContext([toolset, bareIgnored]);
+        greetingTools._exclude(activity._onEnterIgnoredTools(greetingTools));
+        expect(greetingTools.flatten().map((t) => t.id)).toEqual(['keep']);
+        expect(greetingTools.toolsets).toEqual([toolset]);
+
+        await Promise.resolve();
+
+        const toolReplyTools = new ToolContext([toolset, bareIgnored]);
+        toolReplyTools._exclude(activity._onEnterIgnoredTools(toolReplyTools));
+        expect(toolReplyTools.flatten().map((t) => t.id)).toEqual(['keep']);
+      },
+    );
+
+    const restoredTools = new ToolContext([toolset, bareIgnored]);
+    expect(
+      restoredTools
+        .flatten()
+        .map((t) => t.id)
+        .sort(),
+    ).toEqual(['bare_ignored', 'end_call', 'keep']);
+  });
+});
+
 /**
  * Regression test for the dynamic-toolset push path.
  *
@@ -827,5 +960,676 @@ describe('AgentActivity - waitForIdle close abort', () => {
     // close() aborts the shared signal; the wait must unblock.
     closeAbort.abort();
     expect(await raceTimeout(pending, 1000)).toBe('resolved');
+  });
+});
+
+describe('AgentActivity - interrupted tool completion', () => {
+  it('preserves completed outputs without starting a tool-reply generation', () => {
+    const generateReply = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _toolItemsAdded: toolItemsAdded,
+        generateReply,
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const call = FunctionCall.create({
+      callId: 'call_completed',
+      name: 'charge_card',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'charged',
+      isError: false,
+    });
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'charged',
+          replyRequired: true,
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).toContain(output);
+    expect(toolItemsAdded).toHaveBeenCalledWith([output]);
+    expect(generateReply).not.toHaveBeenCalled();
+  });
+
+  it('does not persist an interrupted handoff as completed', () => {
+    const emit = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    const sessionHistory = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit,
+        history: sessionHistory,
+        _toolItemsAdded: toolItemsAdded,
+      },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const call = FunctionCall.create({
+      callId: 'call_handoff',
+      name: 'transfer_to_specialist',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'transferred',
+      isError: false,
+    });
+    chatCtx.insert(call);
+    sessionHistory.insert(call);
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'transferred',
+          replyRequired: false,
+          agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).not.toContain(call);
+    expect(chatCtx.items).not.toContain(output);
+    expect(sessionHistory.items).not.toContain(call);
+    expect(emit).not.toHaveBeenCalled();
+    expect(toolItemsAdded).not.toHaveBeenCalled();
+  });
+
+  it('commits and emits only completed regular tools from a mixed interrupted batch', () => {
+    const emit = vi.fn();
+    const toolItemsAdded = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    const chatCtx = ChatContext.empty();
+    const sessionHistory = ChatContext.empty();
+    Object.assign(activity, {
+      agent: { _chatCtx: chatCtx },
+      agentSession: { emit, history: sessionHistory, _toolItemsAdded: toolItemsAdded },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    });
+    const completedCall = FunctionCall.create({
+      callId: 'call_completed_mixed',
+      name: 'save_note',
+      args: '{}',
+    });
+    const completedOutput = FunctionCallOutput.create({
+      callId: completedCall.callId,
+      name: completedCall.name,
+      output: 'saved',
+      isError: false,
+    });
+    const handoffCall = FunctionCall.create({
+      callId: 'call_handoff_mixed',
+      name: 'transfer_to_specialist',
+      args: '{}',
+    });
+    const handoffOutput = FunctionCallOutput.create({
+      callId: handoffCall.callId,
+      name: handoffCall.name,
+      output: 'transferred',
+      isError: false,
+    });
+    chatCtx.insert([completedCall, handoffCall]);
+    sessionHistory.insert([completedCall, handoffCall]);
+    const toolOutput = {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: completedCall,
+          toolCallOutput: completedOutput,
+          rawOutput: 'saved',
+          replyRequired: true,
+        }),
+        ToolExecutionOutput.create({
+          toolCall: handoffCall,
+          toolCallOutput: handoffOutput,
+          rawOutput: 'transferred',
+          replyRequired: false,
+          agentTask: new AgentTask({ instructions: 'Handle the specialist request.' }),
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+
+    (
+      activity as unknown as {
+        _commitInterruptedToolOutputs: (
+          toolOutput: typeof toolOutput,
+          speechHandle: SpeechHandle,
+          createdAt: number,
+        ) => void;
+      }
+    )._commitInterruptedToolOutputs(toolOutput, SpeechHandle.create(), 123);
+
+    expect(chatCtx.items).toHaveLength(2);
+    expect(chatCtx.items).toEqual(expect.arrayContaining([completedCall, completedOutput]));
+    expect(sessionHistory.items).toEqual([completedCall]);
+    expect(toolItemsAdded).toHaveBeenCalledWith([completedOutput]);
+    expect(emit).toHaveBeenCalledWith(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      expect.objectContaining({
+        functionCalls: [completedCall],
+        functionCallOutputs: [completedOutput],
+      }),
+    );
+  });
+});
+
+describe('AgentActivity - realtime reply chat context push', () => {
+  function buildRealtimeReplyActivity(updateError?: unknown) {
+    const generationEvent = {} as GenerationCreatedEvent;
+    const realtimeSession = {
+      chatCtx: ChatContext.empty(),
+      tools: ToolContext.empty(),
+      updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
+        if (updateError) {
+          throw updateError;
+        }
+        realtimeSession.chatCtx = chatCtx.copy();
+      }),
+      updateTools: vi.fn(async () => {}),
+      updateOptions: vi.fn(),
+      generateReply: vi.fn(async () => generationEvent),
+    };
+    const activity = {
+      realtimeSession,
+      toolChoice: undefined,
+      _onEnterIgnoredTools: () => [],
+      agent: { _chatCtx: ChatContext.empty() },
+      agentSession: {
+        _conversationItemAdded: vi.fn(),
+      },
+      realtimeGenerationTask: vi.fn(async () => {}),
+      logger: { info() {}, debug() {}, warn: vi.fn(), error: vi.fn() },
+    };
+    Object.setPrototypeOf(activity, AgentActivity.prototype);
+
+    return { activity, realtimeSession };
+  }
+
+  async function runRealtimeReplyTask(activity: unknown, speechHandle: SpeechHandle) {
+    const realtimeReplyTask = (
+      AgentActivity.prototype as unknown as {
+        realtimeReplyTask(
+          this: unknown,
+          args: {
+            speechHandle: SpeechHandle;
+            modelSettings: { toolChoice?: never };
+            abortController: AbortController;
+            userInput: string;
+          },
+        ): Promise<void>;
+      }
+    ).realtimeReplyTask;
+
+    await realtimeReplyTask.call(activity, {
+      speechHandle,
+      modelSettings: {},
+      abortController: new AbortController(),
+      userInput: 'hello',
+    });
+  }
+
+  it('generates a reply when updateChatCtx succeeds', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity();
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+  });
+
+  it('still generates a reply when updateChatCtx raises RealtimeError', async () => {
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(
+      new RealtimeError('update_chat_ctx timed out.'),
+    );
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).toHaveBeenCalledTimes(1);
+    expect(activity.realtimeGenerationTask).toHaveBeenCalledTimes(1);
+    expect(handle.done()).toBe(false);
+    expect(activity.agent._chatCtx.items.some((item) => item.type === 'message')).toBe(true);
+  });
+
+  it('marks the speech handle failed for unexpected updateChatCtx errors', async () => {
+    const error = new Error('boom');
+    const { activity, realtimeSession } = buildRealtimeReplyActivity(error);
+    const handle = SpeechHandle.create();
+    handle._authorizeGeneration();
+
+    await runRealtimeReplyTask(activity, handle);
+
+    expect(realtimeSession.generateReply).not.toHaveBeenCalled();
+    expect(activity.realtimeGenerationTask).not.toHaveBeenCalled();
+    expect(handle.done()).toBe(true);
+    expect(handle.exception()).toBe(error);
+  });
+});
+
+describe('AgentActivity - interruption while waiting for tools', () => {
+  function buildToolOutput() {
+    const call = FunctionCall.create({
+      callId: 'call_waiting',
+      name: 'save_note',
+      args: '{}',
+    });
+    const output = FunctionCallOutput.create({
+      callId: call.callId,
+      name: call.name,
+      output: 'saved',
+      isError: false,
+    });
+    return {
+      output: [
+        ToolExecutionOutput.create({
+          toolCall: call,
+          toolCallOutput: output,
+          rawOutput: 'saved',
+          replyRequired: true,
+        }),
+      ],
+      firstToolStartedFuture: new Future<void>(),
+    };
+  }
+
+  type WaitForToolExecution = (options: {
+    executeToolsTask: {
+      result: Promise<void>;
+      cancelAndWait: (timeout: number) => Promise<void>;
+    };
+    toolOutput: ReturnType<typeof buildToolOutput>;
+    speechHandle: SpeechHandle;
+    createdAt: number;
+  }) => Promise<boolean>;
+
+  function buildActivity() {
+    const commitInterruptedToolOutputs = vi.fn();
+    const activity = Object.create(AgentActivity.prototype) as AgentActivity;
+    Object.assign(activity, {
+      _backgroundSpeeches: new Set<SpeechHandle>(),
+      _commitInterruptedToolOutputs: commitInterruptedToolOutputs,
+      logger: log(),
+    });
+    const waitForToolExecution = (
+      activity as unknown as { _waitForToolExecution: WaitForToolExecution }
+    )._waitForToolExecution.bind(activity);
+    return { activity, commitInterruptedToolOutputs, waitForToolExecution };
+  }
+
+  it('commits completed outputs when already interrupted before waiting', async () => {
+    const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const cancelAndWait = vi.fn(async () => {});
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: { result: Promise.resolve(), cancelAndWait },
+      toolOutput,
+      speechHandle,
+      createdAt: 123,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(cancelAndWait).toHaveBeenCalledOnce();
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 123);
+    expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('rechecks interruption after tool execution settles', async () => {
+    const { activity, commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    const executionFinished = new Future<void>();
+    const toolOutput = buildToolOutput();
+
+    const waiting = waitForToolExecution({
+      executeToolsTask: {
+        result: executionFinished.await,
+        cancelAndWait: vi.fn(async () => {}),
+      },
+      toolOutput,
+      speechHandle,
+      createdAt: 456,
+    });
+    expect(activity['_backgroundSpeeches']).toContain(speechHandle);
+
+    speechHandle.interrupt();
+    executionFinished.resolve();
+
+    await expect(waiting).resolves.toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 456);
+    expect(activity['_backgroundSpeeches']).not.toContain(speechHandle);
+  });
+
+  it('still commits outputs when cancelling the tool task overruns its budget', async () => {
+    // `Task.cancelAndWait` throws once the cooperative-cancel budget expires. A tool that
+    // ignores its abort signal must not take the commit down with it — the LLM has already
+    // seen these outputs, so dropping them leaves the function calls dangling.
+    const { commitInterruptedToolOutputs, waitForToolExecution } = buildActivity();
+    const speechHandle = SpeechHandle.create();
+    speechHandle.interrupt();
+    const toolOutput = buildToolOutput();
+
+    const shouldContinue = await waitForToolExecution({
+      executeToolsTask: {
+        result: new Promise<void>(() => {}),
+        cancelAndWait: vi.fn(async () => {
+          throw new Error('Task cancellation timed out');
+        }),
+      },
+      toolOutput,
+      speechHandle,
+      createdAt: 789,
+    });
+
+    expect(shouldContinue).toBe(false);
+    expect(commitInterruptedToolOutputs).toHaveBeenCalledWith(toolOutput, speechHandle, 789);
+  });
+});
+
+/**
+ * A realtime provider only publishes the final user transcript once the reply has
+ * finished generating, so committing the message at that moment stamps the user turn
+ * later than the reply it prompted and the transcript renders them out of order. The
+ * provider reports when the turn began via `turnStartedAt`.
+ */
+describe('AgentActivity - realtime user turn timing', () => {
+  function buildRealtimeActivity() {
+    const chatCtx = new ChatContext();
+    const fakeActivity = {
+      vad: undefined,
+      stt: undefined,
+      audioRecognition: undefined,
+      isInterruptionDetectionEnabled: false,
+      agent: { _chatCtx: chatCtx },
+      agentSession: {
+        emit: vi.fn(),
+        _updateUserState: vi.fn(),
+        _conversationItemAdded: vi.fn(),
+      },
+      interrupt: vi.fn(),
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const proto = AgentActivity.prototype as unknown as Record<string, (...args: never[]) => void>;
+    return {
+      chatCtx,
+      transcribed: (transcript: string, itemId: string, turnStartedAt?: number) =>
+        proto.onInputAudioTranscriptionCompleted!.call(fakeActivity, {
+          transcript,
+          itemId,
+          isFinal: true,
+          turnStartedAt,
+        } as never),
+    };
+  }
+
+  it('stamps the user message where the turn began, not at transcript delivery', () => {
+    vi.useFakeTimers();
+    try {
+      // the provider withholds the transcript until its reply is done generating
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_000_000);
+      // seconds, so the dashboard can place the turn where it happened
+      expect(message.metrics?.startedSpeakingAt).toBe(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('places the turn before the reply it prompted when its transcript lands later', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_007_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // the reply is committed first, because the provider held the user transcript back
+      chatCtx.insert(
+        ChatMessage.create({ role: 'assistant', content: 'you are Brian', createdAt: 1_003_000 }),
+      );
+      transcribed('what is my name?', 'item_1', 1_000_000);
+
+      expect(
+        chatCtx.items.map((item) => (item.type === 'message' ? item.role : item.type)),
+      ).toEqual(['user', 'assistant']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pairs each turn with its own start, even when transcripts arrive late', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_010_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      // both transcripts land after the second turn began; each keeps its own start
+      transcribed('first', 'item_1', 1_000_000);
+      transcribed('second', 'item_2', 1_005_000);
+
+      const [first, second] = chatCtx.items;
+      if (first?.type !== 'message' || second?.type !== 'message') {
+        throw new Error('expected chat messages');
+      }
+      expect(first.createdAt).toBe(1_000_000);
+      expect(second.createdAt).toBe(1_005_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to delivery time when the provider reports no turn start', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_002_000);
+      const { chatCtx, transcribed } = buildRealtimeActivity();
+
+      transcribed('text injected turn', 'item_1');
+
+      const message = chatCtx.items[0]!;
+      if (message.type !== 'message') throw new Error('expected a chat message');
+      expect(message.createdAt).toBe(1_002_000);
+      expect(message.metrics?.startedSpeakingAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('AgentActivity - transcriptsEquivalent', () => {
+  it.each([
+    // Formatting-only differences must not invalidate the preemptive generation
+    // (Python: test_formatting_only_final_reuses_preemptive_generation).
+    {
+      name: 'casing, spacing and trailing punctuation',
+      first: 'BOOK   A ROOM',
+      second: 'book a room.',
+      expected: true,
+    },
+    // A changed word must invalidate it (Python: test_changed_words_invalidate_preemptive_generation).
+    { name: 'a changed word', first: 'book a', second: 'book a room', expected: false },
+    // Guard clause: there is no finalized transcript to compare against.
+    {
+      name: 'an undefined finalized transcript',
+      first: 'book a room',
+      second: undefined,
+      expected: false,
+    },
+    // Both sides tokenize to nothing, so there is nothing to call equivalent.
+    { name: 'transcripts that tokenize to no words', first: '...', second: '', expected: false },
+    // The CJK/Thai alternation splits those scripts per character, so whitespace between
+    // them is irrelevant — this is what emulates Python's `split_character=True`.
+    {
+      name: 'CJK characters split by whitespace',
+      first: '你好world',
+      second: '你 好 world',
+      expected: true,
+    },
+    {
+      name: 'Thai characters split by whitespace',
+      first: 'สวัสดี ครับ',
+      second: 'สวัสดีครับ',
+      expected: true,
+    },
+    // Documented divergence: Python's `casefold()` maps ß -> ss and returns true here, while
+    // JS `toLowerCase()` does not. Erring conservative (regenerate rather than reuse) is the
+    // safe direction: extra work, never a generation reused for a different utterance.
+    {
+      name: 'a fold JS toLowerCase() does not perform (Python casefold() returns true)',
+      first: 'STRASSE',
+      second: 'straße',
+      expected: false,
+    },
+  ])('returns $expected for $name', ({ first, second, expected }) => {
+    expect(transcriptsEquivalent(first, second)).toBe(expected);
+  });
+});
+
+/**
+ * The pipeline task retains the speculative ChatMessage built at preflight time, so when the
+ * preemptive generation is reused that message — not the finalized one — is what lands in
+ * conversation history. It must therefore be reconciled with the finalized transcript and any
+ * onUserTurnCompleted edits before the speech is scheduled (agent_activity.ts:2510-2517).
+ */
+describe('AgentActivity - preemptive generation reconciliation', () => {
+  function buildReuseActivity(
+    onUserTurnCompleted: (chatCtx: ChatContext, message: ChatMessage) => void,
+  ) {
+    const emptyToolCtx = ToolContext.empty();
+    const speculativeMessage = ChatMessage.create({
+      role: 'user',
+      content: 'BOOK   A ROOM',
+      transcriptConfidence: 0.4,
+    });
+    const speechHandle = SpeechHandle.create();
+    const scheduleSpeech = vi.fn();
+    const generateReply = vi.fn();
+
+    const fakeActivity = {
+      _preemptiveGenerationCount: 1,
+      _currentSpeech: undefined as SpeechHandle | undefined,
+      schedulingPaused: false,
+      newTurnsBlocked: false,
+      llm: new FakePreemptiveLLM(),
+      tools: emptyToolCtx,
+      toolChoice: null,
+      agent: {
+        chatCtx: new ChatContext(),
+        onUserTurnCompleted: async (chatCtx: ChatContext, message: ChatMessage) => {
+          onUserTurnCompleted(chatCtx, message);
+        },
+      },
+      agentSession: { emit: vi.fn() },
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+      _preemptiveGeneration: {
+        speechHandle,
+        userMessage: speculativeMessage,
+        info: { newTranscript: 'BOOK   A ROOM', transcriptConfidence: 0.4 },
+        chatCtx: new ChatContext(),
+        tools: emptyToolCtx,
+        toolChoice: null,
+        createdAt: Date.now(),
+      },
+      scheduleSpeech,
+      generateReply,
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const userTurnCompleted = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .userTurnCompleted as (this: unknown, info: unknown) => Promise<void>;
+
+    return {
+      fakeActivity,
+      speculativeMessage,
+      speechHandle,
+      scheduleSpeech,
+      generateReply,
+      // A formatting-only finalized transcript, so the reuse guard passes.
+      completeTurn: () =>
+        userTurnCompleted.call(fakeActivity, {
+          newTranscript: 'book a room.',
+          transcriptConfidence: 0.9,
+          skipReply: false,
+        }),
+    };
+  }
+
+  it('reconciles the retained speculative message with the finalized transcript', async () => {
+    const harness = buildReuseActivity(() => {});
+
+    await harness.completeTurn();
+
+    // Reused, not regenerated.
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.fakeActivity._preemptiveGeneration).toBeUndefined();
+
+    // The message committed to history is the speculative one, carrying the finalized values.
+    expect(harness.speculativeMessage.content).toEqual(['book a room.']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.9);
+  });
+
+  it('keeps onUserTurnCompleted edits on the retained speculative message', async () => {
+    const harness = buildReuseActivity((_chatCtx, message) => {
+      message.content = ['book a room!'];
+      message.transcriptConfidence = 0.42;
+    });
+
+    await harness.completeTurn();
+
+    expect(harness.scheduleSpeech).toHaveBeenCalledWith(harness.speechHandle, expect.any(Number));
+    expect(harness.generateReply).not.toHaveBeenCalled();
+    expect(harness.speculativeMessage.content).toEqual(['book a room!']);
+    expect(harness.speculativeMessage.transcriptConfidence).toBe(0.42);
   });
 });

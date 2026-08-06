@@ -14,6 +14,7 @@ import {
 function createHooks(): RecognitionHooks {
   return {
     onInterruption: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -48,6 +49,7 @@ function overlapSpeechEvent(isInterruption: boolean): OverlappingSpeechEvent {
     type: 'overlapping_speech',
     detectedAt: Date.now(),
     isInterruption,
+    agentEnded: false,
     totalDurationInS: 0,
     predictionDurationInS: 0,
     detectionDelayInS: 0,

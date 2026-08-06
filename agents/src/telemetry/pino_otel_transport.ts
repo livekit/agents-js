@@ -24,6 +24,7 @@ export interface PinoCloudExporterConfig {
   cloudHostname: string;
   roomId: string;
   jobId: string;
+  metadata?: Record<string, unknown>;
   loggerName?: string;
   batchSize?: number;
   flushIntervalMs?: number;
@@ -130,6 +131,10 @@ export class PinoCloudExporter {
       { key: 'logger.name', value: { stringValue: this.loggerName } },
     ];
 
+    for (const [key, value] of Object.entries(this.config.metadata ?? {})) {
+      attributes.push({ key, value: convertValue(value) });
+    }
+
     if (logObj.pid !== undefined) {
       attributes.push({ key: 'process.pid', value: { intValue: String(logObj.pid) } });
     }
@@ -196,6 +201,10 @@ export class PinoCloudExporter {
                 attributes: [
                   { key: 'room_id', value: { stringValue: this.config.roomId } },
                   { key: 'job_id', value: { stringValue: this.config.jobId } },
+                  ...Object.entries(this.config.metadata ?? {}).map(([key, value]) => ({
+                    key,
+                    value: convertValue(value),
+                  })),
                 ],
               },
               logRecords,
