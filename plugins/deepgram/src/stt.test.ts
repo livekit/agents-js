@@ -20,9 +20,13 @@ describe('SpeechStream abort-promise retention (issue #1950)', () => {
   // `abortSignal` has at most one listener at any given time.  We verify that invariant here
   // without needing a real Deepgram WebSocket connection.
   it('does not accumulate abort-signal listeners across pushed frames', async () => {
-    const controller = new AbortController();
     const stt = new STT({ apiKey: 'test-key' });
-    const stream = stt.stream({ signal: controller.signal });
+    // stream() only accepts { connOptions }; there is no way to inject an
+    // external AbortSignal. The signal that actually gates the send loop is
+    // the SpeechStream base class's own internal abortController.
+    const stream = stt.stream();
+    const abortSignal = (stream as unknown as { abortController: AbortController })
+      .abortController.signal;
 
     const SAMPLE_RATE = 16000;
     const SAMPLES = 160; // 10 ms at 16 kHz
@@ -39,14 +43,13 @@ describe('SpeechStream abort-promise retention (issue #1950)', () => {
     // abortSignal should never have accumulated more than 1 listener.
     // EventTarget.listenerCount is not standard; fall back to checking that the
     // listener count does not scale with the number of frames pushed.
-    const listenerCount = (controller.signal as unknown as NodeJS.EventEmitter).listenerCount?.(
+    const listenerCount = (abortSignal as unknown as NodeJS.EventEmitter).listenerCount?.(
       'abort',
     );
     if (listenerCount !== undefined) {
       expect(listenerCount).toBeLessThanOrEqual(1);
     }
 
-    controller.abort();
     stream.close();
   });
 });
