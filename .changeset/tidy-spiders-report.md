@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Report proportional or private process memory instead of RSS when available.
+Report proportional memory, private working set, or physical footprint instead of RSS when available.
