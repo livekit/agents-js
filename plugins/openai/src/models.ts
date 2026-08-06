@@ -42,6 +42,14 @@ export type ChatModels =
 
 export type WhisperModels = 'whisper-1';
 
+export type STTModels =
+  | WhisperModels
+  | 'gpt-transcribe'
+  | 'gpt-4o-transcribe'
+  | 'gpt-4o-mini-transcribe'
+  | 'gpt-live-transcribe'
+  | 'gpt-realtime-whisper';
+
 export type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
 export type TTSVoices =

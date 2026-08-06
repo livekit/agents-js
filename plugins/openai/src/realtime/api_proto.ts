@@ -133,6 +133,8 @@ export type TurnDetectionType =
 export type InputAudioTranscription = {
   model: InputTranscriptionModel;
   language?: string;
+  languages?: string[];
+  keywords?: string[];
   prompt?: string;
 };
 
