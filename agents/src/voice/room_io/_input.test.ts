@@ -120,4 +120,32 @@ describe('ParticipantAudioInputStream', () => {
     reader.releaseLock();
     await input.close();
   });
+
+  it('keeps mute when onDetached override omits attach-state updates', async () => {
+    const { input, participant, source } = createParticipantInput();
+    input.setParticipant(participant.identity);
+    // Simulate a subclass/wrapper that overrides the hook without updating gate state.
+    input.onDetached = () => {};
+
+    const agentInput = new AgentInput(() => {});
+    agentInput.audio = input;
+
+    const reader = input.stream.getReader();
+    const initialFrame = createFrame(1);
+    source.controller().enqueue(initialFrame);
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: initialFrame });
+
+    agentInput.setAudioEnabled(false);
+    source.controller().enqueue(createFrame(2));
+    await nextTick();
+
+    agentInput.setAudioEnabled(true);
+    const resumedFrame = createFrame(3);
+    source.controller().enqueue(resumedFrame);
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: resumedFrame });
+
+    source.controller().close();
+    reader.releaseLock();
+    await input.close();
+  });
 });
