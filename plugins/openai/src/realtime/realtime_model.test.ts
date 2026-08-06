@@ -919,6 +919,25 @@ describe('RealtimeSession chat context update events', () => {
     expect((events[0] as api_proto.ConversationItemDeleteEvent).item_id).toBe('item_1');
     expect((events[1] as api_proto.ConversationItemCreateEvent).item.id).toBe('item_1');
   });
+
+  it('ignores internal agent items', async () => {
+    const remoteMessage = llm.ChatMessage.create({
+      id: 'item_1',
+      role: 'assistant',
+      content: ['hello'],
+    });
+    const session = createChatCtxUpdateSession(remoteMessage);
+
+    const events = await session.createChatCtxUpdateEvents(
+      new llm.ChatContext([
+        remoteMessage,
+        llm.AgentConfigUpdate.create({ instructions: 'updated instructions' }),
+        llm.AgentHandoffItem.create({ oldAgentId: 'agent_1', newAgentId: 'agent_2' }),
+      ]),
+    );
+
+    expect(events).toEqual([]);
+  });
 });
 
 describe('RealtimeSession.updateOptions', () => {
