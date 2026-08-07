@@ -940,14 +940,18 @@ export interface _AudioOut {
 /**
  * The text that actually reached the user, accounting for interruptions.
  *
- * On a mid-playout interruption (`played === 'partial'`) we prefer the
- * playback-aligned `synchronizedTranscript`, but fall back to the full generated
- * text when no synchronized transcript is available (e.g. avatar outputs) so the
- * heard reply is still committed to chat ctx rather than dropped.
+ * On a mid-playout interruption (`played === 'partial'`) the playback-aligned
+ * `synchronizedTranscript` is authoritative whenever the output reported one.
+ * A sync-capable output (e.g. RoomIO wrapped by a TranscriptSynchronizer)
+ * always attaches a string — `''` means the user barged in before any word
+ * was released, so committing the generated text would fabricate a reply the
+ * user never heard. Only when the transcript is `undefined` (no synchronizer
+ * in the chain, e.g. avatar outputs) do we fall back to the full generated
+ * text so the heard reply is still committed to chat ctx rather than dropped.
  */
 export function forwardedTextFor(output: ForwardOutput): string {
   if (output.played === 'skipped') return '';
-  if (output.played === 'partial' && output.synchronizedTranscript) {
+  if (output.played === 'partial' && output.synchronizedTranscript !== undefined) {
     return output.synchronizedTranscript;
   }
   return output.textOut?.text ?? '';

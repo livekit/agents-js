@@ -43,6 +43,38 @@ class InterruptibleOutput extends AudioOutput {
   }
 }
 
+// Audio sink that mimics a sync-capable output (RoomIO wrapped by a
+// TranscriptSynchronizer): the playback-finished event triggered by the
+// interruption's clearBuffer always carries a synchronizedTranscript STRING —
+// the words actually released downstream so far. It is '' (not undefined) when
+// the caller barged in before the synchronizer released any words.
+class SyncedInterruptibleOutput extends AudioOutput {
+  onFirstFrame?: () => void;
+  synchronizedTranscript = '';
+  private started = false;
+  constructor() {
+    super(24000);
+  }
+  async captureFrame(f: AudioFrame): Promise<void> {
+    await super.captureFrame(f);
+    if (!this.started) {
+      this.started = true;
+      this.onPlaybackStarted(Date.now());
+      this.onFirstFrame?.();
+    }
+  }
+  flush(): void {
+    super.flush();
+  }
+  clearBuffer(): void {
+    this.onPlaybackFinished({
+      playbackPosition: 0.02,
+      interrupted: true,
+      synchronizedTranscript: this.synchronizedTranscript,
+    });
+  }
+}
+
 // Audio sink that mimics a DataStream avatar output (waitPlaybackStart: true):
 // frames are accepted faster than real time and playback-started is only
 // reported LATER, via an out-of-band notification (the `lk.playback_started`
@@ -225,6 +257,77 @@ describe('AgentActivity interrupted-speech commit', () => {
       expect(msg.interrupted).toBe(true);
       expect(msg.content.length).toBeGreaterThan(0);
       expect('A fairly long spoken reply.'.startsWith(msg.content)).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('does not commit an interrupted reply when the synchronizer reports an empty transcript (nothing heard)', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A fairly long spoken reply.' }]),
+    });
+    const audioOut = new SyncedInterruptibleOutput();
+    audioOut.synchronizedTranscript = '';
+    session.output.audio = audioOut;
+    // Barge in on the very first frame — before the synchronizer has released
+    // any words downstream, so its transcript is '' (defined, but empty).
+    audioOut.onFirstFrame = () => session.interrupt({ force: true });
+
+    const assistantMessages: { content: string; interrupted: boolean }[] = [];
+    session.on(AgentSessionEventTypes.ConversationItemAdded, (ev: ConversationItemAddedEvent) => {
+      if (ev.item.type === 'message' && ev.item.role === 'assistant') {
+        assistantMessages.push({
+          content: ev.item.textContent ?? '',
+          interrupted: !!ev.item.interrupted,
+        });
+      }
+    });
+
+    await session.start({ agent: new FrameAgent() });
+    try {
+      const handle = session.generateReply({ userInput: 'hello' });
+      await handle.waitForPlayout();
+
+      // Close drains the reply task fully — the interrupted-commit block has
+      // fired by the time close resolves. The synchronizer said nothing was
+      // heard: committing the full generated text would fabricate a reply
+      // (phantom utterance) in both chat ctx and the transcript.
+      await session.close();
+      expect(assistantMessages).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('commits exactly the synchronized transcript when the caller heard a partial prefix', async () => {
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'hello', content: 'A fairly long spoken reply.' }]),
+    });
+    const audioOut = new SyncedInterruptibleOutput();
+    audioOut.synchronizedTranscript = 'A fairly';
+    session.output.audio = audioOut;
+    audioOut.onFirstFrame = () => session.interrupt({ force: true });
+
+    const assistantMessages: { content: string; interrupted: boolean }[] = [];
+    session.on(AgentSessionEventTypes.ConversationItemAdded, (ev: ConversationItemAddedEvent) => {
+      if (ev.item.type === 'message' && ev.item.role === 'assistant') {
+        assistantMessages.push({
+          content: ev.item.textContent ?? '',
+          interrupted: !!ev.item.interrupted,
+        });
+      }
+    });
+
+    await session.start({ agent: new FrameAgent() });
+    try {
+      const handle = session.generateReply({ userInput: 'hello' });
+      await handle.waitForPlayout();
+      await vi.waitFor(() => expect(assistantMessages.length).toBeGreaterThan(0));
+
+      // The synchronizer's transcript is authoritative: only the words that
+      // actually played may be committed, never the full generated text.
+      expect(assistantMessages).toHaveLength(1);
+      expect(assistantMessages[0]).toEqual({ content: 'A fairly', interrupted: true });
     } finally {
       await session.close();
     }
