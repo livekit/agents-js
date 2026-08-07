@@ -363,52 +363,22 @@ describe('memory warning bookkeeping', () => {
     expect(`${proc.processKind} process`).toBe('job process');
   });
 
-  it('samples the highest-priority memory metric available on this host', async () => {
-    const proc = await makeProc();
-
-    const [valueMB, metric] = await proc.sampleMemoryMB(process.pid);
-
-    expect(['pss', 'uss', 'footprint', 'rss']).toContain(metric);
-    expect(valueMB).toBeGreaterThan(0);
-    if (process.platform === 'linux') {
-      expect(metric).toBe('pss');
-    } else if (process.platform === 'darwin') {
-      expect(metric).toBe('footprint');
-    } else if (process.platform === 'win32') {
-      expect(metric).toBe('uss');
-    } else {
-      expect(metric).toBe('rss');
-    }
-  });
-
   it.skipIf(process.platform !== 'linux')('reports PSS on Linux', async () => {
     const proc = await makeProc();
 
-    const [valueMB, metric] = await proc.sampleMemoryMB(process.pid);
+    const [valueMB, metric] = await proc.getChildMemoryUsageMB(process.pid);
 
     expect(metric).toBe('pss');
     expect(valueMB).toBeGreaterThan(0);
   });
 
-  it.skipIf(process.platform !== 'darwin' && process.platform !== 'win32')(
-    'reports private memory on macOS and Windows',
-    async () => {
-      const proc = await makeProc();
-
-      const [valueMB, metric] = await proc.sampleMemoryMB(process.pid);
-
-      expect(metric).toBe(process.platform === 'darwin' ? 'footprint' : 'uss');
-      expect(valueMB).toBeGreaterThan(0);
-    },
-  );
-
   it('falls back to RSS when full memory information is unavailable', async () => {
     const proc = await makeProc();
-    proc.getFullMemoryInfo = async () => {
+    proc.getPssMB = async () => {
       throw new Error('not implemented');
     };
 
-    const [valueMB, metric] = await proc.sampleMemoryMB(process.pid);
+    const [valueMB, metric] = await proc.getChildMemoryUsageMB(process.pid);
 
     expect(metric).toBe('rss');
     expect(valueMB).toBeGreaterThan(0);
