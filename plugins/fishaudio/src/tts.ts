@@ -182,6 +182,9 @@ const buildTtsRequest = (opts: ResolvedTTSOptions, text: string = ''): Record<st
     prosody,
     top_p: opts.topP,
     temperature: opts.temperature,
+    // Server-side reliability feature, deliberately not exposed as an option:
+    // every synthesis request runs with the quality guard enabled.
+    features: ['quality-guard'],
     ...(opts.maxNewTokens !== undefined ? { max_new_tokens: opts.maxNewTokens } : {}),
     ...(opts.minChunkLength !== undefined ? { min_chunk_length: opts.minChunkLength } : {}),
     ...(opts.conditionOnPreviousChunks !== undefined
