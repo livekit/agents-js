@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -127,6 +127,95 @@ describe('Inference STT start of speech', () => {
     stream['processStartOfSpeech']();
     expect(events.map(({ type }) => type)).toContain(SpeechEventType.START_OF_SPEECH);
   });
+});
+
+describe('Inference STT abortable iteration', () => {
+  it('removes each abort listener after consuming an input', async () => {
+    const { stream } = makeSpeechStream();
+    const controller = new AbortController();
+    const addListener = vi.spyOn(controller.signal, 'addEventListener');
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    let value = 0;
+    const iterator: AsyncIterator<number> = {
+      next: async () => ({ done: false, value: value++ }),
+    };
+
+    for (let i = 0; i < 50; i++) {
+      await expect(stream['nextUntilAborted'](iterator, controller.signal)).resolves.toEqual({
+        done: false,
+        value: i,
+      });
+    }
+
+    expect(addListener).toHaveBeenCalledTimes(50);
+    expect(removeListener).toHaveBeenCalledTimes(50);
+  });
+
+  it('stops a pending iteration and consumes its later rejection after abort', async () => {
+    const { stream } = makeSpeechStream();
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    let rejectNext!: (error: Error) => void;
+    const iterator: AsyncIterator<number> = {
+      next: () =>
+        new Promise<IteratorResult<number>>((_, reject) => {
+          rejectNext = reject;
+        }),
+    };
+
+    const next = stream['nextUntilAborted'](iterator, controller.signal);
+    controller.abort();
+
+    await expect(next).resolves.toBeUndefined();
+    expect(removeListener).toHaveBeenCalledTimes(1);
+
+    // The abandoned iterator may still settle after cancellation; its rejection must stay handled.
+    rejectNext(new Error('late iterator failure'));
+    await Promise.resolve();
+  });
+
+  it('propagates an iterator rejection and removes its abort listener', async () => {
+    const { stream } = makeSpeechStream();
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const iterator: AsyncIterator<number> = {
+      next: async () => {
+        throw new Error('input failed');
+      },
+    };
+
+    await expect(stream['nextUntilAborted'](iterator, controller.signal)).rejects.toThrow(
+      'input failed',
+    );
+    expect(removeListener).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(typeof globalThis.gc !== 'function')(
+    'releases consumed inputs while the abort signal remains pending',
+    async () => {
+      const { stream } = makeSpeechStream();
+      const controller = new AbortController();
+      const refs: WeakRef<object>[] = [];
+      const iterator: AsyncIterator<object> = {
+        next: async () => {
+          const value = { payload: new Uint8Array(1024) };
+          refs.push(new WeakRef(value));
+          return { done: false, value };
+        },
+      };
+
+      for (let i = 0; i < 20; i++) {
+        await stream['nextUntilAborted'](iterator, controller.signal);
+      }
+
+      globalThis.gc!();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      globalThis.gc!();
+
+      expect(refs.filter((ref) => ref.deref() !== undefined).length).toBeLessThanOrEqual(1);
+      controller.abort();
+    },
+  );
 });
 
 describe('parseSTTModelString', () => {
