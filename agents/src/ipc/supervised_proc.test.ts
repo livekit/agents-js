@@ -333,8 +333,9 @@ describe('memory warning bookkeeping', () => {
   it('reports baseline and growth in the logging fields', async () => {
     const proc = await makeProc();
     // before a baseline is captured, only the basic fields are present
-    let fields = proc.memoryLoggingFields(520.0);
+    let fields = proc.memoryLoggingFields(520.0, 'pss');
     expect(fields.memoryUsageMB).toBe(520.0);
+    expect(fields.memoryMetric).toBe('pss');
     expect(fields.memoryWarnMB).toBe(500);
     expect(fields.hasRunningJob).toBe(false);
     expect('uptime' in fields).toBe(true);
@@ -342,14 +343,14 @@ describe('memory warning bookkeeping', () => {
 
     // once a baseline is set, growth-since-startup is reported
     proc.memoryBaselineMB = 300.0;
-    fields = proc.memoryLoggingFields(520.0);
+    fields = proc.memoryLoggingFields(520.0, 'pss');
     expect(fields.baselineMemoryMB).toBe(300.0);
     expect(fields.growthMemoryMB).toBe(220.0);
   });
 
   it('rounds reported memory to one decimal', async () => {
     const proc = await makeProc();
-    expect(proc.memoryLoggingFields(520.567).memoryUsageMB).toBe(520.6);
+    expect(proc.memoryLoggingFields(520.567, 'pss').memoryUsageMB).toBe(520.6);
   });
 
   it('uptime is 0 before start', async () => {
@@ -360,5 +361,26 @@ describe('memory warning bookkeeping', () => {
   it('processKind renders into the message string', async () => {
     const proc = await makeProc();
     expect(`${proc.processKind} process`).toBe('job process');
+  });
+
+  it.skipIf(process.platform !== 'linux')('reports PSS on Linux', async () => {
+    const proc = await makeProc();
+
+    const [valueMB, metric] = await proc.getChildMemoryUsageMB(process.pid);
+
+    expect(metric).toBe('pss');
+    expect(valueMB).toBeGreaterThan(0);
+  });
+
+  it('falls back to RSS when full memory information is unavailable', async () => {
+    const proc = await makeProc();
+    proc.getPssMB = async () => {
+      throw new Error('not implemented');
+    };
+
+    const [valueMB, metric] = await proc.getChildMemoryUsageMB(process.pid);
+
+    expect(metric).toBe('rss');
+    expect(valueMB).toBeGreaterThan(0);
   });
 });
