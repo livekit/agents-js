@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_EXPRESSIVE_OPTIONS, resolveExpressiveOptions } from '../voice/agent_session.js';
+import { matchMood } from './_mood.js';
 import {
   TranscriptMarkupStripper,
   convertMarkup,
@@ -132,7 +133,7 @@ describe('Fish Audio dialect', () => {
   it('registers LLM instructions', () => {
     const instructions = llmInstructions('fishaudio');
     expect(instructions).toBeDefined();
-    for (const emotion of [
+    const emotions = [
       'regretful',
       'hopeful',
       'happy',
@@ -142,12 +143,27 @@ describe('Fish Audio dialect', () => {
       'sad',
       'empathetic',
       'sarcastic',
-    ]) {
+      'calm',
+      'angry',
+      'worried',
+      'nervous',
+      'confident',
+      'grateful',
+      'delighted',
+      'disappointed',
+      'frustrated',
+      'determined',
+    ];
+    for (const emotion of emotions) {
       expect(instructions).toContain(emotion);
+      expect(matchMood(emotion, null), emotion).not.toBeNull();
     }
     expect(instructions).toContain('<expr type="sound" label="laughing"/>');
     expect(instructions).toContain('clear throat');
     expect(instructions).toContain('<expr type="prosody" label="emphasis">');
+    for (const tone of ['whispering', 'soft', 'shouting', 'hurried']) {
+      expect(instructions).toContain(tone);
+    }
   });
 
   it('converts expr markers to Fish brackets', () => {
@@ -169,6 +185,23 @@ describe('Fish Audio dialect', () => {
 
   it('converts sound aliases', () => {
     expect(convertMarkup('fishaudio', '<expr type="sound" label="laugh"/>')).toBe('[laughing]');
+    expect(convertMarkup('fishaudio', '<expr type="sound" label="sigh"/>')).toBe('[sighing]');
+    expect(convertMarkup('fishaudio', '<expr type="sound" label="cry"/>')).toBe('[sobbing]');
+  });
+
+  it('converts wrapping and self-closing tones to prefix markers', () => {
+    expect(
+      convertMarkup(
+        'fishaudio',
+        `<expr type="prosody" label="whispering">don't tell anyone</expr> okay?`,
+      ),
+    ).toBe(`[whispering] don't tell anyone okay?`);
+    expect(convertMarkup('fishaudio', '<expr type="prosody" label="soft"/> hey')).toBe(
+      '[soft] hey',
+    );
+    expect(
+      convertMarkup('fishaudio', '<expr type="prosody" label="like a pirate">ahoy</expr>'),
+    ).toBe('ahoy');
   });
 
   it('splitAllMarkup strips expr markers', () => {
@@ -194,6 +227,14 @@ describe('Fish Audio dialect', () => {
     expect(convertMarkup('fishaudio', raw)).toBe('[very happy] Hey there [emphasis] friend');
   });
 
+  it('strips a tone wrapper from the transcript while preserving its words', () => {
+    const [clean, tags] = splitAllMarkup(
+      '<expr type="prosody" label="shouting">We won the whole thing!</expr>',
+    );
+    expect(clean).toBe('We won the whole thing!');
+    expect(tags).toContainEqual({ type: 'prosody', value: 'shouting' });
+  });
+
   it('filters sounds and examples with steering', () => {
     let instructions = llmInstructions('fishaudio', { nonverbalSounds: false });
     expect(instructions).toBeDefined();
@@ -212,7 +253,11 @@ describe('Fish Audio dialect', () => {
   it('reports supported nonverbals', () => {
     expect(supportedNonverbals('fishaudio')).toEqual({
       laughing: ['laughing', 'chuckling'],
-      reflexSounds: ['clear throat'],
+      breathing: ['gasping'],
+      sighing: ['sighing'],
+      crying: ['sobbing'],
+      vocalizing: ['groaning'],
+      reflexSounds: ['clear throat', 'yawning'],
     });
   });
 
@@ -243,7 +288,9 @@ describe('Fish Audio dialect', () => {
     expect(off).not.toContain('type="sound"');
     expect(off).not.toContain('laughing');
     for (const instructions of [on, defaultInstructions]) {
-      expect(instructions).toContain('laughing, chuckling, clear throat');
+      expect(instructions).toContain(
+        'laughing, chuckling, clear throat, sighing, gasping, groaning, yawning, sobbing',
+      );
     }
   });
 
@@ -267,7 +314,9 @@ describe('Fish Audio dialect', () => {
     const steering = { nonverbalSounds: { laughing: false } };
     const fish = llmInstructions('fishaudio', steering);
     expect(fish).not.toContain('laughing');
-    expect(fish).toContain('clear throat');
+    for (const kept of ['clear throat', 'sighing', 'gasping', 'groaning', 'yawning', 'sobbing']) {
+      expect(fish).toContain(kept);
+    }
 
     const inworld = llmInstructions('inworld', steering);
     expect(inworld).not.toContain('label="laugh"');
@@ -354,10 +403,10 @@ describe('transcript stripping (per-provider + provider-agnostic)', () => {
     const text =
       '<expr type="expression" label="say playfully"/> Hello! <sound value="laugh"/> [sigh]';
     const [clean, tags] = splitAllMarkup(text);
-    expect(clean.trim()).toBe('Hello!');
+    expect(clean.trim()).toBe('Hello!  [sigh]');
     expect(tags).toContainEqual({ type: 'expression', value: 'say playfully' });
     expect(tags).toContainEqual({ type: 'sound', value: 'laugh' });
-    expect(tags).toContainEqual({ type: '', value: 'sigh' });
+    expect(tags).not.toContainEqual({ type: '', value: 'sigh' });
   });
 
   it('preserves document order when mixing native and expr markup', () => {
@@ -370,7 +419,9 @@ describe('transcript stripping (per-provider + provider-agnostic)', () => {
       { type: 'emotion', value: 'sad' },
       { type: 'expression', value: 'happy' },
     ]);
-    expect(expressionAttribute(tags)).toEqual({ 'lk.expression': '{"value":"sad"}' });
+    expect(expressionAttribute(tags)).toEqual({
+      'lk.expression': '{"expression":"sad","mood":"sad"}',
+    });
 
     // same through the per-provider path, with brackets in the mix
     const [, inworldTags] = splitMarkup(

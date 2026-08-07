@@ -6,6 +6,13 @@ import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { SpeechHandle } from './speech_handle.js';
 
 describe('AgentSession.run', () => {
+  it('defaults expressive off and accepts boolean or options', () => {
+    expect(new AgentSession().sessionOptions.expressive).toBe(false);
+    expect(new AgentSession({ expressive: true }).sessionOptions.expressive).toBe(true);
+    const expressive = { ttsInstructionsAppend: 'Stay upbeat.' };
+    expect(new AgentSession({ expressive }).sessionOptions.expressive).toEqual(expressive);
+  });
+
   it('forwards inputModality to generateReply', async () => {
     const session = new AgentSession();
     const generateReply = vi

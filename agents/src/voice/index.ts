@@ -19,6 +19,7 @@ export {
   AgentSession,
   type AgentSessionOptions,
   type AgentSessionUsage,
+  type ExpressiveOptions,
   type NonverbalOptions,
   type SpeechSteeringOptions,
   type VoiceOptions,

@@ -211,7 +211,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
         if (this.isDeltaStream) {
           // reuse the existing writer
           if (this.writer === null) {
-            this.writer = await this.createTextWriter();
+            this.writer = await this.createTextWriter(expressionAttribute(this.stripper.tags));
           }
           await this.writer.write(payload);
         } else {
@@ -250,9 +250,8 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     const currWriter = this.writer;
     this.writer = null;
 
-    // only emit on a segment that captured text (keeps lk.transcription cadence intact).
-    // The leading expression the sinks stripped rides along on the closing chunk as the
-    // lk.expression attribute.
+    // Only emit on a segment that captured text. Delta streams attach the leading expression
+    // when opening the writer because rtc-node close() cannot carry attributes.
     let remaining: string;
     let tags: ExpressiveTag[];
     if (this.isDeltaStream) {
@@ -278,13 +277,12 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
       throw new Error('localParticipant not found');
     }
 
-    if (!attributes) {
-      attributes = {
-        [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'false',
-      };
-      if (this.trackId) {
-        attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
-      }
+    attributes = {
+      [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'false',
+      ...attributes,
+    };
+    if (this.trackId) {
+      attributes[ATTRIBUTE_TRANSCRIPTION_TRACK_ID] = this.trackId;
     }
     attributes[ATTRIBUTE_TRANSCRIPTION_SEGMENT_ID] = this.currentId;
 
