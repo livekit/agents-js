@@ -135,6 +135,95 @@ async function collectChatChunks(
   return chunks;
 }
 
+/**
+ * Yields the given completion chunks, then throws as a provider going quiet
+ * would. Returns how many times the request was attempted.
+ */
+async function countAttemptsUntilStall(
+  completionChunks: CompletionChunk[],
+  maxRetry: number,
+): Promise<{ attempts: number }> {
+  const llm = new LLM({
+    model: 'google/gemma-4-31b-it',
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: 'https://example.livekit.cloud',
+  });
+
+  // The stream emits 'error' on every failed attempt; without a listener the
+  // EventEmitter turns it into an unhandled error and fails the run.
+  llm.on('error', () => {});
+
+  let attempts = 0;
+  const stub = async () => {
+    attempts++;
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (const chunk of completionChunks) {
+          yield chunk;
+        }
+        throw new Error('stalled mid-stream');
+      },
+    };
+  };
+
+  const internal = llm as unknown as {
+    client: { chat: { completions: { create: typeof stub } } };
+  };
+  internal.client.chat.completions.create = stub;
+
+  try {
+    const stream = llm.chat({
+      chatCtx: new ChatContext(),
+      connOptions: { maxRetry, retryIntervalMs: 0, timeoutMs: 5000 },
+    });
+    for await (const _chunk of stream) {
+      void _chunk;
+    }
+  } catch {
+    // the stall surfaces through the 'error' event; the iterator just ends
+  }
+
+  return { attempts };
+}
+
+// The gateway stamps its deployment and billing tier onto the leading delta,
+// which carries no content of its own.
+const METADATA_ONLY_CHUNK: CompletionChunk = {
+  id: 'chatcmpl_test',
+  choices: [
+    {
+      index: 0,
+      finish_reason: null,
+      delta: {
+        role: 'assistant',
+        extra_content: {
+          livekit: { inference_deployment: 'd', inference_tier_billed: 'standard' },
+        },
+      },
+    },
+  ],
+};
+
+const TEXT_CHUNK: CompletionChunk = {
+  id: 'chatcmpl_test',
+  choices: [{ index: 0, finish_reason: null, delta: { role: 'assistant', content: 'hello' } }],
+};
+
+describe('inference.LLM retry eligibility', () => {
+  it('retries a stall that follows provider metadata alone', async () => {
+    const { attempts } = await countAttemptsUntilStall([METADATA_ONLY_CHUNK], 2);
+
+    expect(attempts).toBe(3);
+  });
+
+  it('does not retry once generated text has reached the caller', async () => {
+    const { attempts } = await countAttemptsUntilStall([METADATA_ONLY_CHUNK, TEXT_CHUNK], 2);
+
+    expect(attempts).toBe(1);
+  });
+});
+
 describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   // --- no value anywhere ---
 
