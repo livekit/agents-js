@@ -60,7 +60,7 @@ describe('xAI dialect', () => {
     expect(instr).toBeDefined();
     // this branch instructs the unified expr dialect; convertMarkup lowers it to
     // xAI's native syntax (see expr_markup.test.ts)
-    expect(instr).toContain('<expr type="sound" label="laugh"/>');
+    expect(instr).toContain('<expr type="sound" label="breath"/>');
     expect(instr).toContain('<expr type="prosody" label="');
   });
 
@@ -137,26 +137,27 @@ describe('normalizeMarkup', () => {
 
 describe('universal transcript stripping', () => {
   // The transcript sinks strip downstream without knowing the provider, so they remove
-  // the union of every provider's tags. See splitAllMarkup / TranscriptMarkupStripper.
+  // the union of every provider's XML tags. See splitAllMarkup / TranscriptMarkupStripper.
 
   it('splitAllMarkup strips every provider dialect at once', () => {
-    // Cartesia <emotion>, Inworld/xAI <expression>/<sound>, and bracket tags all strip
-    // regardless of which provider produced them
+    // XML tags strip regardless of provider; square brackets remain markdown/prose.
     const [clean, tags] = splitAllMarkup(
       '<emotion value="happy"/>Hi <expression value="warm"/>there ' +
         '<sound value="giggle"/>[pause] friend',
     );
-    expect(clean).toBe('Hi there  friend');
+    expect(clean).toBe('Hi there [pause] friend');
     const types = tags.map((t) => [t.type, t.value]);
     expect(types).toContainEqual(['emotion', 'happy']);
     expect(types).toContainEqual(['expression', 'warm']);
     expect(types).toContainEqual(['sound', 'giggle']);
-    expect(types).toContainEqual(['', 'pause']);
+    expect(types).not.toContainEqual(['', 'pause']);
   });
 
   it('expressionAttribute builds the lk.expression attribute', () => {
     let [, tags] = splitAllMarkup('<emotion value="sad"/>oh no');
-    expect(expressionAttribute(tags)).toEqual({ 'lk.expression': '{"value":"sad"}' });
+    expect(expressionAttribute(tags)).toEqual({
+      'lk.expression': '{"expression":"sad","mood":"sad"}',
+    });
 
     // no expression/emotion tag -> no attribute (bracket sounds don't count)
     [, tags] = splitAllMarkup('[pause]hi');
@@ -172,7 +173,15 @@ describe('universal transcript stripping', () => {
     out += s.flush();
     expect(out).not.toContain('<emotion');
     expect(out.replace(/ /g, '')).toBe('Hithere');
-    expect(s.expressionAttribute()).toEqual({ 'lk.expression': '{"value":"happy"}' });
+    expect(s.expressionAttribute()).toEqual({
+      'lk.expression': '{"expression":"happy","mood":"happy"}',
+    });
+  });
+
+  it('does not strip or hold markdown brackets', () => {
+    const s = new TranscriptMarkupStripper();
+    expect(s.push('See [the docs')).toBe('See [the docs');
+    expect(s.push('](https://livekit.io).')).toBe('](https://livekit.io).');
   });
 
   it('TranscriptMarkupStripper does not stall on a bare "<"', () => {

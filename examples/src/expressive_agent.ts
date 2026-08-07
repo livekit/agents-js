@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-// cue-cli e2e harness agent for expressive mode (expr marker dialect).
-// Registered with explicit dispatch as `expressive-agent-js`.
 import {
   Agent,
   AgentSession,
@@ -11,40 +9,53 @@ import {
   cli,
   defineAgent,
   inference,
-  tool,
+  log,
 } from '@livekit/agents';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
+import { parseSessionConfig } from './expressive_agent/protocol.ts';
+
+const instructions = readFileSync(
+  new URL('../src/expressive_agent/prompt.md', import.meta.url),
+  'utf8',
+).replace(/^<!--[\s\S]*?-->\s*/, '');
+
+const greeting =
+  "Open the call the way you'd answer the phone to someone you know well. " +
+  "Short and warm, and leave them room to say what's going on.";
+
+class Friend extends Agent {
+  constructor() {
+    super({ instructions });
+  }
+
+  async onEnter(): Promise<void> {
+    this.session.generateReply({ instructions: greeting });
+  }
+}
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    const agent = Agent.create({
-      instructions:
-        'You are a cheerful, expressive assistant. Keep replies to one or two short ' +
-        'sentences. You can hear the user and respond with speech.',
-      tools: [
-        tool({
-          name: 'getWeather',
-          description: 'Get the weather for a given location.',
-          parameters: z.object({
-            location: z.string().describe('The location to get the weather for'),
-          }),
-          execute: async ({ location }) => `The weather in ${location} is sunny.`,
-        }),
-      ],
-    });
+    const config = parseSessionConfig(ctx.job.metadata);
+    log().info(
+      { expressive: config.expressive, voice: config.voice.label },
+      'starting expressive session',
+    );
 
     const session = new AgentSession({
-      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
-      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
-      // Inworld: free-form expression labels (with spaces) — exercises both the
-      // expr dialect lowering and the transcript pacing fix.
-      tts: new inference.TTS({ model: 'inworld/inworld-tts-2' }),
-      expressive: true,
+      stt: new inference.STT({ model: 'assemblyai/universal-3-5-pro', language: 'en' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
+      tts: new inference.TTS({ model: config.voice.model, voice: config.voice.voice }),
+      turnHandling: {
+        turnDetection: new inference.TurnDetector({ version: 'v1' }),
+        interruption: { mode: 'adaptive' },
+        preemptiveGeneration: { enabled: true },
+      },
+      expressive: config.expressive,
     });
 
-    await session.start({ agent, room: ctx.room });
-    session.say('Hi there! How can I help you today?');
+    await session.start({ agent: new Friend(), room: ctx.room });
+    await ctx.room.localParticipant?.setAttributes(config.attributes());
   },
 });
 
