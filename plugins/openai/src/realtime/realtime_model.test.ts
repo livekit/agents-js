@@ -27,6 +27,17 @@ type RealtimeSessionInternals = {
   };
 };
 
+type ChatCtxUpdateInternals = {
+  chatCtxEventFutures: Record<string, Future<void>>;
+  handleConversationItemDeleted: (event: api_proto.ConversationItemDeletedEvent) => void;
+  handleError: (event: api_proto.ErrorEvent) => void;
+  itemCreateFutures: Record<string, Future<void>>;
+  itemDeleteFutures: Record<string, Future<void>>;
+  remoteChatCtx: llm.RemoteChatContext;
+  sendEvent: (event: api_proto.ClientEvent) => void;
+  updateChatCtx: RealtimeSession['updateChatCtx'];
+};
+
 type ResponseDoneSessionInternals = {
   handleResponseDone: (event: api_proto.ResponseDoneEvent) => void;
   handleResponseDoneButNotComplete: (event: api_proto.ResponseDoneEvent) => void;
@@ -384,6 +395,117 @@ describe('RealtimeSession fatal error handling', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]!.recoverable).toBe(true);
+  });
+});
+
+describe('RealtimeSession chat context event rejection handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createChatCtxUpdateSession(): ChatCtxUpdateInternals {
+    stubTaskRuntime();
+    return new RealtimeModel({
+      apiKey: 'test-key',
+    }).session() as unknown as ChatCtxUpdateInternals;
+  }
+
+  function createInFlightUpdate(): ChatCtxUpdateInternals {
+    const session = createChatCtxUpdateSession();
+    session.itemDeleteFutures = { item_1: new Future<void>() };
+    session.itemCreateFutures = { item_1: new Future<void>() };
+    session.chatCtxEventFutures = {
+      chat_ctx_delete_abc: session.itemDeleteFutures.item_1!,
+      chat_ctx_create_abc: session.itemCreateFutures.item_1!,
+    };
+    return session;
+  }
+
+  function rejection(eventId: string, code = 'invalid_request_error'): api_proto.ErrorEvent {
+    return {
+      type: 'error',
+      event_id: eventId,
+      error: {
+        message: 'Item not found: item_1',
+        type: 'invalid_request_error',
+        code,
+        event_id: eventId,
+        param: 'item_1',
+      },
+    };
+  }
+
+  it('releases the waiter for a rejected chat context event', () => {
+    const session = createInFlightUpdate();
+    const waiter = session.itemDeleteFutures.item_1!;
+
+    session.handleError(rejection('chat_ctx_delete_abc'));
+
+    expect(waiter.done).toBe(true);
+    expect(waiter.rejected).toBe(true);
+  });
+
+  it('does not settle a rejected waiter twice', () => {
+    const session = createInFlightUpdate();
+    const waiter = session.itemDeleteFutures.item_1!;
+    session.remoteChatCtx.insert(
+      undefined,
+      new llm.ChatMessage({ id: 'item_1', role: 'user', content: 'hello' }),
+    );
+    session.handleError(rejection('chat_ctx_delete_abc'));
+
+    expect(() =>
+      session.handleConversationItemDeleted({
+        type: 'conversation.item.deleted',
+        event_id: 'evt',
+        item_id: 'item_1',
+      }),
+    ).not.toThrow();
+    expect(waiter.rejected).toBe(true);
+  });
+
+  it('reports an error that outlives its chat context update', async () => {
+    const session = createChatCtxUpdateSession();
+    const sent: api_proto.ClientEvent[] = [];
+    session.sendEvent = (event) => sent.push(event);
+    const errors: llm.RealtimeModelError[] = [];
+    (session as unknown as RealtimeSession).on('error', (error) => errors.push(error));
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hello', id: 'item_1' });
+
+    const update = session.updateChatCtx(chatCtx);
+    await vi.waitFor(() => expect(session.itemCreateFutures.item_1).toBeDefined());
+    session.itemCreateFutures.item_1!.resolve();
+    await update;
+
+    const createEvent = sent.find(
+      (event): event is api_proto.ConversationItemCreateEvent =>
+        event.type === 'conversation.item.create',
+    );
+    expect(createEvent?.event_id).toBeDefined();
+    session.handleError(rejection(createEvent!.event_id!));
+
+    expect(errors.map((error) => error.recoverable)).toEqual([true]);
+  });
+
+  it('leaves the sibling event pending when one event is rejected', () => {
+    const session = createInFlightUpdate();
+    const sibling = session.itemCreateFutures.item_1!;
+
+    session.handleError(rejection('chat_ctx_delete_abc'));
+
+    expect(sibling.done).toBe(false);
+    expect(session.itemCreateFutures.item_1).toBe(sibling);
+  });
+
+  it('still throws a fatal error tied to a chat context event', () => {
+    const session = createInFlightUpdate();
+    const waiter = session.itemCreateFutures.item_1!;
+
+    expect(() =>
+      session.handleError(rejection('chat_ctx_create_abc', 'insufficient_quota')),
+    ).toThrow(APIError);
+    expect(waiter.rejected).toBe(true);
   });
 });
 
