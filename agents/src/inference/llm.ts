@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import OpenAI from 'openai';
+import OpenAI, { type APIError as OpenAIAPIError } from 'openai';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import * as llm from '../llm/index.js';
 import {
@@ -19,6 +19,7 @@ import {
   INFERENCE_PROVIDER_HEADER,
   buildMetadataHeaders,
   createAccessToken,
+  extractQuotaUsage,
   getDefaultInferenceUrl,
 } from './utils.js';
 
@@ -548,6 +549,9 @@ export class LLMStream extends llm.LLMStream {
       if (error instanceof OpenAI.APIConnectionTimeoutError) {
         throw new APITimeoutError({ options: { retryable } });
       } else if (error instanceof OpenAI.APIError) {
+        if (error.status === 429) {
+          this.logRateLimited(error);
+        }
         throw new APIStatusError({
           message: error.message,
           options: {
@@ -564,6 +568,17 @@ export class LLMStream extends llm.LLMStream {
         });
       }
     }
+  }
+
+  private logRateLimited(error: OpenAIAPIError): void {
+    this.logger.warn(
+      {
+        model: this.model,
+        requestId: error.requestID ?? null,
+        ...(error.headers ? extractQuotaUsage(error.headers) : {}),
+      },
+      'LLM request rate limited by inference gateway',
+    );
   }
 
   private parseChoice(

@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import OpenAI, { type APIError as OpenAIAPIError } from 'openai';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
-import { type InferenceClass, LLM } from './llm.js';
+import { type InferenceClass, LLM, LLMStream } from './llm.js';
 import { describeLiveKitInference } from './test_utils.js';
 
 beforeAll(() => {
@@ -254,6 +255,58 @@ describe('inference.LLM reasoning markers', () => {
     );
 
     expect(chunks.map((chunk) => chunk.delta?.content).join('')).toBe('beforeanswer');
+  });
+});
+
+describe('inference.LLM rate limit logging', () => {
+  function makeStreamLogger(headers: Headers) {
+    const warn = vi.fn();
+    const stream = Object.create(LLMStream.prototype) as {
+      model: string;
+      logger: { warn: typeof warn };
+      logRateLimited: (error: OpenAIAPIError) => void;
+    };
+    stream.model = 'openai/gpt-4o';
+    stream.logger = { warn };
+    const error = OpenAI.APIError.generate(429, undefined, 'rate limited', headers);
+
+    stream.logRateLimited(error);
+    return warn;
+  }
+
+  it('logs quota headers on 429', () => {
+    const warn = makeStreamLogger(
+      new Headers({
+        'x-request-id': 'req_123',
+        'X-LiveKit-Inference-RPM-Limit': '100',
+        'X-LiveKit-Inference-RPM-Used': '101',
+      }),
+    );
+
+    expect(warn).toHaveBeenCalledWith(
+      {
+        model: 'openai/gpt-4o',
+        requestId: 'req_123',
+        rpmLimit: '100',
+        rpmUsed: '101',
+      },
+      'LLM request rate limited by inference gateway',
+    );
+    expect(warn.mock.calls[0]?.[0]).not.toHaveProperty('tpmLimit');
+  });
+
+  it('logs a 429 without quota headers', () => {
+    const warn = makeStreamLogger(new Headers());
+
+    expect(warn).toHaveBeenCalledWith(
+      {
+        model: 'openai/gpt-4o',
+        requestId: null,
+      },
+      'LLM request rate limited by inference gateway',
+    );
+    expect(warn.mock.calls[0]?.[0]).not.toHaveProperty('rpmLimit');
+    expect(warn.mock.calls[0]?.[0]).not.toHaveProperty('rpmUsed');
   });
 });
 
