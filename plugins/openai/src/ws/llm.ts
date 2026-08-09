@@ -393,6 +393,12 @@ export class WSLLMStream extends llm.LLMStream {
   #fullChatCtx: llm.ChatContext;
   #responseId = '';
   #pendingToolCalls = new Set<string>();
+  /**
+   * Whether this attempt may still be retried. Cleared once generation reaches the
+   * caller, which a retry would duplicate. Held on the instance because the loop
+   * that reads chunks sits in #runWithConn, one call down from run().
+   */
+  #retryable = true;
 
   constructor(
     llm: WSLLM,
@@ -429,7 +435,7 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   protected async run(): Promise<void> {
-    let retryable = true;
+    this.#retryable = true;
 
     try {
       await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
@@ -438,7 +444,7 @@ export class WSLLMStream extends llm.LLMStream {
         if (needsRetry) {
           // previous_response_id was evicted from the server-side cache.
           // Retry once on the same connection with the full context and no ID.
-          retryable = true;
+          this.#retryable = true;
           await this.#runWithConn(conn, this.#fullChatCtx, undefined);
         }
       });
@@ -452,7 +458,7 @@ export class WSLLMStream extends llm.LLMStream {
       }
       throw new APIConnectionError({
         message: toError(error).message,
-        options: { retryable },
+        options: { retryable: this.#retryable },
       });
     }
   }
@@ -535,6 +541,9 @@ export class WSLLMStream extends llm.LLMStream {
 
         if (chunk) {
           this.queue.put(chunk);
+          if (llm.carriesGeneration(chunk)) {
+            this.#retryable = false;
+          }
         }
       }
     } finally {
@@ -564,7 +573,7 @@ export class WSLLMStream extends llm.LLMStream {
       this.#pool.invalidate();
       throw new APIConnectionError({
         message: event.error?.message ?? `WebSocket closed (${code})`,
-        options: { retryable: true },
+        options: { retryable: this.#retryable },
       });
     }
 
