@@ -284,7 +284,6 @@ export function* processMessage(
     if (token.is_final) {
       if (isEndToken(token)) {
         yield* sendEndpointTranscript(state, options);
-        yield* reportProcessedAudioDuration(totalAudioProcMs, state);
       } else {
         state.final.update(token);
       }
@@ -322,6 +321,8 @@ export function* processMessage(
 
   if (content.finished || content.error_code || content.error_message) {
     yield* sendEndpointTranscript(state, options);
-    yield* reportProcessedAudioDuration(totalAudioProcMs, state);
   }
+
+  // Report every frame so processed audio that never reaches an endpoint is not dropped.
+  yield* reportProcessedAudioDuration(totalAudioProcMs, state);
 }
