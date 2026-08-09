@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, tts } from '@livekit/agents';
+import {
+  type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  tts,
+} from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
@@ -110,6 +116,61 @@ async function synthesizeTurn(
 }
 
 describe('Cartesia streaming pool', () => {
+  it('redacts API keys from WebSocket handshake errors', async () => {
+    const secret = 'cartesia-secret-api-key-do-not-log';
+    const wss = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+    });
+    await once(wss, 'listening');
+    const address = wss.address() as AddressInfo;
+    const cartesia = new TTS({ apiKey: secret, baseUrl: `http://127.0.0.1:${address.port}` });
+    const errorEvent = once(cartesia, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+
+    try {
+      const stream = cartesia.stream({
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+      });
+      stream.pushText('test');
+      stream.endInput();
+
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(401);
+      expect(error.message).not.toContain(secret);
+      expect(error.toString()).not.toContain(secret);
+      stream.close();
+    } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not retain generic WebSocket connection errors', async () => {
+    const secret = 'cartesia-secret-api-key-do-not-log';
+    const cartesia = new TTS({ apiKey: secret, baseUrl: `http://[${secret}` });
+    const errorEvent = once(cartesia, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+
+    try {
+      const stream = cartesia.stream({
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+      });
+      stream.pushText('test');
+      stream.endInput();
+
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIConnectionError);
+      expect(error.message).toBe('SyntaxError');
+      expect(error.message).not.toContain(secret);
+      expect(error.toString()).not.toContain(secret);
+      expect((error as Error & { cause?: unknown }).cause).toBeUndefined();
+      stream.close();
+    } finally {
+      await cartesia.close();
+    }
+  });
+
   it('reuses one websocket across sequential turns', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const server = serveCartesia(wss);

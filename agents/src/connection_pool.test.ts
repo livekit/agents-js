@@ -279,6 +279,51 @@ describe('ConnectionPool', () => {
       expect(conn2).toBe(conn1); // Should reuse existing
       expect(connectCb).toHaveBeenCalledTimes(1);
     });
+
+    it('does not leak API keys from failed prewarm errors', async () => {
+      const secret = 'cartesia-secret-api-key-do-not-log';
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new Error(`WebSocket handshake failed with X-API-Key: ${secret}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('does not leak URL credentials from failed prewarm errors', async () => {
+      const secretKey = 'url-secret-api-key-do-not-log';
+      const secretJwt = 'url-secret-jwt-token-do-not-log';
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        const pool = new ConnectionPool<string>({
+          connectCb: async () => {
+            throw new Error(`wss://example.com/ws?api_key=${secretKey}&jwt_token=${secretJwt}`);
+          },
+          closeCb: async () => {},
+        });
+        pool.prewarm();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
   });
 
   describe('close', () => {
