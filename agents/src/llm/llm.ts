@@ -40,6 +40,17 @@ export interface ChatChunk {
   usage?: CompletionUsage;
 }
 
+/**
+ * Whether this chunk delivered generation the caller can see.
+ *
+ * Token counts and provider metadata (a gateway deployment stamp, a thought
+ * signature) reach the caller without being output: they neither start the clock
+ * on time-to-first-token nor give a retry anything to duplicate.
+ */
+export function carriesGeneration(chunk: ChatChunk): boolean {
+  return Boolean(chunk.delta?.content || chunk.delta?.toolCalls?.length);
+}
+
 export interface CollectedResponse {
   text: string;
   toolCalls: FunctionCall[];
