@@ -26,7 +26,7 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
-import { type RemoteChatItem, chatItemToProto, msToTimestamp } from '../proto.js';
+import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
@@ -401,10 +401,12 @@ function msToDuration(ms: number): Duration {
   });
 }
 
+type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
+
 function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
   return items
     .filter((item): item is RemoteChatItem => item.type !== 'agent_config_update')
-    .map(chatItemToProto);
+    .map(encodeChatItem);
 }
 
 // ===========================================================================
@@ -710,7 +712,7 @@ export class SessionHost {
       {
         case: 'conversationItemAdded',
         value: new pb.AgentSessionEvent_ConversationItemAdded({
-          item: chatItemToProto(event.item),
+          item: encodeChatItem(event.item),
         }),
       },
       event.createdAt,
