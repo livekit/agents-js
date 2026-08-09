@@ -60,14 +60,17 @@ export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
   timeoutMs: 10000,
 };
 
+/** Matches agents (Python), whose _interval_for_retry returns 0.1 seconds here. */
+const FIRST_RETRY_INTERVAL_MS = 100;
+
 /**
- * Return the interval for the given number of retries.
- * The first retry is immediate, and then uses specified retryIntervalMs.
+ * Return the interval before the given retry, in milliseconds.
+ * The first retry comes quickly, and every one after uses retryIntervalMs.
  * @internal
  */
 export function intervalForRetry(connOptions: APIConnectOptions, numRetries: number): number {
   if (numRetries === 0) {
-    return 0.1;
+    return FIRST_RETRY_INTERVAL_MS;
   }
   return connOptions.retryIntervalMs;
 }
