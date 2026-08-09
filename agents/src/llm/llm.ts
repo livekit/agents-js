@@ -280,7 +280,9 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       if (requestId && !this.#providerRequestIds.includes(requestId)) {
         this.#providerRequestIds.push(requestId);
       }
-      if (ttft === BigInt(-1)) {
+      // measured against generation, not the first chunk: a retry that follows a
+      // contentless chunk would otherwise latch the clock on the failed attempt
+      if (ttft === BigInt(-1) && carriesGeneration(ev)) {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
       }

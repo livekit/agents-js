@@ -186,6 +186,69 @@ describe('inference.LLM retry eligibility', () => {
   });
 });
 
+const STALL_MS = 60;
+
+/**
+ * First attempt yields metadata, waits, then stalls; the retry succeeds. Returns
+ * the ttft the run reported.
+ */
+async function ttftAcrossARetry(): Promise<number> {
+  const llm = new LLM({
+    model: 'google/gemma-4-31b-it',
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: 'https://example.livekit.cloud',
+  });
+  llm.on('error', () => {});
+
+  let reported = -1;
+  llm.on('metrics_collected', (metrics) => {
+    reported = metrics.ttftMs;
+  });
+
+  let attempts = 0;
+  const stub = async () => {
+    attempts++;
+    const failing = attempts === 1;
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield METADATA_ONLY_CHUNK;
+        if (failing) {
+          await new Promise((resolve) => setTimeout(resolve, STALL_MS));
+          throw new Error('stalled mid-stream');
+        }
+        yield TEXT_CHUNK;
+      },
+    };
+  };
+
+  const internal = llm as unknown as {
+    client: { chat: { completions: { create: typeof stub } } };
+  };
+  internal.client.chat.completions.create = stub;
+
+  const stream = llm.chat({
+    chatCtx: new ChatContext(),
+    connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
+  });
+  for await (const _chunk of stream) {
+    void _chunk;
+  }
+  // metrics are emitted just after the output stream closes
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(attempts).toBe(2);
+  return reported;
+}
+
+describe('inference.LLM reported latency', () => {
+  it('measures ttft to generation, not to a failed attempt metadata chunk', async () => {
+    const ttftMs = await ttftAcrossARetry();
+
+    expect(ttftMs).toBeGreaterThanOrEqual(STALL_MS);
+  });
+});
+
 describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   // --- no value anywhere ---
 

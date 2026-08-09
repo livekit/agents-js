@@ -16,6 +16,7 @@ import {
   isInstructions,
 } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
+import { carriesGeneration } from '../llm/llm.js';
 import {
   type JSONObject,
   type ToolChoice,
@@ -599,7 +600,16 @@ export function performLLMInference(
         const { done, value: chunk } = result;
         if (done) break;
 
-        if (!firstTokenReceived) {
+        let generated = false;
+        if (typeof chunk === 'string') {
+          generated = chunk.length > 0;
+        } else if (!isFlushSentinel(chunk)) {
+          generated = carriesGeneration(chunk);
+        }
+
+        // measured against generation, not the first chunk: a retry that follows a
+        // contentless chunk would otherwise latch the clock on the failed attempt
+        if (!firstTokenReceived && generated) {
           firstTokenReceived = true;
           data.ttft = performance.now() / 1000 - startTime;
         }
