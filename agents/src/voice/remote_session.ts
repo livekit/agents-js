@@ -16,7 +16,7 @@ import type {
   FunctionCall as FCItem,
   FunctionCallOutput as FCOItem,
 } from '../llm/chat_context.js';
-import { isInstructions, renderInstructions } from '../llm/chat_context.js';
+import { renderInstructions } from '../llm/chat_context.js';
 import { type ToolContext, sortedToolNames } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type {
@@ -26,6 +26,7 @@ import type {
   STTModelUsage,
   TTSModelUsage,
 } from '../metrics/model_usage.js';
+import { type RemoteChatItem, chatItemToProto, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
@@ -387,10 +388,6 @@ const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
 // ===========================================================================
 // Chat item / timestamp conversion helpers
 // ===========================================================================
-function msToTimestamp(ms: number): Timestamp {
-  return Timestamp.fromDate(new Date(ms));
-}
-
 function nowTimestamp(): Timestamp {
   return Timestamp.fromDate(new Date());
 }
@@ -404,107 +401,10 @@ function msToDuration(ms: number): Duration {
   });
 }
 
-type RemoteChatItem = Exclude<ChatItem, { type: 'agent_config_update' }>;
-
 function chatItemsToProto(items: ChatItem[]): pb.ChatContext_ChatItem[] {
   return items
     .filter((item): item is RemoteChatItem => item.type !== 'agent_config_update')
     .map(chatItemToProto);
-}
-
-function chatItemToProto(item: RemoteChatItem): pb.ChatContext_ChatItem {
-  switch (item.type) {
-    case 'message': {
-      const msg = item;
-      const roleMap: Record<string, pb.ChatRole> = {
-        developer: pb.ChatRole.DEVELOPER,
-        system: pb.ChatRole.SYSTEM,
-        user: pb.ChatRole.USER,
-        assistant: pb.ChatRole.ASSISTANT,
-      };
-      const content: pb.ChatMessage_ChatContent[] = [];
-      for (const c of msg.content) {
-        if (typeof c === 'string') {
-          content.push(new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c } }));
-        } else if (isInstructions(c)) {
-          content.push(
-            new pb.ChatMessage_ChatContent({ payload: { case: 'text', value: c.value } }),
-          );
-        }
-      }
-
-      const metricsReport = new pb.MetricsReport();
-      if (msg.metrics.transcriptionDelay !== undefined)
-        metricsReport.transcriptionDelay = msg.metrics.transcriptionDelay;
-      if (msg.metrics.endOfTurnDelay !== undefined)
-        metricsReport.endOfTurnDelay = msg.metrics.endOfTurnDelay;
-      if (msg.metrics.onUserTurnCompletedDelay !== undefined)
-        metricsReport.onUserTurnCompletedDelay = msg.metrics.onUserTurnCompletedDelay;
-      if (msg.metrics.llmNodeTtft !== undefined)
-        metricsReport.llmNodeTtft = msg.metrics.llmNodeTtft;
-      if (msg.metrics.ttsNodeTtfb !== undefined)
-        metricsReport.ttsNodeTtfb = msg.metrics.ttsNodeTtfb;
-      if (msg.metrics.e2eLatency !== undefined) metricsReport.e2eLatency = msg.metrics.e2eLatency;
-
-      const pbMsg = new pb.ChatMessage({
-        id: msg.id,
-        role: roleMap[msg.role] ?? pb.ChatRole.ASSISTANT,
-        content,
-        interrupted: msg.interrupted,
-        metrics: metricsReport,
-        createdAt: msToTimestamp(msg.createdAt),
-      });
-      if (msg.transcriptConfidence !== undefined) {
-        pbMsg.transcriptConfidence = msg.transcriptConfidence;
-      }
-      return new pb.ChatContext_ChatItem({ item: { case: 'message', value: pbMsg } });
-    }
-    case 'function_call': {
-      const fc = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCall',
-          value: new pb.FunctionCall({
-            id: fc.id,
-            callId: fc.callId,
-            name: fc.name,
-            arguments: fc.args,
-            createdAt: msToTimestamp(fc.createdAt),
-          }),
-        },
-      });
-    }
-    case 'function_call_output': {
-      const fco = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'functionCallOutput',
-          value: new pb.FunctionCallOutput({
-            id: fco.id,
-            callId: fco.callId,
-            name: fco.name,
-            output: fco.output,
-            isError: fco.isError,
-            createdAt: msToTimestamp(fco.createdAt),
-          }),
-        },
-      });
-    }
-    case 'agent_handoff': {
-      const ah = item;
-      return new pb.ChatContext_ChatItem({
-        item: {
-          case: 'agentHandoff',
-          value: new pb.AgentHandoff({
-            id: ah.id,
-            oldAgentId: ah.oldAgentId,
-            newAgentId: ah.newAgentId,
-            createdAt: msToTimestamp(ah.createdAt),
-          }),
-        },
-      });
-    }
-  }
 }
 
 // ===========================================================================
