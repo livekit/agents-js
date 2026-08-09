@@ -190,6 +190,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     if (!this.capturing) {
       this.resetState();
       this.capturing = true;
+      this.latestText = text;
     }
 
     try {
@@ -214,7 +215,10 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
   protected handleFlush() {
     const currWriter = this.writer;
     this.writer = null;
-    this.flushTask = Task.from((controller) => this.flushTaskImpl(currWriter, controller.signal));
+    const textToFlush = this.latestText;
+    this.flushTask = Task.from((controller) =>
+      this.flushTaskImpl(currWriter, textToFlush, controller.signal),
+    );
   }
 
   private async createTextWriter(attributes?: Record<string, string>): Promise<TextStreamWriter> {
@@ -243,7 +247,11 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     });
   }
 
-  private async flushTaskImpl(writer: TextStreamWriter | null, signal: AbortSignal): Promise<void> {
+  private async flushTaskImpl(
+    writer: TextStreamWriter | null,
+    textToFlush: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const attributes: Record<string, string> = {
       [ATTRIBUTE_TRANSCRIPTION_FINAL]: 'true',
     };
@@ -266,7 +274,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
           if (signal.aborted || !tmpWriter) {
             return;
           }
-          await Promise.race([tmpWriter.write(this.latestText), abortPromise]);
+          await Promise.race([tmpWriter.write(textToFlush), abortPromise]);
           if (signal.aborted) {
             return;
           }

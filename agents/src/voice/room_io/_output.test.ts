@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
-import { Future } from '../../utils.js';
-import { ParticipantAudioOutput } from './_output.js';
+import { ATTRIBUTE_TRANSCRIPTION_FINAL } from '../../constants.js';
+import { Future, type Task } from '../../utils.js';
+import { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './_output.js';
 
 type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
 
@@ -276,5 +277,139 @@ describe('ParticipantAudioOutput publishTrack', () => {
 
     expect(publishTrack).toHaveBeenCalledWith(fakeTrack, trackPublishOptions);
     expect(output.startedFuture.done).toBe(true);
+  });
+});
+
+describe('ParticipantTranscriptionOutput non-delta final streams', () => {
+  type Stream = { attributes: Record<string, string>; chunks: string[] };
+  type Deferred = { promise: Promise<void>; resolve: () => void };
+
+  const deferred = (): Deferred => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((resolvePromise) => {
+      resolve = resolvePromise;
+    });
+    return { promise, resolve };
+  };
+
+  const makeOutput = ({ holdFinalWriter = false }: { holdFinalWriter?: boolean } = {}) => {
+    const streams: Stream[] = [];
+    const finalWriterEntered = deferred();
+    const releaseFinalWriter = deferred();
+    const logger = { error: vi.fn() };
+    const output = Object.create(
+      ParticipantTranscriptionOutput.prototype,
+    ) as ParticipantTranscriptionOutput & {
+      writer: unknown;
+      flushTask: Task<void> | null;
+      jsonFormat: boolean;
+      isDeltaStream: boolean;
+      latestText: string;
+      capturing: boolean;
+      currentId: string;
+      participantIdentity: string | null;
+      trackId?: string;
+      logger: { error: () => void };
+      room: unknown;
+      handleFlush: () => void;
+    };
+
+    output.writer = null;
+    output.flushTask = null;
+    output.jsonFormat = false;
+    output.isDeltaStream = false;
+    output.latestText = '';
+    output.capturing = false;
+    output.currentId = 'SG_a';
+    output.participantIdentity = 'user-a';
+    output.trackId = 'TR_a';
+    output.logger = logger;
+    output.room = {
+      isConnected: true,
+      localParticipant: {
+        streamText: async ({ attributes }: { attributes: Record<string, string> }) => {
+          const stream: Stream = { attributes: { ...attributes }, chunks: [] };
+          streams.push(stream);
+
+          if (holdFinalWriter && attributes[ATTRIBUTE_TRANSCRIPTION_FINAL] === 'true') {
+            finalWriterEntered.resolve();
+            await releaseFinalWriter.promise;
+          }
+
+          return {
+            write: async (text: string) => {
+              stream.chunks.push(text);
+            },
+            close: async () => {},
+          };
+        },
+      },
+    };
+
+    return { output, streams, logger, finalWriterEntered, releaseFinalWriter };
+  };
+
+  const finals = (streams: Stream[]) =>
+    streams.filter((stream) => stream.attributes[ATTRIBUTE_TRANSCRIPTION_FINAL] === 'true');
+
+  it('publishes the latest capture from one active segment', async () => {
+    const { output, streams, logger } = makeOutput();
+
+    await output.captureText('interim');
+    await output.captureText('complete sentence');
+    output.flush();
+    await output.flushTask!.result;
+
+    expect(finals(streams)).toHaveLength(1);
+    expect(finals(streams)[0]!.chunks).toEqual(['complete sentence']);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('publishes the captured text when a segment starts with a final (no prior interims)', async () => {
+    const { output, streams, logger } = makeOutput();
+
+    await output.captureText('hello world');
+    output.flush();
+    await output.flushTask!.result;
+
+    expect(finals(streams)).toHaveLength(1);
+    expect(finals(streams)[0]!.chunks).toEqual(['hello world']);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('keeps segment A when it finishes before segment B starts', async () => {
+    const { output, streams, logger } = makeOutput();
+
+    await output.captureText('segment A interim');
+    await output.captureText('segment A');
+    output.flush();
+    await output.flushTask!.result;
+    await output.captureText('B');
+
+    expect(finals(streams)).toHaveLength(1);
+    expect(finals(streams)[0]!.chunks).toEqual(['segment A']);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('keeps segment A when segment B captures while A finalization is blocked', async () => {
+    const { output, streams, logger, finalWriterEntered, releaseFinalWriter } = makeOutput({
+      holdFinalWriter: true,
+    });
+
+    await output.captureText('segment A interim');
+    await output.captureText('segment A full sentence');
+    output.flush();
+    await finalWriterEntered.promise;
+
+    // captureText updates latestText before waiting for the pending flush. The barriers ensure
+    // that update happens while segment A's final writer is blocked, without relying on timing.
+    const nextCapture = output.captureText('segment B fragment');
+    releaseFinalWriter.resolve();
+    await nextCapture;
+    await output.flushTask!.result;
+
+    expect(finals(streams)).toHaveLength(1);
+    expect(finals(streams)[0]!.chunks).toEqual(['segment A full sentence']);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });
